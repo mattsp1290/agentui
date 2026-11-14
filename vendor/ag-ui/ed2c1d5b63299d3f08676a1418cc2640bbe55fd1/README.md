@@ -13,7 +13,7 @@ These six archives contain the bytes built from [mattsp1290/ag-ui PR 49](https:/
 
 Every archive includes its MIT notice. Extracted notices and packed manifests are in `notices/` and `manifests/`. Pi preserves YS-BW's MIT notice and donor provenance for `YS-BW/pi-agui` source `ee810dfb9ad3fe81d8854e9121b84ddee4c59148`. No retained archive has been patched or repacked.
 
-`provenance.json` is the frozen acquisition identity, including the source lock, fixture and consumer digests, acquisition evidence and historical commands. `qualification.json` holds current commands, a thin replay index, later evidence and known limitations. It binds back to the frozen identity through `identityProvenanceSha256`. The protocol report binds `provenance.json`; adding a qualification record does not change that identity or require a protocol report update.
+`provenance.json` is the frozen acquisition identity, including the source lock, fixture and consumer digests, acquisition evidence and historical commands. `qualification.json` holds a thin replay index, later evidence, known limitations and the metadata-history pointer; it records no commands. The current commands appear under "Run package qualification" below. The frozen identity's `qualification.offlineCommand` names the removed Python checker and remains historical only. It binds back to the frozen identity through `identityProvenanceSha256`. The protocol report binds `provenance.json`; adding a qualification record does not change that identity or require a protocol report update.
 
 ## Run package qualification
 
