@@ -1,4 +1,4 @@
-import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, Projection, SubmitResult } from '@agentui/contracts';
+import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
 
 export interface OutboxEntry {
   readonly command: ClientCommand;
@@ -34,6 +34,7 @@ export interface ConversationStore<P> {
   approve(pendingId: string, choiceId: string): Promise<SubmitResult>;
   cancel(runId: string): Promise<SubmitResult>;
   retry(clientCommandId: string): Promise<SubmitResult>;
+  refreshReceipt(clientCommandId: string): Promise<Receipt | null>;
   connect(): Promise<void>;
   disconnect(): void;
 }

@@ -129,15 +129,16 @@ test('concurrent host callbacks close the connection without advancing either de
   assert.equal(store.getSnapshot().cursor, 0);
 });
 
-test('each reconnect requires its own snapshot before any events', async () => {
+test('same live store reconnect resumes from its applied baseline', async () => {
   const { store, stream, port } = await connected();
   await stream.receive(events([1, 'old']));
   store.disconnect();
   await store.connect();
-  await assert.rejects(port.watches[1].receive(events([2, 'unbased'])), /before a snapshot/);
-  assert.equal(store.getSnapshot().cursor, 1);
-  assert.equal(store.getSnapshot().document.domain.text, 'old');
-  assert.equal(store.getSnapshot().connection.kind, 'resync');
+  assert.equal(port.watches[1].request.after, 1);
+  await port.watches[1].receive(events([2, ' continued']));
+  assert.equal(store.getSnapshot().cursor, 2);
+  assert.equal(store.getSnapshot().document.domain.text, 'old continued');
+  assert.equal(store.getSnapshot().connection.kind, 'connected');
 });
 
 test('a snapshot cannot regress the cursor within one connection', async () => {
