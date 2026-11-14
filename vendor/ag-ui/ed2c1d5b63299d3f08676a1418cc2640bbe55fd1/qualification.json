@@ -49,6 +49,11 @@
       "log": "evidence/modular-node-qualification.log.gz",
       "measuredBase": "e6996901b004d54cb5109c4da95959448e731bac",
       "note": "Measured working source after integrating main4a01 and modular verifier fixes. The full-consumer report records all ten source hashes and the input ledger digest before this evidence was appended."
+    },
+    {
+      "log": "evidence/ledger-owner-node-qualification.log.gz",
+      "measuredBase": "7b39edef133c1dd488a7bea09c404a3387262366",
+      "note": "Measured working source over the recorded base. The verified full-consumer report supplies every current checker/driver/consumer-script hash and the ledger input digest before this evidence was appended."
     }
   ],
   "evidence": [
@@ -194,6 +199,17 @@
       "compressedSha256": "3dc4f1f56676b34021bfc0d961bf067f440ff49ed286f0a2a7607446188745c0",
       "encoding": "gzip; raw retained without edits",
       "role": "Controlled Linux full-consumer qualification of the modular verifier, with all ten verifier and consumer-script hashes."
+    },
+    {
+      "path": "evidence/ledger-owner-node-qualification.log.gz",
+      "rawBytes": 55994,
+      "rawSha256": "e60cafefc4b8a1be9a346aaf8725416ef85f05c205ade93ba4751087159d4d0e",
+      "retainedBytes": 55994,
+      "retainedSha256": "e60cafefc4b8a1be9a346aaf8725416ef85f05c205ade93ba4751087159d4d0e",
+      "compressedBytes": 6905,
+      "compressedSha256": "5be3ac2643f376d915ff891750b126dd6e8446ff77ab7585af7878fc41678f82",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification after consolidating ledger ownership and deriving checker source hashes from the module directory."
     }
   ],
   "metadataHistory": "evidence/qualification-metadata-history.json.gz"

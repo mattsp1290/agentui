@@ -13,7 +13,7 @@ These six archives contain the bytes built from [mattsp1290/ag-ui PR 49](https:/
 
 Every archive includes its MIT notice. Extracted notices and packed manifests are in `notices/` and `manifests/`. Pi preserves YS-BW's MIT notice and donor provenance for `YS-BW/pi-agui` source `ee810dfb9ad3fe81d8854e9121b84ddee4c59148`. No retained archive has been patched or repacked.
 
-`provenance.json` is the frozen acquisition identity, including the source lock, fixture and consumer digests, acquisition evidence and historical commands. `qualification.json` holds a thin replay index, later evidence, known limitations and the metadata-history pointer; it records no commands. The current commands appear under "Run package qualification" below. The frozen identity's `qualification.offlineCommand` names the removed Python checker and remains historical only. It binds back to the frozen identity through `identityProvenanceSha256`. The protocol report binds `provenance.json`; adding a qualification record does not change that identity or require a protocol report update.
+`provenance.json` is the frozen acquisition identity, including the source lock, fixture and consumer digests, acquisition evidence and historical commands. `qualification.json` holds a thin replay index, later evidence, known limitations and the metadata-history pointer; it records no commands. The current commands appear under "Run package qualification" below. The frozen identity's `qualification.offlineCommand` names the removed Python checker and remains historical only. The qualification ledger binds back to the frozen identity through `identityProvenanceSha256`. The protocol report binds `provenance.json`; adding a qualification record does not change that identity or require a protocol report update.
 
 ## Run package qualification
 
@@ -34,9 +34,9 @@ Qualification imports every public package, runs Codex first turn and continuati
 
 ## Node execution and launcher scope
 
-Verification rejects altered package, fixture and consumer inputs. Retained paths stay inside the fork directory. Hashes describe bytes when read; copies read the files again from disk.
+Verification rejects altered package, fixture and consumer inputs. Retained path names are lexically confined to the fork directory. Hashes describe bytes when read; copies read the files again from disk.
 
-Node children use the driver's executable, and npm resolves with that executable's directory first on PATH. Reports identify the measured runtime and all ten verifier and consumer-script hashes. Ambient Node and npm settings remain inherited. A `NODE_OPTIONS` digest identifies the inherited value without printing it; it does not conceal short or guessable values.
+Node children use the driver's executable, and npm resolves with that executable's directory first on PATH. Reports identify the measured runtime and all verifier and consumer-script source hashes. Ambient Node and npm settings remain inherited. A `NODE_OPTIONS` digest identifies the inherited value without printing it; it does not conceal short or guessable values.
 
 The replay index names verified full-consumer logs and their measurement bases. Earlier coordinator observations remain in the metadata-history snapshot and their original logs remain verified evidence. Each emitted qualification digest identifies the input ledger at invocation time. Appending evidence produces a different ledger; it does not alter the earlier measurement.
 

@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { RETAINED_CONSUMER_RECORD_SCOPE, readConsumerPassRecord, verifyEvidence } from '../../scripts/lib/agui-fork/ledger.mjs';
+import { RETAINED_CONSUMER_RECORD_SCOPE, readConsumerPassRecord, verifyEvidence, verifyLedger } from '../../scripts/lib/agui-fork/ledger.mjs';
 
 const revision = 'a'.repeat(40);
 const pass = { result: 'PASS', scope: 'controlled package consumer; no native provider or Apple qualification', sourceRevision: revision, sourceSha256: { 'checker.mjs': 'b'.repeat(64) } };
@@ -50,8 +50,8 @@ function evidenceFixture(context) {
     return { path, rawBytes: raw.length, retainedBytes: raw.length, rawSha256: digest(raw), retainedSha256: digest(raw), compressedBytes: compressed.length, compressedSha256: digest(compressed) };
   });
   return {
-    fork: { folder, metadata: { evidence, sourceRevision: revision, sourceLockSha256: digest(files['source-pnpm-lock.yaml']) } },
-    qualification: { evidence: [], metadataHistory: 'evidence/history.gz', knownLimitations: [], nodeReplays: [{ log: 'evidence/replay.gz', measuredBase: 'd'.repeat(40) }] },
+    fork: { folder, provenanceSha256: 'f'.repeat(64), metadata: { evidence, sourceRevision: revision, sourceLockSha256: digest(files['source-pnpm-lock.yaml']) } },
+    qualification: { sourceRevision: revision, identityProvenanceSha256: 'f'.repeat(64), evidence: [], metadataHistory: 'evidence/history.gz', knownLimitations: [], nodeReplays: [{ log: 'evidence/replay.gz', measuredBase: 'd'.repeat(40) }] },
   };
 }
 
@@ -71,4 +71,45 @@ for (const [label, mutate, error] of [
   const { fork, qualification } = evidenceFixture(context);
   mutate(qualification);
   assert.throws(() => verifyEvidence(fork, qualification), error);
+});
+
+
+test('ledger validation returns the digest of its exact verified input bytes', (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  const body = Buffer.from(JSON.stringify(qualification, null, 2));
+  assert.equal(verifyLedger(fork, body), digest(body));
+});
+
+for (const [label, value, error] of [
+  ['null', () => null, /must declare/u],
+  ['array', () => [], /must declare/u],
+  ['non-array evidence', (q) => ({ ...q, evidence: {} }), /must declare/u],
+  ['non-array replays', (q) => ({ ...q, nodeReplays: {} }), /must declare/u],
+  ['non-array limitations', (q) => ({ ...q, knownLimitations: {} }), /must declare/u],
+  ['unknown top-level field', (q) => ({ ...q, command: 'obsolete command' }), /unexpected qualification ledger fields/u],
+  ['wrong revision', (q) => ({ ...q, sourceRevision: 'c'.repeat(40) }), /qualification source revision/u],
+  ['wrong identity digest', (q) => ({ ...q, identityProvenanceSha256: 'e'.repeat(64) }), /qualification identity digest/u],
+]) test(`ledger validation rejects ${label}`, (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(value(qualification)))), error);
+});
+
+for (const [label, body, error] of [
+  ['malformed JSON', Buffer.from('{'), SyntaxError],
+  ['invalid UTF-8', Buffer.from([0xff]), /encoded data/u],
+]) test(`ledger validation rejects ${label}`, (context) => {
+  const { fork } = evidenceFixture(context);
+  assert.throws(() => verifyLedger(fork, body), error);
+});
+
+for (const [label, mutate, error] of [
+  ['compressed hash mismatch', (f) => { f.metadata.evidence[0].compressedSha256 = '0'.repeat(64); }, /compressed hash/u],
+  ['raw hash mismatch', (f) => { f.metadata.evidence[1].rawSha256 = '0'.repeat(64); }, /raw hash/u],
+  ['retained hash mismatch', (f) => { f.metadata.evidence[1].retainedSha256 = '0'.repeat(64); }, /retained hash/u],
+  ['source-lock digest mismatch', (f) => { f.metadata.sourceLockSha256 = '0'.repeat(64); }, /source lock digest/u],
+  ['duplicate evidence path', (f, q) => { q.evidence.push(f.metadata.evidence[1]); }, /duplicate evidence path/u],
+]) test(`ledger validation rejects ${label}`, (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  mutate(fork, qualification);
+  assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), error);
 });

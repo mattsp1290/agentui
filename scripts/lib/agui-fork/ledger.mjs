@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { gunzipSync } from 'node:zlib';
-import { digest, forkFile } from './bytes.mjs';
+import { digest, forkFile, parseJson } from './bytes.mjs';
 
 export const RETAINED_CONSUMER_RECORD_SCOPE = 'controlled package consumer; no native provider or Apple qualification';
 
@@ -25,10 +25,26 @@ export function readConsumerPassRecord(raw, label, sourceRevision) {
   return report;
 }
 
+function assertClosedKeys(value, allowed, label) {
+  assert.deepEqual(Object.keys(value).filter((key) => !allowed.includes(key)), [], label);
+}
+
+export function verifyLedger(fork, body) {
+  const qualification = parseJson(body);
+  assert.ok(qualification && Array.isArray(qualification.evidence) && Array.isArray(qualification.nodeReplays)
+    && Array.isArray(qualification.knownLimitations), 'qualification ledger must declare evidence, nodeReplays and knownLimitations arrays');
+  const ledgerKeys = ['sourceRevision', 'identityProvenanceSha256', 'knownLimitations', 'nodeReplays', 'evidence', 'metadataHistory'];
+  assertClosedKeys(qualification, ledgerKeys, 'unexpected qualification ledger fields');
+  assert.equal(qualification.sourceRevision, fork.metadata.sourceRevision, 'qualification source revision');
+  assert.equal(qualification.identityProvenanceSha256, fork.provenanceSha256, 'qualification identity digest');
+  verifyEvidence(fork, qualification);
+  return digest(body);
+}
+
 const replayKeys = ['log', 'measuredBase', 'note'];
 function verifyReplay(replay, raws, sourceRevision) {
   assert.ok(replay && typeof replay === 'object' && !Array.isArray(replay), 'replay must be an index record');
-  assert.deepEqual(Object.keys(replay).filter((key) => !replayKeys.includes(key)), [], `${replay.log}: unexpected replay fields`);
+  assertClosedKeys(replay, replayKeys, `${replay.log}: unexpected replay fields`);
   assert.ok(typeof replay.log === 'string' && raws.has(replay.log), `${replay.log}: replay log must be verified evidence`);
   assert.ok(typeof replay.measuredBase === 'string' && /^[a-f0-9]{40}$/u.test(replay.measuredBase), `${replay.log}: replay base must be a full commit SHA`);
   assert.ok(replay.note === undefined || typeof replay.note === 'string', `${replay.log}: replay note must be a string`);

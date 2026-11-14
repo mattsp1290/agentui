@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { digest, forkFile, parseJson } from './agui-fork/bytes.mjs';
 import { resolveLockedFork } from './agui-fork/identity.mjs';
 import { verifyArchive } from './agui-fork/archives.mjs';
-import { verifyEvidence } from './agui-fork/ledger.mjs';
+import { verifyLedger } from './agui-fork/ledger.mjs';
 
 const aguiPackages = ['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => `@ag-ui/${name}`);
 
@@ -32,21 +32,13 @@ function verifyFixtures({ folder, metadata }) {
 }
 export function verifyFork(root) {
   const fork = resolveLockedFork(root);
-  const qualificationBody = readFileSync(forkFile(fork.folder, 'qualification.json'));
-  const qualification = parseJson(qualificationBody);
-  assert.ok(qualification && Array.isArray(qualification.evidence) && Array.isArray(qualification.nodeReplays)
-    && Array.isArray(qualification.knownLimitations), 'qualification ledger must declare evidence, nodeReplays and knownLimitations arrays');
-  const ledgerKeys = ['sourceRevision', 'identityProvenanceSha256', 'knownLimitations', 'nodeReplays', 'evidence', 'metadataHistory'];
-  assert.deepEqual(Object.keys(qualification).filter((key) => !ledgerKeys.includes(key)), [], 'unexpected qualification ledger fields');
-  assert.equal(qualification.sourceRevision, fork.metadata.sourceRevision, 'qualification source revision');
-  assert.equal(qualification.identityProvenanceSha256, fork.provenanceSha256, 'qualification identity digest');
+  const qualificationSha256 = verifyLedger(fork, readFileSync(forkFile(fork.folder, 'qualification.json')));
   assert.deepEqual(fork.metadata.artifacts.map((artifact) => artifact.package).toSorted(), aguiPackages.toSorted(), 'exact six AG-UI archives');
   const packages = new Map();
   for (const artifact of fork.metadata.artifacts) {
     assert.ok(!packages.has(artifact.package), `duplicate artifact ${artifact.package}`);
     packages.set(artifact.package, verifyArchive(fork.folder, artifact));
   }
-  verifyEvidence(fork, qualification);
   const fixtures = verifyFixtures(fork);
-  return { ...fork, packages, ...fixtures, qualificationSha256: digest(qualificationBody) };
+  return { ...fork, packages, ...fixtures, qualificationSha256 };
 }

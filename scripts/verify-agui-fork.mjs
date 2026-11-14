@@ -24,9 +24,11 @@ assert(process.platform !== 'win32', 'Controlled Codex supervision requires POSI
 const runtime = { node: process.version, execPath: process.execPath, platform: process.platform, arch: process.arch,
   inheritedRuntimeConfig: Object.keys(process.env).filter((key) => /^(NODE_OPTIONS$|npm_config_)/iu.test(key)).sort(),
   nodeOptionsSha256: process.env.NODE_OPTIONS === undefined ? null : sha256(process.env.NODE_OPTIONS) };
+const libraryFiles = (await readdir(join(root, 'scripts/lib/agui-fork')))
+  .filter((name) => name.endsWith('.mjs')).sort().map((name) => `scripts/lib/agui-fork/${name}`);
 const sourceBytes = new Map(await Promise.all([
   'scripts/lib/agui-fork.mjs', 'scripts/verify-agui-fork.mjs',
-  ...['bytes', 'identity', 'archives', 'ledger', 'consumer'].map((name) => `scripts/lib/agui-fork/${name}.mjs`),
+  ...libraryFiles,
   ...consumerScripts.map((name) => `tests/dependencies/ag-ui/${name}`),
 ].map(async (file) => [file, await readFile(join(root, file))])));
 const sourceSha256 = Object.fromEntries([...sourceBytes].map(([file, body]) => [file, sha256(body)]));
