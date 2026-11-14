@@ -26,7 +26,8 @@ export interface Receipt {
   readonly sequence: number;
   readonly state: ReceiptState;
 }
-/** Rejections are not persisted and leave the command id available. Storage faults reject the promise. */
+/** Rejections are not persisted and leave the command id available.
+ * A full host snapshot budget returns conversation-capacity. Storage faults reject the promise. */
 export type SubmitResult =
   | { readonly kind: 'receipt'; readonly receipt: Receipt }
   | { readonly kind: 'rejected'; readonly reason: string };
@@ -36,9 +37,12 @@ export interface PendingDecision {
   readonly choices: readonly string[];
   readonly prompt: string;
 }
+const TERMINAL_RECEIPT_RETENTION = 128;
 export interface ConversationDocument<P> {
   readonly domain: P;
-  /** All unresolved receipts and the latest 128 terminal receipts. Older receipts remain available through receipt(id). */
+  /** All unresolved receipts and the latest 128 terminal receipts. Older receipts remain available through receipt(id).
+   * Unresolved receipts occupy snapshot capacity until authoritative settlement; retained terminal receipts
+   * are pruned only after newer terminal receipts exceed the retention count. No forced release is provided. */
   readonly receipts: Readonly<Record<string, Receipt>>;
   readonly decisions: Readonly<Record<string, PendingDecision>>;
 }
@@ -101,7 +105,7 @@ export function foldDocument<E, P>(document: ConversationDocument<P>, event: Hos
       const terminal = Object.values(receipts).filter(value => value.state.kind === 'completed' ||
         value.state.kind === 'rejected' || value.state.kind === 'not-dispatched')
         .sort((a, b) => b.sequence - a.sequence);
-      for (const value of terminal.slice(128)) delete receipts[value.clientCommandId];
+      for (const value of terminal.slice(TERMINAL_RECEIPT_RETENTION)) delete receipts[value.clientCommandId];
       return { ...document, receipts };
     }
     case 'decision-opened': return { ...document, decisions: { ...document.decisions, [event.decision.pendingId]: event.decision } };

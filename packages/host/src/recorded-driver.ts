@@ -2,7 +2,7 @@ import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSyn
 import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
-import { positiveInteger, nonempty, object, output } from './durable-model.js';
+import { nonempty, object, output, parseEvidence } from './codec.js';
 import type { CapturedTarget, CommandResult, ProviderDriver } from './durable-model.js';
 
 export interface RecordedDriverOptions<E> {
@@ -41,13 +41,7 @@ export function createRecordedDriver<E>(options: RecordedDriverOptions<E>): Prov
         catch (error) { if (index === lines.length - 1) continue; throw error; }
         const observed = object(parsed), evidence = object(observed.evidence);
         if (canonicalJson(evidence.identity) === canonicalJson(target.identity)) {
-          const native = evidence.nativeOperation === null ? null : object(evidence.nativeOperation);
-          const extension = object(evidence.observation);
-          const parsedEvidence = { identity: target.identity, source: 'authoritative-native-lookup',
-            nativeOperation: native ? { namespace: nonempty(native.namespace), id: nonempty(native.id) } : null,
-            observation: { namespace: nonempty(extension.namespace), schemaVersion: positiveInteger(extension.schemaVersion),
-              data: JSON.parse(canonicalJson(extension.data)) },
-          } as const;
+          const parsedEvidence = { ...parseEvidence(evidence, target.identity), source: 'authoritative-native-lookup' } as const;
           if (observed.kind === 'accepted') return { kind: 'accepted', evidence: parsedEvidence };
           if (observed.kind !== 'conclusive') throw new Error('Invalid recorded observation');
           const result = object(observed.result);

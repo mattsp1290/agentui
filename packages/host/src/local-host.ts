@@ -1,7 +1,9 @@
 import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationPort, ConversationScope, Projection, Receipt } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
-import { budgets, installation, nonempty } from './durable-model.js';
+import { budgets } from './durable-model.js';
+import { installation, nonempty } from './codec.js';
+import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
@@ -23,11 +25,16 @@ export interface LocalHost<E, P> {
 export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
   const store = new SqliteStore(options.path, options.projection, budgets(options.budgets));
   const journal = new Journal(store);
+  store.onCommit = () => journal.wake();
   let closed = false;
   let active = 0;
-  const finished = () => {
-    active--;
-    if (closed && active === 0) store.close();
+  const inFlight = async <T>(work: () => Promise<T>): Promise<T> => {
+    active++;
+    try { return await work(); }
+    finally {
+      active--;
+      if (closed && active === 0) store.close();
+    }
   };
   const authorized = (value: ConversationScope): ConversationScope => {
     const scope = parseScope(value);
@@ -41,7 +48,6 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     },
     append(scope: ConversationScope, output: HostOutput<E>): void {
       store.append(authorized(scope), output);
-      journal.wake();
     },
     conversation(value: ConversationScope): ConversationPort<E, P> {
       const scope = authorized(value);
@@ -57,25 +63,22 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const admitted = store.admit(command, options.driver.capability(command));
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
-          journal.wake();
           const stored = admitted.stored;
           const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
             signal: new AbortController().signal,
             recordIntent: () => store.verifyIntent(stored),
             dispatchNative: () => options.driver.dispatch(stored.command, stored.target),
           });
-          active++;
-          try {
+          return inFlight(async () => {
             const observed = await operation.run();
             const receipt = store.settle(scope, command.clientCommandId, observed.observation);
-            journal.wake();
-            return { kind: 'receipt', receipt };
-          } finally { finished(); }
+            return { kind: 'receipt' as const, receipt };
+          });
         },
         async receipt(id) {
           authorized(scope);
           const stored = store.command(scope, nonempty(id));
-          return stored ? store.exposedReceipt(stored) : null;
+          return stored ? stored.receipt : null;
         },
         watch(request, receive) {
           authorized(scope);
@@ -87,10 +90,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       authorized(scope);
       const stored = store.command(scope, nonempty(id));
       if (!stored) return null;
-      if (stored.observation?.kind === 'conclusive' && stored.receipt.state.kind === 'uncertain' && stored.receipt.state.reason === 'output-rejected') {
-        const receipt = store.settle(scope, id, stored.observation);
-        journal.wake();
-        return receipt;
+      if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) {
+        return store.settle(scope, id, stored.observation);
       }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       const lookup = options.driver.lookup;
@@ -98,19 +99,14 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         previous: store.recoveryPrevious(stored),
         ...(lookup ? { reconcileNative: () => lookup.call(options.driver, stored.command, stored.target) } : {}),
       });
-      active++;
-      try {
-      const result = await operation.reconcile(new AbortController().signal);
-      if (result.kind !== 'ok') {
-        if (stored.observation !== null) return stored.receipt;
-        const receipt = store.settle(scope, id, { kind: 'outcome-unknown' });
-        journal.wake();
-        return receipt;
-      }
-      const receipt = store.settle(scope, id, result.value.observation);
-      journal.wake();
-      return receipt;
-      } finally { finished(); }
+      return inFlight(async () => {
+        const result = await operation.reconcile(new AbortController().signal);
+        if (result.kind !== 'ok') {
+          return stored.observation === null
+            ? store.settle(scope, id, { kind: 'outcome-unknown' }) : stored.receipt;
+        }
+        return store.settle(scope, id, result.value.observation);
+      });
     },
     close(): void {
       if (closed) return;
