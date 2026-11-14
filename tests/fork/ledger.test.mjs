@@ -5,16 +5,18 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
-import { RETAINED_CONSUMER_RECORD_SCOPE, readConsumerPassRecord, verifyEvidence, verifyLedger } from '../../scripts/lib/agui-fork/ledger.mjs';
+import { RETAINED_CONSUMER_RECORD_SCOPE, readConsumerPassRecord, verifyCurrentReceipt, verifyEvidence, verifyLedger } from '../../scripts/lib/agui-fork/ledger.mjs';
 
 const revision = 'a'.repeat(40);
-const pass = { result: 'PASS', scope: 'controlled package consumer; no native provider or Apple qualification', sourceRevision: revision, sourceSha256: { 'checker.mjs': 'b'.repeat(64) } };
-const log = (...records) => Buffer.from(records.map((record) => typeof record === 'string' ? record : JSON.stringify(record)).join('\n'));
 const provenance = { path: 'provenance.json', sha256: 'f'.repeat(64) };
+const successfulSteps = [{ command: ['controlled-child'], exitCode: 0, signal: null }];
+const inputLedger = Buffer.from('exact input ledger bytes');
+const pass = { provenance, results: successfulSteps, qualificationSha256: createHash('sha256').update(inputLedger).digest('hex'), result: 'PASS', scope: 'controlled package consumer; no native provider or Apple qualification', sourceRevision: revision, sourceSha256: { 'checker.mjs': 'b'.repeat(64) } };
+const log = (...records) => Buffer.from(records.map((record) => typeof record === 'string' ? record : JSON.stringify(record)).join('\n'));
 const read = (body) => readConsumerPassRecord(body, 'test.log', revision, provenance);
 const digest = (body) => createHash('sha256').update(body).digest('hex');
 
-test('retained full-consumer record discriminator stays compatible with historical logs', () => {
+test('driver and current receipt reader share the full-consumer discriminator', () => {
   assert.equal(RETAINED_CONSUMER_RECORD_SCOPE, pass.scope);
 });
 
@@ -43,7 +45,7 @@ function evidenceFixture(context, report = pass) {
   const folder = mkdtempSync(join(tmpdir(), 'agentui-ledger-test-'));
   context.after(() => rmSync(folder, { recursive: true, force: true }));
   mkdirSync(join(folder, 'evidence'));
-  const files = { 'source-pnpm-lock.yaml': Buffer.from('frozen lock'), history: Buffer.from('historical metadata'), replay: log(report) };
+  const files = { 'source-pnpm-lock.yaml': Buffer.from('frozen lock'), history: Buffer.from('historical metadata'), input: inputLedger, replay: log(report) };
   const evidence = Object.entries(files).map(([name, raw]) => {
     const path = `evidence/${name}.gz`;
     const compressed = gzipSync(raw);
@@ -52,43 +54,48 @@ function evidenceFixture(context, report = pass) {
   });
   return {
     fork: { folder, provenancePath: provenance.path, provenanceSha256: provenance.sha256, metadata: { evidence, sourceRevision: revision, sourceLockSha256: digest(files['source-pnpm-lock.yaml']) } },
-    qualification: { sourceRevision: revision, identityProvenanceSha256: 'f'.repeat(64), evidence: [], metadataHistory: 'evidence/history.gz', knownLimitations: [], nodeReplays: [{ log: 'evidence/replay.gz', measuredBase: 'd'.repeat(40) }] },
+    qualification: { sourceRevision: revision, identityProvenanceSha256: 'f'.repeat(64), evidence: [], metadataHistory: 'evidence/history.gz', knownLimitations: [], currentReplay: { log: 'evidence/replay.gz', inputLedger: 'evidence/input.gz', measuredBase: 'd'.repeat(40) } },
   };
 }
 
-test('verified evidence supplies the uniformly shaped replay report', (context) => {
-  const { fork, qualification } = evidenceFixture(context);
-  assert.deepEqual(verifyEvidence(fork, qualification), [{ ...qualification.nodeReplays[0], report: pass }]);
+test('verified evidence returns raw bytes without parsing historical report formats', (context) => {
+  const { fork, qualification } = evidenceFixture(context, 'historical output without a scoped record');
+  const raws = verifyEvidence(fork, qualification);
+  assert.ok(raws instanceof Map);
+  assert.deepEqual(raws.get('evidence/input.gz'), inputLedger);
 });
 
 for (const [label, mutate, error] of [
-  ['extra replay fields', (q) => { q.nodeReplays[0].kind = 'self-reported'; }, /unexpected replay fields/u],
-  ['duplicate replay log', (q) => { q.nodeReplays.push({ ...q.nodeReplays[0], measuredBase: 'e'.repeat(40) }); }, /replay logs must be indexed once/u],
-  ['unverified replay log', (q) => { q.nodeReplays[0].log = 'unverified.gz'; }, /verified evidence/u],
-  ['abbreviated base', (q) => { q.nodeReplays[0].measuredBase = 'ddddddd'; }, /full commit SHA/u],
-  ['non-string note', (q) => { q.nodeReplays[0].note = {}; }, /note must be a string/u],
+  ['missing current replay', (q) => { delete q.currentReplay; }, /currentReplay/u],
+  ['null current replay', (q) => { q.currentReplay = null; }, /currentReplay/u],
+  ['array current replay', (q) => { q.currentReplay = []; }, /currentReplay/u],
+  ['extra current replay field', (q) => { q.currentReplay.note = 'obsolete'; }, /currentReplay fields/u],
+  ['missing input ledger', (q) => { delete q.currentReplay.inputLedger; }, /currentReplay fields/u],
+  ['unverified replay log', (q) => { q.currentReplay.log = 'unverified.gz'; }, /verified evidence/u],
+  ['unverified input ledger', (q) => { q.currentReplay.inputLedger = 'unverified.gz'; }, /verified evidence/u],
+  ['same log and input ledger', (q) => { q.currentReplay.inputLedger = q.currentReplay.log; }, /must differ/u],
+  ['abbreviated base', (q) => { q.currentReplay.measuredBase = 'ddddddd'; }, /full commit SHA/u],
+  ['legacy replay index', (q) => { q.nodeReplays = []; }, /qualification ledger fields/u],
   ['unverified history', (q) => { q.metadataHistory = 'unverified.gz'; }, /verified evidence/u],
   ['unverified limitation', (q) => { q.knownLimitations = [{ failureEvidence: 'unverified.gz' }]; }, /verified evidence/u],
-]) test(`verified evidence rejects ${label}`, (context) => {
+]) test(`ledger validation rejects ${label}`, (context) => {
   const { fork, qualification } = evidenceFixture(context);
   mutate(qualification);
-  assert.throws(() => verifyEvidence(fork, qualification), error);
+  assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), error);
 });
-
 
 test('ledger validation returns the digest of its exact verified input bytes', (context) => {
   const { fork, qualification } = evidenceFixture(context);
   const body = Buffer.from(JSON.stringify(qualification, null, 2));
-  assert.equal(verifyLedger(fork, body), digest(body));
+  assert.equal(verifyLedger(fork, body).sha256, digest(body));
 });
 
 for (const [label, value, error] of [
   ['null', () => null, /must declare/u],
   ['array', () => [], /must declare/u],
   ['non-array evidence', (q) => ({ ...q, evidence: {} }), /must declare/u],
-  ['non-array replays', (q) => ({ ...q, nodeReplays: {} }), /must declare/u],
   ['non-array limitations', (q) => ({ ...q, knownLimitations: {} }), /must declare/u],
-  ['unknown top-level field', (q) => ({ ...q, command: 'obsolete command' }), /unexpected qualification ledger fields/u],
+  ['unknown top-level field', (q) => ({ ...q, command: 'obsolete command' }), /qualification ledger fields/u],
   ['wrong revision', (q) => ({ ...q, sourceRevision: 'c'.repeat(40) }), /qualification source revision/u],
   ['wrong identity digest', (q) => ({ ...q, identityProvenanceSha256: 'e'.repeat(64) }), /qualification identity digest/u],
 ]) test(`ledger validation rejects ${label}`, (context) => {
@@ -116,7 +123,6 @@ for (const [label, mutate, error] of [
   assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), error);
 });
 
-const successfulSteps = [{ command: ['controlled-child'], exitCode: 0, signal: null }];
 test('full consumer records accept the exact measured identity and successful child results', () => {
   const bound = { ...pass, provenance, results: successfulSteps };
   assert.deepEqual(read(log(bound)), bound);
@@ -140,14 +146,55 @@ for (const [label, fields, error] of [
   assert.throws(() => read(log({ ...pass, ...fields })), error);
 });
 
-test('verified ledger admits a replay bound to its resolved identity', (context) => {
-  const bound = { ...pass, provenance, results: successfulSteps };
-  const { fork, qualification } = evidenceFixture(context, bound);
-  assert.deepEqual(verifyEvidence(fork, qualification)[0].report, bound);
-  assert.equal(verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), digest(Buffer.from(JSON.stringify(qualification))));
+for (const [label, fields, error] of [
+  ['missing identity', { provenance: undefined }, /replay frozen identity/u],
+  ['missing child results', { results: undefined }, /replay child results/u],
+  ['missing input digest', { qualificationSha256: undefined }, /input-ledger digest/u],
+  ['uppercase input digest', { qualificationSha256: 'A'.repeat(64) }, /input-ledger digest/u],
+  ['short input digest', { qualificationSha256: 'a'.repeat(63) }, /input-ledger digest/u],
+  ['non-string input digest', { qualificationSha256: 123 }, /input-ledger digest/u],
+]) test(`current receipts reject ${label}`, () => {
+  assert.throws(() => read(log({ ...pass, ...fields })), error);
 });
 
-test('verified ledger rejects a replay bound to another resolved identity', (context) => {
-  const { fork, qualification } = evidenceFixture(context, { ...pass, provenance: { ...provenance, sha256: 'e'.repeat(64) } });
-  assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), /replay frozen identity/u);
+for (const report of ['unscoped historical output', { ...pass, provenance: undefined }, { ...pass, results: undefined }]) {
+  test('static ledger verification permits replacing an obsolete receipt contract', (context) => {
+    const { fork, qualification } = evidenceFixture(context, report);
+    const ledger = verifyLedger(fork, Buffer.from(JSON.stringify(qualification)));
+    assert.deepEqual(ledger.logRaw, log(report));
+    assert.throws(() => verifyCurrentReceipt({ ...fork, ledger }, pass.sourceSha256));
+  });
+}
+
+test('current receipt binds exact input ledger bytes and current source hashes', (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  const ledger = verifyLedger(fork, Buffer.from(JSON.stringify(qualification)));
+  assert.deepEqual(verifyCurrentReceipt({ ...fork, ledger }, pass.sourceSha256), pass);
+  assert.notEqual(pass.qualificationSha256, ledger.sha256);
+});
+
+for (const [label, hashes] of [
+  ['stale source bytes', { 'checker.mjs': 'c'.repeat(64) }],
+  ['missing measured source', {}],
+  ['extra measured source', { ...pass.sourceSha256, 'extra.mjs': 'c'.repeat(64) }],
+]) test(`current receipts reject ${label}`, (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  const ledger = verifyLedger(fork, Buffer.from(JSON.stringify(qualification)));
+  assert.throws(() => verifyCurrentReceipt({ ...fork, ledger }, hashes), /current verifier sources/u);
+});
+
+test('current receipt rejects a valid-shaped digest naming different retained bytes', (context) => {
+  const { fork, qualification } = evidenceFixture(context);
+  qualification.currentReplay.inputLedger = qualification.metadataHistory;
+  const ledger = verifyLedger(fork, Buffer.from(JSON.stringify(qualification)));
+  assert.throws(() => verifyCurrentReceipt({ ...fork, ledger }, pass.sourceSha256), /input.ledger/u);
+});
+
+for (const [label, fields, error] of [
+  ['foreign identity', { provenance: { ...provenance, sha256: 'e'.repeat(64) } }, /replay frozen identity/u],
+  ['failed child', { results: [{ exitCode: 1, signal: null }] }, /replay child results/u],
+]) test(`current receipt validation rejects ${label}`, (context) => {
+  const { fork, qualification } = evidenceFixture(context, { ...pass, ...fields });
+  const ledger = verifyLedger(fork, Buffer.from(JSON.stringify(qualification)));
+  assert.throws(() => verifyCurrentReceipt({ ...fork, ledger }, pass.sourceSha256), error);
 });

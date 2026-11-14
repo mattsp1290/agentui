@@ -1,3 +1,4 @@
+import { writeSync } from 'node:fs';
 import { registerHooks } from 'node:module';
 import { relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -10,4 +11,4 @@ registerHooks({ resolve(specifier, context, next) {
   }
   return value;
 } });
-process.on('exit', () => console.log(JSON.stringify({ type: 'fork-import-graph', sourceFiles: [...sourceFiles].sort() })));
+process.on('exit', () => writeSync(1, `${JSON.stringify({ type: 'fork-import-graph', sourceFiles: [...sourceFiles].sort() })}\n`));

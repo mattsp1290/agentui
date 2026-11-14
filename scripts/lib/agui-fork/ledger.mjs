@@ -16,13 +16,11 @@ export function readConsumerPassRecord(raw, label, sourceRevision, expectedProve
   const [report] = reports;
   assert.equal(report.result, 'PASS', `${label}: full consumer result`);
   assert.equal(report.sourceRevision, sourceRevision, `${label}: full consumer source revision`);
-  if (report.provenance !== undefined) {
-    assert.deepEqual(report.provenance, expectedProvenance, `${label}: replay frozen identity`);
-  }
-  if (report.results !== undefined) {
-    assert.ok(Array.isArray(report.results) && report.results.length > 0
-      && report.results.every((step) => step?.exitCode === 0 && step.signal === null), `${label}: replay child results`);
-  }
+  assert.deepEqual(report.provenance, expectedProvenance, `${label}: replay frozen identity`);
+  assert.ok(typeof report.qualificationSha256 === 'string' && /^[a-f0-9]{64}$/u.test(report.qualificationSha256),
+    `${label}: replay input-ledger digest`);
+  assert.ok(Array.isArray(report.results) && report.results.length > 0
+    && report.results.every((step) => step?.exitCode === 0 && step.signal === null), `${label}: replay child results`);
   const hashes = report.sourceSha256;
   assert.ok(hashes && typeof hashes === 'object' && !Array.isArray(hashes)
     && Object.keys(hashes).length > 0, `${label}: replay source hashes must be a nonempty map`);
@@ -32,33 +30,38 @@ export function readConsumerPassRecord(raw, label, sourceRevision, expectedProve
   return report;
 }
 
-function assertClosedKeys(value, allowed, label) {
-  assert.deepEqual(Object.keys(value).filter((key) => !allowed.includes(key)), [], label);
-}
-
 export function verifyLedger(fork, body) {
   const qualification = parseJson(body);
-  assert.ok(qualification && Array.isArray(qualification.evidence) && Array.isArray(qualification.nodeReplays)
-    && Array.isArray(qualification.knownLimitations), 'qualification ledger must declare evidence, nodeReplays and knownLimitations arrays');
-  const ledgerKeys = ['sourceRevision', 'identityProvenanceSha256', 'knownLimitations', 'nodeReplays', 'evidence', 'metadataHistory'];
-  assertClosedKeys(qualification, ledgerKeys, 'unexpected qualification ledger fields');
+  assert.ok(qualification && Array.isArray(qualification.evidence) && Array.isArray(qualification.knownLimitations),
+    'qualification ledger must declare evidence and knownLimitations arrays');
+  assert.deepEqual(Object.keys(qualification).sort(),
+    ['currentReplay', 'evidence', 'identityProvenanceSha256', 'knownLimitations', 'metadataHistory', 'sourceRevision'],
+    'qualification ledger fields');
   assert.equal(qualification.sourceRevision, fork.metadata.sourceRevision, 'qualification source revision');
   assert.equal(qualification.identityProvenanceSha256, fork.provenanceSha256, 'qualification identity digest');
-  verifyEvidence(fork, qualification);
-  return digest(body);
+  const raws = verifyEvidence(fork, qualification);
+  const replay = qualification.currentReplay;
+  assert.ok(replay && typeof replay === 'object' && !Array.isArray(replay), 'currentReplay must be an index record');
+  assert.deepEqual(Object.keys(replay).sort(), ['inputLedger', 'log', 'measuredBase'], 'currentReplay fields');
+  for (const field of ['log', 'inputLedger']) {
+    assert.ok(typeof replay[field] === 'string' && raws.has(replay[field]), `${replay[field]}: currentReplay ${field} must be verified evidence`);
+  }
+  assert.notEqual(replay.log, replay.inputLedger, 'currentReplay log and input ledger must differ');
+  assert.ok(typeof replay.measuredBase === 'string' && /^[a-f0-9]{40}$/u.test(replay.measuredBase), 'currentReplay base must be a full commit SHA');
+  return { sha256: digest(body), currentReplay: replay, logRaw: raws.get(replay.log), inputLedgerRaw: raws.get(replay.inputLedger) };
 }
 
-const replayKeys = ['log', 'measuredBase', 'note'];
-function verifyReplay(replay, raws, sourceRevision, expectedProvenance) {
-  assert.ok(replay && typeof replay === 'object' && !Array.isArray(replay), 'replay must be an index record');
-  assertClosedKeys(replay, replayKeys, `${replay.log}: unexpected replay fields`);
-  assert.ok(typeof replay.log === 'string' && raws.has(replay.log), `${replay.log}: replay log must be verified evidence`);
-  assert.ok(typeof replay.measuredBase === 'string' && /^[a-f0-9]{40}$/u.test(replay.measuredBase), `${replay.log}: replay base must be a full commit SHA`);
-  assert.ok(replay.note === undefined || typeof replay.note === 'string', `${replay.log}: replay note must be a string`);
-  return { ...replay, report: readConsumerPassRecord(raws.get(replay.log), replay.log, sourceRevision, expectedProvenance) };
+export function verifyCurrentReceipt(fork, sourceSha256) {
+  const { currentReplay, logRaw, inputLedgerRaw } = fork.ledger;
+  const report = readConsumerPassRecord(logRaw, currentReplay.log, fork.metadata.sourceRevision,
+    { path: fork.provenancePath, sha256: fork.provenanceSha256 });
+  assert.equal(report.qualificationSha256, digest(inputLedgerRaw), `${currentReplay.log}: input-ledger digest must name the retained pre-append ledger`);
+  assert.deepEqual(report.sourceSha256, sourceSha256,
+    `${currentReplay.log}: receipt does not measure the current verifier sources; run the full qualification and record a new receipt`);
+  return report;
 }
 
-export function verifyEvidence({ folder, metadata, provenancePath, provenanceSha256 }, qualification) {
+export function verifyEvidence({ folder, metadata }, qualification) {
   const raws = new Map();
   for (const entry of [...metadata.evidence, ...qualification.evidence]) {
     assert.ok(!raws.has(entry.path), `${entry.path}: duplicate evidence path`);
@@ -81,8 +84,5 @@ export function verifyEvidence({ folder, metadata, provenancePath, provenanceSha
       assert.ok(raws.has(limitation[field]), `${limitation[field]}: limitation ${field} must be verified evidence`);
     }
   }
-  const logs = qualification.nodeReplays.map((replay) => replay?.log);
-  assert.equal(new Set(logs).size, logs.length, 'replay logs must be indexed once');
-  const expectedProvenance = { path: provenancePath, sha256: provenanceSha256 };
-  return qualification.nodeReplays.map((replay) => verifyReplay(replay, raws, metadata.sourceRevision, expectedProvenance));
+  return raws;
 }

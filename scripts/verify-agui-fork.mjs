@@ -1,48 +1,41 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { delimiter, dirname, join, resolve } from 'node:path';
+import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { verifyFork } from './lib/agui-fork.mjs';
+import { consumerScripts, measureVerifierSources, verifyFork } from './lib/agui-fork.mjs';
+import { digest } from './lib/agui-fork/bytes.mjs';
 import { verifyConsumerLock, verifyInstalled } from './lib/agui-fork/consumer.mjs';
 import { tarVersion } from './lib/agui-fork/archives.mjs';
-import { RETAINED_CONSUMER_RECORD_SCOPE } from './lib/agui-fork/ledger.mjs';
+import { RETAINED_CONSUMER_RECORD_SCOPE, verifyCurrentReceipt } from './lib/agui-fork/ledger.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--offline'), 'Usage: node scripts/verify-agui-fork.mjs [--offline]');
 const offline = args[0] === '--offline';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const checks = join(root, 'tests/dependencies/ag-ui');
-const consumerScripts = ['all-imports.mjs', 'codex-esm.mjs', 'codex-commonjs.cjs'];
-const sha256 = (body) => createHash('sha256').update(body).digest('hex');
 const [major, minor] = process.versions.node.split('.').map(Number);
 assert(major > 22 || (major === 22 && minor >= 19), 'Node >=22.19 is required');
 assert(process.platform !== 'win32', 'Controlled Codex supervision requires POSIX');
 const runtime = { node: process.version, execPath: process.execPath, platform: process.platform, arch: process.arch,
   inheritedRuntimeConfig: Object.keys(process.env).filter((key) => /^(NODE_OPTIONS$|npm_config_)/iu.test(key)).sort(),
-  nodeOptionsSha256: process.env.NODE_OPTIONS === undefined ? null : sha256(process.env.NODE_OPTIONS) };
-const libraryFiles = (await readdir(join(root, 'scripts/lib/agui-fork')))
-  .filter((name) => name.endsWith('.mjs')).sort().map((name) => `scripts/lib/agui-fork/${name}`);
-const sourceBytes = new Map(await Promise.all([
-  'scripts/lib/agui-fork.mjs', 'scripts/verify-agui-fork.mjs',
-  ...libraryFiles,
-  ...consumerScripts.map((name) => `tests/dependencies/ag-ui/${name}`),
-].map(async (file) => [file, await readFile(join(root, file))])));
-const sourceSha256 = Object.fromEntries([...sourceBytes].map(([file, body]) => [file, sha256(body)]));
+  nodeOptionsSha256: process.env.NODE_OPTIONS === undefined ? null : digest(process.env.NODE_OPTIONS) };
+const sources = measureVerifierSources(root);
 const tar = tarVersion();
 const fork = verifyFork(root);
 const provenance = { path: fork.provenancePath, sha256: fork.provenanceSha256 };
 const baseRecord = { result: 'PASS', sourceRevision: fork.metadata.sourceRevision, provenance,
-  qualificationSha256: fork.qualificationSha256, ...runtime, sourceSha256, tar };
+  qualificationSha256: fork.ledger.sha256, ...runtime, sourceSha256: sources.sha256, tar };
 verifyConsumerLock(join(checks, 'consumer'), fork);
 if (offline) {
-  console.log(JSON.stringify({ ...baseRecord, scope: 'retained archives, evidence, source lock, fixtures and frozen consumer lock',
+  const receipt = verifyCurrentReceipt(fork, sources.sha256);
+  console.log(JSON.stringify({ ...baseRecord, scope: 'retained archives, evidence, source lock, fixtures, frozen consumer lock and current full-consumer receipt',
+    currentReplay: { log: fork.ledger.currentReplay.log, platform: receipt.platform, arch: receipt.arch },
     localAguiArchives: fork.packages.size, installed: false }));
 } else {
-  await qualifyInstalledConsumer(fork);
+  await qualifyInstalledConsumer(fork, sources);
 }
 
 async function copyExactly(source, target, names, label) {
@@ -51,7 +44,7 @@ async function copyExactly(source, target, names, label) {
   for (const name of names) await copyFile(join(source, name), join(target, name));
 }
 
-async function qualifyInstalledConsumer(fork) {
+async function qualifyInstalledConsumer(fork, sources) {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-agui-fork-'));
   const consumer = join(directory, 'consumer');
   const env = { ...process.env, PATH: `${dirname(process.execPath)}${delimiter}${process.env.PATH ?? ''}`, CODEX_TEST_MODE: '1', CODEX_FIXTURE_DIR: join(directory, 'fixture'), AGUI49_CODEX_FIXTURE: join(consumer, 'codex-exec.mjs') };
@@ -81,14 +74,14 @@ async function qualifyInstalledConsumer(fork) {
     await copyExactly(join(fork.folder, 'qualification-fixtures/pi'), join(consumer, 'test'), piFixtures, 'Pi fixtures');
     await copyFile(join(fork.folder, fork.codexFixture), env.AGUI49_CODEX_FIXTURE);
     await chmod(env.AGUI49_CODEX_FIXTURE, 0o755);
-    for (const name of consumerScripts) {
-      await writeFile(join(consumer, name), sourceBytes.get(`tests/dependencies/ag-ui/${name}`));
+    for (const file of consumerScripts) {
+      await writeFile(join(consumer, basename(file)), sources.bytes.get(file));
     }
     npm = run('npm', ['--version'], { capture: true }).trim();
     run('npm', ['ci', '--ignore-scripts', '--include=optional', '--no-audit', '--no-fund']);
     verifyConsumerLock(consumer, fork);
     verifyInstalled(consumer, fork);
-    for (const name of consumerScripts) run(process.execPath, [name]);
+    for (const file of consumerScripts) run(process.execPath, [basename(file)]);
     run(process.execPath, ['--test', 'test/adapter.test.ts', 'test/example.test.ts']);
     run('npm', ['ls', '--all', '--json']);
   } catch (error) {

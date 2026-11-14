@@ -14,53 +14,11 @@
       "successfulCondition": "The controlled consumer passed with an external temporary directory outside an ESM package scope."
     }
   ],
-  "nodeReplays": [
-    {
-      "log": "evidence/single-owner-node-qualification.log.gz",
-      "measuredBase": "3a1064d09c0b2cb6aaef112c32d84645ee11aa67",
-      "note": "Measured working code over the recorded base."
-    },
-    {
-      "log": "evidence/archive-identity-node-qualification.log.gz",
-      "measuredBase": "e2817a927389a6d85b5ac69de0b75d007c2041a3",
-      "note": "Measured working code over the recorded base."
-    },
-    {
-      "log": "evidence/closed-input-node-qualification.log.gz",
-      "measuredBase": "b5acd0a2bf331177bc4c845c7afa3f0798393750",
-      "note": "Measured working code over the recorded base."
-    },
-    {
-      "log": "evidence/verified-model-node-qualification.log.gz",
-      "measuredBase": "843d217a876aef4d2d51a0258f4a2af3a8970383",
-      "note": "Measured working code over the recorded base. The five source files match the later 0e8d4c4274247b646b3a5cd86446931227cad073 snapshot; this does not identify later metadata annotations."
-    },
-    {
-      "log": "evidence/thin-ledger-node-qualification.log.gz",
-      "measuredBase": "bf28d916fd19bd7b7532d6275554a09d96114837",
-      "note": "Dependency verifier measured on working source over the recorded base. Source hashes and runtime facts are authoritative in the retained full-consumer PASS record."
-    },
-    {
-      "log": "evidence/shared-format-node-qualification.log.gz",
-      "measuredBase": "a289cf85595689f93c7ae661265aecb60ec1707e",
-      "note": "Dependency verifier measured on working source over the recorded base. The verified full-consumer record supplies actual source hashes, runtime facts and command results."
-    },
-    {
-      "log": "evidence/modular-node-qualification.log.gz",
-      "measuredBase": "e6996901b004d54cb5109c4da95959448e731bac",
-      "note": "Measured working source after integrating main4a01 and modular verifier fixes. The full-consumer report records all ten source hashes and the input ledger digest before this evidence was appended."
-    },
-    {
-      "log": "evidence/ledger-owner-node-qualification.log.gz",
-      "measuredBase": "7b39edef133c1dd488a7bea09c404a3387262366",
-      "note": "Measured working source over the recorded base. The verified full-consumer report records the checker, driver and consumer-script hashes measured by that invocation and the ledger input digest before this evidence was appended."
-    },
-    {
-      "log": "evidence/replay-integrity-node-qualification.log.gz",
-      "measuredBase": "3b3b7e90839e6848ca59898fa00c9058a0eb06cf",
-      "note": "Measured working source over the recorded base. Source hashes, frozen identity, successful child results and the input-ledger digest describe this invocation; later source changes need a new qualification record."
-    }
-  ],
+  "currentReplay": {
+    "log": "evidence/current-receipt-node-qualification.log.gz",
+    "inputLedger": "evidence/current-receipt-input-ledger.json.gz",
+    "measuredBase": "180a4091943c97724b03f0a70b69128cb4cacac4"
+  },
   "evidence": [
     {
       "path": "evidence/node-qualification.log.gz",
@@ -226,7 +184,51 @@
       "compressedSha256": "65162e00d530f77d3eeaad4ddaaf8f4dc3685e9239028739ea26ebaa624aa428",
       "encoding": "gzip; raw retained without edits",
       "role": "Controlled Linux full-consumer replay after enforcing historical identity/result binding and physical installed-package/payload boundaries."
+    },
+    {
+      "path": "evidence/qualification-node-replay-index.json.gz",
+      "rawBytes": 12983,
+      "rawSha256": "fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f",
+      "retainedBytes": 12983,
+      "retainedSha256": "fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f",
+      "compressedBytes": 3737,
+      "compressedSha256": "003664390e674b493ad11e71981416535d52585a04fb76940125f08f12803dc7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Byte-exact qualification ledger at 180a409 with the nine-entry nodeReplays index and notes; superseded by currentReplay. Its metadataHistory names the earlier bf28 snapshot."
+    },
+    {
+      "path": "evidence/replay-integrity-input-ledger.json.gz",
+      "rawBytes": 11956,
+      "rawSha256": "bd1ee0d580c84bf79c2433f2465eccdf1429d0ceb31d165ea20fda1e78a42027",
+      "retainedBytes": 11956,
+      "retainedSha256": "bd1ee0d580c84bf79c2433f2465eccdf1429d0ceb31d165ea20fda1e78a42027",
+      "compressedBytes": 3475,
+      "compressedSha256": "75c3296ce7349e57c9848a5ede9d1913e78feb3a6b200412e22bbfea469cd1e0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Reconstructed from the 180a409 ledger by removing exactly its final nodeReplays and evidence appends and serializing with two-space indentation and a final newline; byte identity is proven by the replay-integrity receipt qualificationSha256."
+    },
+    {
+      "path": "evidence/current-receipt-node-qualification.log.gz",
+      "rawBytes": 55994,
+      "rawSha256": "7ed1eccae38c54f7d6625ceb84be177e0319682264fb6abae46f13f16c9f199c",
+      "retainedBytes": 55994,
+      "retainedSha256": "7ed1eccae38c54f7d6625ceb84be177e0319682264fb6abae46f13f16c9f199c",
+      "compressedBytes": 6895,
+      "compressedSha256": "452a7238b866b49b946cd97b2117f332228a3d6057199d56a678ecef2dc1ce9b",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification of the single current receipt, including frozen identity, all verifier and consumer-script source hashes, and successful child results; no Mac, native-provider or Apple qualification."
+    },
+    {
+      "path": "evidence/current-receipt-input-ledger.json.gz",
+      "rawBytes": 11882,
+      "rawSha256": "7e81e9d4d4dfcc6905522d0dce1577f7d5f15f0b18ee874b11611dd3cf17902d",
+      "retainedBytes": 11882,
+      "retainedSha256": "7e81e9d4d4dfcc6905522d0dce1577f7d5f15f0b18ee874b11611dd3cf17902d",
+      "compressedBytes": 3524,
+      "compressedSha256": "0aa1e51194b1dca1a7bb8c7e95a6ac2d2737d60de750851777597ad4b1bc5ad7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Exact qualification ledger bytes copied before the corresponding full-consumer invocation; the receipt qualificationSha256 binds to these bytes before its own evidence is appended."
     }
   ],
-  "metadataHistory": "evidence/qualification-metadata-history.json.gz"
+  "metadataHistory": "evidence/qualification-node-replay-index.json.gz"
 }
