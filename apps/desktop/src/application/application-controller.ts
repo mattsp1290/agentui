@@ -1,6 +1,6 @@
 import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityResult, ConversationStore } from '@agentui/client';
-import { ServiceError } from '@agentui/client/service';
+import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { sameScope } from '@agentui/contracts';
 import { RECORDED_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
@@ -52,7 +52,11 @@ export interface ApplicationController {
   open(scope: ConversationScope): Promise<void>;
   conversationActions(target: OpenConversation): ConversationActions;
 }
-interface Session { owner: OwnedViewStorage | null; readonly connection: ServiceConnection }
+type OwnedView = { readonly storage: OwnedViewStorage } & (
+  | { readonly saved: null }
+  | { readonly saved: SavedView; readonly hostId: string }
+);
+interface Session { view: OwnedView | null; readonly connection: ServiceConnection }
 function initialSnapshot(): ApplicationSnapshot {
   return { host: { kind: 'loading' }, catalog: { items: [], after: null },
     saved: { version: 1, route: null, pendingCreation: null }, savedViews: { items: [], after: null },
@@ -81,18 +85,24 @@ export function createApplicationController(deps: {
     return result;
   }
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
-    if (session !== owner || owner.owner !== storage) return;
+    if (session !== owner || (owner.view?.storage ?? null) !== storage) return;
     publish({ storageFailure: message(cause) });
     state.active?.store.disconnect();
   }
   function local(owner: Session): OwnedViewStorage {
-    if (session !== owner || !owner.owner || state.storageFailure) throw new Error(state.storageFailure || 'Local storage is not ready.');
-    return owner.owner;
+    if (session !== owner || !owner.view || state.storageFailure) throw new Error(state.storageFailure || 'Local storage is not ready.');
+    return owner.view.storage;
   }
   function requireHost(owner: Session): ServiceMetadata {
     local(owner);
     if (state.host.kind !== 'ready' || state.host.compatibility.kind !== 'compatible') throw new Error('A compatible paired host is required.');
     return state.host.metadata;
+  }
+  function requireSaved(owner: Session): OwnedView & { readonly saved: SavedView; readonly hostId: string } {
+    const host = requireHost(owner);
+    const view = owner.view;
+    if (!view || view.saved === null || view.hostId !== host.hostId) throw new Error('This view is still loading.');
+    return view;
   }
   async function acquire(owner: Session, viewId: string | null): Promise<OwnedViewStorage> {
     let storage: OwnedViewStorage | null = null;
@@ -102,9 +112,13 @@ export function createApplicationController(deps: {
     return storage;
   }
   async function save(owner: Session, hostId: string, next: SavedView): Promise<void> {
-    const storage = local(owner);
-    try { await current(owner, storage.saveView(hostId, next)); publish({ saved: next }); }
-    catch (cause) { failStorage(owner, storage, cause); throw cause; }
+    const view = requireSaved(owner);
+    if (view.hostId !== hostId) throw new Error('Saved view belongs to another host.');
+    try {
+      await current(owner, view.storage.saveView(hostId, next));
+      owner.view = { ...view, saved: next };
+      publish({ saved: next });
+    } catch (cause) { failStorage(owner, view.storage, cause); throw cause; }
   }
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
@@ -119,9 +133,9 @@ export function createApplicationController(deps: {
     await current(owner, store.connect());
   }
   async function readCatalog(owner: Session, hostId: string, after: string | null = null): Promise<void> {
-    const items = await current(owner, owner.connection.catalog(after, 100));
+    const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE));
     if (items.some(scope => scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
-    const next = items.length === 100 ? items.at(-1)?.conversationId ?? null : null;
+    const next = items.length === SERVICE_CATALOG_PAGE ? items.at(-1)?.conversationId ?? null : null;
     if (next !== null && next === after) throw new Error('Catalog did not advance.');
     publish({ catalog: { items: after === null ? items : [...state.catalog.items, ...items], after: next } });
   }
@@ -135,20 +149,32 @@ export function createApplicationController(deps: {
     }
   }
   async function refresh(owner: Session): Promise<void> {
-    local(owner);
-    const metadata = await current(owner, owner.connection.metadata());
-    if (state.active && state.active.scope.hostId !== metadata.hostId) {
-      state.active.store.disconnect();
-      publish({ active: null, saved: initialSnapshot().saved, catalog: { items: [], after: null }, savedViews: { items: [], after: null } });
+    const storage = local(owner);
+    publish({ host: { kind: 'loading' } });
+    let metadata: ServiceMetadata;
+    try { metadata = await current(owner, owner.connection.metadata()); }
+    catch (cause) {
+      if (session === owner) publish({ host: { kind: 'unavailable' } });
+      throw cause;
+    }
+    const previous = owner.view;
+    if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
+      state.active?.store.disconnect();
+      owner.view = { storage, saved: null };
+      publish({ active: null, saved: initialSnapshot().saved, catalog: { items: [], after: null },
+        savedViews: { items: [], after: null }, savedViewNotice: '' });
     }
     const compatibility = checkCompatibility(RECORDED_CLIENT_COMPATIBILITY, metadata.compatibility);
-    publish({ host: { kind: 'ready', metadata, compatibility } });
-    if (compatibility.kind !== 'compatible') { state.active?.store.disconnect(); return; }
-    const storage = local(owner);
+    if (compatibility.kind !== 'compatible') {
+      state.active?.store.disconnect();
+      publish({ host: { kind: 'ready', metadata, compatibility } });
+      return;
+    }
     let saved: SavedView;
     try { saved = await current(owner, storage.readView(metadata.hostId)); }
     catch (cause) { failStorage(owner, storage, cause); throw cause; }
-    publish({ saved });
+    owner.view = { storage, saved, hostId: metadata.hostId };
+    publish({ saved, host: { kind: 'ready', metadata, compatibility } });
     const results = await Promise.allSettled([readCatalog(owner, metadata.hostId), readSavedViews(owner, metadata.hostId),
       saved.route ? install(owner, saved.route) : Promise.resolve()]);
     const failed = results.find(result => result.status === 'rejected');
@@ -179,7 +205,7 @@ export function createApplicationController(deps: {
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     start() {
       if (session) return Promise.resolve();
-      const next: Session = { owner: null, connection: deps.createConnection({ onUnauthorized: () => {
+      const next: Session = { view: null, connection: deps.createConnection({ onUnauthorized: () => {
         if (session !== next) return;
         state.active?.store.disconnect();
         publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
@@ -187,7 +213,7 @@ export function createApplicationController(deps: {
       session = next;
       publish(initialSnapshot());
       return run(async owner => {
-        try { owner.owner = await acquire(owner, null); }
+        try { owner.view = { storage: await acquire(owner, null), saved: null }; }
         catch (cause) { failStorage(owner, null, cause); return; }
         try { await refresh(owner); }
         catch (cause) {
@@ -200,7 +226,7 @@ export function createApplicationController(deps: {
       const owner = session;
       session = null;
       state.active?.store.disconnect();
-      owner?.owner?.close();
+      owner?.view?.storage.close();
     },
     pair: code => run(async owner => { local(owner); await current(owner, owner.connection.pair(code)); await refresh(owner); }),
     reconnect: () => run(refresh),
@@ -208,9 +234,10 @@ export function createApplicationController(deps: {
       requireHost(owner);
       const next = await acquire(owner, viewId);
       state.active?.store.disconnect();
-      owner.owner?.close();
-      owner.owner = next;
-      publish({ active: null });
+      owner.view?.storage.close();
+      owner.view = { storage: next, saved: null };
+      publish({ active: null, saved: initialSnapshot().saved, catalog: { items: [], after: null }, savedViews: { items: [], after: null },
+        savedViewNotice: '', host: { kind: 'loading' } });
       await refresh(owner);
     }),
     moreConversations: () => run(async owner => {
@@ -223,24 +250,25 @@ export function createApplicationController(deps: {
     }),
     create: () => run(async owner => {
       const host = requireHost(owner);
-      if (state.saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
+      const { saved } = requireSaved(owner);
+      if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
       const scope = { hostId: host.hostId, conversationId: deps.createId() };
-      await save(owner, host.hostId, { ...state.saved, pendingCreation: scope });
+      await save(owner, host.hostId, { ...saved, pendingCreation: scope });
       requireHost(owner);
       await completeCreation(owner, scope);
     }),
-    recoverCreation: () => run(async owner => { requireHost(owner); if (state.saved.pendingCreation) await completeCreation(owner, state.saved.pendingCreation); }),
+    recoverCreation: () => run(async owner => { const { saved } = requireSaved(owner); if (saved.pendingCreation) await completeCreation(owner, saved.pendingCreation); }),
     open: scope => run(async owner => {
       const host = requireHost(owner);
       if (scope.hostId !== host.hostId) throw new Error('Conversation belongs to another host.');
-      await save(owner, scope.hostId, { ...state.saved, route: scope });
+      await save(owner, scope.hostId, { ...requireSaved(owner).saved, route: scope });
       await install(owner, scope);
     }),
     conversationActions(target) {
       return { enabled: applicationEnabled(state), busy: state.busy, storageFailure: state.storageFailure,
         submit: operation => run(async owner => { requireTarget(owner, target); const result = await current(owner, operation()); if (result.kind === 'rejected') throw new Error(result.reason); }),
         reconcile: id => run(async owner => { requireTarget(owner, target); await current(owner, owner.connection.reconcile(target.scope, id)); await current(owner, target.store.refreshReceipt(id)); }),
-        reportDraftFailure: cause => { if (session && state.active === target) failStorage(session, session.owner, cause); } };
+        reportDraftFailure: cause => { if (session && state.active === target) failStorage(session, session.view?.storage ?? null, cause); } };
     },
   };
 }

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, JsonLimitError, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
@@ -13,8 +13,7 @@ export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snaps
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
 class OutputApplicationError extends Error {}
 class CapacityError extends Error {}
-const QUARANTINE_RESERVE_BYTES = 128;
-const DOCUMENT_JSON_BUDGET = { maxNodes: 99_936, maxDepth: 56 };
+const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
 export class SqliteStore<E, P> {
   readonly db;
@@ -95,9 +94,9 @@ export class SqliteStore<E, P> {
   }
   private encodeDocument(scope: ConversationScope, document: ConversationDocument<P>): string {
     const reserve = Object.values(document.receipts).filter(value =>
-      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RESERVE_BYTES;
+      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RECEIPT_GROWTH_BYTES;
     let encoded: string;
-    try { encoded = canonicalJson(document, DOCUMENT_JSON_BUDGET); }
+    try { encoded = canonicalJson(document, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET); }
     catch (error) {
       if (error instanceof JsonLimitError) throw new CapacityError('Document exceeds snapshot structural budget');
       throw error;
@@ -113,7 +112,7 @@ export class SqliteStore<E, P> {
     for (const event of events) {
       const envelope: Envelope<E> = { scope, sequence: ++sequence, event };
       const payload = canonicalJson(envelope), bytes = Buffer.byteLength(payload);
-      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? QUARANTINE_RESERVE_BYTES : 0;
+      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? QUARANTINE_RECEIPT_GROWTH_BYTES : 0;
       if (bytes + reserve > this.limits.maxEventBytes) throw new OutputApplicationError('Event exceeds byte budget');
       try { document = foldDocument(document, event, this.projection); }
       catch (error) { throw new OutputApplicationError('Projection rejected output', { cause: error }); }

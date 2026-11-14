@@ -5,6 +5,7 @@ import type { AccessDatabase } from './access-database.js';
 export type CredentialClass = 'browser-development' | 'native';
 export interface Principal { readonly id: string; readonly hostId: string; readonly credentialClass: CredentialClass }
 const digest = (value: string): string => createHash('sha256').update(value).digest('hex');
+const ACTIVE_DEVICE = "credential_class=? AND expires>? AND revoked=0 AND policy='owner'";
 
 export class Access {
   readonly hostId: string;
@@ -32,12 +33,12 @@ export class Access {
   }
   authenticate(secret: string | undefined, credentialClass: CredentialClass, now = Date.now()): Principal | null {
     if (!secret || secret.length > 256) return null;
-    const row = this.db.prepare("SELECT id,host FROM service_devices WHERE digest=? AND credential_class=? AND expires>? AND revoked=0 AND policy='owner'").get(digest(secret), credentialClass, now);
+    const row = this.db.prepare(`SELECT id,host FROM service_devices WHERE digest=? AND ${ACTIVE_DEVICE}`).get(digest(secret), credentialClass, now);
     if (!row || typeof row.id !== 'string' || row.host !== this.hostId) return null;
     return { id: row.id, hostId: this.hostId, credentialClass };
   }
   authorized(principal: Principal, credentialClass: CredentialClass, now = Date.now()): boolean {
-    return principal.hostId === this.hostId && principal.credentialClass === credentialClass && Boolean(this.db.prepare("SELECT 1 FROM service_devices WHERE id=? AND host=? AND credential_class=? AND expires>? AND revoked=0 AND policy='owner'").get(principal.id, this.hostId, credentialClass, now));
+    return principal.hostId === this.hostId && principal.credentialClass === credentialClass && Boolean(this.db.prepare(`SELECT 1 FROM service_devices WHERE id=? AND host=? AND ${ACTIVE_DEVICE}`).get(principal.id, this.hostId, credentialClass, now));
   }
   devices(after = '', now = Date.now()): readonly { readonly id: string; readonly revoked: boolean; readonly expires: number; readonly active: boolean }[] {
     return this.db.prepare('SELECT id,revoked,expires FROM service_devices WHERE id>? ORDER BY id LIMIT 100').all(after).map(row => {

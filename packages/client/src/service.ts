@@ -2,13 +2,11 @@ import { canonicalJson, parseScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
+import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
 
 export type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
-export class ServiceError extends Error {
-  constructor(readonly kind: 'unauthorized' | 'forbidden' | 'invalid' | 'unavailable', message: string) { super(message); }
-}
+export { ServiceError } from '@agentui/contracts/service';
 export class ServiceProtocolError extends Error {}
 class ServiceRequestRejected extends Error {}
 export interface BrowserConnectionOptions {
@@ -146,7 +144,7 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
   return {
     async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
-    catalog: (after = null, limit = 100) => request({ op: 'catalog', after, limit }),
+    catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
     create: scope => request({ op: 'create', scope }),
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
     conversation(value) {

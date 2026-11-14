@@ -3,6 +3,8 @@ import type { ConversationScope } from './index.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 export const DEFAULT_MAX_COMMAND_BYTES = 64_000;
+export const JSON_MAX_NODES = 100_000;
+export const JSON_MAX_DEPTH = 64;
 export type CommandBody =
   | { readonly kind: 'send'; readonly text: string }
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }
@@ -187,9 +189,9 @@ export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequ
   }
 }
 export class JsonLimitError extends Error {}
-export function canonicalJson(value: unknown, budget: { readonly maxNodes: number; readonly maxDepth: number } = { maxNodes: 100_000, maxDepth: 64 }): string {
-  if (!Number.isSafeInteger(budget.maxNodes) || budget.maxNodes < 1 || budget.maxNodes > 100_000 ||
-    !Number.isSafeInteger(budget.maxDepth) || budget.maxDepth < 1 || budget.maxDepth > 64) throw new Error('Invalid JSON budget');
+export function canonicalJson(value: unknown, budget: { readonly maxNodes: number; readonly maxDepth: number } = { maxNodes: JSON_MAX_NODES, maxDepth: JSON_MAX_DEPTH }): string {
+  if (!Number.isSafeInteger(budget.maxNodes) || budget.maxNodes < 1 || budget.maxNodes > JSON_MAX_NODES ||
+    !Number.isSafeInteger(budget.maxDepth) || budget.maxDepth < 1 || budget.maxDepth > JSON_MAX_DEPTH) throw new Error('Invalid JSON budget');
   const ancestors = new Set<object>();
   let nodes = 0;
   let characters = 0;

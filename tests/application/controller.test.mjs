@@ -8,7 +8,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -28,7 +28,7 @@ function fixture() {
   }
   const connection = {
     async pair() {},
-    async metadata() { metadataCalls++; return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
       nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { cursors.push(after); return after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []; },
@@ -188,4 +188,65 @@ test('a disposed startup releases its late storage lease and ignores old connect
   await f.app.create();
   assert.equal(f.created.length, 0);
   assert.equal(f.submitted.length, 0);
+});
+
+test('failed reopening refuses view mutations and reconnect preserves creation recovery', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const original = { ...empty(), route: scope };
+  const restored = { ...empty(), pendingCreation: { hostId: 'host', conversationId: 'pending-restored' } };
+  f.views.set('original-view/host', original);
+  f.views.set('restored-view/host', restored);
+  f.behavior.listing = async () => ({ ids: ['restored-view'], unreadable: 1, after: 'next-page' });
+  await f.app.start();
+  f.behavior.metadata = async () => { throw new Error('Metadata temporarily unavailable'); };
+  await f.app.reopenView('restored-view');
+  assert.match(f.app.getSnapshot().error, /Metadata temporarily unavailable/);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+  assert.deepEqual(f.app.getSnapshot().saved, empty());
+  assert.deepEqual(f.app.getSnapshot().catalog, { items: [], after: null });
+  assert.deepEqual(f.app.getSnapshot().savedViews, { items: [], after: null });
+  assert.equal(f.app.getSnapshot().savedViewNotice, '');
+  assert.equal(f.app.getSnapshot().active, null);
+  for (const action of [() => f.app.open(scope), () => f.app.create(), () => f.app.recoverCreation()]) {
+    await action();
+    assert.notEqual(f.app.getSnapshot().error, '');
+    assert.deepEqual(f.views.get('restored-view/host'), restored);
+    assert.deepEqual(f.views.get('original-view/host'), original);
+    assert.equal(f.created.length, 0);
+  }
+  f.behavior.metadata = async () => {};
+  await f.app.reconnect();
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  assert.deepEqual(f.app.getSnapshot().saved, restored);
+  await f.app.recoverCreation();
+  assert.deepEqual(f.created, [restored.pendingCreation]);
+  assert.equal(f.app.getSnapshot().active.viewId, 'restored-view');
+  assert.deepEqual(f.app.getSnapshot().active.scope, restored.pendingCreation);
+  assert.equal(f.views.get('restored-view/host').pendingCreation, null);
+});
+
+test('a host change without an active conversation replaces the loaded recovery record', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const original = { ...empty(), pendingCreation: scope };
+  f.views.set('original-view/host', original);
+  f.behavior.listing = async () => ({ ids: ['old-host-view'], unreadable: 1, after: 'old-page' });
+  await f.app.start();
+  assert.equal(f.app.getSnapshot().active, null);
+  f.host('replacement-host');
+  const entered = deferred(), loading = deferred();
+  f.behavior.read = async () => { entered.resolve(); await loading.promise; };
+  const reconnecting = f.app.reconnect();
+  await entered.promise;
+  try {
+    assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+    assert.deepEqual(f.app.getSnapshot().saved, empty());
+    assert.deepEqual(f.app.getSnapshot().savedViews, { items: [], after: null });
+    assert.equal(f.app.getSnapshot().savedViewNotice, '');
+  } finally { loading.resolve(); await reconnecting; }
+  await f.app.recoverCreation();
+  assert.equal(f.created.length, 0);
+  await f.app.create();
+  assert.equal(f.created.length, 1);
+  assert.equal(f.created[0].hostId, 'replacement-host');
+  assert.deepEqual(f.views.get('original-view/host'), original);
 });

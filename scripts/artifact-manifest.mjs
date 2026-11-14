@@ -4,7 +4,7 @@ import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { canonicalJson } from '@agentui/contracts';
 import { RECORDED_RUNTIME, SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
-import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdentityText, assertArtifactId } from '@agentui/contracts/artifact';
+import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest } from '@agentui/contracts/artifact';
 
 const targets = {
   host: { directory: 'apps/host/dist', nativeRuntime: { engine: 'node', version: process.versions.node, format: 'esm' } },
@@ -68,6 +68,5 @@ const payload = manifestPayload({
   assets,
 });
 const manifest = parseArtifactManifest({ ...payload, artifactId: digest(canonicalJson(payload)) });
-assertArtifactId(manifest, digest(artifactIdentityText(manifest)));
 writeFileSync(join(directory, 'artifact.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`${target.directory}/artifact.json ${manifest.artifactId}\n`);

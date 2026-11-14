@@ -3,7 +3,6 @@ import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES } from '@agentui/contrac
 import type { Access } from './access.js';
 import type { createApi } from './api.js';
 import { HostFailure, FAILURE_STATUS } from './errors.js';
-import { ObservationError } from './feeds.js';
 import { json, readJson } from './framing.js';
 import { serveAsset } from './static-assets.js';
 
@@ -34,7 +33,7 @@ export function browserHandler(options: { readonly access: Access; readonly api:
     } catch (error) {
       if (response.headersSent || response.destroyed) { response.destroy(); return; }
       const kind = error instanceof HostFailure ? error.kind : 'invalid';
-      const message = error instanceof HostFailure || error instanceof ObservationError ? error.message : 'Invalid host request';
+      const message = error instanceof HostFailure ? error.message : 'Invalid host request';
       json(response, FAILURE_STATUS[kind], { ok: false, error: { kind, message } });
     }
   };

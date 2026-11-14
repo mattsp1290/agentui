@@ -2,9 +2,9 @@ import { randomUUID } from 'node:crypto';
 import type { ConversationScope, Feed, FeedEnd, FeedItem } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServicePull } from '@agentui/contracts/service';
+import { HostFailure } from './errors.js';
 
 type Page = Extract<ServicePull, { kind: 'page' }>;
-export class ObservationError extends Error {}
 export class ServiceFeed {
   readonly id = randomUUID();
   private pending: { readonly value: Page; readonly applied: () => void } | null = null;
@@ -30,9 +30,9 @@ export class ServiceFeed {
     });
   }
   async pull(ack: number | null): Promise<ServicePull> {
-    if (this.polling) throw new ObservationError('Observation pull is already in progress');
+    if (this.polling) throw new HostFailure('invalid', 'Observation pull is already in progress');
     if (ack !== null && ack !== this.lastAck) {
-      if (ack !== this.pending?.value.page) throw new ObservationError('Invalid observation acknowledgement');
+      if (ack !== this.pending?.value.page) throw new HostFailure('invalid', 'Invalid observation acknowledgement');
       const applied = this.pending.applied;
       this.lastAck = ack;
       this.pending = null;

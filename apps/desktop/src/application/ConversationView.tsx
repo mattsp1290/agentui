@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
-import { SERVICE_MAX_SEND_TEXT } from '@agentui/contracts/service';
+import { SERVICE_MAX_COMMAND_BYTES } from '@agentui/contracts/service';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
 
@@ -41,7 +41,7 @@ export function ConversationView({ actions, active }: { readonly actions: Conver
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); void actions.submit(() => active.store.send()); }}>
       <label htmlFor="message">Message</label>
-      <textarea id="message" maxLength={SERVICE_MAX_SEND_TEXT} value={text} onChange={event => void edit(event.target.value)} disabled={Boolean(actions.storageFailure)} placeholder="Write to the recorded assistant…" rows={3} />
+      <textarea id="message" maxLength={SERVICE_MAX_COMMAND_BYTES} value={text} onChange={event => void edit(event.target.value)} disabled={Boolean(actions.storageFailure)} placeholder="Write to the recorded assistant…" rows={3} />
       <div className="composer-footer"><span>Recorded playback · No live model</span><button disabled={!connected || !text.trim()}>Send</button></div>
     </form>
     <CommandRecovery view={view} actions={actions} retry={id => active.store.retry(id)} />

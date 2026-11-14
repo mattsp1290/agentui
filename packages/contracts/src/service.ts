@@ -5,11 +5,22 @@ import type { Transcript, TranscriptEvent } from './conversation.js';
 import { transcriptProjection } from './conversation.js';
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope } from './durable.js';
 import type { ClientCommand, ConversationDocument, ConversationPort, FeedEnd, FeedItem, Receipt, SubmitResult } from './durable.js';
+import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
-export const SERVICE_MAX_REQUEST_BYTES = 410_000;
-export const SERVICE_MAX_RESPONSE_BYTES = 4_100_000;
-export const SERVICE_MAX_SEND_TEXT = DEFAULT_MAX_COMMAND_BYTES;
+const JSON_STRING_ESCAPE_EXPANSION = 6;
+const SERVICE_REQUEST_ENVELOPE_HEADROOM_BYTES = 26_000;
 export const SERVICE_MAX_COMMAND_BYTES = DEFAULT_MAX_COMMAND_BYTES;
+export const SERVICE_MAX_REQUEST_BYTES = SERVICE_MAX_COMMAND_BYTES * JSON_STRING_ESCAPE_EXPANSION + SERVICE_REQUEST_ENVELOPE_HEADROOM_BYTES;
+const SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES = 100_000;
+export const SERVICE_CATALOG_PAGE = CORE_CATALOG_PAGE;
+export const SERVICE_EVENT_PAGE = Object.freeze({ events: HOST_DEFAULT_PAGE_EVENTS, bytes: HOST_DEFAULT_PAGE_BYTES });
+export const SERVICE_SNAPSHOT_BYTES = HOST_DEFAULT_SNAPSHOT_BYTES;
+export const SERVICE_MAX_RESPONSE_BYTES = SERVICE_SNAPSHOT_BYTES + SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES;
+export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable'] as const;
+export type ServiceFailureKind = typeof SERVICE_FAILURE_KINDS[number];
+export class ServiceError extends Error {
+  constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
+}
 export type ServiceRequest =
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'metadata' }
@@ -43,7 +54,8 @@ export interface ServiceValueMap {
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: { readonly kind: 'unauthorized' | 'forbidden' | 'invalid' | 'unavailable'; readonly message: string } };
+  | { readonly ok: false; readonly error: { readonly kind: ServiceFailureKind; readonly message: string } };
+/** Host-classified failures reject with ServiceError; transport failures may be inconclusive. */
 export interface ServiceConnection {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
@@ -66,14 +78,13 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
     case 'catalog': {
       exact(input, ['op', 'after', 'limit']);
       const limit = integer(input.limit);
-      if (limit < 1 || limit > 100) throw new Error('Catalog limit must be between 1 and 100');
+      if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
       return { op: 'catalog', after: input.after === null ? null : text(input.after), limit };
     }
     case 'create': exact(input, ['op', 'scope']); return { op: 'create', scope: parseScope(input.scope) };
     case 'submit': {
       exact(input, ['op', 'command']);
       const command = parseCommand(input.command);
-      if (command.body.kind === 'send' && command.body.text.length > SERVICE_MAX_SEND_TEXT) throw new Error('Message too large. Shorten it and try again.');
       if (utf8Bytes(canonicalJson(command)) > SERVICE_MAX_COMMAND_BYTES) throw new Error('Message too large. Shorten it and try again.');
       return { op: 'submit', command };
     }
@@ -115,8 +126,8 @@ function feedItem(value: unknown): FeedItem<TranscriptEvent, Transcript> {
       cursor: integer(snapshot.cursor), document } };
   }
   exact(input, ['kind', 'events']);
-  if (input.kind !== 'events' || !Array.isArray(input.events) || input.events.length > 64) throw new Error('Invalid service feed item');
-  if (utf8Bytes(canonicalJson(input)) > 256_000) throw new Error('Service event page exceeds byte limit');
+  if (input.kind !== 'events' || !Array.isArray(input.events) || input.events.length > SERVICE_EVENT_PAGE.events) throw new Error('Invalid service feed item');
+  if (utf8Bytes(canonicalJson(input)) > SERVICE_EVENT_PAGE.bytes) throw new Error('Service event page exceeds byte limit');
   return { kind: 'events', events: input.events.map(value => {
     const envelope = record(value, ['scope', 'sequence', 'event']);
     const scope = parseScope(envelope.scope), sequence = integer(envelope.sequence);
@@ -150,7 +161,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     return { hostId: text(input.hostId), principalId: text(input.principalId), compatibility: compatibility(input.compatibility) };
   },
   catalog(value) {
-    if (!Array.isArray(value) || value.length > 100) throw new Error('Invalid service catalog');
+    if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
     return value.map(parseScope);
   },
   create: parseScope,
@@ -175,7 +186,8 @@ export function parseServiceResponse<K extends keyof ServiceValueMap>(request: {
   }
   exact(input, ['ok', 'error']);
   const error = record(input.error, ['kind', 'message']);
-  if (input.ok !== false || (error.kind !== 'unauthorized' && error.kind !== 'forbidden' && error.kind !== 'invalid' && error.kind !== 'unavailable') ||
+  const kind = SERVICE_FAILURE_KINDS.find(kind => kind === error.kind);
+  if (input.ok !== false || kind === undefined ||
     typeof error.message !== 'string' || !error.message) throw new Error('Invalid service error');
-  return { ok: false, error: { kind: error.kind, message: error.message } };
+  return { ok: false, error: { kind, message: error.message } };
 }

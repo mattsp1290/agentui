@@ -2,7 +2,7 @@ import { parseScope } from '@agentui/contracts';
 import { record } from '@agentui/contracts/decode';
 import type { DraftStoragePort } from '@agentui/client';
 
-import type { SavedView } from './view-state.js';
+import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 
 function decodeView(value: unknown, hostId: string): SavedView {
   if (value === undefined) return { version: 1, route: null, pendingCreation: null };
@@ -52,7 +52,7 @@ function viewKeyRange(after: string | null): IDBKeyRange {
   return IDBKeyRange.bound(lower, ['view', AFTER_ALL_STRINGS], after !== null, true);
 }
 
-export class BrowserViewStorage {
+export class BrowserViewStorage implements OwnedViewStorage {
   private closed = false;
   private constructor(readonly viewId: string, private readonly db: IDBDatabase, private readonly unlock: () => void, onFailure: (error: unknown) => void) {
     db.onversionchange = () => {
@@ -88,7 +88,7 @@ export class BrowserViewStorage {
     } catch (error) { db?.close(); release(); throw error; }
   }
 
-  async savedViews(hostId: string, after: string | null = null): Promise<{ readonly ids: readonly string[]; readonly unreadable: number; readonly after: string | null }> {
+  async savedViews(hostId: string, after: string | null = null): ReturnType<OwnedViewStorage['savedViews']> {
     if (this.closed) throw new Error('This view no longer owns local storage.');
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction('records');
@@ -159,3 +159,5 @@ export class BrowserViewStorage {
     this.unlock();
   }
 }
+
+BrowserViewStorage satisfies ViewStorageFactory;
