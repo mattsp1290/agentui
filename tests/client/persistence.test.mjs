@@ -211,3 +211,16 @@ test('delayed initial refusal preserves an edited draft while removing only its 
   assert.equal(drafts.value.draft, 'newer draft');
   assert.deepEqual(drafts.value.outbox, []);
 });
+
+test('failed retry storage check prevents submission and retains the durable identity', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('saved command');
+  await store.send();
+  const before = structuredClone(drafts.value);
+  const submissions = port.submitted.length;
+  drafts.save = async () => { throw new Error('retry storage unavailable'); };
+  await assert.rejects(store.retry(before.outbox[0].command.clientCommandId), /retry storage unavailable/);
+  assert.equal(port.submitted.length, submissions);
+  assert.deepEqual(drafts.value, before);
+  assert.deepEqual(store.getSnapshot().outbox, before.outbox);
+});

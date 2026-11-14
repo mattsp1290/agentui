@@ -125,3 +125,41 @@ test('packed SDK rejects a mismatched receipt without corrupting the persisted i
   await assert.rejects(conversation.reconcile());
   assert.deepEqual((await f.open()).intent(), before);
 });
+
+
+test('same-ID retry after a known refusal can durably establish another refusal', async t => {
+  const f = await fixture(t), conversation = await f.open();
+  f.state.refusal = refusal();
+  await assert.rejects(conversation.send('refused request'), CrewHttpError);
+  const command = conversation.intent().command;
+  f.state.refusal = refusal(403);
+  await assert.rejects(conversation.retry(), CrewHttpError);
+  assert.deepEqual(conversation.intent().command, command);
+  assert.deepEqual(conversation.intent().outcome, { kind: 'rejected', ...refusal(403) });
+  const reopened = await f.open();
+  assert.deepEqual(reopened.intent(), conversation.intent());
+  f.state.refusal = null;
+  const receipt = await reopened.send('corrected request');
+  assert.notEqual(receipt.requestId, command.requestId);
+  assert.equal(f.state.entries, 1);
+});
+
+test('failed retry storage checks preserve unresolved and observed identities without HTTP', async t => {
+  for (const status of ['lost-reply', 'uncertain']) {
+    const f = await fixture(t), conversation = await f.open();
+    if (status === 'lost-reply') {
+      f.state.dropReply = true;
+      await assert.rejects(conversation.send('saved command'), CrewUnknownOutcomeError);
+    } else {
+      f.state.status = status;
+      await conversation.send('saved command');
+    }
+    const before = conversation.intent();
+    const posts = f.calls.filter(call => call.method === 'POST').length;
+    f.intents.save = async () => { throw new Error('retry storage unavailable'); };
+    await assert.rejects(conversation.retry(), /retry storage unavailable/);
+    assert.equal(f.calls.filter(call => call.method === 'POST').length, posts);
+    assert.deepEqual(conversation.intent(), before);
+    assert.deepEqual((await f.open()).intent(), before);
+  }
+});

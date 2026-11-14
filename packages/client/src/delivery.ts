@@ -1,6 +1,8 @@
-import { canonicalJson, foldDocument, parseScope, sameScope } from '@agentui/contracts';
-import type { ConversationDocument, ConversationScope, FeedItem, HostEvent, Projection, Receipt } from '@agentui/contracts';
-import { copyJson, integer, object, string } from './local-state.js';
+import { canonicalJson, foldDocument, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import type { ConversationDocument, ConversationScope, FeedItem, Projection, Receipt } from '@agentui/contracts';
+import { copyJson, integer, object } from './local-state.js';
+
+const RETAINED_SEQUENCE_IDENTITIES = 256;
 
 export class DeliveryError extends Error {
   constructor(readonly kind: 'resync' | 'mismatch', message: string) { super(message); }
@@ -9,30 +11,9 @@ function checkScope(value: unknown, scope: ConversationScope): void {
   if (!sameScope(parseScope(value), scope)) throw new DeliveryError('mismatch', 'Host scope mismatch; connect to the requested host and conversation');
 }
 export function decodeReceipt(value: unknown, scope: ConversationScope): Receipt {
-  const input = object(value);
-  checkScope(input.scope, scope);
-  const state = object(input.state);
-  const base = { scope, clientCommandId: string(input.clientCommandId), hostOperationId: string(input.hostOperationId), sequence: integer(input.sequence) };
-  switch (state.kind) {
-    case 'pending': case 'accepted': case 'completed': return { ...base, state: { kind: state.kind } };
-    case 'uncertain': case 'not-dispatched': case 'rejected': return { ...base, state: { kind: state.kind, reason: string(state.reason) } };
-    default: throw new Error('Unsupported receipt state');
-  }
-}
-function decision(value: unknown) {
-  const input = object(value);
-  if (!Array.isArray(input.choices)) throw new Error('Invalid decision choices');
-  return { pendingId: string(input.pendingId), runId: string(input.runId), choices: input.choices.map(string), prompt: string(input.prompt) };
-}
-function decodeEvent<E, P>(value: unknown, scope: ConversationScope, projection: Projection<E, P>): HostEvent<E> {
-  const input = object(value);
-  switch (input.kind) {
-    case 'domain': return { kind: 'domain', event: projection.decodeEvent(input.event) };
-    case 'receipt': return { kind: 'receipt', receipt: decodeReceipt(input.receipt, scope) };
-    case 'decision-opened': return { kind: 'decision-opened', decision: decision(input.decision) };
-    case 'decision-closed': return { kind: 'decision-closed', pendingId: string(input.pendingId) };
-    default: throw new Error('Unsupported host event');
-  }
+  const receipt = parseReceipt(value);
+  checkScope(receipt.scope, scope);
+  return receipt;
 }
 export interface DeliveryState<P> {
   readonly document: ConversationDocument<P>;
@@ -48,14 +29,13 @@ export function applyDelivery<E, P>(state: DeliveryState<P>, item: FeedItem<E, P
     const cursor = integer(snapshot.cursor);
     if (state.cursor !== null && cursor < state.cursor) throw new DeliveryError('resync', 'Host snapshot cursor regressed; reconnect for a fresh snapshot');
     const document = object(snapshot.document);
-    const receipts: Record<string, Receipt> = {};
-    for (const [id, value] of Object.entries(object(document.receipts))) {
+    const receipts = Object.fromEntries(Object.entries(object(document.receipts)).map(([id, value]) => {
       const receipt = decodeReceipt(value, scope);
       if (id !== receipt.clientCommandId || receipt.sequence > cursor) throw new Error('Snapshot receipt identity or cursor mismatch');
-      Object.defineProperty(receipts, id, { value: receipt, enumerable: true });
-    }
+      return [id, receipt];
+    }));
     const decisions = Object.fromEntries(Object.entries(object(document.decisions)).map(([id, value]) => {
-      const parsed = decision(value);
+      const parsed = parseDecision(value);
       if (id !== parsed.pendingId) throw new Error('Snapshot decision identity mismatch');
       return [id, parsed];
     }));
@@ -76,12 +56,13 @@ export function applyDelivery<E, P>(state: DeliveryState<P>, item: FeedItem<E, P
       continue;
     }
     if (sequence !== cursor + 1) throw new DeliveryError('resync', 'Event sequence gap; reconnect for a snapshot');
-    const event = decodeEvent(envelope.event, scope, projection);
-    if (event.kind === 'receipt' && event.receipt.sequence !== sequence) throw new Error('Receipt sequence differs from its envelope');
+    const inputEvent = object(envelope.event);
+    if (inputEvent.kind === 'receipt') checkScope(object(inputEvent.receipt).scope, scope);
+    const event = parseHostEvent(inputEvent, scope, sequence, projection);
     document = foldDocument(document, event, projection);
     cursor = sequence;
     identities.set(sequence, identity);
-    if (identities.size > 256) {
+    if (identities.size > RETAINED_SEQUENCE_IDENTITIES) {
       const oldest = identities.keys().next();
       if (!oldest.done) identities.delete(oldest.value);
     }

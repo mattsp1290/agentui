@@ -5,21 +5,18 @@ import type { DeliveryState } from './delivery.js';
 import { copyJson, immutable, restore } from './local-state.js';
 import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
+function acknowledgementBoundary(): Promise<void> { return Promise.resolve(); }
 function settled(receipt: Receipt): boolean {
   return receipt.state.kind !== 'pending' && receipt.state.kind !== 'uncertain';
 }
-function reconcile(local: LocalRecords, receipts: readonly Receipt[]): LocalRecords {
-  let draft = local.draft;
-  const completed = new Set<string>();
-  for (const receipt of receipts) {
-    if (!settled(receipt)) continue;
-    const entry = local.outbox.find(value => value.command.clientCommandId === receipt.clientCommandId);
-    if (!entry) continue;
-    completed.add(receipt.clientCommandId);
-    if ((receipt.state.kind === 'accepted' || receipt.state.kind === 'completed') && entry.draftRevision === local.draftRevision && entry.command.body.kind === 'send' && entry.command.body.text === draft) draft = '';
-  }
-  if (!completed.size) return local;
-  return immutable({ ...local, draft, outbox: local.outbox.filter(entry => !completed.has(entry.command.clientCommandId)) });
+function settle(local: LocalRecords, receipt: Receipt): LocalRecords {
+  if (!settled(receipt)) return local;
+  const entry = local.outbox.find(value => value.command.clientCommandId === receipt.clientCommandId);
+  if (!entry) return local;
+  const clearDraft = (receipt.state.kind === 'accepted' || receipt.state.kind === 'completed') &&
+    entry.draftRevision === local.draftRevision && entry.command.body.kind === 'send' && entry.command.body.text === local.draft;
+  return immutable({ ...local, draft: clearDraft ? '' : local.draft,
+    outbox: local.outbox.filter(value => value.command.clientCommandId !== receipt.clientCommandId) });
 }
 export function createConversationStore<E, P>(options: StoreOptions<E, P>): ConversationStore<P> {
   const { port, projection, drafts, createCommandId } = options;
@@ -55,6 +52,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     await drafts.save(next);
     local = next;
   }
+  function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
   function stop(next: ConnectionState): void {
     generation++;
     const previous = feed;
@@ -63,15 +61,14 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     previous?.close();
     publish();
   }
-  async function dispatch(entry: OutboxEntry, attempt: 'initial' | 'retry'): Promise<SubmitResult> {
+  async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
     const id = entry.command.clientCommandId;
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
       const result = await port.submit(entry.command);
       if (result.kind === 'rejected') {
-        // A retry refusal cannot disprove admission during an earlier lost reply.
-        if (attempt === 'initial') await enqueue(async () => {
+        if (admission === 'known-absent') await enqueue(async () => {
           await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
           publish();
         });
@@ -81,7 +78,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       const receipt = immutable(decodeReceipt(copyJson(result.receipt), scope));
       if (receipt.clientCommandId !== id) throw new Error('Submit receipt command ID mismatch');
       await enqueue(async () => {
-        const next = reconcile(local, [receipt]);
+        const next = settle(local, receipt);
         if (next !== local) { await persist(next); publish(); }
       });
       return { kind: 'receipt', receipt };
@@ -97,7 +94,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       publish();
       return created;
     });
-    return dispatch(entry, 'initial');
+    return dispatch(entry, 'known-absent');
   }
   return {
     ready,
@@ -119,11 +116,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       const entry = await enqueue(async () => {
         const found = local.outbox.find(value => value.command.clientCommandId === clientCommandId);
         if (!found) throw new Error('Command is not in the outbox');
-        // Verify storage is writable before another possible external effect.
-        await drafts.save(local);
+        await requireWritableRetryStorage();
         return found;
       });
-      return dispatch(entry, 'retry');
+      return dispatch(entry, 'unknown-or-observed');
     },
     async connect() {
       stop({ kind: 'connecting' });
@@ -140,10 +136,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           try {
             const previous = firstDelivery ? { ...delivery, cursor: null } : delivery;
             const next = applyDelivery(previous, item, scope, projection);
-            await Promise.resolve();
+            await acknowledgementBoundary();
             if (current !== generation) return;
             firstDelivery = false;
-            if (next === delivery && connection.kind === 'connected') return;
+            if (next === delivery) return;
             delivery = { ...next, document: immutable(next.document) };
             connection = { kind: 'connected' };
             publish();
