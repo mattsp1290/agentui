@@ -12,11 +12,22 @@ test('opening incomplete version one refuses without guessing a migration or cha
   db.exec('PRAGMA user_version=1; CREATE TABLE sentinel(value TEXT);');
   db.close();
   const before = readFileSync(f.path);
-  assert.throws(() => f.open(), /Incomplete database schema version 1: missing host_limits/);
+  assert.throws(() => f.open(), /Incomplete database schema version 1: missing .*host_limits/);
   assert.deepEqual(readFileSync(f.path), before);
   const reopened = new DatabaseSync(f.path);
   try { assert.equal(reopened.prepare("SELECT name FROM sqlite_schema WHERE name='host_limits'").get(), undefined); }
   finally { reopened.close(); }
+});
+
+test('opening version one missing a command table refuses before mutation', t => {
+  const f = fixture(t), host = f.open();
+  host.close();
+  const db = new DatabaseSync(f.path);
+  db.exec('DROP TABLE commands');
+  db.close();
+  const before = readFileSync(f.path);
+  assert.throws(() => f.open(), /Incomplete database schema version 1: missing commands/);
+  assert.deepEqual(readFileSync(f.path), before);
 });
 
 test('store notifies only successful write commits after other connections can observe them', t => {

@@ -27,7 +27,8 @@ export interface Receipt {
   readonly state: ReceiptState;
 }
 /** Rejections are not persisted and leave the command id available.
- * A full host snapshot budget returns conversation-capacity. Storage faults reject the promise. */
+ * A full host snapshot budget returns conversation-capacity. Storage faults, settlement conflicts and
+ * invalid driver results reject the promise; admitted receipts remain persisted. */
 export type SubmitResult =
   | { readonly kind: 'receipt'; readonly receipt: Receipt }
   | { readonly kind: 'rejected'; readonly reason: string };

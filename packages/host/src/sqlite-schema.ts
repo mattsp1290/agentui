@@ -41,9 +41,9 @@ export function openDatabase(path: string): DatabaseSync {
         PRAGMA user_version=1;`);
       db.exec('COMMIT');
     }
-    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='host_limits'").get()) {
-      throw new Error('Incomplete database schema version 1: missing host_limits');
-    }
+    const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
+    const missing = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits'].filter(name => !tables.has(name));
+    if (missing.length) throw new Error(`Incomplete database schema version 1: missing ${missing.join(', ')}`);
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
     db.exec('PRAGMA synchronous=FULL;');
