@@ -65,14 +65,16 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Current deployment-mode `prepare.sh` on a freshly generated template | PASS | [Fresh preparation at `f4f8fcf`](../../spikes/ios-updates/evidence/fresh-preparation-f4f8fcf/README.md); script and independent lock comparison exit 0 |
 | Release B rebuild/install/render | PASS | build-B log and B screenshot |
 | B restart without Metro | PASS | restart-B log, B-restart screenshot |
-| Repository regression at native measurement, base `bf16a1f`, excluding spikes | PASS | 11 tests, build, check, lint |
+| Repository regression at native measurement, base `bf16a1f`, excluding spikes | PASS | 11 tests, build, check, lint; revision attributed by the operator, not embedded in the log |
 | Linux integration regression at `f4f8fcf`, excluding spikes | PASS | [26 tests, build, check, lint](https://github.com/mattsp1290/agentui/actions/runs/43540852662/job/132280830858) |
 | Compatible live-update recovery | UNQUALIFIED | No updater tested |
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
 | Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
+| Cold-cache native build | UNQUALIFIED | Warm caches and retained DerivedData |
+| VoiceOver / accessibility | UNQUALIFIED | Not exercised |
 
-The new fresh-tree preparation ran at source `f4f8fcf` on the same Mac with pinned
-tools. Its provenance records an absent app directory before generation, clean
+The new fresh-tree preparation ran at source `f4f8fcf` with the same recorded macOS,
+Xcode, Node, npm, CocoaPods and Ruby versions. Its provenance records an absent app directory before generation, clean
 source before and after, and matching script/dependency blobs. The retained output
 contains template generation, deployment verification, and Pod installation success.
 An independent comparison confirms the generated native lock equals the committed lock.
@@ -106,7 +108,9 @@ qualification documents. The probe does not implement product update delivery or
 notifications. Native-incompatible changes remain rebuild-required in all cases.
 
 ShellCheck and Bash syntax checks passed for all three probe scripts. See
-`evidence/shellcheck.txt`. The retained restart logs report distinct A and B
+`evidence/shellcheck.txt`; its attribution comes from the operator's record because
+the file does not embed a source revision, tool version or checked-file list.
+The retained restart logs report distinct A and B
 installed-bundle hashes and no Metro listener. Screenshots were visually checked.
 
 Probe scripts and dependency inputs are byte-identical to native-tested
@@ -114,7 +118,7 @@ Probe scripts and dependency inputs are byte-identical to native-tested
 
 ```sh
 git diff --exit-code 7d250ae54c3267997dc0f56b00281fd8076424d0 -- \
-  spikes/ios-updates/*.sh spikes/ios-updates/package*.json \
+  'spikes/ios-updates/*.sh' 'spikes/ios-updates/package*.json' \
   spikes/ios-updates/Podfile.lock
 ```
 

@@ -40,7 +40,16 @@ Now run:
 bash spikes/ios-updates/rebuild.sh B "$PROBE_SIMULATOR"
 ```
 
-Expect B. Run `bash spikes/ios-updates/restart.sh B "$PROBE_SIMULATOR"` and expect B again. There should be no
+Expect B and save the post-build screenshot as `B.png` using the printed command.
+Run `bash spikes/ios-updates/restart.sh B "$PROBE_SIMULATOR"` and expect B again.
+Preserve `B.png` by saving this restart screenshot with the distinct path below,
+overriding the `B.png` path printed by `restart.sh`:
+
+```sh
+xcrun simctl io "$PROBE_SIMULATOR" screenshot spikes/ios-updates/.work/evidence/B-restart.png
+```
+
+There should be no
 listener on port 8081 (`lsof -nP -iTCP:8081 -sTCP:LISTEN`). That check plus the
 Release bundle URL in generated `spikes/ios-updates/.work/app/ios/AgentUIUpdateProbe/AppDelegate.swift`
 confirms this workflow does not depend on a running Metro server.
