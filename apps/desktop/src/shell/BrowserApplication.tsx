@@ -10,8 +10,16 @@ import '../application/application.css';
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const { controller, snapshot: app } = useApplication();
   const enabled = applicationEnabled(app);
-  const conversation = app.active ? <ConversationView key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`} actions={controller.conversationActions(app.active)} active={app.active} />
-    : <section className="conversation-panel empty-workspace"><p className="eyebrow">YOUR LOCAL WORKSPACE</p><h1>A conversation that stays with you.</h1><p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p></section>;
+  const conversation = app.active
+    ? <ConversationView
+        key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
+        actions={controller.conversationActions(app.active)} active={app.active}
+      />
+    : <section className="conversation-panel empty-workspace">
+        <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
+        <h1>A conversation that stays with you.</h1>
+        <p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p>
+      </section>;
   const controls = <div className="application-controls">
     <div className="application-status"><strong>Browser development · Recorded playback</strong>
       <HostStatusLabel host={app.host} />

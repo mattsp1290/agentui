@@ -11,9 +11,8 @@ async function main(): Promise<void> {
   } });
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
-  if (extra.length || !command || !Object.hasOwn(COMMANDS, command)) throw new Error('Use browser-dev, invite, devices or revoke');
-  const allowed = COMMANDS[command];
-  if (!allowed) throw new Error('Unknown command');
+  const allowed = command && Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
+  if (extra.length || !command || !allowed) throw new Error('Use browser-dev, invite, devices or revoke');
   for (const flag of Object.keys(values)) {
     if (flag !== 'data-dir' && !allowed.includes(flag)) throw new Error(`--${flag} is not valid for ${command}`);
   }

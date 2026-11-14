@@ -8,7 +8,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -31,7 +31,7 @@ function fixture() {
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
       nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
-    async catalog(after) { cursors.push(after); return after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []; },
+    async catalog(after) { await behavior.catalog(); cursors.push(after); return after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []; },
     async create(value) { created.push(value); await behavior.create(); return value; },
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
@@ -259,4 +259,52 @@ test('a storage acquisition failure stops the loading status and blocks commands
   assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
   assert.equal(applicationEnabled(f.app.getSnapshot()), false);
   assert.match(f.app.getSnapshot().storageFailure, /Storage cannot be owned/);
+});
+
+test('a startup catalog failure keeps the ready host enabled and reconnect clears the error', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.catalog = async () => { throw new Error('Catalog temporarily unavailable'); };
+  await f.app.start();
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  assert.match(f.app.getSnapshot().error, /Catalog temporarily unavailable/);
+  f.behavior.catalog = async () => {};
+  await f.app.reconnect();
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  assert.equal(f.app.getSnapshot().error, '');
+  assert.equal(f.app.getSnapshot().catalog.items.length, 100);
+});
+
+for (const entry of ['start', 'reconnect', 'pair', 'reopenView']) {
+  test(`a saved-view read failure during ${entry} ends loading and blocks commands`, async t => {
+    const f = fixture(); t.after(() => f.app.dispose());
+    if (entry !== 'start') await f.app.start();
+    f.behavior.read = async () => { throw new Error('Saved view cannot be read'); };
+    await f.app[entry]('restored-view');
+    assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
+    assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+    assert.match(f.app.getSnapshot().storageFailure, /Saved view cannot be read/);
+    await f.app.create();
+    assert.equal(f.created.length, 0);
+  });
+}
+
+test('a late saved-view read failure cannot change a replacement session', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  const entered = deferred(), reading = deferred();
+  f.behavior.read = async () => { entered.resolve(); await reading.promise; };
+  const refreshing = f.app.reconnect();
+  await entered.promise;
+  f.app.dispose();
+  f.behavior.read = async () => {};
+  await f.app.start();
+  const replacement = f.app.getSnapshot();
+  reading.reject(new Error('Old saved view cannot be read'));
+  await refreshing;
+  assert.strictEqual(f.app.getSnapshot(), replacement);
+  assert.equal(applicationEnabled(replacement), true);
+  assert.equal(replacement.storageFailure, '');
+  assert.equal(replacement.error, '');
 });

@@ -1,0 +1,234 @@
+{
+  "sourceRevision": "ed2c1d5b63299d3f08676a1418cc2640bbe55fd1",
+  "identityProvenanceSha256": "0f37ab5f9d1257bab72c9676bd3af012be731354da2e5c1cd7e4bf2ea1d6fcd8",
+  "knownLimitations": [
+    {
+      "package": "@ag-ui/codex-sdk",
+      "version": "0.0.1",
+      "condition": "TMPDIR beneath a Node package with type:module",
+      "observation": "The factory writes extensionless codex-launch with CommonJS require; Node interprets it as ESM and fails before the selected executable runs. In the controlled consumer, runAgent() resolved without throwing; the failure surfaced as a missing assistant reply.",
+      "source": "integrations/community/codex-sdk/typescript/src/sdk.ts:47-53",
+      "task": "ag-ui-4ipx",
+      "failureEvidence": "evidence/node-esm-tmp-failure.log.gz",
+      "reproductionEvidence": "evidence/codex-launcher-esm-reproduction.json.gz",
+      "successfulCondition": "The controlled consumer passed with an external temporary directory outside an ESM package scope."
+    }
+  ],
+  "currentReplay": {
+    "log": "evidence/current-receipt-node-qualification.log.gz",
+    "inputLedger": "evidence/current-receipt-input-ledger.json.gz",
+    "measuredBase": "180a4091943c97724b03f0a70b69128cb4cacac4"
+  },
+  "evidence": [
+    {
+      "path": "evidence/node-qualification.log.gz",
+      "rawBytes": 54148,
+      "rawSha256": "2c62642c9bf6023125608910131e52e4992fb092b8b51dae2f648c801092eeed",
+      "retainedBytes": 54148,
+      "retainedSha256": "2c62642c9bf6023125608910131e52e4992fb092b8b51dae2f648c801092eeed",
+      "compressedBytes": 5986,
+      "compressedSha256": "d2480c237692b5df37295566731b00dd611e58c08b2e9ed960158050bd3bada0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Node-only controlled consumer replay on Linux arm64 with GNU tar and an external temporary directory"
+    },
+    {
+      "path": "evidence/node-esm-tmp-failure.log.gz",
+      "rawBytes": 1785,
+      "rawSha256": "6bb3b52a7d6bd42f2de5d805e5d1d97e5d64a621bd35ca14e820c650ad943935",
+      "retainedBytes": 1785,
+      "retainedSha256": "6bb3b52a7d6bd42f2de5d805e5d1d97e5d64a621bd35ca14e820c650ad943935",
+      "compressedBytes": 718,
+      "compressedSha256": "2d01c0f5048ecbba3927a31c1754ace9a6c0c118d48fdbc65e160f232f6ab721",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled consumer failure with a missing Codex assistant reply under an ESM-project TMPDIR; attributed to the launcher by the separate direct reproduction"
+    },
+    {
+      "path": "evidence/codex-launcher-esm-reproduction.log.gz",
+      "rawBytes": 693,
+      "rawSha256": "293d9f353667fa0874a572424f7cc61c18c2d49764b2b43294efed7611d5bbef",
+      "retainedBytes": 693,
+      "retainedSha256": "293d9f353667fa0874a572424f7cc61c18c2d49764b2b43294efed7611d5bbef",
+      "compressedBytes": 362,
+      "compressedSha256": "abf61a52d791e861aed9667ba5501e99949693642e078df1aaef2083640064d7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Direct reproduction using the pinned extensionless CommonJS launcher bytes"
+    },
+    {
+      "path": "evidence/codex-launcher-esm-reproduction.json.gz",
+      "rawBytes": 1133,
+      "rawSha256": "8da033947defa589f59d5f16ca48266913041717f57dcca160b230bd150522cc",
+      "retainedBytes": 1133,
+      "retainedSha256": "8da033947defa589f59d5f16ca48266913041717f57dcca160b230bd150522cc",
+      "compressedBytes": 526,
+      "compressedSha256": "cd141d56dfa86c4837be2dd404c64f62763c3f5559e5e5d702cc6297eabf973f",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Exact source path, temporary-directory condition and observed Node error"
+    },
+    {
+      "path": "evidence/node-qualification-final.log.gz",
+      "rawBytes": 53940,
+      "rawSha256": "1f595fa1a7cfac79dab0ecacfe2cd13b88ac46e128f0b83b20f3dc3155bf49bc",
+      "retainedBytes": 53940,
+      "retainedSha256": "1f595fa1a7cfac79dab0ecacfe2cd13b88ac46e128f0b83b20f3dc3155bf49bc",
+      "compressedBytes": 5980,
+      "compressedSha256": "6aee08066c4e6011f619f8c2d2731b5ed8e8b7d7be20867ed9d12f1c36cda2dd",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Final Node-only controlled consumer replay after byte-line-counter naming cleanup"
+    },
+    {
+      "path": "evidence/single-owner-node-qualification.log.gz",
+      "rawBytes": 56584,
+      "rawSha256": "60c8a866918d0079314b5191ea151d57ca60d42d75bc7d6a262dec3061f34176",
+      "retainedBytes": 56584,
+      "retainedSha256": "60c8a866918d0079314b5191ea151d57ca60d42d75bc7d6a262dec3061f34176",
+      "compressedBytes": 7093,
+      "compressedSha256": "c1f96ef622337a6a10f1b8762041b2b4a8e373a315c3b69d7c10da524c4625f8",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Fresh single-owner Node offline and full consumer qualification with enforced child runtime and self-reported source hashes"
+    },
+    {
+      "path": "evidence/archive-identity-node-qualification.log.gz",
+      "rawBytes": 56583,
+      "rawSha256": "8aa30b1219508beabe19bf3887c6d8b3c9baf21ecc076a317e8a7dcbe14fc096",
+      "retainedBytes": 56583,
+      "retainedSha256": "8aa30b1219508beabe19bf3887c6d8b3c9baf21ecc076a317e8a7dcbe14fc096",
+      "compressedBytes": 7090,
+      "compressedSha256": "64d38afe6288b87197c67c40817462e058ff2e1c39edbfa26373c97adf594d74",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Fresh separate offline and full replay of package identity checks and canonical consumer execution; five actual source hashes emitted"
+    },
+    {
+      "path": "evidence/closed-input-node-qualification.log.gz",
+      "rawBytes": 56758,
+      "rawSha256": "1ba44adda0d04fbe889918d76e7a5344f9840dffc2a064077781c48f25911bd0",
+      "retainedBytes": 56758,
+      "retainedSha256": "1ba44adda0d04fbe889918d76e7a5344f9840dffc2a064077781c48f25911bd0",
+      "compressedBytes": 7208,
+      "compressedSha256": "1dcd308316677198321b3143ea0c53805207d1e236db70cb9bafe939c589eefc",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Separate offline and full replay with exact verified copy sets, relative retained-path guards, scrubbed archive-reader environment and Node-options digest"
+    },
+    {
+      "path": "evidence/verified-model-node-qualification.log.gz",
+      "rawBytes": 57311,
+      "rawSha256": "dec24f4569f6dece4e4434fe88ce62dbbefd9463f0db2f31ef46a2e2f4fdb7ed",
+      "retainedBytes": 57311,
+      "retainedSha256": "dec24f4569f6dece4e4434fe88ce62dbbefd9463f0db2f31ef46a2e2f4fdb7ed",
+      "compressedBytes": 7489,
+      "compressedSha256": "1078071eb6ac0ca2c471cef7c3b540f1b6a34ba066046f050ad590945851489c",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/qualification-metadata-history.json.gz",
+      "rawBytes": 23373,
+      "rawSha256": "1ae28751c1ecf16cd62d786f5df0c2a0c57870d389a0d30df3d10f3f2facbdc1",
+      "retainedBytes": 23373,
+      "retainedSha256": "1ae28751c1ecf16cd62d786f5df0c2a0c57870d389a0d30df3d10f3f2facbdc1",
+      "compressedBytes": 5587,
+      "compressedSha256": "c02dc4de3083b8821c705238123622d1de2311cfef8aab30ce9a200fceff5494",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Historical qualification metadata snapshot, including prior coordinator observations and textual clarifications"
+    },
+    {
+      "path": "evidence/thin-ledger-node-qualification.log.gz",
+      "rawBytes": 57313,
+      "rawSha256": "64a5e90ab50003caa82248e2edd86b9c4aba2ef4303bb28137c08364c9584432",
+      "retainedBytes": 57313,
+      "retainedSha256": "64a5e90ab50003caa82248e2edd86b9c4aba2ef4303bb28137c08364c9584432",
+      "compressedBytes": 7499,
+      "compressedSha256": "51a67a48459a583f9869d405a92e2a679c970b6389e3723bd2c8a2701573fb53",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/shared-format-node-qualification.log.gz",
+      "rawBytes": 57308,
+      "rawSha256": "9ea28423385314d3d10c443e7529fc71d041776a1c3529b23b67bd1446d2fc1b",
+      "retainedBytes": 57308,
+      "retainedSha256": "9ea28423385314d3d10c443e7529fc71d041776a1c3529b23b67bd1446d2fc1b",
+      "compressedBytes": 7477,
+      "compressedSha256": "ab128de7ad523907a5c9e686f89e661f97e8f68b5b911bc2194f0f589bde22c7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/modular-node-qualification.log.gz",
+      "rawBytes": 55993,
+      "rawSha256": "353dbe676680938b3ba930257b33e5f3a2f17d9916445510212b84b86aab6d3b",
+      "retainedBytes": 55993,
+      "retainedSha256": "353dbe676680938b3ba930257b33e5f3a2f17d9916445510212b84b86aab6d3b",
+      "compressedBytes": 6903,
+      "compressedSha256": "3dc4f1f56676b34021bfc0d961bf067f440ff49ed286f0a2a7607446188745c0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification of the modular verifier, with all ten verifier and consumer-script hashes."
+    },
+    {
+      "path": "evidence/ledger-owner-node-qualification.log.gz",
+      "rawBytes": 55994,
+      "rawSha256": "e60cafefc4b8a1be9a346aaf8725416ef85f05c205ade93ba4751087159d4d0e",
+      "retainedBytes": 55994,
+      "retainedSha256": "e60cafefc4b8a1be9a346aaf8725416ef85f05c205ade93ba4751087159d4d0e",
+      "compressedBytes": 6905,
+      "compressedSha256": "5be3ac2643f376d915ff891750b126dd6e8446ff77ab7585af7878fc41678f82",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification after consolidating ledger ownership and deriving checker source hashes from the module directory."
+    },
+    {
+      "path": "evidence/replay-integrity-node-qualification.log.gz",
+      "rawBytes": 55992,
+      "rawSha256": "27b67b7e344a356f6021060466e673aa059119af7fb69c3a8e9fb8093e76e6b8",
+      "retainedBytes": 55992,
+      "retainedSha256": "27b67b7e344a356f6021060466e673aa059119af7fb69c3a8e9fb8093e76e6b8",
+      "compressedBytes": 6894,
+      "compressedSha256": "65162e00d530f77d3eeaad4ddaaf8f4dc3685e9239028739ea26ebaa624aa428",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer replay after enforcing historical identity/result binding and physical installed-package/payload boundaries."
+    },
+    {
+      "path": "evidence/qualification-node-replay-index.json.gz",
+      "rawBytes": 12983,
+      "rawSha256": "fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f",
+      "retainedBytes": 12983,
+      "retainedSha256": "fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f",
+      "compressedBytes": 3737,
+      "compressedSha256": "003664390e674b493ad11e71981416535d52585a04fb76940125f08f12803dc7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Byte-exact qualification ledger at 180a409 with the nine-entry nodeReplays index and notes; superseded by currentReplay. Its metadataHistory names the earlier bf28 snapshot."
+    },
+    {
+      "path": "evidence/replay-integrity-input-ledger.json.gz",
+      "rawBytes": 11956,
+      "rawSha256": "bd1ee0d580c84bf79c2433f2465eccdf1429d0ceb31d165ea20fda1e78a42027",
+      "retainedBytes": 11956,
+      "retainedSha256": "bd1ee0d580c84bf79c2433f2465eccdf1429d0ceb31d165ea20fda1e78a42027",
+      "compressedBytes": 3475,
+      "compressedSha256": "75c3296ce7349e57c9848a5ede9d1913e78feb3a6b200412e22bbfea469cd1e0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Reconstructed from the 180a409 ledger by removing exactly its final nodeReplays and evidence appends and serializing with two-space indentation and a final newline; byte identity is proven by the replay-integrity receipt qualificationSha256."
+    },
+    {
+      "path": "evidence/current-receipt-node-qualification.log.gz",
+      "rawBytes": 55994,
+      "rawSha256": "7ed1eccae38c54f7d6625ceb84be177e0319682264fb6abae46f13f16c9f199c",
+      "retainedBytes": 55994,
+      "retainedSha256": "7ed1eccae38c54f7d6625ceb84be177e0319682264fb6abae46f13f16c9f199c",
+      "compressedBytes": 6895,
+      "compressedSha256": "452a7238b866b49b946cd97b2117f332228a3d6057199d56a678ecef2dc1ce9b",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification of the single current receipt, including frozen identity, all verifier and consumer-script source hashes, and successful child results; no Mac, native-provider or Apple qualification."
+    },
+    {
+      "path": "evidence/current-receipt-input-ledger.json.gz",
+      "rawBytes": 11882,
+      "rawSha256": "7e81e9d4d4dfcc6905522d0dce1577f7d5f15f0b18ee874b11611dd3cf17902d",
+      "retainedBytes": 11882,
+      "retainedSha256": "7e81e9d4d4dfcc6905522d0dce1577f7d5f15f0b18ee874b11611dd3cf17902d",
+      "compressedBytes": 3524,
+      "compressedSha256": "0aa1e51194b1dca1a7bb8c7e95a6ac2d2737d60de750851777597ad4b1bc5ad7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Exact qualification ledger bytes copied before the corresponding full-consumer invocation; the receipt qualificationSha256 binds to these bytes before its own evidence is appended."
+    }
+  ],
+  "metadataHistory": "evidence/qualification-node-replay-index.json.gz"
+}

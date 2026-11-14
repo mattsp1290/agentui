@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { assertCompileCases } from './support/compile.mjs';
+import { assertCompileCases } from '../../../tests/support/compile.mjs';
 
 test('host native contracts require narrowed capabilities and complete native identities', async () => {
   await assertCompileCases({

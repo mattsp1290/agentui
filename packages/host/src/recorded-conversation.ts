@@ -13,6 +13,7 @@ import { createRecordedDriver } from './recorded-driver.js';
 export const recordedInstallation: Installation = Object.freeze({ installationId: 'agentui-recorded-v1',
   binding: Object.freeze({ engine: RECORDED_RUNTIME.engine, nativeVersion: RECORDED_RUNTIME.version, account: 'local',
     authorizedScope: 'recorded-conversations', nativeFormat: RECORDED_RUNTIME.format }) });
+const UUID_OPERATION_ID = '00000000-0000-0000-0000-000000000000';
 
 export interface RecordedHostOptions {
   readonly path: string;
@@ -88,7 +89,7 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
   const limits = budgets();
   const driver: ProviderDriver<TranscriptEvent> = { ...recorded,
     capability(command) {
-      for (const event of userEvents(command, '0'.repeat(36))) {
+      for (const event of userEvents(command, UUID_OPERATION_ID)) {
         const envelope: Envelope<TranscriptEvent> = { scope: command.scope, sequence: Number.MAX_SAFE_INTEGER, event: { kind: 'domain', event } };
         if (utf8Bytes(canonicalJson(envelope)) > limits.maxEventBytes) return { kind: 'unsupported', reason: 'message-too-large' };
       }
