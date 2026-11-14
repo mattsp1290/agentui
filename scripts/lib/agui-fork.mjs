@@ -5,6 +5,8 @@ import { readFileSync, readdirSync, existsSync, lstatSync } from 'node:fs';
 import { isAbsolute, join, basename, relative, resolve, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
+export const fullConsumerScope = 'controlled package consumer; no native provider or Apple qualification';
+
 const parseJson = (body) => JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
 const readJson = (path) => parseJson(readFileSync(path));
 const digest = (body, algorithm = 'sha256', encoding = 'hex') => createHash(algorithm).update(body).digest(encoding);
@@ -132,22 +134,24 @@ function verifyReplay(replay, raws, sourceRevision) {
   assert.ok(replay.note === undefined || typeof replay.note === 'string', `${replay.log}: replay note must be a string`);
   let report;
   if (replay.kind === 'self-reported') {
-    const reports = new TextDecoder('utf-8', { fatal: true }).decode(raws.get(replay.log)).split(/\r?\n/u)
-      .filter((line) => line.startsWith('{"result":"PASS"'))
-      .map((line) => parseJson(Buffer.from(line)))
-      .filter((entry) => typeof entry.scope === 'string' && entry.scope.startsWith('controlled package consumer'));
-    assert.equal(reports.length, 1, `${replay.log}: exactly one full consumer PASS record is required`);
+    const reports = [];
+    for (const line of new TextDecoder('utf-8', { fatal: true }).decode(raws.get(replay.log)).split(/\r?\n/u)) {
+      let entry;
+      try { entry = JSON.parse(line); } catch { continue; }
+      if (entry?.scope === fullConsumerScope) reports.push(entry);
+    }
+    assert.equal(reports.length, 1, `${replay.log}: exactly one full consumer record is required`);
     [report] = reports;
     assert.equal(report.result, 'PASS', `${replay.log}: full consumer result`);
     assert.equal(report.sourceRevision, sourceRevision, `${replay.log}: full consumer source revision`);
   }
-  const hashes = report ? report.sourceSha256 : replay.sourceSha256;
+  const hashes = replay.kind === 'self-reported' ? report.sourceSha256 : replay.sourceSha256;
   assert.ok(hashes && typeof hashes === 'object' && !Array.isArray(hashes)
     && Object.keys(hashes).length > 0, `${replay.log}: replay source hashes must be a nonempty map`);
   for (const [file, hash] of Object.entries(hashes)) {
     assert.ok(typeof hash === 'string' && /^[a-f0-9]{64}$/u.test(hash), `${replay.log}: ${file}: replay source digest`);
   }
-  return report ? { ...replay, report } : replay;
+  return replay.kind === 'self-reported' ? { ...replay, report } : replay;
 }
 function verifyEvidence({ folder, metadata }, qualification) {
   const raws = new Map();
@@ -207,7 +211,8 @@ export function verifyFork(root) {
     packages.set(artifact.package, verifyArchive(fork.folder, artifact));
   }
   const replays = verifyEvidence(fork, qualification);
-  return { ...fork, packages, ...verifyFixtures(fork), qualification, qualificationSha256: digest(qualificationBody), replays };
+  const fixtures = verifyFixtures(fork);
+  return { ...fork, packages, ...fixtures, qualification, qualificationSha256: digest(qualificationBody), replays };
 }
 export function verifyConsumerLock(consumer, verified) {
   const { metadata, packages: expected } = verified;

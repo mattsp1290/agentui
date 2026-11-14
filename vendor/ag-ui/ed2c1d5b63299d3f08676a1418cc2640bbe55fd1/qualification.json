@@ -72,6 +72,12 @@
       "log": "evidence/thin-ledger-node-qualification.log.gz",
       "measuredBase": "bf28d916fd19bd7b7532d6275554a09d96114837",
       "note": "Dependency verifier measured on working source over the recorded base. Source hashes and runtime facts are authoritative in the retained full-consumer PASS record."
+    },
+    {
+      "kind": "self-reported",
+      "log": "evidence/shared-format-node-qualification.log.gz",
+      "measuredBase": "a289cf85595689f93c7ae661265aecb60ec1707e",
+      "note": "Dependency verifier measured on working source over the recorded base. The verified full-consumer record supplies actual source hashes, runtime facts and command results."
     }
   ],
   "evidence": [
@@ -193,6 +199,17 @@
       "retainedSha256": "64a5e90ab50003caa82248e2edd86b9c4aba2ef4303bb28137c08364c9584432",
       "compressedBytes": 7499,
       "compressedSha256": "51a67a48459a583f9869d405a92e2a679c970b6389e3723bd2c8a2701573fb53",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/shared-format-node-qualification.log.gz",
+      "rawBytes": 57308,
+      "rawSha256": "9ea28423385314d3d10c443e7529fc71d041776a1c3529b23b67bd1446d2fc1b",
+      "retainedBytes": 57308,
+      "retainedSha256": "9ea28423385314d3d10c443e7529fc71d041776a1c3529b23b67bd1446d2fc1b",
+      "compressedBytes": 7477,
+      "compressedSha256": "ab128de7ad523907a5c9e686f89e661f97e8f68b5b911bc2194f0f589bde22c7",
       "encoding": "gzip; raw retained without edits",
       "role": "Offline and controlled installed-package replay"
     }

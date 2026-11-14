@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { verifyFork, verifyConsumerLock, verifyInstalled, tarVersion } from './lib/agui-fork.mjs';
+import { verifyFork, verifyConsumerLock, verifyInstalled, tarVersion, fullConsumerScope } from './lib/agui-fork.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--offline'), 'Usage: node scripts/verify-agui-fork.mjs [--offline]');
@@ -79,8 +79,7 @@ async function qualifyInstalledConsumer(fork) {
     }
     npm = run('npm', ['--version'], { capture: true }).trim();
     run('npm', ['ci', '--ignore-scripts', '--include=optional', '--no-audit', '--no-fund']);
-    assert.equal(sha256(await readFile(join(consumer, 'package-lock.json'))), fork.metadata.qualification.consumerLockSha256, 'frozen consumer lock changed');
-    assert.equal(sha256(await readFile(join(consumer, 'package.json'))), fork.metadata.qualification.consumerPackageSha256, 'frozen consumer manifest changed');
+    verifyConsumerLock(consumer, fork);
     verifyInstalled(consumer, fork);
     for (const name of consumerScripts) run(process.execPath, [name]);
     run(process.execPath, ['--test', 'test/adapter.test.ts', 'test/example.test.ts']);
@@ -90,6 +89,6 @@ async function qualifyInstalledConsumer(fork) {
     throw error;
   }
   await rm(directory, { recursive: true, force: true });
-  console.log(JSON.stringify({ result: 'PASS', scope: 'controlled package consumer; no native provider or Apple qualification',
+  console.log(JSON.stringify({ result: 'PASS', scope: fullConsumerScope,
     sourceRevision: fork.metadata.sourceRevision, provenance, qualificationSha256, ...runtime, npm, temporaryDirectory: tmpdir(), sourceSha256, tar, results }));
 }
