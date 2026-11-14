@@ -1,10 +1,11 @@
 import { createServer } from 'node:http';
 import { once } from 'node:events';
+import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
 export async function createPreview(port = 0) {
   const result = await build({
-    entryPoints: [new URL('./fixture.jsx', import.meta.url).pathname],
+    entryPoints: [fileURLToPath(new URL('./fixture.jsx', import.meta.url))],
     outfile: 'fixture.js', bundle: true, write: false,
     define: { 'process.env.NODE_ENV': '"development"' },
   });

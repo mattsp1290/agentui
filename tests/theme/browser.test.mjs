@@ -18,6 +18,7 @@ test('desktop controls work with system themes, scoped overrides and accessible 
   const scope = page.getByTestId('system');
   await page.getByRole('heading', { level: 1 }).waitFor();
   const color = (locator, name) => locator.evaluate((element, property) => getComputedStyle(element).getPropertyValue(property).trim(), name);
+  const settle = () => page.evaluate(() => Promise.all(document.getAnimations().map((animation) => animation.finished)));
   assert.equal(await scope.getAttribute('data-appearance'), 'light');
   const moduleButton = page.getByTestId('module-button');
   const send = page.getByTestId('send');
@@ -35,6 +36,7 @@ test('desktop controls work with system themes, scoped overrides and accessible 
   for (const appearance of ['light', 'dark']) {
     await page.emulateMedia({ colorScheme: appearance });
     await page.waitForFunction((value) => document.querySelector('[data-testid="system"]').dataset.appearance === value, appearance);
+    await settle();
     assert.equal(await page.getByTestId('override').getAttribute('data-appearance'), appearance);
     await page.addScriptTag({ content: axe.source });
     const accessibility = await page.evaluate(async () => window.axe.run(document, { runOnly: { type: 'tag', values: ['wcag2a', 'wcag2aa', 'wcag21aa'] } }));
@@ -53,6 +55,9 @@ test('desktop controls work with system themes, scoped overrides and accessible 
   await page.emulateMedia({ colorScheme: 'dark', reducedMotion: 'reduce' });
   await page.waitForFunction(() => document.querySelector('[data-testid="system"]').dataset.reducedMotion === 'true');
   assert.equal(await scope.getAttribute('data-appearance'), 'light');
+  assert.equal(await page.getByTestId('override').getAttribute('data-appearance'), 'light');
+  assert.equal(await page.getByTestId('override').getAttribute('data-reduced-motion'), 'true');
+  assert.ok((await color(moduleButton, 'transition-duration')).split(',').every((duration) => duration.trim() === '0s'));
   assert.ok((await color(send, 'transition-duration')).split(',').every((duration) => duration.trim() === '0s'));
   await page.getByRole('button', { name: 'System', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('[data-testid="system"]').dataset.appearance === 'dark');
@@ -76,6 +81,7 @@ test('desktop controls work with system themes, scoped overrides and accessible 
   });
   assert.ok(inputMetrics.content >= inputMetrics.line, 'input has space for an enlarged text line');
   if (process.env.THEME_SCREENSHOT_DIR) {
+    await settle();
     await page.screenshot({ path: `${process.env.THEME_SCREENSHOT_DIR}/scaled-mobile.png`, fullPage: true });
   }
   assert.deepEqual(errors, []);

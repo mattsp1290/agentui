@@ -28,7 +28,7 @@
   border: 1px solid var(--aui-controlBorder);
   border-radius: var(--aui-radius-control);
   padding: var(--aui-space-sm) var(--aui-space-lg);
-  transition: background-color var(--aui-motion-quick), box-shadow var(--aui-motion-quick);
+  transition: box-shadow var(--aui-motion-quick);
 }
 .aui-button {
   color: var(--aui-onAccent);

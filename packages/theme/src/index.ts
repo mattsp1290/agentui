@@ -41,11 +41,17 @@ export interface Theme {
 }
 export function createTheme(options: ThemeOptions = {}, parent?: Theme): Theme {
   const appearance = options.appearance ?? parent?.appearance ?? 'light';
-  const reducedMotion = options.reducedMotion ?? parent?.reducedMotion ?? false;
+  if (appearance !== 'light' && appearance !== 'dark') {
+    throw new TypeError(`Unknown appearance ${String(appearance)}; omit it to inherit the parent or system.`);
+  }
+  const reducedMotion = (parent?.reducedMotion ?? false) || (options.reducedMotion ?? false);
   const inheritedColors = parent?.appearance === appearance ? parent.colors : palettes[appearance];
+  const overrides = Object.fromEntries<string>(Object.entries(options.colors ?? {}).filter(
+    ([key, value]) => Object.hasOwn(inheritedColors, key) && typeof value === 'string' && value.trim() !== '',
+  ));
   return {
     appearance, reducedMotion,
-    colors: { ...inheritedColors, ...options.colors },
+    colors: { ...inheritedColors, ...overrides },
     spacing, radius, typography,
     motion: reducedMotion ? { quick: 0, standard: 0 } : { quick: 120, standard: 180 },
   };

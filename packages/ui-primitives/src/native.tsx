@@ -4,7 +4,7 @@ import { type ButtonTone, type TextVariant } from '@agentui/theme';
 import { useTheme } from '@agentui/theme/react';
 export { ThemeProvider } from '@agentui/theme/react';
 
-export interface TextProps extends NativeTextProps { readonly variant?: TextVariant }
+export interface TextProps extends Omit<NativeTextProps, 'allowFontScaling'> { readonly variant?: TextVariant }
 export function Text({ variant = 'body', style, ...props }: TextProps) {
   const theme = useTheme();
   const token = theme.typography[variant];
@@ -14,7 +14,7 @@ export function Text({ variant = 'body', style, ...props }: TextProps) {
     ...(variant === 'code' ? { fontFamily: 'Menlo' } : {}),
   }, style]} />;
 }
-export interface ButtonProps extends Omit<PressableProps, 'children'> {
+export interface ButtonProps extends Omit<PressableProps, 'children' | 'accessibilityRole' | 'role'> {
   readonly tone?: ButtonTone;
   readonly children: ReactNode;
 }
@@ -42,12 +42,12 @@ export function Surface({ style, ...props }: SurfaceProps) {
   return <View {...props} style={[{ backgroundColor: theme.colors.surface, borderColor: theme.colors.border,
     borderWidth: 1, borderRadius: theme.radius.panel, padding: theme.spacing.xl }, style]} />;
 }
-export interface TextFieldProps extends TextInputProps { readonly label: string }
+export interface TextFieldProps extends Omit<TextInputProps, 'allowFontScaling'> { readonly label: string }
 export function TextField({ label, style, editable, accessibilityState, ...props }: TextFieldProps) {
   const theme = useTheme();
   return <View style={{ gap: theme.spacing.sm }}>
-    <Text variant="label">{label}</Text>
-    <TextInput {...props} editable={editable} allowFontScaling accessibilityLabel={props.accessibilityLabel ?? label}
+    <Text variant="label" accessibilityElementsHidden importantForAccessibility="no">{label}</Text>
+    <TextInput keyboardAppearance={theme.appearance} {...props} editable={editable} allowFontScaling accessibilityLabel={props.accessibilityLabel ?? label}
       accessibilityState={{ ...accessibilityState, disabled: editable === false }}
       placeholderTextColor={theme.colors.muted} style={[{
         minHeight: 44, minWidth: 44, color: theme.colors.text, backgroundColor: theme.colors.surface,

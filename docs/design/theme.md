@@ -10,6 +10,9 @@ Import `@agentui/ui-primitives/styles.css` once in the desktop entry.
 Wrap a module in `ThemeScope` from `@agentui/ui-primitives/desktop`.
 The outer scope follows system appearance and reduced motion unless you provide explicit values.
 Nested scopes inherit those choices.
+Use `ThemeScope` as the outer desktop boundary.
+A plain `ThemeProvider` represents caller-supplied preferences, so scopes below it inherit those preferences instead of observing the OS.
+Nested scopes can request reduced motion but cannot re-enable motion that their parent reduced.
 
 ```tsx
 import { Button, Text, TextField, ThemeScope } from '@agentui/ui-primitives/desktop';
@@ -35,7 +38,7 @@ Desktop text uses `rem` units and responds to browser text scaling.
 Import `Button`, `Text`, `Surface`, `TextField`, and `ThemeProvider` from `@agentui/ui-primitives/native`.
 The native shell supplies appearance and reduced-motion preferences to `ThemeProvider`.
 This package does not subscribe to native OS preferences or mount an application.
-Native text leaves automatic font scaling enabled and uses unscaled token sizes.
+Native text always enables automatic font scaling and uses unscaled token sizes.
 Do not multiply these sizes by the OS font scale.
 The native runtime and VoiceOver behavior still require qualification on an Apple device or simulator.
 
@@ -43,8 +46,11 @@ The native runtime and VoiceOver behavior still require qualification on an Appl
 
 Put a nested `ThemeScope` around a desktop module, or a nested `ThemeProvider` around a native module.
 Pass `colors` with only the semantic roles you want to change.
+Unset, empty, and non-string override values keep the inherited color, and unknown roles are ignored.
 The override inherits the parent's remaining colors and preferences without changing sibling modules.
 Changing `appearance` selects the new default palette before applying the scope's color overrides.
+Desktop `ThemeScope` renders a block element with its own canvas background.
+Place it around a module's `Surface` rather than around an inline action in a row.
 
 ```tsx
 <ThemeScope colors={{ accent: '#6d28d9', onAccent: '#ffffff' }}>

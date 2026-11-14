@@ -43,3 +43,21 @@ test('module overrides inherit without mutating their parent or siblings', () =>
   const switched = createTheme({ appearance: 'light' }, parent);
   assert.equal(switched.colors.surface, '#ffffff');
 });
+
+test('JavaScript module overrides keep inherited colors when settings are unset', () => {
+  const parent = createTheme({ colors: { accent: '#6d28d9' } });
+  const child = createTheme({ colors: { accent: undefined, onAccent: '', muted: null, unknownRole: '#ffffff' } }, parent);
+  assert.equal(child.colors.accent, parent.colors.accent);
+  assert.equal(child.colors.onAccent, parent.colors.onAccent);
+  assert.equal(child.colors.muted, parent.colors.muted);
+  assert.equal(Object.hasOwn(child.colors, 'unknownRole'), false);
+  assert.throws(() => createTheme({ appearance: 'system' }), /Unknown appearance/);
+});
+
+test('a module cannot re-enable motion reduced by its parent', () => {
+  const parent = createTheme({ reducedMotion: true });
+  const child = createTheme({ reducedMotion: false }, parent);
+  assert.equal(child.reducedMotion, true);
+  assert.equal(child.motion.quick, 0);
+  assert.equal(child.motion.standard, 0);
+});
