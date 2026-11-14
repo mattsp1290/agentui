@@ -27,8 +27,8 @@ function mapped(projection, fact, count = 1) {
   return result.events;
 }
 
-function actor({ start = true, sourceKey = 'agentui.fixture' } = {}) {
-  const made = createAguiProjection({ threadId: 'thread', runId: 'run', parentRunId: 'parent', sourceKey, bounds });
+function actor({ start = true, sourceKey = 'agentui.fixture', runId = 'run' } = {}) {
+  const made = createAguiProjection({ threadId: 'thread', runId, parentRunId: 'parent', sourceKey, bounds });
   assert.equal(made.kind, 'ok', JSON.stringify(made));
   if (start) mapped(made.value, { kind: 'run-started' });
   return made.value;
@@ -75,11 +75,14 @@ export const installedFixtures = {
     assert.notEqual(result.messageId, text.messageId);
     assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
-    assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome.type, 'success');
+    assert.deepEqual(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome, { type: 'success' });
     const other = actor({ sourceKey: 'another.source' });
     const same = actor();
     assert.equal(mapped(same, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
     same.close();
+    const anotherRun = actor({ runId: 'another-run' });
+    assert.equal(mapped(anotherRun, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
+    anotherRun.close();
     const batch = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3);
     const [plain] = batch;
     assert.deepEqual(batch.map(event => event.type), ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']);
@@ -173,7 +176,7 @@ export const installedFixtures = {
       const tool = ref('same'), owner = ref('same');
       const [call] = mapped(projection, { kind: 'tool-started', tool, owner, name: '' });
       mapped(projection, { kind: 'tool-arguments-ended', tool, owner });
-      const fact = { kind: 'run-finished', outcome, usage, timestamp: 0, ...(outcome === 'interrupt' ? {
+      const fact = { kind: 'run-finished', outcome, usage, timestamp: 0, ...(outcome === 'success' ? { pendingTools: [tool] } : {}), ...(outcome === 'interrupt' ? {
         interrupts: [{ interrupt: ref('same'), tool, owner, reason: '', message: '', metadata: { zero: 0 }, responseSchema: { type: 'string' } }],
       } : {}) };
       const [finished] = mapped(projection, fact);
@@ -181,9 +184,11 @@ export const installedFixtures = {
       assert.equal(finished.threadId, 'thread');
       assert.equal(finished.runId, 'run');
       assert.equal(finished.outcome.type, outcome);
+      if (outcome === 'success') assert.deepEqual(finished.outcome, { type: 'success', pendingToolCallIds: [call.toolCallId] });
       assert.deepEqual(finished.usage, usage);
       assert.equal(finished.timestamp, 0);
       if (outcome === 'interrupt') {
+        assert.equal(finished.outcome.interrupts.length, 1);
         const [interrupt] = finished.outcome.interrupts;
         for (const id of [call.subagentRunId, interrupt.subagentRunId, interrupt.toolCallId]) {
           assert.equal(typeof id, 'string');
@@ -200,11 +205,11 @@ export const installedFixtures = {
       projection.close();
     }
     const failing = actor();
-    assert.deepEqual(mapped(failing, { kind: 'run-failed', failure: 'transport-failure' }), [{
-      type: 'RUN_ERROR', code: 'transport-failure', message: 'The native run transport failed.',
+    assert.deepEqual(mapped(failing, { kind: 'run-failed', failure: 'transport-failure', usage }), [{
+      type: 'RUN_ERROR', code: 'transport-failure', message: 'The native run transport failed.', usage,
     }]);
     failing.close();
-    for (const result of [false, null]) {
+    for (const result of [false, 0, '', null]) {
       const projection = actor();
       const [finished] = mapped(projection, { kind: 'run-finished', outcome: 'success', result });
       if (result === null) assert.equal('result' in finished, false);

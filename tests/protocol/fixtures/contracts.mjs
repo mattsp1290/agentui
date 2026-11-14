@@ -6,8 +6,8 @@ export const protocolContract = {
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
 export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
 export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
-const sdkOnlyCapabilities = { multiAgent: { supported: true, unexpected: true } };
-export const sdkCapabilities: AgentCapabilities = sdkOnlyCapabilities;
+const widenedCapabilities = { multiAgent: { supported: true, unexpected: true } };
+export const structurallyAssignable: AgentCapabilities = widenedCapabilities;
 export const operations = {
   inspect: { kind: 'undeclared' },
   submit: { kind: 'supported' },
@@ -26,10 +26,19 @@ export function describe(value: BackendAvailability): string {
 `,
     cases: [
       ['', null],
+      ["export const fresh: AgentCapabilities = { multiAgent: { supported: true, unexpected: true } };", /TS2353.*unexpected/u],
+      ["export const silent: BackendAvailability = { kind: 'unsupported' };", /Property 'reason' is missing/u],
+      ["export const silent: BackendAvailability = { kind: 'unavailable' };", /Property 'reason' is missing/u],
+      ["export function partial(value: BackendAvailability): string { switch (value.kind) { case 'supported': case 'unsupported': case 'unavailable': return ''; default: { const unhandled: never = value; return unhandled; } } }", /not assignable to type 'never'/u],
       ["export const canonicalMinimal: RunAgentInput = { threadId: 't', runId: 'r', messages: [] };", /missing.*tools, context/u],
       ['export const reason = (value: BackendAvailability) => value.reason;', /Property 'reason' does not exist/u],
       ["export const reason = (value: BackendAvailability) => value.kind === 'supported' ? value.reason : '';", /Property 'reason' does not exist/u],
       ["export const assumed: Extract<BackendAvailability, { kind: 'supported' }> = operations.inspect;", /'"undeclared"' is not assignable to type '"supported"'/u],
     ],
   },
+};
+
+export const alignmentContract = {
+  file: protocolContract.file,
+  test: 'backend availability and projection families align across package boundaries',
 };

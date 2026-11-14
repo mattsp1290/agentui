@@ -1,8 +1,9 @@
 # AG-UI consumer conformance
 
 AgentUI imports published TypeScript SDK 1.0.4 types from `@agentui/protocol`.
-These structural types differ from canonical wire shapes in both directions.
-The SDK accepts null `state` and `forwardedProps` that the wire forbids.
+The published `RunAgentInput` type differs from canonical wire shapes in both directions.
+The SDK types `state` and `forwardedProps` as `any`, admitting values such as null
+that the wire forbids.
 It requires `tools` and `context` arrays that the wire may omit. Schema validation
 establishes canonical validity. AgentUI consumes the installed
 Switchboard projection through `@agentui/host/agui`. The host core
@@ -11,7 +12,9 @@ entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
 The [versioned matrix](conformance.json) joins immutable upstream inventories to
 AgentUI's owned fixture coverage. Its version identifies canonical protocol 1.0,
 TypeScript SDK 1.0.4, Python SDK 1.0.0, the Switchboard artifact and the owned
-coverage contract. Source bytes, digests and both MIT notices are retained under
+coverage contract schema. `coverageContractVersion` versions that schema; coverage
+content is reviewed with its Git revision. Source bytes, digests and both MIT
+notices are retained under
 [the test inputs](../../tests/protocol/fixtures/upstream/).
 
 ## Read the evidence
@@ -41,15 +44,23 @@ state, activity, public extensions, message content and terminal observations.
 Opaque reasoning-role messages and scoped owner references provide partial
 representation. Reasoning and subagent lifecycle mapping remain planned.
 Request and capability rows distinguish published SDK types from canonical schema
-controls. These controls validate representative raw shapes without implementing
-host admission. Canonical discriminator lists describe the wire inventory,
+controls. The `multiAgent` type rejects unknown fields on fresh literals. Widened values
+can retain extra keys through TypeScript structural assignment, a language property
+rather than SDK openness. These controls validate representative raw shapes
+without implementing host admission. Canonical discriminator lists describe the wire inventory,
 not emitted-event evidence. The pinned producer uses text and tool boundaries,
 not chunk shorthands. Full consumer handling remains `agentui-ckpw`.
 
 Unknown or unimplemented facts produce an explicit error and fault the mapper.
 They cannot become a successful empty batch. An explicit `not-observable` fact
 acknowledges absent observation, returns an empty batch and leaves the actor
-usable. Closing the actor creates no terminal outcome.
+usable. After a fault, the next accept reports `closed`, just as after an explicit
+close. Callers must retain the original failure result. Closing the actor creates
+no terminal outcome.
+
+Entity IDs can repeat across runs with the same source key and native reference.
+Owner references produce subagent attribution without lifecycle events. Consumers
+must retain run scope and handle partial streams in `agentui-7s6y`/`agentui-ckpw`.
 
 Validation covers individual events, not stream ordering. The pinned projection
 can map a failure after a finished terminal. A separate fixture records this
@@ -66,7 +77,8 @@ validates arbitrary JSON nor supplies a callable backend API.
 
 Switchboard's projection descriptor carries availability states without reasons.
 A bridge into `BackendAvailability` needs a reason from the backend declaration,
-owned by `agentui-k4zj`. No such bridge is implemented here.
+owned by `agentui-k4zj`. The bridge must validate that reasons are nonempty;
+`string` alone cannot enforce that. No such bridge is implemented here.
 
 Capability wire data, backend availability and native qualification
 remain independent. A representable event is not evidence of an available or
@@ -99,6 +111,18 @@ verifier used 8.17.1. Both use the unchanged retained canonical schema.
 The earlier exact-source TS/Python comparison is retained with the
 [Switchboard qualification](../../vendor/README.md); new installed-output
 validation is a separate check.
+
+To recheck retained Switchboard files against a source checkout containing the
+pinned revision, compare these results with `tests/protocol/fixtures/upstream/provenance.json`:
+
+```sh
+git -C /path/to/switchboard show 58c7922d8fade3617cc86fedcf41677f897025ef:docs/protocol/ag-ui-pin.json | sha256sum
+git -C /path/to/switchboard show 58c7922d8fade3617cc86fedcf41677f897025ef:docs/protocol/ag-ui-matrix.tsv | sha256sum
+git -C /path/to/switchboard show 58c7922d8fade3617cc86fedcf41677f897025ef:tests/agui/fixtures/upstream.tsv | sha256sum
+```
+
+The index's 219 payload digests refer to upstream files that are not copied here.
+Checking those payload bytes requires the pinned upstream source and verifier.
 
 Provider operation contracts and runtime admission remain `agentui-k4zj` and
 `agentui-7s6y`. Complete native, transport/replay and UI conformance remains

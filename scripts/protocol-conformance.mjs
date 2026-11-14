@@ -51,6 +51,8 @@ function verifiedInputs() {
   assert.equal(lock.packages['node_modules/@ag-ui/core'].version, sdk.version);
   assert.equal(lock.packages['node_modules/@ag-ui/core'].integrity, sdk.integrity);
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
+  assert.equal(json(new URL('node_modules/@ag-ui/core/package.json', root)).version, sdk.version);
+  assert.equal(json(new URL('node_modules/ajv/package.json', root)).version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
     mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedDescriptor,

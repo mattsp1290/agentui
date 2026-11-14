@@ -22,7 +22,7 @@ const hook = registerHooks({ resolve(specifier, context, next) {
 const core = await import('@agentui/host');
 hook.deregister();
 assert.equal(core.hostRuntime, 'node');
-assert.ok(urls.length > 0);
+assert.ok(urls.includes(import.meta.resolve('@mattsp1290/switchboard')), 'hook observed Switchboard core');
 assert.ok(urls.every(url => !url.includes('/@ag-ui/') && !url.includes('/switchboard/dist/agui/') && !url.endsWith('/packages/host/dist/agui.js')));
 `;
   const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: root, encoding: 'utf8', timeout: 10000 });

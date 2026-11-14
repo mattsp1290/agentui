@@ -1,4 +1,4 @@
-import { protocolContract } from './contracts.mjs';
+import { alignmentContract, protocolContract } from './contracts.mjs';
 
 const contracts = [{ file: protocolContract.file, test: protocolContract.test }];
 export const installedFixtureFile = 'tests/protocol/conformance.test.mjs';
@@ -13,13 +13,15 @@ export const coverageContract = {
   sdkRuntimeEvidenceKind: 'historical-upstream-runtime-validators',
   publishedTypeEvidence: 'Acceptance flags do not evaluate published TypeScript types; see compiler contracts.',
   validatorControlTest: 'canonical Event validator enforces closed shapes',
-  requestControlTest: 'canonical request and capability shapes differ from SDK types',
+  requestControlTest: 'canonical request and capability shapes require runtime validation',
   nativeAvailability: { kind: 'undeclared' },
   nativeDeclarationScope: 'No backend availability declaration input exists. Contracts belong to agentui-k4zj, admission to agentui-7s6y and qualification to agentui-ckpw.',
   behaviorLimits: {
     unknownOrUnimplementedFact: 'Explicit error and faulted actor; no successful empty batch.',
     notObservable: 'Acknowledged absence for an allowed family; empty batch and usable actor.',
     terminalOrdering: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).',
+    repeatedEntityIds: 'Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.',
+    ownerAttribution: 'Owner references map to subagentRunId without emitted subagent lifecycle events; partial-stream reconciliation belongs to agentui-ckpw.',
     nullTerminalResult: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.',
     qualification: 'Fixture registration and retained evidence inventory are not current execution results or native qualification.',
     downstream: 'Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw.',
@@ -90,8 +92,8 @@ export const coverage = {
     fixtures: [], contracts: canonicalContracts, pending: ['AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y'],
   },
   capabilities: {
-    mapping: 'wire-only', scope: 'Published SDK AgentCapabilities type, canonical schema controls, four-state availability contract and projection description.',
-    fixtures: ['availability-description'], contracts: canonicalContracts, pending: ['AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y'],
+    mapping: 'wire-only', scope: 'Closed SDK capability literals and widened TypeScript structural values require canonical validation; four-state availability alignment and projection description.',
+    fixtures: ['availability-description'], contracts: [...canonicalContracts, alignmentContract], pending: ['AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y'],
   },
 };
 
