@@ -1,0 +1,49 @@
+{
+  "sourceRevision": "0ec18a925f8f8628a4e72a253608705c0542598d",
+  "sourceTreeCleanAtVerification": true,
+  "simulator": {
+    "name": "AgentUI packaging qualification",
+    "udid": "8C8C1971-6462-4016-BE9B-DBBBD9DCB0C6",
+    "device": "iPhone 17 Pro",
+    "runtime": "iOS 26.3.1 (23D8133)"
+  },
+  "buildConfiguration": "Release",
+  "signing": "CODE_SIGNING_ALLOWED=NO",
+  "bundleIdentifier": "homes.birb.agentui",
+  "bundleSha256": "b6aa9aba87e4bc48c244e594588d744931fe9dff264d31aa113fbcb09de72ac7",
+  "checks": {
+    "freshPreparationAtDifferentPath": "passed deployment install and unchanged lockfile",
+    "repository": "33 tests passed; build, check and lint passed",
+    "offlineRelaunch": "passed; no listener on port 8081; installed bundle matches build; running process recorded",
+    "visualInspection": "Codex inspected relaunch.png and observed AgentUI, Not connected, This developer build and readable text without clipping"
+  },
+  "inputSha256": {
+    ".node-version": "584f19ccde29925286e32f566a2aa06c89efb4e2eb2bb2fc9ea5d56e2d190ac4",
+    "agentui-ios": "1839028b30bf9fa3e116c1b5f0af678e9857c7656a562635867c38a2471ec04e",
+    "apps/ios/native/app.json": "18d2eb790132ba39d3e69b8eb4195058823578e172f025f48edcfb1f72f7d77c",
+    "apps/ios/native/babel.config.cjs": "3f000bff4b555fe23bd46dea4817b0d812e8c07ff80cdae3c6a5e8eb7ead04d7",
+    "apps/ios/native/index.js": "183a8b7493b2d3c3b0a356ee70f7d30c695020d51fd449508f331ddfae7600fd",
+    "apps/ios/native/ios/.xcode.env": "d443202aa7349816e4d827d25a8c749e4ce610784f26a5c08002531f24ca5dbb",
+    "apps/ios/native/ios/AgentUI.xcodeproj/project.pbxproj": "9eaba1ef6d8c3db725c902f29b3d5540a4e4d80d74295e9288ef126f4cf6d295",
+    "apps/ios/native/ios/AgentUI.xcodeproj/xcshareddata/xcschemes/AgentUI.xcscheme": "b8e7c8580f4ed3167782e2d90505fe091e5780c477cfe6616c5be04c6c35ace1",
+    "apps/ios/native/ios/AgentUI/AppDelegate.swift": "caca7e713a531856cac1e50ccab82d551e0fad192a29a97ff5528e1b4a6bdf64",
+    "apps/ios/native/ios/AgentUI/Images.xcassets/AppIcon.appiconset/Contents.json": "8a18bd4a58344d5fd5ac8f51f2e1a4e3409b0c3e503ea4d0940399900aa9ffd8",
+    "apps/ios/native/ios/AgentUI/Images.xcassets/Contents.json": "991ae939fbd598450a066b66404e06c5ae9b7d37e9aa0026de9e318443ba46fb",
+    "apps/ios/native/ios/AgentUI/Info.plist": "0c17a9352daaf284306d0ed01f785b1cd5cb619455e919ffa7bc9a60b45e7713",
+    "apps/ios/native/ios/AgentUI/LaunchScreen.storyboard": "96779cc539894628fc9fb5d8a03ec78b619458aff33eb75faeee772a664d8d01",
+    "apps/ios/native/ios/AgentUI/PrivacyInfo.xcprivacy": "b9289ecfec677540a293fba948db7268c02b1d44943fa66b1e7a85ba0c31a252",
+    "apps/ios/native/ios/Podfile": "52ddd0003281ef50299931ddc024085cfdde3f25237a54c09ee3c0f37a341588",
+    "apps/ios/native/ios/Podfile.lock": "8c85ee2c48d928c01afaf85d13523cb1622e55bcd5dbbeac95cbff51c777bb0b",
+    "apps/ios/native/metro.config.cjs": "229e3f8c0309e20dc13a4a7d0a59af0c3da85652b4b104ef78e8570bda919a2e",
+    "apps/ios/native/normalize-hermes.cjs": "7e405a8f1f309cc962ba1b43a36b3e77631dc9d3597862255a91ca5521624a53",
+    "apps/ios/native/package-lock.json": "e7d291b3f3481ffebb24ce0f9654ab7224af5ae9bb71b536a56cb3e4c9d44ba3",
+    "apps/ios/native/package.json": "f53790496ab818b1721fbd9ad78558a3fd240862e23da1800d9a0bcc3c99a9ae",
+    "apps/ios/native/prepare.sh": "36c67e572d3cbb5afa43e65ab61d9b599fffd6fd25619b647e7fe74927961ffa",
+    "apps/ios/native/run.sh": "543d875f96929fbf3542c31f22d2c8b036a5854dbbd53b75fa13c4399d958978",
+    "apps/ios/native/verify.sh": "d07efabdd88fee4b180008c691730c43052b5b21a8f6c36c0fec41ad6a35700c",
+    "apps/ios/package.json": "ceb4fa7a4189adf8fcb1a764361a8cc561d69f4c45ff04b2d6ec0d20fab40018",
+    "apps/ios/src/shell/App.tsx": "814f28fc245ffc3d370d2136541e78712e86afa5cb43c5c9dc291e866e3769c5",
+    "package.json": "cb7a53b9af8df70d1d623c4a50f43cfde49dbd76668612be6425458dab447a28",
+    "scripts/check-toolchain.mjs": "bcb9ac33419a1b78dc8277620aad38d2214f7b19f8c301948fec7ac124b5b6b8"
+  }
+}
