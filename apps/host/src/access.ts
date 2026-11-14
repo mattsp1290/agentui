@@ -10,8 +10,7 @@ export class Access {
   readonly hostId: string;
   private readonly db: DatabaseSync;
   private readonly invitations = new Map<string, { readonly expires: number; readonly credentialClass: CredentialClass }>();
-  private attempts = 0;
-  private attemptWindow = 0;
+  private readonly attempts = new Map<string, { readonly start: number; failures: number }>();
   constructor(path: string) {
     this.db = new DatabaseSync(path);
     try {
@@ -40,11 +39,18 @@ export class Access {
     this.invitations.set(digest(code), { expires: now + 300_000, credentialClass });
     return code;
   }
-  pair(code: string, credentialClass: CredentialClass, now = Date.now()): { readonly principal: Principal; readonly secret: string } {
-    if (now - this.attemptWindow >= 60_000) { this.attemptWindow = now; this.attempts = 0; }
-    if (++this.attempts > 20) throw new Error('Pairing attempt limit');
+  pair(code: string, credentialClass: CredentialClass, now = Date.now(), source = 'local'): { readonly principal: Principal; readonly secret: string } {
     const key = digest(code), invitation = this.invitations.get(key);
-    if (!invitation || invitation.expires <= now || invitation.credentialClass !== credentialClass) throw new Error('Invalid or expired pairing invitation');
+    if (!invitation || invitation.expires <= now || invitation.credentialClass !== credentialClass) {
+      for (const [key, window] of this.attempts) if (now - window.start >= 60_000) this.attempts.delete(key);
+      let window = this.attempts.get(source);
+      if (!window) {
+        if (this.attempts.size >= 64) throw new Error('Pairing attempt limit');
+        window = { start: now, failures: 0 }; this.attempts.set(source, window);
+      }
+      if (++window.failures > 20) throw new Error('Pairing attempt limit');
+      throw new Error('Invalid or expired pairing invitation');
+    }
     const secret = randomBytes(32).toString('base64url');
     const principal = { id: randomUUID(), hostId: this.hostId, credentialClass };
     this.db.prepare("INSERT INTO service_devices(id,digest,host,credential_class,expires,policy,revoked) VALUES(?,?,?,?,?,'owner',0)")
@@ -61,10 +67,10 @@ export class Access {
   authorized(principal: Principal, credentialClass: CredentialClass, now = Date.now()): boolean {
     return principal.hostId === this.hostId && principal.credentialClass === credentialClass && Boolean(this.db.prepare("SELECT 1 FROM service_devices WHERE id=? AND host=? AND credential_class=? AND expires>? AND revoked=0 AND policy='owner'").get(principal.id, this.hostId, credentialClass, now));
   }
-  devices(after = ''): readonly { readonly id: string; readonly revoked: boolean }[] {
-    return this.db.prepare('SELECT id,revoked FROM service_devices WHERE id>? ORDER BY id LIMIT 100').all(after).map(row => {
-      if (typeof row.id !== 'string') throw new Error('Invalid device record');
-      return { id: row.id, revoked: row.revoked === 1 };
+  devices(after = ''): readonly { readonly id: string; readonly revoked: boolean; readonly expires: number; readonly active: boolean }[] {
+    return this.db.prepare('SELECT id,revoked,expires FROM service_devices WHERE id>? ORDER BY id LIMIT 100').all(after).map(row => {
+      if (typeof row.id !== 'string' || typeof row.expires !== 'number') throw new Error('Invalid device record');
+      return { id: row.id, revoked: row.revoked === 1, expires: row.expires, active: row.revoked !== 1 && row.expires > Date.now() };
     });
   }
   revoke(id: string): void {

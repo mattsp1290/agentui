@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { isAbsolute, join, relative, resolve } from 'node:path';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
+import { canonicalJson } from '@agentui/contracts';
 
 interface Asset {
   readonly path: string;
@@ -87,7 +88,7 @@ export function parseArtifactManifest(value: unknown): ArtifactManifest {
     assets,
   } satisfies Omit<ArtifactManifest, 'artifactId'>;
   const artifactId = sha256(input.artifactId);
-  if (digest(JSON.stringify(payload)) !== artifactId) throw new Error('Artifact manifest identity mismatch');
+  if (digest(canonicalJson(payload)) !== artifactId) throw new Error('Artifact manifest identity mismatch');
   return { ...payload, artifactId };
 }
 
@@ -117,6 +118,21 @@ export function readArtifact(directory: string, expectedPlatform: ArtifactManife
     if (digest(readFileSync(resolve(root, entry.path))) !== entry.sha256) throw new Error(`Installed artifact digest mismatch: ${entry.path}`);
   }
   return manifest;
+}
+
+export function readArtifactBytes(directory: string, platform: ArtifactManifest['platform']) {
+  const manifest = readArtifact(directory, platform);
+  const files = new Map<string, Buffer>();
+  let total = 0;
+  for (const entry of manifest.assets) {
+    const bytes = readFileSync(resolve(directory, entry.path));
+    total += bytes.length;
+    if (total > 32_000_000 || digest(bytes) !== entry.sha256) throw new Error('Browser artifact changed or exceeds memory budget');
+    files.set(entry.path, bytes);
+  }
+  files.set('artifact.json', Buffer.from(`${JSON.stringify(manifest, null, 2)}\n`));
+  const frozen: ReadonlyMap<string, Buffer> = files;
+  return { manifest, files: frozen };
 }
 
 export function readInstalledArtifact(directory: string, options: { readonly desiredGitRevision?: string } = {}): { readonly manifest: ArtifactManifest; readonly compatibility: HostCompatibility } {

@@ -18,7 +18,7 @@ function fixture(t) {
   };
   const git = (...args) => execFileSync('git', ['-C', root, ...args], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim();
   git('init', '--initial-branch=main');
-  put('.gitignore', 'dist/\nweb-dist/\n.audit/\nnode_modules/\n');
+  put('.gitignore', 'dist/\nweb-dist/\nweb-dist-browser/\n.audit/\nnode_modules/\n');
   put('package.json', '{"name":"artifact-fixture"}');
   put('package-lock.json', '{"lockfileVersion":3}');
   put('apps/host/src/main.ts', 'export const value = 1;\n');
@@ -26,11 +26,11 @@ function fixture(t) {
   git('-c', 'user.name=Artifact test', '-c', 'user.email=artifact@example.invalid', 'commit', '-m', 'Initial product source');
   put('apps/host/dist/index.js', 'export const value = 1;\n');
   put('apps/host/dist/nested/code.js.map', '{"version":3}\n');
-  put('apps/desktop/web-dist/index.html', '<!doctype html><title>Artifact</title>');
-  put('apps/desktop/web-dist/assets/main.js', 'document.title = "Artifact";');
+  put('apps/desktop/web-dist-browser/index.html', '<!doctype html><title>Artifact</title>');
+  put('apps/desktop/web-dist-browser/assets/main.js', 'document.title = "Artifact";');
   const build = (platform = 'host') => {
     execFileSync(process.execPath, [generator, platform], { cwd: root, stdio: 'pipe' });
-    return JSON.parse(readFileSync(join(root, platform === 'host' ? 'apps/host/dist/artifact.json' : 'apps/desktop/web-dist/artifact.json'), 'utf8'));
+    return JSON.parse(readFileSync(join(root, platform === 'host' ? 'apps/host/dist/artifact.json' : 'apps/desktop/web-dist-browser/artifact.json'), 'utf8'));
   };
   const directory = join(root, 'apps/host/dist');
   return { root, put, git, build, directory };
@@ -140,9 +140,9 @@ test('browser development build records its own asset identity and cannot pass a
   assert.equal(manifest.platform, 'browser-development');
   assert.equal(parseArtifactManifest(manifest).artifactId, manifest.artifactId);
   assert.deepEqual(manifest.assets.map(asset => asset.path), ['assets/main.js', 'index.html']);
-  const directory = join(f.root, 'apps/desktop/web-dist');
+  const directory = join(f.root, 'apps/desktop/web-dist-browser');
   assert.deepEqual(readArtifact(directory, 'browser-development'), manifest);
   assert.throws(() => readInstalledArtifact(directory), /requires a host artifact/);
-  f.put('apps/desktop/web-dist/assets/main.js', 'tampered browser code');
+  f.put('apps/desktop/web-dist-browser/assets/main.js', 'tampered browser code');
   assert.throws(() => readArtifact(directory, 'browser-development'), /digest mismatch/);
 });

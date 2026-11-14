@@ -1,19 +1,19 @@
-import { chmodSync, existsSync, readFileSync, realpathSync, unlinkSync } from 'node:fs';
+import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createServer } from 'node:http';
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { createServer as createControlServer } from 'node:net';
-import { dirname, extname, join, relative, resolve } from 'node:path';
+import { dirname, extname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES } from '@agentui/contracts/service';
-import type { ServiceRequest } from '@agentui/contracts/service';
+import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { ConversationScope } from '@agentui/contracts';
 import { Access } from './access.js';
 import type { Principal } from './access.js';
 import { ownDirectory } from './ownership.js';
-import { ServiceFeed } from './feeds.js';
+import { ObservationError, ServiceFeed } from './feeds.js';
 import { json, readJson } from './framing.js';
-import { readArtifact, readInstalledArtifact } from './artifact.js';
+import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -27,45 +27,52 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let host: ReturnType<typeof openRecordedHost> | undefined;
   const feeds = new Map<string, ServiceFeed>();
   let origin = '';
+  let closing = false;
   try {
-    const assets = realpathSync(options.assetsDirectory);
-    readArtifact(assets, 'browser-development');
+    const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     access = new Access(join(owner.directory, 'host.sqlite'));
     const activeAccess = access;
+    const cookieName = `agentui_device_${access.hostId}`;
     host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
       hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     const activeHost = host;
     const authorizeScope = (principal: Principal, scope: ConversationScope) => {
-      if (!activeAccess.authorized(principal, 'browser-development') || scope.hostId !== principal.hostId) throw new Unauthorized();
+      if (!activeAccess.authorized(principal, 'browser-development')) throw new Unauthorized();
+      if (scope.hostId !== principal.hostId) throw new HostFailure('forbidden', 'Conversation belongs to another host');
     };
     const service = async (principal: Principal, request: ServiceRequest): Promise<unknown> => {
+      if (closing) throw new HostFailure('unavailable', 'Host is shutting down');
       if (!activeAccess.authorized(principal, 'browser-development')) throw new Unauthorized();
       if ('scope' in request) authorizeScope(principal, request.scope);
       switch (request.op) {
         case 'pair': throw new Error('Pairing is handled before authentication');
-        case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: artifact.compatibility };
-        case 'catalog': return activeHost.listConversations(principal.hostId, request.after, request.limit);
-        case 'create': activeHost.createConversation(request.scope, recordedInstallation); return request.scope;
+        case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: artifact.compatibility } satisfies ServiceValueMap['metadata'];
+        case 'catalog': return activeHost.listConversations(principal.hostId, request.after, request.limit) satisfies ServiceValueMap['catalog'];
+        case 'create': activeHost.createConversation(request.scope, recordedInstallation); return request.scope satisfies ServiceValueMap['create'];
         case 'submit': {
           authorizeScope(principal, request.command.scope);
-          return activeHost.conversation(request.command.scope).submit(request.command);
+          return activeHost.conversation(request.command.scope).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
         }
-        case 'receipt': return activeHost.conversation(request.scope).receipt(request.id);
-        case 'reconcile': return activeHost.reconcile(request.scope, request.id);
+        case 'receipt': return activeHost.conversation(request.scope).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;
+        case 'reconcile': return activeHost.reconcile(request.scope, request.id) satisfies Promise<ServiceValueMap['reconcile']>;
         case 'watch': {
-          if (feeds.size >= 100 || [...feeds.values()].filter(feed => feed.principalId === principal.id).length >= 16) throw new Error('Feed limit');
+          if (feeds.size >= 100 || [...feeds.values()].filter(feed => feed.principalId === principal.id).length >= 16) throw new HostFailure('unavailable', 'Observation limit reached. Close unused views and reconnect.');
           const feed = new ServiceFeed(principal.id, request.scope);
           feeds.set(feed.id, feed);
           try { feed.attach(activeHost.conversation(request.scope).watch({ after: request.after, projectionVersion: request.projectionVersion }, item => feed.receive(item))); }
           catch (error) { feeds.delete(feed.id); throw error; }
-          return { feedId: feed.id };
+          return { feedId: feed.id } satisfies ServiceValueMap['watch'];
         }
         case 'pull': case 'close': {
           const feed = feeds.get(request.feedId);
-          if (!feed || feed.principalId !== principal.id) throw new Error('Unknown observation');
+          if (!feed || feed.principalId !== principal.id) throw new HostFailure('invalid', 'Observation no longer exists. Reconnect to the host.');
           authorizeScope(principal, feed.scope);
-          if (request.op === 'pull') return feed.pull(request.ack);
+          if (request.op === 'pull') {
+            const result = await feed.pull(request.ack);
+            if (result.kind === 'ended') { feed.close(); feeds.delete(feed.id); }
+            return result satisfies ServiceValueMap['pull'];
+          }
           feed.close(); feeds.delete(feed.id); return null;
         }
       }
@@ -83,38 +90,39 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       if (request.url !== '/api/v1') {
         if (request.method !== 'GET' && request.method !== 'HEAD') throw new Error('Unsupported method');
         const pathname = decodeURIComponent(new URL(request.url ?? '/', origin).pathname);
-        const file = resolve(assets, `.${pathname === '/' ? '/browser.html' : pathname}`);
-        const resolved = realpathSync(file);
-        const within = relative(assets, resolved);
-        if (within.startsWith('..') || within === '' || within.startsWith('/')) throw new Error('Asset outside installed app');
+        const name = pathname === '/' ? 'browser.html' : pathname.slice(1);
+        const bytes = browser.files.get(name);
+        if (!bytes) { response.writeHead(404, { 'cache-control': 'no-store' }); response.end(); return; }
         const types: Record<string, string> = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml' };
-        response.writeHead(200, { 'content-type': types[extname(resolved)] ?? 'application/octet-stream', 'cache-control': 'no-store',
+        response.writeHead(200, { 'content-type': types[extname(name)] ?? 'application/octet-stream', 'cache-control': 'no-store',
           'x-content-type-options': 'nosniff', 'referrer-policy': 'no-referrer', 'x-frame-options': 'DENY',
           'content-security-policy': "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; connect-src 'self'; frame-ancestors 'none'; object-src 'none'; base-uri 'none'; form-action 'none'" });
-        response.end(request.method === 'HEAD' ? undefined : readFileSync(resolved));
+        response.end(request.method === 'HEAD' ? undefined : bytes);
         return;
       }
       if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
+      if (closing) { json(response, 503, { ok: false, error: { kind: 'unavailable', message: 'Host is shutting down' } }); return; }
       const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
+      if (closing) { json(response, 503, { ok: false, error: { kind: 'unavailable', message: 'Host is shutting down' } }); return; }
       if (message.op === 'pair') {
         try {
-          const paired = activeAccess.pair(message.code, 'browser-development');
-          response.setHeader('set-cookie', `agentui_device=${paired.secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`);
+          const paired = activeAccess.pair(message.code, 'browser-development', Date.now(), request.socket.remoteAddress);
+          response.setHeader('set-cookie', `${cookieName}=${paired.secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`);
           json(response, 200, { ok: true, value: null });
         } catch { json(response, 401, { ok: false, error: { kind: 'unauthorized', message: 'Pairing invitation is invalid, expired or rate limited' } }); }
         return;
       }
-      const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith('agentui_device=')) ?? [];
-      const principal = cookies.length === 1 ? activeAccess.authenticate(cookies[0]!.slice('agentui_device='.length), 'browser-development') : null;
+      const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith(`${cookieName}=`)) ?? [];
+      const principal = cookies.length === 1 ? activeAccess.authenticate(cookies[0]!.slice(cookieName.length + 1), 'browser-development') : null;
       if (!principal) { json(response, 401, { ok: false, error: { kind: 'unauthorized', message: 'Pair this device with the host' } }); return; }
       try {
         const value = await service(principal, message);
         if (!activeAccess.authorized(principal, 'browser-development')) throw new Unauthorized();
         json(response, 200, { ok: true, value });
       } catch (error) {
-        json(response, error instanceof Unauthorized ? 401 : 400, { ok: false, error: {
-          kind: error instanceof Unauthorized ? 'unauthorized' : 'invalid',
-          message: error instanceof Unauthorized ? 'Device access was revoked or scope is unauthorized' : 'Host operation refused' } });
+        const kind = error instanceof Unauthorized ? 'unauthorized' : error instanceof HostFailure ? error.kind : 'invalid';
+        json(response, kind === 'unauthorized' ? 401 : kind === 'forbidden' ? 403 : kind === 'unavailable' ? 503 : 400, { ok: false, error: {
+          kind, message: error instanceof Unauthorized ? 'Device access was revoked' : error instanceof HostFailure || error instanceof ObservationError ? error.message : 'Host operation refused' } });
       }
     };
     await new Promise<void>((resolve, reject) => { http.once('error', reject); http.listen(options.port ?? 7140, '127.0.0.1', () => { http.off('error', reject); resolve(); }); });
@@ -157,21 +165,29 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     try { await new Promise<void>((resolve, reject) => { control.once('error', reject); control.listen(controlPath, () => { control.off('error', reject); chmodSync(controlPath, 0o600); resolve(); }); }); }
     catch (error) { http.closeAllConnections(); http.close(); throw error; }
     const sweep = setInterval(() => {
-      for (const [id, feed] of feeds) if (Date.now() - feed.touched > 60_000) { feed.close(); feeds.delete(id); }
-    }, 10_000);
+      for (const [id, feed] of feeds) if (Date.now() - feed.touched > 25_000) { feed.close(); feeds.delete(id); }
+    }, 5_000);
     let closed = false;
     return { origin, hostId: activeAccess.hostId,
       async close() {
         if (closed) return;
         closed = true;
+        closing = true;
         clearInterval(sweep);
         for (const feed of feeds.values()) feed.close();
         feeds.clear();
-        await Promise.all([new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
-          new Promise<void>(done => control.close(() => done()))]);
-        activeHost.close(); await activeHost.drained; activeAccess.close(); owner.close();
+        activeHost.close();
+        const deadline = setTimeout(() => http.closeAllConnections(), 2000);
+        try {
+          await Promise.all([new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
+            new Promise<void>(done => control.close(() => done())), activeHost.drained]);
+        } finally { clearTimeout(deadline); }
+        activeAccess.close(); owner.close();
       },
     };
   } catch (error) { host?.close(); access?.close(); owner.close(); throw error; }
 }
 class Unauthorized extends Error {}
+class HostFailure extends Error {
+  constructor(readonly kind: 'forbidden' | 'invalid' | 'unavailable', message: string) { super(message); }
+}

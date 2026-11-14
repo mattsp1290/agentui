@@ -25,7 +25,7 @@
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && npm run build --workspaces",
+    "build": "npm run clean && npm run build --workspaces && npm run build:browser --workspace=@agentui/desktop",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests examples",
     "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/client/*.test.mjs examples/crew/tests/*.test.mjs tests/application/*.test.mjs tests/desktop/*.test.mjs",

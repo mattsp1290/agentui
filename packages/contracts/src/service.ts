@@ -7,6 +7,8 @@ import type { ClientCommand, ConversationDocument, ConversationPort, FeedEnd, Fe
 
 export const SERVICE_MAX_REQUEST_BYTES = 410_000;
 export const SERVICE_MAX_RESPONSE_BYTES = 4_100_000;
+export const SERVICE_MAX_SEND_TEXT = 64_000;
+export const SERVICE_MAX_COMMAND_BYTES = 64_000;
 export type ServiceRequest =
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'metadata' }
@@ -40,7 +42,7 @@ export interface ServiceValueMap {
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
-  | { readonly ok: false; readonly error: { readonly kind: 'unauthorized' | 'invalid' | 'unavailable'; readonly message: string } };
+  | { readonly ok: false; readonly error: { readonly kind: 'unauthorized' | 'forbidden' | 'invalid' | 'unavailable'; readonly message: string } };
 export interface ServiceConnection {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
@@ -83,7 +85,11 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
     case 'submit': {
       object(input, ['op', 'command']);
       const command = parseCommand(input.command);
-      if (command.body.kind === 'send' && command.body.text.length > 64_000) throw new Error('Command text exceeds limit');
+      if (command.body.kind === 'send' && command.body.text.length > SERVICE_MAX_SEND_TEXT) throw new Error('Message too large. Shorten it and try again.');
+      const encoded = canonicalJson(command);
+      let bytes = 0;
+      for (const character of encoded) bytes += character.length === 2 ? 4 : character.charCodeAt(0) < 128 ? 1 : character.charCodeAt(0) < 2048 ? 2 : 3;
+      if (bytes > SERVICE_MAX_COMMAND_BYTES) throw new Error('Message too large. Shorten it and try again.');
       return { op: 'submit', command };
     }
     case 'receipt': case 'reconcile':
@@ -211,7 +217,7 @@ export function parseServiceResponse<K extends keyof ServiceValueMap>(request: {
   }
   object(input, ['ok', 'error']);
   const error = object(input.error, ['kind', 'message']);
-  if (input.ok !== false || (error.kind !== 'unauthorized' && error.kind !== 'invalid' && error.kind !== 'unavailable') ||
+  if (input.ok !== false || (error.kind !== 'unauthorized' && error.kind !== 'forbidden' && error.kind !== 'invalid' && error.kind !== 'unavailable') ||
     typeof error.message !== 'string' || !error.message) throw new Error('Invalid service error');
   return { ok: false, error: { kind: error.kind, message: error.message } };
 }

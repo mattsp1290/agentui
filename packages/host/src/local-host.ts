@@ -30,6 +30,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   store.onCommit = () => journal.wake();
   let closed = false;
   let active = 0;
+  const dispatching = new Set<string>();
+  const commandKey = (scope: ConversationScope, id: string) => JSON.stringify([scope.hostId, scope.conversationId, id]);
   let resolveDrained!: () => void;
   let rejectDrained!: (error: unknown) => void;
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
@@ -81,15 +83,19 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
+          const key = commandKey(scope, command.clientCommandId);
           const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
             signal: new AbortController().signal,
             recordIntent: () => store.verifyIntent(stored),
             dispatchNative: () => options.driver.dispatch(stored.command, stored.target),
           });
           return inFlight(async () => {
-            const observed = await operation.run();
-            const receipt = store.settle(scope, command.clientCommandId, observed.observation);
-            return { kind: 'receipt' as const, receipt };
+            dispatching.add(key);
+            try {
+              const observed = await operation.run();
+              const receipt = store.settle(scope, command.clientCommandId, observed.observation);
+              return { kind: 'receipt' as const, receipt };
+            } finally { dispatching.delete(key); }
           });
         },
         async receipt(id) {
@@ -118,6 +124,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       });
       return inFlight(async () => {
         const result = await operation.reconcile(new AbortController().signal);
+        if (dispatching.has(commandKey(scope, id)) && (result.kind !== 'ok' || result.value.observation.kind === 'outcome-unknown')) {
+          const latest = store.command(scope, id);
+          if (!latest) throw new Error('Admitted command disappeared');
+          return latest.receipt;
+        }
         if (result.kind !== 'ok') {
           return store.settle(scope, id, { kind: 'outcome-unknown' });
         }

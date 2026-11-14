@@ -17,7 +17,7 @@ async function main(): Promise<void> {
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
     if (values.id || values.after) throw new Error('Device id is only valid for revoke');
     const host = await startBrowserHost({ directory, port,
-      assetsDirectory: fileURLToPath(new URL('../../desktop/web-dist/', import.meta.url)) });
+      assetsDirectory: fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)) });
     process.stdout.write(`${JSON.stringify({ mode: 'browser-development', origin: host.origin, hostId: host.hostId })}\n`);
     let closing = false;
     const close = () => {

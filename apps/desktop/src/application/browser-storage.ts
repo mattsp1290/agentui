@@ -43,9 +43,14 @@ async function claim(viewId: string, waitForPreviousDocument = false): Promise<(
 
 export class BrowserViewStorage {
   private closed = false;
-  private constructor(readonly viewId: string, private readonly db: IDBDatabase, private readonly unlock: () => void) {}
+  private constructor(readonly viewId: string, private readonly db: IDBDatabase, private readonly unlock: () => void, onFailure: (error: unknown) => void) {
+    db.onversionchange = () => {
+      this.close();
+      onFailure(new Error('Local storage changed in another app version. Reload this view before continuing.'));
+    };
+  }
 
-  static async open(): Promise<BrowserViewStorage> {
+  static async open(onFailure: (error: unknown) => void): Promise<BrowserViewStorage> {
     if (!globalThis.indexedDB || !navigator.locks) throw new Error('This browser cannot safely save an exclusive view. IndexedDB and Web Locks are required.');
     const inherited = sessionStorage.getItem('agentui.viewId');
     let viewId = inherited ?? crypto.randomUUID();
@@ -57,41 +62,43 @@ export class BrowserViewStorage {
     if (!release) throw new Error('Could not acquire an exclusive view. Reload the app.');
     try {
       sessionStorage.setItem('agentui.viewId', viewId);
-      return new BrowserViewStorage(viewId, await openDatabase(), release);
+      return new BrowserViewStorage(viewId, await openDatabase(), release, onFailure);
     } catch (error) { release(); throw error; }
   }
 
-  static async reopen(viewId: string): Promise<BrowserViewStorage> {
+  static async reopen(viewId: string, onFailure: (error: unknown) => void): Promise<BrowserViewStorage> {
     const release = await claim(viewId);
     if (!release) throw new Error('This saved view is already open in another tab.');
     let db: IDBDatabase | undefined;
     try {
       db = await openDatabase();
       sessionStorage.setItem('agentui.viewId', viewId);
-      return new BrowserViewStorage(viewId, db, release);
+      return new BrowserViewStorage(viewId, db, release, onFailure);
     } catch (error) { db?.close(); release(); throw error; }
   }
 
-  async savedViews(hostId: string, after: string | null = null): Promise<{ readonly ids: readonly string[]; readonly after: string | null }> {
+  async savedViews(hostId: string, after: string | null = null): Promise<{ readonly ids: readonly string[]; readonly unreadable: number; readonly after: string | null }> {
     if (this.closed) throw new Error('This view no longer owns local storage.');
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction('records');
       const range = IDBKeyRange.bound(after === null ? ['view'] : ['view', after, []], ['view', []], after !== null, true);
       const request = transaction.objectStore('records').openCursor(range);
       const ids: string[] = [];
+      let unreadable = 0;
+      let scanned = 0;
       let next: string | null = null;
       request.onsuccess = () => {
         const cursor = request.result;
         if (!cursor) return;
         const key = cursor.key;
         if (Array.isArray(key) && key.length === 3 && typeof key[1] === 'string' && key[2] === hostId && key[1] !== this.viewId) {
-          try { decodeView(cursor.value, hostId); } catch (error) { transaction.abort(); reject(error); return; }
-          ids.push(key[1]);
-          if (ids.length === 100) { next = key[1]; return; }
+          try { decodeView(cursor.value, hostId); ids.push(key[1]); } catch { unreadable++; }
+          scanned++;
+          if (scanned === 100) { next = key[1]; return; }
         }
         cursor.continue();
       };
-      transaction.oncomplete = () => resolve({ ids, after: next });
+      transaction.oncomplete = () => resolve({ ids, unreadable, after: next });
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not list saved views.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('Saved view listing was interrupted.'));
     });

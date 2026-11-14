@@ -2,10 +2,11 @@ import { createHash } from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
+import { canonicalJson } from '@agentui/contracts';
 
 const targets = {
   host: { directory: 'apps/host/dist', nativeRuntime: { engine: 'node', version: process.versions.node, format: 'esm' } },
-  'browser-development': { directory: 'apps/desktop/web-dist', nativeRuntime: { engine: 'browser', version: 'development', format: 'web-assets' } },
+  'browser-development': { directory: 'apps/desktop/web-dist-browser', nativeRuntime: { engine: 'browser', version: 'development', format: 'web-assets' } },
 };
 const platform = process.argv[2];
 if (process.argv.length !== 3 || !Object.hasOwn(targets, platform)) {
@@ -30,7 +31,7 @@ function assetsAt(path) {
 
 function isProductSource(path) {
   const parts = path.split('/');
-  if (parts.some(part => ['node_modules', 'dist', 'web-dist', 'build', '.audit', 'target', 'gen', '.git'].includes(part))) return false;
+  if (parts.some(part => ['node_modules', 'dist', 'web-dist', 'web-dist-browser', 'build', '.audit', 'target', 'gen', '.git'].includes(part))) return false;
   if (parts.some(part => /^\.env|\.pem$|\.key$|\.p12$/i.test(part))) return false;
   return ['apps', 'packages', 'scripts', 'tests', 'examples'].includes(parts[0]) ||
     (parts.length === 1 && /^(?:package(?:-lock)?\.json|tsconfig[^/]*\.json|[^/]*config\.[cm]?[jt]s|\.npmrc)$/.test(path));
@@ -64,6 +65,6 @@ const payload = {
   lockSha256: digest(readFileSync(join(root, 'package-lock.json'))),
   assets,
 };
-const manifest = { ...payload, artifactId: digest(JSON.stringify(payload)) };
+const manifest = { ...payload, artifactId: digest(canonicalJson(payload)) };
 writeFileSync(join(directory, 'artifact.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`${target.directory}/artifact.json ${manifest.artifactId}\n`);

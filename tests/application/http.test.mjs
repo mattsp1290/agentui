@@ -158,7 +158,7 @@ test('real host pairs independent devices and protects metadata, scope and expli
   for (const request of [{ op: 'create', scope: foreign },
     { op: 'watch', scope: foreign, after: null, projectionVersion: 1 },
     { op: 'submit', command: command(foreign) }, { op: 'receipt', scope: foreign, id: 'send-once' }]) {
-    denied(await f.call(request, alice.cookie), 401, 'unauthorized');
+    denied(await f.call(request, alice.cookie), 403, 'forbidden');
   }
   assert.deepEqual(await f.ok(catalog, alice.cookie), []);
   assert.deepEqual(await f.ok({ op: 'create', scope }, alice.cookie), scope);
@@ -235,7 +235,7 @@ test('revoking a device wakes its open HTTP pull and denies later operations whi
   }
   assert.equal((await f.ok({ op: 'metadata' }, bob.cookie)).principalId, bob.metadata.principalId);
   assert.equal((await f.ok({ op: 'submit', command: command(scope) }, bob.cookie)).receipt.state.kind, 'completed');
-  assert.deepEqual(await f.control('devices'), [
+  assert.deepEqual((await f.control('devices')).map(({ id, revoked }) => ({ id, revoked })), [
     { id: alice.metadata.principalId, revoked: true }, { id: bob.metadata.principalId, revoked: false },
   ].sort((a, b) => a.id.localeCompare(b.id)));
 });

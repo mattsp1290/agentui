@@ -9,8 +9,8 @@ function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid build manifest');
   return value as Record<string, unknown>;
 }
-function hash(value: unknown, length: number): string {
-  if (typeof value !== 'string' || value.length !== length || !/^[a-f0-9]+$/.test(value)) throw new Error('Invalid build identity');
+function hash(value: unknown, ...lengths: readonly number[]): string {
+  if (typeof value !== 'string' || !lengths.includes(value.length) || !/^[a-f0-9]+$/.test(value)) throw new Error('Invalid build identity');
   return value;
 }
 function decode(value: unknown): Identity {
@@ -32,7 +32,7 @@ function decode(value: unknown): Identity {
     paths.add(asset.path);
     hash(asset.sha256, 64);
   }
-  return { artifactId: hash(input.artifactId, 64), sourceRevision: hash(input.sourceRevision, 40), dirty: source.kind === 'dirty' };
+  return { artifactId: hash(input.artifactId, 64), sourceRevision: hash(input.sourceRevision, 40, 64), dirty: source.kind === 'dirty' };
 }
 
 export function ArtifactIdentity() {

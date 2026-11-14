@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, JsonLimitError, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
@@ -13,6 +13,7 @@ function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
 class OutputApplicationError extends Error {}
 class CapacityError extends Error {}
 const QUARANTINE_RESERVE_BYTES = 128;
+const DOCUMENT_JSON_BUDGET = { maxNodes: 99_936, maxDepth: 56 };
 function key(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
 
 export class SqliteStore<E, P> {
@@ -95,7 +96,12 @@ export class SqliteStore<E, P> {
   private encodeDocument(scope: ConversationScope, document: ConversationDocument<P>): string {
     const reserve = Object.values(document.receipts).filter(value =>
       value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RESERVE_BYTES;
-    const encoded = canonicalJson(document);
+    let encoded: string;
+    try { encoded = canonicalJson(document, DOCUMENT_JSON_BUDGET); }
+    catch (error) {
+      if (error instanceof JsonLimitError) throw new CapacityError('Document exceeds snapshot structural budget');
+      throw error;
+    }
     if (Buffer.byteLength(encoded) + this.snapshotOverheadBytes(scope) + reserve > this.limits.snapshotBytes) {
       throw new CapacityError('Document exceeds snapshot budget');
     }

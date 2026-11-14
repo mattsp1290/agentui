@@ -7,14 +7,14 @@ import '../application/application.css';
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const app = useApplication();
   const [code, setCode] = useState('');
-  const conversation = app.active ? <ConversationView key={`${app.active.scope.hostId}/${app.active.scope.conversationId}`} app={app} active={app.active} />
+  const conversation = app.active ? <ConversationView key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`} app={app} active={app.active} />
     : <section className="conversation-panel empty-workspace"><p className="eyebrow">YOUR LOCAL WORKSPACE</p><h1>A conversation that stays with you.</h1><p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p></section>;
   const controls = <div className="application-controls">
     <div className="application-status"><strong>Browser development · Recorded playback</strong>
       <span>{app.host.kind === 'ready' ? `Host ${app.host.metadata.hostId}` : app.host.kind === 'unpaired' ? 'Pairing required' : app.host.kind === 'loading' ? 'Opening saved view…' : 'Host unavailable'}</span>
-      {app.active && <ConversationStatus active={app.active} />}
     </div>
     {artifact}
+    {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
     {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
     {app.error && <p className="application-alert" role="alert">{app.error}</p>}
     {app.host.kind === 'ready' && app.host.compatibility.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
@@ -35,9 +35,11 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       {app.catalog.map(scope => <button key={scope.conversationId} disabled={!app.enabled}
         aria-current={scope.conversationId === app.active?.scope.conversationId ? 'page' : undefined}
         onClick={() => void app.open(scope)}>Open conversation {scope.conversationId}</button>)}
+      {app.catalogAfter !== null && <button disabled={!app.enabled} onClick={() => void app.moreConversations()}>More conversations</button>}
     </nav>}
-    {app.savedViews.length > 0 && <nav className="conversation-catalog" aria-label="Saved local views">
+    {(app.savedViews.length > 0 || app.viewsAfter !== null) && <nav className="conversation-catalog" aria-label="Saved local views">
       {app.savedViews.map(viewId => <button key={viewId} disabled={!app.enabled} onClick={() => void app.reopenView(viewId)}>Reopen saved view {viewId}</button>)}
+      {app.viewsAfter !== null && <button disabled={!app.enabled} onClick={() => void app.moreSavedViews()}>More saved views</button>}
     </nav>}
   </div>;
   return <DesktopShell protectedContent={controls} defaultView={conversation}

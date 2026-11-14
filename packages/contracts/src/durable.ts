@@ -201,20 +201,23 @@ export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequ
     default: throw new Error('Corrupt event');
   }
 }
-export function canonicalJson(value: unknown): string {
+export class JsonLimitError extends Error {}
+export function canonicalJson(value: unknown, budget: { readonly maxNodes: number; readonly maxDepth: number } = { maxNodes: 100_000, maxDepth: 64 }): string {
+  if (!Number.isSafeInteger(budget.maxNodes) || budget.maxNodes < 1 || budget.maxNodes > 100_000 ||
+    !Number.isSafeInteger(budget.maxDepth) || budget.maxDepth < 1 || budget.maxDepth > 64) throw new Error('Invalid JSON budget');
   const ancestors = new Set<object>();
   let nodes = 0;
   let characters = 0;
   const token = (text: string): string => {
     characters += text.length;
-    if (characters > 16_000_000) throw new Error('JSON exceeds size limit');
+    if (characters > 16_000_000) throw new JsonLimitError('JSON exceeds size limit');
     return text;
   };
   const encode = (value: unknown, depth: number): string => {
-    if (++nodes > 100_000 || depth > 64) throw new Error('JSON exceeds structural limit');
+    if (++nodes > budget.maxNodes || depth > budget.maxDepth) throw new JsonLimitError('JSON exceeds structural limit');
     if (value === null || typeof value === 'boolean') return token(JSON.stringify(value));
     if (typeof value === 'string') {
-      if (value.length > 16_000_000) throw new Error('JSON exceeds size limit');
+      if (value.length > 16_000_000) throw new JsonLimitError('JSON exceeds size limit');
       return token(JSON.stringify(value));
     }
     if (typeof value === 'number' && Number.isFinite(value)) return token(JSON.stringify(value));

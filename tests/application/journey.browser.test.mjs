@@ -321,8 +321,33 @@ test('browser catalog reads every page and opens a conversation beyond the first
   }, host.hostId);
   await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
   const catalog = page.getByRole('navigation', { name: 'Host conversations', exact: true });
+  await wait(async () => await catalog.getByRole('button').count() === 101, 'first bounded catalog page');
+  await catalog.getByRole('button', { name: 'More conversations', exact: true }).click();
   await wait(async () => await catalog.getByRole('button').count() === 105, 'complete paginated catalog');
   await catalog.getByRole('button', { name: 'Open conversation catalog-104', exact: true }).click();
   await connected(page);
   assert.equal(await page.locator('.scope-label').textContent(), 'catalog-104');
+});
+
+test('an unreadable foreign saved view leaves the current conversation and draft usable', { timeout: 30000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  const conversation = await page.locator('.scope-label').textContent();
+  await draft(page, 'My own draft survives another view’s bad record');
+  await page.evaluate(async hostId => {
+    const request = indexedDB.open('agentui-browser-views', 1);
+    const db = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
+    const transaction = db.transaction('records', 'readwrite');
+    transaction.objectStore('records').put({ version: 2, route: null, pendingCreation: null }, ['view', 'unreadable-other-view', hostId]);
+    await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
+    db.close();
+  }, host.hostId);
+  await page.reload();
+  await connected(page);
+  await page.getByRole('note').filter({ hasText: 'records were left untouched' }).waitFor();
+  assert.equal(await page.locator('.scope-label').textContent(), conversation);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'My own draft survives another view’s bad record');
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
+  assert.deepEqual(await host.entries(), []);
 });

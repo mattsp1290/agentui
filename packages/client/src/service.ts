@@ -6,9 +6,10 @@ import type { ServiceConnection, ServiceRequest, ServiceValueMap } from '@agentu
 
 export type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 export class ServiceError extends Error {
-  constructor(readonly kind: 'unauthorized' | 'invalid' | 'unavailable', message: string) { super(message); }
+  constructor(readonly kind: 'unauthorized' | 'forbidden' | 'invalid' | 'unavailable', message: string) { super(message); }
 }
 export class ServiceProtocolError extends Error {}
+class ServiceRequestRejected extends Error {}
 export interface BrowserConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
@@ -60,22 +61,28 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
       signal?.addEventListener('abort', abort, { once: true });
     });
     const perform = async (): Promise<ServiceValueMap[K]> => {
-      const parsed = parseServiceRequest(value);
-      const body = canonicalJson(parsed);
-      if (new TextEncoder().encode(body).byteLength > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
+      let body: string;
+      try {
+        body = canonicalJson(parseServiceRequest(value));
+        if (new TextEncoder().encode(body).byteLength > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
+      } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
       const response = await fetch('/api/v1', { method: 'POST', credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal });
+        headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal, keepalive: value.op === 'close' });
       if (response.status === 401) {
-        await response.body?.cancel();
-        options.onUnauthorized?.();
-        throw new ServiceError('unauthorized', 'Pair this browser with the host');
+        let reason = 'Pair this browser with the host';
+        try {
+          const result = parseServiceResponse<K>(value, await readResponse(response));
+          if (!result.ok && result.error.kind === 'unauthorized') reason = result.error.message;
+        } catch { await response.body?.cancel().catch(() => {}); }
+        if (value.op !== 'pair') options.onUnauthorized?.();
+        throw new ServiceError('unauthorized', reason);
       }
       const raw = await readResponse(response);
       let result;
       try { result = parseServiceResponse<K>(value, raw); }
       catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
       if (!result.ok) {
-        if (result.error.kind === 'unauthorized') options.onUnauthorized?.();
+        if (result.error.kind === 'unauthorized' && value.op !== 'pair') options.onUnauthorized?.();
         throw new ServiceError(result.error.kind, result.error.message);
       }
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
@@ -131,7 +138,7 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
           else cursor = result.item.events.at(-1)?.sequence ?? cursor;
         }
       } catch (error) {
-        finish({ kind: error instanceof ServiceProtocolError ? 'resync' : error instanceof ServiceError && error.kind === 'unauthorized' ? 'refused' : 'failed', cursor,
+        finish({ kind: error instanceof ServiceProtocolError ? 'resync' : 'failed', cursor,
           reason: error instanceof Error ? error.message : 'Service connection failed' });
       }
     };
@@ -147,7 +154,13 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
     conversation(value) {
       const scope = parseScope(value);
       return { scope,
-        submit: command => request({ op: 'submit', command }),
+        async submit(command) {
+          try { return await request({ op: 'submit', command }); }
+          catch (error) {
+            if (error instanceof ServiceRequestRejected) return { kind: 'rejected', reason: error.message };
+            throw error;
+          }
+        },
         receipt: id => request({ op: 'receipt', scope, id }),
         watch: (input, receive) => watch(scope, input, receive) };
     },

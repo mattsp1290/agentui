@@ -13,6 +13,7 @@ type HostState =
   | { readonly kind: 'loading' | 'unpaired' | 'unavailable' }
   | { readonly kind: 'ready'; readonly metadata: Metadata; readonly compatibility: CompatibilityResult };
 export interface OpenConversation {
+  readonly viewId: string;
   readonly scope: ConversationScope;
   readonly store: ConversationStore<Transcript>;
 }
@@ -24,6 +25,9 @@ export function useApplication() {
   const [catalog, setCatalog] = useState<readonly ConversationScope[]>([]);
   const [saved, setSaved] = useState<SavedView>(initialView);
   const [savedViews, setSavedViews] = useState<readonly string[]>([]);
+  const [catalogAfter, setCatalogAfter] = useState<string | null>(null);
+  const [viewsAfter, setViewsAfter] = useState<string | null>(null);
+  const [savedViewNotice, setSavedViewNotice] = useState('');
   const [active, setActive] = useState<OpenConversation | null>(null);
   const [error, setError] = useState('');
   const [storageFailure, setStorageFailure] = useState('');
@@ -46,8 +50,15 @@ export function useApplication() {
     return storage.current;
   }
   async function save(hostId: string, next: SavedView): Promise<void> {
-    try { await local().saveView(hostId, next); setSaved(next); }
-    catch (cause) { failStorage(cause); throw cause; }
+    const owner = local();
+    try { await owner.saveView(hostId, next); if (storage.current === owner) setSaved(next); }
+    catch (cause) { if (storage.current === owner) failStorage(cause); throw cause; }
+  }
+  async function openStorage(viewId: string | null): Promise<BrowserViewStorage> {
+    let owner: BrowserViewStorage | null = null;
+    const failed = (cause: unknown) => { if (storage.current === owner) failStorage(cause); };
+    owner = viewId === null ? await BrowserViewStorage.open(failed) : await BrowserViewStorage.reopen(viewId, failed);
+    return owner;
   }
   async function install(scope: ConversationScope): Promise<void> {
     if (current.current?.scope.hostId === scope.hostId && current.current.scope.conversationId === scope.conversationId) {
@@ -55,30 +66,37 @@ export function useApplication() {
       return;
     }
     current.current?.store.disconnect();
+    const owner = local();
+    const failed = (cause: unknown) => { if (storage.current === owner) failStorage(cause); };
     const store = createConversationStore({ scope, port: connection.conversation(scope), projection: transcriptProjection,
-      drafts: local().drafts(failStorage), createCommandId: () => crypto.randomUUID() });
-    try { await store.ready; } catch (cause) { failStorage(cause); throw cause; }
+      drafts: owner.drafts(failed), createCommandId: () => crypto.randomUUID() });
+    try { await store.ready; } catch (cause) { failed(cause); throw cause; }
     if (!alive.current) { store.disconnect(); return; }
-    current.current = { scope, store };
+    current.current = { scope, store, viewId: owner.viewId };
     setActive(current.current);
     await store.connect();
   }
-  async function readCatalog(hostId: string): Promise<void> {
-    const all: ConversationScope[] = [];
-    let after: string | null = null;
-    for (;;) {
-      const page = await connection.catalog(after, 100);
-      if (page.some(scope => scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
-      all.push(...page);
-      if (page.length < 100) break;
-      const next = page.at(-1)?.conversationId;
-      if (!next || next === after) throw new Error('Catalog did not advance.');
-      after = next;
-    }
-    setCatalog(all);
+  async function readCatalog(hostId: string, after: string | null = null): Promise<void> {
+    const page = await connection.catalog(after, 100);
+    if (page.some(scope => scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
+    const next = page.length === 100 ? page[99]?.conversationId ?? null : null;
+    if (next !== null && next === after) throw new Error('Catalog did not advance.');
+    setCatalog(previous => after === null ? page : [...previous, ...page]);
+    setCatalogAfter(next);
+  }
+  async function readSavedViews(hostId: string, after: string | null = null): Promise<void> {
+    try {
+      const page = await local().savedViews(hostId, after);
+      setSavedViews(previous => after === null ? page.ids : [...previous, ...page.ids]);
+      setViewsAfter(page.after);
+      setSavedViewNotice(page.unreadable ? `${page.unreadable} saved views on this page could not be opened. Their records were left untouched.` : '');
+    } catch { setSavedViewNotice('Saved views could not be listed. This view and its records remain available.'); }
   }
   async function refresh(): Promise<void> {
     const metadata = await connection.metadata();
+    if (current.current && current.current.scope.hostId !== metadata.hostId) {
+      current.current.store.disconnect(); current.current = null; setActive(null);
+    }
     const compatibility = checkCompatibility({ supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.0.0'],
       supportedNativeRuntimes: [{ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' }],
       expectedArtifactId: null }, metadata.compatibility);
@@ -87,16 +105,9 @@ export function useApplication() {
     let view: SavedView;
     try { view = await local().readView(metadata.hostId); } catch (cause) { failStorage(cause); throw cause; }
     setSaved(view);
-    const viewIds: string[] = [];
-    let after: string | null = null;
-    do {
-      const page = await local().savedViews(metadata.hostId, after);
-      viewIds.push(...page.ids);
-      after = page.after;
-    } while (after !== null);
-    setSavedViews(viewIds);
     await readCatalog(metadata.hostId);
     if (view.route) await install(view.route);
+    await readSavedViews(metadata.hostId);
   }
   async function run(operation: () => Promise<unknown>): Promise<void> {
     if (working.current) return;
@@ -112,7 +123,7 @@ export function useApplication() {
   useEffect(() => {
     alive.current = true;
     void run(async () => {
-      try { storage.current = await BrowserViewStorage.open(); }
+      try { storage.current = await openStorage(null); }
       catch (cause) { failStorage(cause); return; }
       if (!alive.current) { storage.current.close(); return; }
       try { await refresh(); }
@@ -140,13 +151,13 @@ export function useApplication() {
     await readCatalog(scope.hostId);
   }
   return {
-    host, catalog, saved, savedViews, active, error, storageFailure, busy,
+    host, catalog, catalogAfter, saved, savedViews, viewsAfter, savedViewNotice, active, error, storageFailure, busy,
     enabled: host.kind === 'ready' && host.compatibility.kind === 'compatible' && !storageFailure && !busy,
     pair: (code: string) => run(async () => { local(); await connection.pair(code); await refresh(); }),
     reconnect: () => run(refresh),
     reopenView: (viewId: string) => run(async () => {
       requireHost();
-      const next = await BrowserViewStorage.reopen(viewId);
+      const next = await openStorage(viewId);
       current.current?.store.disconnect();
       current.current = null;
       setActive(null);
@@ -154,6 +165,8 @@ export function useApplication() {
       storage.current = next;
       await refresh();
     }),
+    moreConversations: () => run(async () => { const metadata = requireHost(); if (catalogAfter !== null) await readCatalog(metadata.hostId, catalogAfter); }),
+    moreSavedViews: () => run(async () => { const metadata = requireHost(); if (viewsAfter !== null) await readSavedViews(metadata.hostId, viewsAfter); }),
     create: () => run(async () => {
       const metadata = requireHost();
       if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
@@ -180,7 +193,7 @@ export function useApplication() {
       await connection.reconcile(scope, id);
       await target.store.refreshReceipt(id);
     }),
-    draftFailure: failStorage,
+    draftFailure: (target: OpenConversation, cause: unknown) => { if (current.current?.store === target.store) failStorage(cause); },
   };
 }
 export type Application = ReturnType<typeof useApplication>;

@@ -4,6 +4,7 @@ import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversatio
 import type { ServicePull } from '@agentui/contracts/service';
 
 type Page = Extract<ServicePull, { kind: 'page' }>;
+export class ObservationError extends Error {}
 export class ServiceFeed {
   readonly id = randomUUID();
   private pending: { readonly value: Page; readonly applied: () => void } | null = null;
@@ -28,9 +29,9 @@ export class ServiceFeed {
     });
   }
   async pull(ack: number | null): Promise<ServicePull> {
-    if (this.polling) throw new Error('Concurrent feed pull');
+    if (this.polling) throw new ObservationError('Observation pull is already in progress');
     if (ack !== null && ack !== this.lastAck) {
-      if (ack !== this.pending?.value.page) throw new Error('Invalid feed acknowledgement');
+      if (ack !== this.pending?.value.page) throw new ObservationError('Invalid observation acknowledgement');
       const applied = this.pending.applied;
       this.lastAck = ack;
       this.pending = null;
@@ -41,7 +42,7 @@ export class ServiceFeed {
     try {
       if (!this.pending && !this.end) await new Promise<void>(resolve => {
         const finish = () => { clearTimeout(timer); this.wake = () => {}; resolve(); };
-        const timer = setTimeout(finish, 10_000);
+        const timer = setTimeout(finish, 2000);
         this.wake = finish;
       });
       if (this.end) return { kind: 'ended', end: this.end };
@@ -49,9 +50,10 @@ export class ServiceFeed {
     } finally { this.polling = false; this.touched = Date.now(); }
   }
   close(): void {
-    if (this.end) return;
-    this.feed?.close();
-    this.end = { kind: 'closed', reason: 'Observation closed', cursor: null };
+    if (!this.end) {
+      this.feed?.close();
+      this.end = { kind: 'closed', reason: 'Observation closed', cursor: null };
+    }
     this.pending?.applied();
     this.pending = null;
     this.wake();

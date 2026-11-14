@@ -7,7 +7,7 @@ import type { ClientView, ConnectionState, ConversationStore, LocalRecords, Outb
 
 type ReplayState<P> =
   | { readonly kind: 'empty'; readonly document: ConversationDocument<P>; readonly cursor: null }
-  | { readonly kind: 'valid'; readonly delivery: DeliveryState<P>; readonly projectionVersion: number }
+  | { readonly kind: 'valid'; readonly delivery: DeliveryState<P> }
   | { readonly kind: 'resync-required'; readonly document: ConversationDocument<P>; readonly cursor: number | null;
     readonly cause: { readonly kind: 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string } };
 
@@ -159,7 +159,6 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       try {
         await ready;
         if (current !== generation) return;
-        if (replay.kind === 'valid' && replay.projectionVersion !== projection.version) invalidate();
         const after = replay.kind === 'valid' ? replay.delivery.cursor : null;
         const opened = port.watch({ after, projectionVersion: projection.version }, async item => {
           if (current !== generation) return;
@@ -171,7 +170,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
             await acknowledgementBoundary();
             if (current !== generation) return;
             if (next === previous && connection.kind === 'connected') return;
-            replay = { kind: 'valid', delivery: { ...next, document: immutable(next.document) }, projectionVersion: projection.version };
+            replay = { kind: 'valid', delivery: { ...next, document: immutable(next.document) } };
             connection = { kind: 'connected' };
             publish();
           } catch (error) {
