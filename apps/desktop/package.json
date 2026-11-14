@@ -13,7 +13,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && vite build",
+    "build": "tsc -p tsconfig.json && vite build && node ../../scripts/artifact-manifest.mjs browser-development",
     "check": "tsc -p tsconfig.json --noEmit",
     "dev:web": "vite",
     "tauri:dev": "tauri dev",
@@ -24,7 +24,8 @@
     "@agentui/sdk": "0.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "@agentui/ui-primitives": "0.0.0"
+    "@agentui/ui-primitives": "0.0.0",
+    "@agentui/client": "0.0.0"
   },
   "devDependencies": {
     "@types/react": "19.3.0",
