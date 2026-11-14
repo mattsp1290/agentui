@@ -3,11 +3,42 @@ import test from 'node:test';
 import { appendFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { foldDocument } from '@agentui/contracts';
+import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { budgets } from '../../packages/host/dist/durable-model.js';
 import { fixture, scope, installed, command, empty, completed, snapshot, deferred, note, run, question, projection } from './fixture.mjs';
 
 const evidence = (target, nativeOperation = null, source = 'native-acknowledgement') => ({
   identity: target.identity, source, nativeOperation,
   observation: { namespace: 'recorded', schemaVersion: 1, data: null },
+});
+
+test('repeated output quarantine retains newly learned native identity', async t => {
+  const f = fixture(t), entered = deferred(), release = deferred();
+  const native = { namespace: 'recorded', id: 'confirmed-operation' };
+  const result = completed({ ...empty(), events: [{ nonsense: 'invalid output' }] });
+  let target;
+  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    dispatch: async (_command, captured) => {
+      target = captured; entered.resolve(); await release.promise;
+      return { kind: 'conclusive', evidence: evidence(target, native), result };
+    },
+    lookup: async () => ({ kind: 'conclusive', evidence: evidence(target, null, 'authoritative-native-lookup'), result }),
+  };
+  const host = f.open({ driver }); host.createConversation(scope, installed);
+  const submitting = host.conversation(scope).submit(command('id')); await entered.promise;
+  const quarantined = await host.reconcile(scope, 'id');
+  assert.deepEqual(quarantined.state, { kind: 'uncertain', reason: 'output-rejected' });
+  release.resolve();
+  assert.deepEqual((await submitting).receipt, quarantined);
+  const db = new DatabaseSync(f.path);
+  try { assert.deepEqual(JSON.parse(db.prepare('SELECT observation FROM commands').get().observation).evidence.nativeOperation, native); }
+  finally { db.close(); }
+  const store = new SqliteStore(f.path, projection, budgets());
+  try {
+    assert.throws(() => store.settle(scope, 'id', { kind: 'conclusive',
+      evidence: evidence(target, { ...native, id: 'competing-operation' }), result }), /Conflicting native operation/);
+  } finally { store.close(); }
+  assert.deepEqual(await host.conversation(scope).receipt('id'), quarantined);
 });
 
 test('invalid Switchboard bindings fail before any conversation or intent is persisted', t => {

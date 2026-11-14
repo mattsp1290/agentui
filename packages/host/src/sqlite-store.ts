@@ -205,9 +205,13 @@ export class SqliteStore<E, P> {
       .run(canonicalJson(observed), canonicalJson(next), ...key(stored.command.scope), stored.command.clientCommandId);
   }
   private quarantine(stored: StoredCommand, observed: DispatchObservation<ObservedResult>, error: OutputApplicationError | CapacityError): Receipt {
-    if (isQuarantined(stored)) return stored.receipt;
     const scope = stored.command.scope;
     const reason = error instanceof CapacityError && observed.kind !== 'conclusive' ? CAPACITY_EXHAUSTED : OUTPUT_REJECTED;
+    const current = stored.receipt.state;
+    if (current.kind === 'uncertain' && current.reason === reason) {
+      this.writeObservation(stored, observed);
+      return stored.receipt;
+    }
     const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state: { kind: 'uncertain', reason } };
     this.writeObservation(stored, observed, next);
     this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
