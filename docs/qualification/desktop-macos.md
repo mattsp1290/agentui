@@ -1,0 +1,90 @@
+# Build and launch AgentUI on macOS
+
+AgentUI packages a React shell in a local Tauri application. It opens a disconnected landing page with built-in recovery controls. Pairing, host transport, conversation state, credential storage, and customization activation remain separate work in `agentui-otsp` and its prerequisites. Packaging is tracked by `agentui-gxrk`.
+
+## Prepare your Mac
+
+Install Xcode command-line tools and Rust using the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/). Use Node 24.22.3 and npm 11.19.1.
+
+From the repository root, install the locked JavaScript dependencies:
+
+```sh
+npm ci
+```
+
+## Start development
+
+```sh
+npm run desktop:dev
+```
+
+The Tauri hook builds the shared workspace packages, starts Vite on `127.0.0.1:1420`, and opens the native window. The port is fixed and startup fails if another process owns it. Stop the development command before you qualify the production bundle.
+
+## Build the local application
+
+```sh
+npm run desktop:bundle
+open apps/desktop/src-tauri/target/release/bundle/macos/AgentUI.app
+```
+
+The build hook compiles shared package exports and the desktop frontend. Cargo builds the native executable and embeds the frontend assets. The `.app` is ad-hoc signed for local use. Distribution signing, notarization, a universal binary, and an installer are not qualified.
+
+Tauri consumes `apps/desktop/web-dist`. Existing package exports remain in `apps/desktop/dist`. The [official Vite integration guide](https://v2.tauri.app/start/frontend/vite/) describes the development URL and embedded-assets configuration.
+
+## Resolve a shadowed macOS tool
+
+If bundling reports that `xattr` does not recognize `-r`, check `command -v xattr`. A Python environment can shadow Apple's `/usr/bin/xattr`. Run the build with system tools first:
+
+```sh
+PATH="/usr/bin:/bin:$PATH" npm run desktop:bundle
+```
+
+This changes the build process's tool lookup without changing your system installation.
+
+## Check the shell
+
+1. Stop the Vite development process.
+2. Open the production `.app` using the command above.
+3. Confirm that the native window says **No host connected** and explains that pairing and conversations are unavailable.
+4. Click **Restore default view**. Confirm that the built-in landing page remains visible.
+5. Click **Reload app**. Confirm that the same page returns.
+6. Quit the app and open the same bundle again.
+
+The app starts no host process and manages no backend run. Its recovery controls sit outside the content error boundary. Browser tests inject a throwing content component to check containment and restoration. They do not qualify real customization loading or native error recovery.
+
+## Run package and browser checks
+
+```sh
+npm run setup:browser
+npm run verify
+```
+
+The checks build the production web assets, preserve package exports, and exercise the shell's disconnected content, recovery controls, and failed-content containment. They run on Linux without Rust or Apple toolchains. Native Rust compilation and `.app` launch remain separate local checks.
+
+## Security boundary
+
+The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Inline styles are allowed because the shared theme supplies CSS custom properties through React style attributes. The app stores no credentials. Host authorization and OS-protected credential storage must be designed with pairing before connection controls are added.
+
+## Local qualification record
+
+The local checks below passed on November 14, 2026, against source commit `4bddd92620964d0e800ddc72fdd0a2cd7f21d0ea`. This record is a subsequent documentation change.
+
+| Input | Observed value |
+| --- | --- |
+| Machine | Apple silicon, arm64 |
+| macOS | 26.6.2, build 25G83 |
+| Xcode | 26.2, build 17C52 |
+| Node and npm | 24.22.3 and 11.19.1 |
+| rustc | 1.98.1, 48a229cea |
+| Cargo | 1.98.1, 797e8a9bc |
+| Tauri crate and CLI | 2.12.5 and 2.12.4 |
+| Bundle identifier | `homes.birb.agentui` |
+| Native target | arm64 only |
+| Signing | Ad-hoc with hardened runtime, no team identity, no notarization |
+| Executable SHA-256 | `2fc1371dfd16e259609482cb83263bbfe2b977513e16830434b347662ae2c8d8` |
+
+`npm run verify` passed all 33 tests, strict TypeScript checks, and lint. The production browser check exercised light and dark appearance, keyboard restore, reload, and enlarged text on a narrow viewport. The failing-content fixture passed recovery containment and repeat restoration.
+
+`npm run desktop:bundle` passed with the system-tool PATH adjustment above. `codesign --verify --deep --strict` and `cargo fmt --check` passed. No process listened on development port 1420 before production launch. The observed native document URL was `tauri://localhost`. Restore and Reload each returned the disconnected landing page. Quitting removed the application process. Reopening the same bundle returned the same page, and the app was left open.
+
+The native window was inspected visually and through its accessibility tree. Failure injection was exercised in the browser fixture only. macOS 11 compatibility, distribution installation, real host connection loss, permission failures, and backend run continuity were not tested.

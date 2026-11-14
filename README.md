@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-This foundation establishes package builds and ownership contracts. It does not launch a desktop app, an iOS app, a host server, or an agent loop.
+The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. Host connections, pairing, conversations, and agent execution remain separate work.
 
 Use Node 24.22.3 and npm 11.19.1.
 
@@ -21,3 +21,21 @@ Apple application builds remain separate.
 
 Read the [default theme and primitives](docs/design/theme.md) and [T3 Code design findings](docs/design/t3-code.md).
 Run `npm run preview:theme` after building to inspect the local visual fixture.
+
+## Launch the desktop app
+
+On macOS, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and the pinned Node and npm versions above. From the repository root, run:
+
+```sh
+npm ci
+npm run desktop:dev
+```
+
+To build a local application bundle:
+
+```sh
+npm run desktop:bundle
+open apps/desktop/src-tauri/target/release/bundle/macos/AgentUI.app
+```
+
+The bundle loads embedded assets without a development server. This is a local build, without distribution signing or notarization. Read the [desktop packaging guide](docs/qualification/desktop-macos.md) for checks and limitations.

@@ -18,11 +18,11 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | `@agentui/desktop` | Tauri client entry contracts | React and DOM |
 | `@agentui/ios` | React Native client entry contracts | React Native, without DOM |
 
-The app files are compilation probes. No application is mounted.
+The desktop app mounts an app-owned React shell in Tauri. Its public compilation contracts remain in `src/index.ts`. The iOS app entry remains a compilation probe.
 Modules import the platform primitive package directly; the app entries do not re-export it.
 The root owns the browser workbench and its tooling because it checks integration across the theme and primitive packages.
 The adapter-test workspace separately owns package and ambient-boundary checks.
-Tauri Rust setup and native application lifecycle belong to later tasks.
+The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Connection lifecycle and OS-protected credential storage remain gated on host pairing and shared client state.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. Imports resolve built package exports.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
@@ -97,7 +97,7 @@ It offers local transactions for host coordination.
 No database schema or persistence API is implemented here.
 Crash recovery, dispatch admission, and migration checks must qualify it before adoption.
 
-Vite is the desktop build candidate behind Tauri.
+Vite bundles the desktop shell behind Tauri. Frontend assets go in `web-dist`; package exports remain in `dist`. Native packaging uses a separate command and is excluded from Linux verification.
 Metro is the React Native bundling candidate.
 React Native is pinned to 0.86.0 because its public declarations pass strict compilation with this toolchain.
 Version 0.88.1 produced three errors inside its generated declarations with library checking enabled.
@@ -115,6 +115,6 @@ It does not qualify native execution, proxies, full AG-UI support, authorization
 
 All future GitHub Actions jobs use Linux runners.
 The Linux workflow installs the pinned toolchain and browser, then runs `npm run verify`.
-Browser fixtures qualify the desktop primitives, not a mounted Tauri client.
+Browser fixtures qualify the desktop primitives and shell recovery behavior. Production native launch has separate [macOS packaging qualification](../qualification/desktop-macos.md).
 Local macOS package checks are macOS evidence.
 Apple applications need [separate qualification](apple-qualification.md).
