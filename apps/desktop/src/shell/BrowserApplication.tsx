@@ -1,13 +1,15 @@
 import { useState, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
+import { applicationEnabled } from '../application/application-controller.js';
 import { useApplication } from '../application/use-application.js';
 import { ConversationStatus, ConversationView } from '../application/ConversationView.js';
 import '../application/application.css';
 
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
-  const app = useApplication();
+  const { controller, snapshot: app } = useApplication();
+  const enabled = applicationEnabled(app);
   const [code, setCode] = useState('');
-  const conversation = app.active ? <ConversationView key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`} app={app} active={app.active} />
+  const conversation = app.active ? <ConversationView key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`} actions={controller.conversationActions(app.active)} active={app.active} />
     : <section className="conversation-panel empty-workspace"><p className="eyebrow">YOUR LOCAL WORKSPACE</p><h1>A conversation that stays with you.</h1><p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p></section>;
   const controls = <div className="application-controls">
     <div className="application-status"><strong>Browser development · Recorded playback</strong>
@@ -20,29 +22,29 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.host.kind === 'ready' && app.host.compatibility.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.compatibility.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
-    {app.host.kind === 'unpaired' && <form className="pair-form" onSubmit={event => { event.preventDefault(); void app.pair(code); setCode(''); }}>
+    {app.host.kind === 'unpaired' && <form className="pair-form" onSubmit={event => { event.preventDefault(); void controller.pair(code); setCode(''); }}>
       <label htmlFor="pairing-code">Pairing code</label><input id="pairing-code" value={code} onChange={event => setCode(event.target.value)} autoComplete="off" placeholder="Code from the local host" />
       <button disabled={app.busy || Boolean(app.storageFailure) || !code.trim()}>Pair host</button>
     </form>}
     <div className="action-row">
-      <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void app.reconnect()}>Reconnect</button>
-      <button disabled={!app.enabled || app.saved.pendingCreation !== null} onClick={() => void app.create()}>New recorded conversation</button>
+      <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void controller.reconnect()}>Reconnect</button>
+      <button disabled={!enabled || app.saved.pendingCreation !== null} onClick={() => void controller.create()}>New recorded conversation</button>
     </div>
     {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.conversationId} needs confirmation. Recovery uses the saved conversation ID.</p>
-      <button disabled={!app.enabled} onClick={() => void app.recoverCreation()}>Recover creation</button>
+      <button disabled={!enabled} onClick={() => void controller.recoverCreation()}>Recover creation</button>
     </div>}
-    {app.catalog.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
-      {app.catalog.map(scope => <button key={scope.conversationId} disabled={!app.enabled}
+    {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
+      {app.catalog.items.map(scope => <button key={scope.conversationId} disabled={!enabled}
         aria-current={scope.conversationId === app.active?.scope.conversationId ? 'page' : undefined}
-        onClick={() => void app.open(scope)}>Open conversation {scope.conversationId}</button>)}
-      {app.catalogAfter !== null && <button disabled={!app.enabled} onClick={() => void app.moreConversations()}>More conversations</button>}
+        onClick={() => void controller.open(scope)}>Open conversation {scope.conversationId}</button>)}
+      {app.catalog.after !== null && <button disabled={!enabled} onClick={() => void controller.moreConversations()}>More conversations</button>}
     </nav>}
-    {(app.savedViews.length > 0 || app.viewsAfter !== null) && <nav className="conversation-catalog" aria-label="Saved local views">
-      {app.savedViews.map(viewId => <button key={viewId} disabled={!app.enabled} onClick={() => void app.reopenView(viewId)}>Reopen saved view {viewId}</button>)}
-      {app.viewsAfter !== null && <button disabled={!app.enabled} onClick={() => void app.moreSavedViews()}>More saved views</button>}
+    {(app.savedViews.items.length > 0 || app.savedViews.after !== null) && <nav className="conversation-catalog" aria-label="Saved local views">
+      {app.savedViews.items.map(viewId => <button key={viewId} disabled={!enabled} onClick={() => void controller.reopenView(viewId)}>Reopen saved view {viewId}</button>)}
+      {app.savedViews.after !== null && <button disabled={!enabled} onClick={() => void controller.moreSavedViews()}>More saved views</button>}
     </nav>}
   </div>;
   return <DesktopShell protectedContent={controls} defaultView={conversation}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
-    buildLabel="Browser development · Recorded host">{children ?? conversation}</DesktopShell>;
+    buildLabel="Browser development · Recorded host">{children}</DesktopShell>;
 }

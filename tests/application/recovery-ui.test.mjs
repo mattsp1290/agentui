@@ -19,10 +19,10 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const store = { getSnapshot: () => view, subscribe: () => () => {} };
     const active = { scope, store };
     globalThis.checked = [];
-    const app = { enabled: false, busy: true, storageFailure: null,
-      reconcile: async (scope, id) => globalThis.checked.push(id) };
+    const actions = { enabled: false, busy: true, storageFailure: '',
+      reconcile: async id => globalThis.checked.push(id) };
     const root = createRoot(document.getElementById('root'));
-    globalThis.renderRecovery = busy => { app.busy = busy; app.enabled = !busy; flushSync(() => root.render(<ConversationView app={app} active={active} />)); };
+    globalThis.renderRecovery = busy => { actions.busy = busy; actions.enabled = !busy; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
     globalThis.savedCommand = own;
     globalThis.renderRecovery(true);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',

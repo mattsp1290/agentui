@@ -1,12 +1,7 @@
 import { parseScope } from '@agentui/contracts';
-import type { ConversationScope } from '@agentui/contracts';
 import type { DraftStoragePort } from '@agentui/client';
 
-export interface SavedView {
-  readonly version: 1;
-  readonly route: ConversationScope | null;
-  readonly pendingCreation: ConversationScope | null;
-}
+import type { SavedView } from './view-state.js';
 
 function decodeView(value: unknown, hostId: string): SavedView {
   if (value === undefined) return { version: 1, route: null, pendingCreation: null };
@@ -39,6 +34,18 @@ async function claim(viewId: string, waitForPreviousDocument = false): Promise<(
       return new Promise<void>(release => resolve(release));
     }).catch(error => { clearTimeout(timer); if (controller.signal.aborted) resolve(null); else reject(error); });
   });
+}
+
+// IndexedDB arrays sort after strings, so this sentinel bounds all view identifiers.
+const AFTER_ALL_STRINGS: IDBValidKey = [];
+function viewKeyRange(after: string | null): IDBKeyRange {
+  let lower: IDBValidKey = ['view'];
+  if (after !== null) {
+    const cursor: unknown = JSON.parse(after);
+    if (!Array.isArray(cursor) || cursor.length !== 2 || typeof cursor[0] !== 'string' || typeof cursor[1] !== 'string') throw new Error('Invalid saved view cursor');
+    lower = ['view', cursor[0], cursor[1]];
+  }
+  return IDBKeyRange.bound(lower, ['view', AFTER_ALL_STRINGS], after !== null, true);
 }
 
 export class BrowserViewStorage {
@@ -81,7 +88,7 @@ export class BrowserViewStorage {
     if (this.closed) throw new Error('This view no longer owns local storage.');
     return new Promise((resolve, reject) => {
       const transaction = this.db.transaction('records');
-      const range = IDBKeyRange.bound(after === null ? ['view'] : ['view', after, []], ['view', []], after !== null, true);
+      const range = viewKeyRange(after);
       const request = transaction.objectStore('records').openCursor(range);
       const ids: string[] = [];
       let unreadable = 0;
@@ -91,11 +98,14 @@ export class BrowserViewStorage {
         const cursor = request.result;
         if (!cursor) return;
         const key = cursor.key;
-        if (Array.isArray(key) && key.length === 3 && typeof key[1] === 'string' && key[2] === hostId && key[1] !== this.viewId) {
-          try { decodeView(cursor.value, hostId); ids.push(key[1]); } catch { unreadable++; }
-          scanned++;
-          if (scanned === 100) { next = key[1]; return; }
+        if (!Array.isArray(key) || key.length !== 3 || typeof key[1] !== 'string' || typeof key[2] !== 'string') {
+          transaction.abort(); reject(new Error('Unsupported saved view key. Local records were preserved.')); return;
         }
+        if (key[2] === hostId && key[1] !== this.viewId) {
+          try { decodeView(cursor.value, hostId); ids.push(key[1]); } catch { unreadable++; }
+        }
+        scanned++;
+        if (scanned === 100) { next = JSON.stringify([key[1], key[2]]); return; }
         cursor.continue();
       };
       transaction.oncomplete = () => resolve({ ids, unreadable, after: next });
