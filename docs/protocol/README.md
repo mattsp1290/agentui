@@ -126,16 +126,15 @@ git diff -- docs/protocol/conformance.json
 fixture paths from the retained inventories. It lists SDK divergences and
 references hashed inputs instead of copying their complete rows. Evidence
 identity comes directly from the named body maps in `tests/protocol/fixtures/`
-and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates each
-map with its evidence kind and validates citations, callability and global ID
-uniqueness. Every ID must have category credit.
+and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` builds the body-derived registry and validates
+citations, callability and global ID uniqueness. Every ID must have category credit.
 
 The version 2 report has one `evidence.registrar` path and evidence fields derived
 from the registry's kind keys in insertion order. Each kind has sorted `ids` and a
 `testName` template. Replacing `<id>` in
 that template with an ID gives the name registered in
 `tests/protocol/conformance.test.mjs`. Category fields cite those same IDs by
-kind. Compiler bodies use the shared adapter-test helper, which requires a
+kind. Compiler bodies use root-owned compiler test support, which requires a
 compiling positive control first.
 
 Canonical validation and report generation consume one verified snapshot from
@@ -145,8 +144,19 @@ its named tests register. This ordering covers canonical validator construction,
 not unrelated dependency loading. The snapshot lasts for its process; start a
 fresh process to check changed retained files.
 
-Report generation imports body definitions without invoking fixture callbacks or
-starting compiler processes. `npm test` and `npm run verify` also run the named
+A named coherence test calls `loadConformanceInputs`, which checks retained
+revisions, schema inventories and the installed projection descriptor, then
+resolves the frozen fork identity. It returns one checked record with the fork
+and historical SDK entries. Report generation uses a private pure projection over
+that record and the evidence registry. Coverage, behavior limits and report text
+remain module-owned definitions. The report's write command, `--check` command and
+freshness test all use the same loader. The loader and installation-pin test import
+the built host descriptor, so run `npm run build` before invoking them directly.
+The shared `scripts/lib/agui-fork/identity.mjs` belongs to the measured fork-verifier
+closure. Changing it invalidates the committed receipt until the full fork
+qualification is rerun and its receipt recorded, as described in the vendor README.
+Importing body definitions invokes no
+fixture callback or compiler process. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
 matrix checks retained inputs and writes the expected report. Both check locked SDK
 metadata against fork provenance and workspace declarations. Actual archive bytes,
@@ -182,3 +192,9 @@ Provider operation contracts and runtime admission remain `agentui-k4zj` and
 durable consumption, delivery, retries or integrated Apple behavior.
 The original [Mac package record](../qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
 continues to describe its measured source `54065e2` and five focused tests.
+
+The report binds the frozen fork acquisition identity with
+`installedSdk.provenanceSha256`. Later verifier replay records and evidence live in
+the sibling `qualification.json`, which binds back to that identity. Adding a
+qualification record does not change the protocol report. Changes to the frozen
+identity still require matrix regeneration.

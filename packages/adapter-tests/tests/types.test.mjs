@@ -1,5 +1,5 @@
 import { test } from 'node:test';
-import { assertCompileCases } from './support/compile.mjs';
+import { assertCompileCases } from '../../../tests/support/compile.mjs';
 const targets = [
   { workspace: 'packages/contracts', type: 'RunIdentity', module: '@agentui/contracts', forbidden: ['document', 'process'] },
   { workspace: 'packages/protocol', type: 'Event', module: '@agentui/protocol', forbidden: ['document', 'process'] },

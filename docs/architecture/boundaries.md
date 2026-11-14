@@ -27,8 +27,7 @@ The adapter-test workspace separately owns package and ambient-boundary checks.
 The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Connection lifecycle and OS-protected credential storage remain gated on host pairing and shared client state.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. TypeScript package imports resolve built exports.
-Repository Node tests also consume explicit test-only exports from the adapter-test workspace.
-The test-only compile export assumes this repository's workspace layout.
+Repository tests share root-owned compiler support.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
 
 The host is the only application workspace with a Switchboard dependency.
@@ -117,6 +116,8 @@ Compatible live updates, physical-device signing, and integrated Mac-delivered c
 No layout or state library is selected.
 
 ## Verification limits
+
+`npm test` and `npm run verify` include offline checks of the retained AG-UI archives, evidence and fixtures. These gates require POSIX and system `tar`; GNU tar also requires `gzip`. A Mac run exercises the host reader. Mac qualification requires its own labelled record of the requested frozen source and inputs.
 
 `npm run verify` builds emitted exports, checks strict types, lints, and exercises package imports.
 It tests platform ambient isolation and real Switchboard observation through the host package.
