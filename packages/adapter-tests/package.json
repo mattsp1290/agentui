@@ -27,5 +27,8 @@
     "@agentui/ios": "0.0.0",
     "@agentui/theme": "0.0.0",
     "@agentui/ui-primitives": "0.0.0"
+  },
+  "devDependencies": {
+    "@agentui/switchboard-qualification": "file:../../vendor/dev-qualification/switchboard-71d204015f573e1399d8ba19a33a2d4b4067fa1a.tgz"
   }
 }

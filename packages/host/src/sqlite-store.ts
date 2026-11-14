@@ -1,9 +1,9 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, foldDocument, parseCommand, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
-import { nonempty, object, decision, installation, integer, nativeRun, output, receipt, capturedTarget, observation, hostEvent, cloneJson, assertDispatchIdentity } from './codec.js';
+import { nonempty, object, installation, integer, nativeRun, output, capturedTarget, observation, cloneJson, assertDispatchIdentity } from './codec.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { CapturedTarget, ObservedResult, HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
 
@@ -63,8 +63,8 @@ export class SqliteStore<E, P> {
   private decodeDocument(value: unknown): ConversationDocument<P> {
     const input = object(value), receipts = object(input.receipts), decisions = object(input.decisions);
     return { domain: this.projection.decodeState(input.domain),
-      receipts: Object.fromEntries(Object.entries(receipts).map(([id, value]) => [id, receipt(value)])),
-      decisions: Object.fromEntries(Object.entries(decisions).map(([id, value]) => [id, decision(value)])) };
+      receipts: Object.fromEntries(Object.entries(receipts).map(([id, value]) => [id, parseReceipt(value)])),
+      decisions: Object.fromEntries(Object.entries(decisions).map(([id, value]) => [id, parseDecision(value)])) };
   }
   snapshot(scope: ConversationScope): Snapshot<P> {
     const row = this.conversation(scope);
@@ -79,7 +79,7 @@ export class SqliteStore<E, P> {
     const row = this.db.prepare('SELECT intent, target, observation, receipt FROM commands WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
     if (!row) return null;
     const command = parseCommand(json(row.intent)), target = capturedTarget(json(row.target), scope);
-    const parsedReceipt = receipt(json(row.receipt));
+    const parsedReceipt = parseReceipt(json(row.receipt));
     if (!sameScope(command.scope, scope) || command.clientCommandId !== id || parsedReceipt.hostOperationId !== target.identity.hostOperationId) throw new Error('Corrupt command');
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
@@ -129,7 +129,7 @@ export class SqliteStore<E, P> {
           .get(...key(scope), command.body.pendingId);
         if (!row || row.status !== 'open') return { kind: 'rejected', reason: 'decision-unavailable' };
         const data = object(json(row.data));
-        pending = { visible: decision(data.visible), continuation: cloneJson(data.continuation) };
+        pending = { visible: parseDecision(data.visible), continuation: cloneJson(data.continuation) };
         if (!pending.visible.choices.includes(command.body.choiceId)) return { kind: 'rejected', reason: 'invalid-choice' };
       }
       const runId = command.body.kind === 'cancel' ? command.body.runId : pending?.visible.runId;
@@ -286,7 +286,7 @@ export class SqliteStore<E, P> {
       const input = object(json(payload?.payload));
       if (!sameScope(parseScope(input.scope), scope) || input.sequence !== row.sequence) throw new Error('Corrupt envelope');
       const sequence = integer(row.sequence);
-      events.push({ scope, sequence, event: hostEvent(input.event, scope, sequence, this.projection) });
+      events.push({ scope, sequence, event: parseHostEvent(input.event, scope, sequence, this.projection) });
     }
     return events;
   }

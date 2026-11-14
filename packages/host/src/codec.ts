@@ -1,5 +1,5 @@
-import { canonicalJson, parseScope, sameScope } from '@agentui/contracts';
-import type { ConversationScope, HostEvent, Json, PendingDecision, Projection, Receipt } from '@agentui/contracts';
+import { canonicalJson, parseDecision, parseScope, sameScope } from '@agentui/contracts';
+import type { ConversationScope, Json, Projection } from '@agentui/contracts';
 import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
 import type { DispatchEvidence, DispatchIdentity, DispatchObservation } from '@mattsp1290/switchboard';
 import type { CapturedTarget, HostOutput, Installation, NativeRun, ObservedResult } from './durable-model.js';
@@ -34,23 +34,6 @@ export function installation(value: unknown): Installation {
   } catch { throw new Error('Invalid installation binding'); }
   return parsed;
 }
-export function decision(value: unknown): PendingDecision {
-  const input = object(value);
-  const choices = array(input.choices).map(nonempty);
-  if (choices.length === 0 || new Set(choices).size !== choices.length) throw new Error('Invalid choices');
-  return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt) };
-}
-export function receipt(value: unknown): Receipt {
-  const input = object(value), state = object(input.state);
-  const base = { scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId),
-    hostOperationId: nonempty(input.hostOperationId), sequence: integer(input.sequence) };
-  switch (state.kind) {
-    case 'pending': case 'accepted': case 'completed': return { ...base, state: { kind: state.kind } };
-    case 'not-dispatched': case 'rejected': case 'uncertain':
-      return { ...base, state: { kind: state.kind, reason: nonempty(state.reason) } };
-    default: throw new Error('Invalid receipt');
-  }
-}
 export function nativeRun(value: unknown, expected: Installation, scope: ConversationScope): NativeRun {
   const input = object(value), identity = object(input.identity), authority = object(identity.authority);
   const binding = object(authority.binding), conversation = parseScope(identity.conversation);
@@ -71,7 +54,7 @@ export function output<E>(value: unknown, projection: Pick<Projection<E, unknown
     decisions: array(input.decisions).map(value => {
       const input = object(value);
       const continuation: Json = cloneJson(input.continuation);
-      return { visible: decision(input.visible), continuation };
+      return { visible: parseDecision(input.visible), continuation };
     }) };
 }
 
@@ -101,7 +84,7 @@ export function capturedTarget(value: unknown, scope: ConversationScope): Captur
   const run = input.run === null ? null : nativeRun(input.run, installed, scope);
   const storedDecision = input.decision === null ? null : object(input.decision);
   const parsedDecision = storedDecision === null ? null : {
-    visible: decision(storedDecision.visible), continuation: cloneJson(storedDecision.continuation),
+    visible: parseDecision(storedDecision.visible), continuation: cloneJson(storedDecision.continuation),
   };
   const target: CapturedTarget = { installation: installed, run, decision: parsedDecision,
     identity: { hostOperationId: nonempty(identity.hostOperationId), target: run
@@ -123,20 +106,4 @@ export function observation(value: unknown, target: CapturedTarget): DispatchObs
   return { kind: 'conclusive', evidence: parsedEvidence, result: {
     kind: 'completed', output: cloneJson(result.output),
   } };
-}
-
-export function hostEvent<E>(value: unknown, scope: ConversationScope, sequence: number,
-  projection: Pick<Projection<E, unknown>, 'decodeEvent'>): HostEvent<E> {
-  const event = object(value);
-  switch (event.kind) {
-    case 'domain': return { kind: 'domain', event: projection.decodeEvent(event.event) };
-    case 'receipt': {
-      const parsed = receipt(event.receipt);
-      if (!sameScope(parsed.scope, scope) || parsed.sequence !== sequence) throw new Error('Corrupt receipt event');
-      return { kind: 'receipt', receipt: parsed };
-    }
-    case 'decision-opened': return { kind: 'decision-opened', decision: decision(event.decision) };
-    case 'decision-closed': return { kind: 'decision-closed', pendingId: nonempty(event.pendingId) };
-    default: throw new Error('Corrupt event');
-  }
 }

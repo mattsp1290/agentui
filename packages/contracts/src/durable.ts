@@ -85,6 +85,7 @@ export interface ConversationPort<E, P> {
 /**
  * E and P must be plain JSON values accepted by canonicalJson. Decoders must accept their own outputs,
  * because appended and stored values are decoded again on read and write.
+ * apply must return the next domain state without mutating its state or event input.
  * Version changes are refused; no in-place upgrader is provided. A migration must preserve commands,
  * evidence, captured targets, private runs, decisions, reservations and deduplication identities.
  * Replaying domain events alone does not preserve those guarantees.
@@ -127,6 +128,10 @@ function nonempty(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error('Expected nonempty string');
   return value;
 }
+function integer(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid integer');
+  return value;
+}
 function identifier(value: unknown): string {
   const parsed = nonempty(value);
   if (parsed.length > 1024) throw new Error('Identifier exceeds length limit');
@@ -162,6 +167,39 @@ export function parseCommand(value: unknown): ClientCommand {
     default: throw new Error('Unsupported command kind');
   }
   return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
+}
+export function parseDecision(value: unknown): PendingDecision {
+  const input = object(value);
+  if (!Array.isArray(input.choices)) throw new Error('Expected array');
+  const choices = input.choices.map(nonempty);
+  if (choices.length === 0 || new Set(choices).size !== choices.length) throw new Error('Invalid choices');
+  return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt) };
+}
+export function parseReceipt(value: unknown): Receipt {
+  const input = object(value), state = object(input.state);
+  const base = { scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId),
+    hostOperationId: nonempty(input.hostOperationId), sequence: integer(input.sequence) };
+  switch (state.kind) {
+    case 'pending': case 'accepted': case 'completed': return { ...base, state: { kind: state.kind } };
+    case 'not-dispatched': case 'rejected': case 'uncertain':
+      return { ...base, state: { kind: state.kind, reason: nonempty(state.reason) } };
+    default: throw new Error('Invalid receipt');
+  }
+}
+export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequence: number,
+  projection: Pick<Projection<E, unknown>, 'decodeEvent'>): HostEvent<E> {
+  const event = object(value);
+  switch (event.kind) {
+    case 'domain': return { kind: 'domain', event: projection.decodeEvent(event.event) };
+    case 'receipt': {
+      const parsed = parseReceipt(event.receipt);
+      if (!sameScope(parsed.scope, scope) || parsed.sequence !== sequence) throw new Error('Corrupt receipt event');
+      return { kind: 'receipt', receipt: parsed };
+    }
+    case 'decision-opened': return { kind: 'decision-opened', decision: parseDecision(event.decision) };
+    case 'decision-closed': return { kind: 'decision-closed', pendingId: nonempty(event.pendingId) };
+    default: throw new Error('Corrupt event');
+  }
 }
 export function canonicalJson(value: unknown): string {
   const ancestors = new Set<object>();

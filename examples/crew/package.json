@@ -1,0 +1,20 @@
+{
+  "name": "@agentui/example-crew",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist"],
+  "exports": {
+    ".": "./dist/index.js",
+    "./file-intents": "./dist/file-intents.js"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentui/contracts": "0.0.0",
+    "@birbcrew/client": "file:../../vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/birbcrew-client-0.1.0.tgz",
+    "zod": "4.4.3"
+  }
+}
