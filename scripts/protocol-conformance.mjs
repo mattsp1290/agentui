@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { readFileSync, writeFileSync } from 'node:fs';
 import { aguiProtocol } from '@agentui/host/agui';
-import { coverage, coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from '../tests/protocol/fixtures/coverage.mjs';
+import { behaviorLimits, canonicalDefinitions, coverage, coverageContractVersion, projectionFacts, reportText } from '../tests/protocol/coverage.mjs';
+import { evidenceKinds, validateCoverage } from '../tests/protocol/evidence.mjs';
 
 const root = new URL('../', import.meta.url);
 const retainedDir = 'tests/protocol/fixtures/upstream/';
@@ -31,10 +32,11 @@ function verifiedInputs() {
   const vendor = json(new URL('vendor/switchboard.json', root));
   const schema = json(new URL('schema.json', upstream));
   const definitions = table('ag-ui-matrix.tsv');
-  const fixtures = table('upstream.tsv').map(({ path, typescriptAccepts, pythonAccepts }) => ({
-    path, validity: path.split('/')[1], typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true',
-  }));
-  for (const fixture of fixtures) assert.ok(['valid', 'invalid'].includes(fixture.validity), fixture.path);
+  const fixtures = table('upstream.tsv').map(({ path, typescriptAccepts, pythonAccepts }) => {
+    const [definition, validity] = path.split('/');
+    assert.ok(['valid', 'invalid'].includes(validity), path);
+    return { path, definition, valid: validity === 'valid', typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true' };
+  });
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   const lock = json(new URL('package-lock.json', root));
@@ -54,37 +56,31 @@ function verifiedInputs() {
   assert.equal(json(new URL('node_modules/ajv/package.json', root)).version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedDescriptor,
+    mapping: pin.classification.switchboardMapping, planned: projectionFacts.plannedDescriptor,
   });
   assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
   assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
   assert.deepEqual(definitions.flatMap((row) => row.event ? [row.event] : []).sort(), [...schema.$defs.EventType.enum].sort());
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
-  assert.ok(existsSync(new URL(installedFixtureFile, root)), installedFixtureFile);
-  for (const [name, limit] of Object.entries(coverageContract.behaviorLimits)) {
-    assert.ok(limit.claim.length > 0 && limit.fixtures.length > 0, name);
-    for (const id of limit.fixtures) assert.ok(installedFixtureIds.includes(id), `${name}: ${id}`);
-  }
   return { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project };
 }
 
-function projectCategories({ pin, definitions, fixtures }) {
+function projectCategories({ pin, definitions, fixtures }, registry) {
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
     const rows = definitions.filter((row) => row.category === category);
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
-    const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.path.split('/')[0]));
+    const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.definition));
     assert.ok(['represented', 'partial', 'wire-only'].includes(owned.mapping), category);
     assert.ok(owned.pending.length > 0 && owned.pending.every((owner) => owner.length > 0), category);
-    assert.ok(owned.fixtures.length > 0 || owned.contracts.length > 0, category);
-    for (const fixture of owned.contracts) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
-      sdkRuntimeDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.validity === 'valid')))
+      sdkRuntimeDivergences: canonicalFixtures.filter((fixture) => fixture.typescriptAccepts !== fixture.valid || fixture.pythonAccepts !== fixture.valid)
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
-      mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts,
+      mapping: owned.mapping, scope: owned.scope,
+      ...Object.fromEntries(Object.keys(evidenceKinds).map((kind) => [kind, owned.evidence.filter((id) => registry[id].kind === kind)])),
       pendingProductOwners: owned.pending,
     };
   });
@@ -96,42 +92,47 @@ function projectCategories({ pin, definitions, fixtures }) {
 export function buildConformanceReport() {
   const inputs = verifiedInputs();
   const { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project } = inputs;
-  const categories = projectCategories(inputs);
+  const registry = validateCoverage();
+  const categories = projectCategories(inputs, registry);
+  const entries = (kind) => Object.values(registry).filter((entry) => entry.kind === kind).sort((a, b) => a.id.localeCompare(b.id))
+    .map(({ id, file, test }) => ({ id, file, test }));
+  const count = (predicate) => fixtures.filter(predicate).length;
   return {
-    coverageContractVersion: coverageContract.version,
+    coverageContractVersion,
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-      authority: coverageContract.authority,
+      authority: reportText.authority,
       definitionCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
         matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: retainedPath('ag-ui-matrix.tsv'), verifier: pin.ownership.schemaTest },
       fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
         index: provenance.files['upstream.tsv'].path, retained: retainedPath('upstream.tsv'), python: pin.ownership.pythonTest },
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.canonicalEventDiscriminators).length,
-        fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.validity === 'valid').length,
-        invalid: fixtures.filter((fixture) => fixture.validity === 'invalid').length,
-        typescriptSdkRuntimePermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.typescriptAccepts).length,
-        pythonSdkRuntimePermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.pythonAccepts).length,
-        typescriptSdkRuntimeRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.typescriptAccepts).length,
-        pythonSdkRuntimeRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.pythonAccepts).length },
-      sdkRuntimeEvidence: { kind: coverageContract.sdkRuntimeEvidenceKind,
+        fixtures: fixtures.length, valid: count((fixture) => fixture.valid),
+        invalid: count((fixture) => !fixture.valid),
+        typescriptSdkRuntimePermissiveInvalid: count((fixture) => !fixture.valid && fixture.typescriptAccepts),
+        pythonSdkRuntimePermissiveInvalid: count((fixture) => !fixture.valid && fixture.pythonAccepts),
+        typescriptSdkRuntimeRestrictiveValid: count((fixture) => fixture.valid && !fixture.typescriptAccepts),
+        pythonSdkRuntimeRestrictiveValid: count((fixture) => fixture.valid && !fixture.pythonAccepts) },
+      sdkRuntimeEvidence: { kind: reportText.sdkRuntimeEvidenceKind,
         typescript: { package: sdk.package, version: sdk.version, validator: 'zod', validatorVersion: pin.verifierTools.zod },
         python: { package: pythonSdk.package, version: pythonSdk.version, validator: 'pydantic', validatorVersion: pin.verifierTools.pydantic },
-        publishedTypes: coverageContract.publishedTypeEvidence },
+        publishedTypes: reportText.publishedTypeEvidence },
     },
     switchboard: {
       repository: vendor.sourceRepository, sourceRevision: vendor.sourceRevision, artifact: vendor.artifact, sha256: vendor.sha256,
       descriptor: aguiProtocol,
-      retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: coverageContract.canonicalComparisonScope },
+      retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: reportText.canonicalComparisonScope },
     },
     nativeEvidence: {
-      availability: coverageContract.nativeAvailability, declarationScope: coverageContract.nativeDeclarationScope,
+      availability: projectionFacts.nativeAvailability, declarationScope: reportText.nativeDeclarationScope,
       qualificationsByRoute: pin.classification.nativeAdapters,
     },
     agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'),
-      emittedEventDefinition: coverageContract.canonicalValidator.event, contractDefinitions: Object.values(coverageContract.canonicalValidator.contracts), file: installedFixtureFile,
-      tests: [coverageContract.validatorControlTest, coverageContract.requestControlTest] },
-    installedFixtures: installedFixtureIds.map((id) => ({ id, file: installedFixtureFile, test: installedFixtureTest(id) })),
-    behaviorLimits: coverageContract.behaviorLimits,
+      emittedEventDefinition: canonicalDefinitions.event, contractDefinitions: Object.values(canonicalDefinitions.contracts),
+      controls: entries('canonicalControls') },
+    installedFixtures: entries('installedFixtures'),
+    publishedTypeContracts: entries('publishedTypeContracts'),
+    behaviorLimits,
     retainedInputs: {
       [retainedPath('provenance.json')]: digest(readFileSync(new URL('provenance.json', upstream))),
       ...Object.fromEntries(Object.entries(provenance.files).map(([file, input]) => [retainedPath(file), input.sha256])),
@@ -142,10 +143,13 @@ export function buildConformanceReport() {
 
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
+export function assertReportFresh() {
+  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()), 'Conformance report is stale; regenerate it');
+}
+
 if (import.meta.main) {
   assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node scripts/protocol-conformance.mjs [--check]');
-  const report = serializeConformanceReport(buildConformanceReport());
-  if (process.argv[2] === '--check') assert.equal(readFileSync(reportFile, 'utf8'), report, 'Conformance report is stale; regenerate it');
-  else writeFileSync(reportFile, report);
+  if (process.argv[2] === '--check') assertReportFresh();
+  else writeFileSync(reportFile, serializeConformanceReport(buildConformanceReport()));
   console.log(process.argv[2] === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');
 }

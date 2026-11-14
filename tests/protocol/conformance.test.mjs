@@ -1,36 +1,27 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { test } from 'node:test';
-import { buildConformanceReport, reportFile, serializeConformanceReport } from '../../scripts/protocol-conformance.mjs';
-import { coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from './fixtures/coverage.mjs';
-import { installedFixtures, validateDefinition, validateEvent } from './fixtures/installed.mjs';
+import { fileURLToPath } from 'node:url';
+import { assertReportFresh } from '../../scripts/protocol-conformance.mjs';
+import { evidenceFile, evidenceKinds, evidenceTest, validateCoverage } from './evidence.mjs';
+import { canonicalControls } from './canonical.mjs';
+import { installedFixtures } from './fixtures/installed.mjs';
+import { publishedTypeContracts } from './fixtures/types.mjs';
 
-assert.equal(new URL(installedFixtureFile, new URL('../../', import.meta.url)).href, import.meta.url);
-test(coverageContract.validatorControlTest, () => {
-  assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
-  assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm' }), true);
-  assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', unexpected: true }), false);
-  assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled' } }), true);
-  assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled', interrupts: [] } }), false);
+const bodies = { installedFixtures, canonicalControls, publishedTypeContracts };
+test('protocol evidence registrations match catalog IDs and registrar location', () => {
+  validateCoverage();
+  assert.equal(new URL(evidenceFile, new URL('../../', import.meta.url)).href, import.meta.url);
+  assert.deepEqual(Object.keys(bodies), Object.keys(evidenceKinds));
+  for (const [kind, { ids }] of Object.entries(evidenceKinds)) assert.deepEqual(Object.keys(bodies[kind]).sort(), [...ids].sort(), kind);
 });
-
-test(coverageContract.requestControlTest, () => {
-  const request = validateDefinition(coverageContract.canonicalValidator.contracts.request);
-  const minimal = { threadId: 't', runId: 'r', messages: [] };
-  assert.equal(request(minimal), true);
-  for (const extra of [{ state: null }, { forwardedProps: null }, { unexpected: 1 }]) assert.equal(request({ ...minimal, ...extra }), false);
-  const capabilities = validateDefinition(coverageContract.canonicalValidator.contracts.capabilities);
-  assert.equal(capabilities({ multiAgent: { supported: true } }), true);
-  assert.equal(capabilities({ multiAgent: { supported: true, unexpected: true } }), false);
+for (const [kind, { ids }] of Object.entries(evidenceKinds)) for (const id of ids) test(evidenceTest(kind, id), () => {
+  assert.ok(Object.hasOwn(bodies[kind] ?? {}, id), `Missing ${kind} body: ${id}`);
+  assert.equal(typeof bodies[kind][id], 'function', id);
+  return bodies[kind][id]();
 });
-
-test('installed fixture registrations match coverage-owned IDs', () => {
-  assert.ok(installedFixtureIds.length > 0);
-  assert.deepEqual(Object.keys(installedFixtures).sort(), installedFixtureIds);
+test('report generation imports metadata without executable evidence bodies', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./support/generator-imports.mjs', import.meta.url))], { encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
 });
-
-for (const [id, run] of Object.entries(installedFixtures)) test(installedFixtureTest(id), run);
-
-test('versioned conformance report matches immutable inputs and every owned fixture', () => {
-  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()));
-});
+test('versioned conformance report matches immutable inputs and every owned fixture', assertReportFresh);

@@ -90,10 +90,17 @@
       "RunAgentInput",
       "AgentCapabilities"
     ],
-    "file": "tests/protocol/conformance.test.mjs",
-    "tests": [
-      "canonical Event validator enforces closed shapes",
-      "canonical request and capability shapes require runtime validation"
+    "controls": [
+      {
+        "id": "event-closed-shapes",
+        "file": "tests/protocol/conformance.test.mjs",
+        "test": "protocol canonical control: event-closed-shapes"
+      },
+      {
+        "id": "request-capability-shapes",
+        "file": "tests/protocol/conformance.test.mjs",
+        "test": "protocol canonical control: request-capability-shapes"
+      }
     ]
   },
   "installedFixtures": [
@@ -106,6 +113,11 @@
       "id": "availability-description",
       "file": "tests/protocol/conformance.test.mjs",
       "test": "protocol installed fixture: availability-description"
+    },
+    {
+      "id": "identity-run-source-scope",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: identity-run-source-scope"
     },
     {
       "id": "lifecycle-text-tools",
@@ -133,41 +145,54 @@
       "test": "protocol installed fixture: terminal-ordering-limit"
     }
   ],
+  "publishedTypeContracts": [
+    {
+      "id": "availability-family-alignment",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol published type contract: availability-family-alignment"
+    },
+    {
+      "id": "published-sdk-availability",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol published type contract: published-sdk-availability"
+    }
+  ],
   "behaviorLimits": {
     "unknownOrUnimplementedFact": {
       "claim": "Explicit error and faulted actor; no successful empty batch.",
-      "fixtures": [
+      "evidence": [
         "acknowledged-absence-and-fault"
       ]
     },
     "notObservable": {
       "claim": "Acknowledged absence for a family declared by describeProjection; empty batch and usable actor.",
-      "fixtures": [
+      "evidence": [
         "acknowledged-absence-and-fault"
       ]
     },
     "terminalOrdering": {
       "claim": "Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
-      "fixtures": [
+      "evidence": [
         "terminal-ordering-limit"
       ]
     },
     "repeatedEntityIds": {
       "claim": "Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.",
-      "fixtures": [
-        "lifecycle-text-tools"
+      "evidence": [
+        "identity-run-source-scope"
       ]
     },
     "ownerAttribution": {
       "claim": "Owner attribution can reuse subagentRunId across runs without emitted lifecycle events; invocation reconciliation belongs to agentui-ckpw.",
-      "fixtures": [
+      "evidence": [
         "lifecycle-text-tools",
+        "identity-run-source-scope",
         "acknowledged-absence-and-fault"
       ]
     },
     "nullTerminalResult": {
       "claim": "The pinned projection omits a null terminal result; non-null falsy values remain intact.",
-      "fixtures": [
+      "evidence": [
         "terminal-interrupts-usage"
       ]
     }
@@ -201,7 +226,8 @@
       "installedFixtures": [
         "lifecycle-text-tools"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI transport and UI event consumption; agentui-ckpw"
       ]
@@ -275,9 +301,11 @@
       "mapping": "represented",
       "scope": "Observed text boundaries and fragments, including empty deltas.",
       "installedFixtures": [
-        "lifecycle-text-tools"
+        "lifecycle-text-tools",
+        "identity-run-source-scope"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI streaming transport and text renderer; agentui-ckpw"
       ]
@@ -341,7 +369,8 @@
         "lifecycle-text-tools",
         "messages-and-opaque-content"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI tool renderer and provider operations; agentui-k4zj and agentui-ckpw"
       ]
@@ -403,7 +432,8 @@
       "installedFixtures": [
         "state-activity-public-extensions"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI durable state, replay and reducer; agentui-ckpw"
       ]
@@ -467,7 +497,8 @@
       "installedFixtures": [
         "messages-and-opaque-content"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI materialized message store and UI; agentui-ckpw"
       ]
@@ -499,7 +530,8 @@
         "state-activity-public-extensions",
         "messages-and-opaque-content"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI activity reducer and renderer; agentui-ckpw"
       ]
@@ -538,7 +570,8 @@
       "installedFixtures": [
         "state-activity-public-extensions"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI host admission, redaction and extension consumers; agentui-ckpw"
       ]
@@ -621,7 +654,8 @@
         "terminal-interrupts-usage",
         "terminal-ordering-limit"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw"
       ]
@@ -675,7 +709,8 @@
         "messages-and-opaque-content",
         "acknowledged-absence-and-fault"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "Switchboard reasoning lifecycle mapping; AgentUI reasoning consumer; agentui-ckpw"
       ]
@@ -741,9 +776,11 @@
       "scope": "Scoped owner attribution only; subagent lifecycle mapping planned.",
       "installedFixtures": [
         "lifecycle-text-tools",
+        "identity-run-source-scope",
         "acknowledged-absence-and-fault"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw"
       ]
@@ -766,7 +803,8 @@
         "terminal-interrupts-usage",
         "terminal-ordering-limit"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
       ]
@@ -793,7 +831,8 @@
       "installedFixtures": [
         "terminal-interrupts-usage"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "Native interaction qualification and AgentUI continuation delivery; agentui-ckpw"
       ]
@@ -812,7 +851,8 @@
       "installedFixtures": [
         "terminal-interrupts-usage"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI usage persistence and display; agentui-ckpw"
       ]
@@ -851,7 +891,8 @@
       "installedFixtures": [
         "messages-and-opaque-content"
       ],
-      "contractFixtures": [],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI content admission, media policy and UI; agentui-ckpw"
       ]
@@ -886,15 +927,11 @@
       "mapping": "wire-only",
       "scope": "Published SDK RunAgentInput type and canonical schema controls, with different accepted shapes; no host admission implementation.",
       "installedFixtures": [],
-      "contractFixtures": [
-        {
-          "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
-          "test": "published SDK types and availability contracts preserve declared limits"
-        },
-        {
-          "file": "tests/protocol/conformance.test.mjs",
-          "test": "canonical request and capability shapes require runtime validation"
-        }
+      "canonicalControls": [
+        "request-capability-shapes"
+      ],
+      "publishedTypeContracts": [
+        "published-sdk-availability"
       ],
       "pendingProductOwners": [
         "AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y"
@@ -967,19 +1004,12 @@
       "installedFixtures": [
         "availability-description"
       ],
-      "contractFixtures": [
-        {
-          "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
-          "test": "published SDK types and availability contracts preserve declared limits"
-        },
-        {
-          "file": "tests/protocol/conformance.test.mjs",
-          "test": "canonical request and capability shapes require runtime validation"
-        },
-        {
-          "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
-          "test": "backend availability and projection families align across package boundaries"
-        }
+      "canonicalControls": [
+        "request-capability-shapes"
+      ],
+      "publishedTypeContracts": [
+        "published-sdk-availability",
+        "availability-family-alignment"
       ],
       "pendingProductOwners": [
         "AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y"

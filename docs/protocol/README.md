@@ -26,6 +26,8 @@ The matrix keeps these facts separate:
 | Canonical schema | Closed wire shapes and their required fields, unions and enums |
 | SDK runtime results | Historical upstream validator acceptance of indexed payloads |
 | Mapping coverage | Facts represented by the pinned Switchboard projection |
+| Canonical controls | Executed closed-schema checks on representative raw shapes |
+| Published type contracts | Executed compiler probes of SDK assignability and package alignment |
 | Installed fixtures | Actual public projection events, descriptors, absence and fault results |
 | Native availability | One explicit undeclared scope because no backend declaration input exists |
 | Native qualification | The pinned record's route assessments, currently unqualified for all six routes |
@@ -106,14 +108,18 @@ npm run verify
 
 The generator derives definitions, event discriminators and raw fixture paths
 from the retained inventories. It lists SDK divergences and references hashed
-inputs instead of copying their complete rows. Coverage owns the expected fixture
-IDs. A test checks them against the actual function map, and every function is
-registered under its coverage-owned name. Report generation loads data without
-executing fixture code.
-The adapter-test workspace owns compiler probes; the protocol suite and generator
-share their contract names from this checkout. Behavior limits name the registered
-fixtures that substantiate each claim. Qualification scope and pending ownership
-remain separate from those behavioral claims.
+inputs instead of copying their complete rows. The catalog in
+`tests/protocol/evidence.mjs` owns one ID namespace for installed fixtures,
+canonical controls and published type contracts. Categories and behavior limits
+cite those IDs. Separate report fields retain each evidence kind's meaning.
+`tests/protocol/conformance.test.mjs` registers all catalog IDs and checks each
+kind against its actual function map. A report entry's `file` names this registrar,
+not the module defining its body. Compiler bodies use the unchanged shared
+adapter-test helper. Canonical controls have their own module and report section.
+A separate identity fixture checks cross-run, source and reference scoping.
+Report generation imports metadata without executing evidence bodies. A fresh
+process checks that import graph. Qualification scope and pending ownership
+remain separate from behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. `protocol:check` provides the same freshness comparison as a fast
 read-only command; `verify` already includes the test. Normal verification needs

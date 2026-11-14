@@ -1,21 +1,11 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import Ajv from 'ajv/dist/2020.js';
 import { createAguiProjection, describeProjection, aguiProtocol } from '@agentui/host/agui';
-import { coverageContract } from './coverage.mjs';
+import { projectionFacts } from '../coverage.mjs';
+import { validateEvent } from '../canonical.mjs';
 
 const ref = (id, scope = ['fixture']) => ({ id, scope });
 const bounds = { maxEntities: 64, maxPayloadBytes: 16384, maxJsonDepth: 24, maxJsonNodes: 2048 };
-const { projectionFamilies, plannedFamilies } = coverageContract;
-const schema = JSON.parse(readFileSync(new URL('./upstream/schema.json', import.meta.url), 'utf8'));
-const ajv = new Ajv({ strict: false });
-ajv.addSchema(schema);
-export function validateDefinition(name) {
-  const validate = ajv.getSchema(`${schema.$id}#/$defs/${name}`);
-  assert.equal(typeof validate, 'function', name);
-  return validate;
-}
-export const validateEvent = validateDefinition(coverageContract.canonicalValidator.event);
+const { families: projectionFamilies, plannedFamilies } = projectionFacts;
 
 function mapped(projection, fact, count = 1) {
   const result = projection.accept(fact);
@@ -77,6 +67,19 @@ export const installedFixtures = {
     assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
     assert.deepEqual(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome, { type: 'success' });
+    projection.close();
+  },
+
+  'identity-run-source-scope'() {
+    const projection = actor();
+    const owner = ref('same'), message = ref('same');
+    const [text] = mapped(projection, { kind: 'text-started', message, owner, role: 'assistant', name: '' });
+    assert.equal(typeof text.messageId, 'string');
+    assert.notEqual(text.messageId, '');
+    assert.equal(typeof text.subagentRunId, 'string');
+    assert.notEqual(text.subagentRunId, '');
+    assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
+    assert.deepEqual(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome, { type: 'success' });
     const other = actor({ sourceKey: 'another.source' });
     const same = actor();
     assert.equal(mapped(same, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
@@ -95,9 +98,9 @@ export const installedFixtures = {
     assert.equal('subagentRunId' in plain, false);
     const scoped = actor();
     assert.notEqual(mapped(scoped, { kind: 'text-complete', message: ref('same', ['other']), role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
-    projection.close();
     other.close();
     scoped.close();
+    projection.close();
   },
 
   'state-activity-public-extensions'() {
