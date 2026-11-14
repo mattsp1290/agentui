@@ -1,0 +1,20 @@
+{
+  "name": "agui49-exact-fork-consumer",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "dependencies": {
+    "@ag-ui/core": "file:../artifacts/ag-ui-core-1.0.4.tgz",
+    "@ag-ui/proto": "file:../artifacts/ag-ui-proto-1.0.4.tgz",
+    "@ag-ui/encoder": "file:../artifacts/ag-ui-encoder-1.0.4.tgz",
+    "@ag-ui/client": "file:../artifacts/ag-ui-client-1.0.4.tgz",
+    "@ag-ui/codex-sdk": "file:../artifacts/ag-ui-codex-sdk-0.0.1.tgz",
+    "@ag-ui/pi": "file:../artifacts/ag-ui-pi-0.0.1.tgz",
+    "@openai/codex-sdk": "0.167.1",
+    "@openai/codex": "0.167.1",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
+    "zod": "3.25.76"
+  }
+}
