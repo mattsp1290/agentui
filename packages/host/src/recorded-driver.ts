@@ -2,7 +2,7 @@ import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSyn
 import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
-import { integer, nonempty, object, output } from './durable-model.js';
+import { positiveInteger, nonempty, object, output } from './durable-model.js';
 import type { CapturedTarget, CommandResult, ProviderDriver } from './durable-model.js';
 
 export interface RecordedDriverOptions<E> {
@@ -32,17 +32,20 @@ export function createRecordedDriver<E>(options: RecordedDriverOptions<E>): Prov
       await options.afterAcceptance?.(command, target);
       return observed;
     },
-    async lookup(_command, target) {
+    async lookup(command, target) {
       if (!existsSync(options.backendPath)) return { kind: 'outcome-unknown' };
       const lines = readFileSync(options.backendPath, 'utf8').trim().split('\n').filter(Boolean);
-      for (const line of lines.reverse()) {
-        const observed = object(JSON.parse(line)), evidence = object(observed.evidence);
+      for (let index = lines.length - 1; index >= 0; index--) {
+        let parsed: unknown;
+        try { parsed = JSON.parse(lines[index]!); }
+        catch (error) { if (index === lines.length - 1) continue; throw error; }
+        const observed = object(parsed), evidence = object(observed.evidence);
         if (canonicalJson(evidence.identity) === canonicalJson(target.identity)) {
           const native = evidence.nativeOperation === null ? null : object(evidence.nativeOperation);
           const extension = object(evidence.observation);
           const parsedEvidence = { identity: target.identity, source: 'authoritative-native-lookup',
             nativeOperation: native ? { namespace: nonempty(native.namespace), id: nonempty(native.id) } : null,
-            observation: { namespace: nonempty(extension.namespace), schemaVersion: integer(extension.schemaVersion),
+            observation: { namespace: nonempty(extension.namespace), schemaVersion: positiveInteger(extension.schemaVersion),
               data: JSON.parse(canonicalJson(extension.data)) },
           } as const;
           if (observed.kind === 'accepted') return { kind: 'accepted', evidence: parsedEvidence };
@@ -52,7 +55,7 @@ export function createRecordedDriver<E>(options: RecordedDriverOptions<E>): Prov
             result: { kind: 'rejected', reason: nonempty(result.reason) } };
           if (result.kind !== 'completed') throw new Error('Invalid recorded result');
           return { kind: 'conclusive', evidence: parsedEvidence, result: {
-            kind: 'completed', output: output(result.output, options, target.installation, _command.scope),
+            kind: 'completed', output: output(result.output, options, target.installation, command.scope),
           } };
         }
       }

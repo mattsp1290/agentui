@@ -92,7 +92,9 @@ test('authorization precedes reads, unsupported cancel rejects, and settlement f
   host.createConversation(scope, installed);
   assert.equal((await host.conversation(scope).submit(command('cancel', { kind: 'cancel', runId: 'r' }))).reason, 'recorded-cancel-unavailable');
   assert.equal((await host.conversation(scope).submit(command('wrong', undefined, other))).reason, 'scope-mismatch');
-  await assert.rejects(host.conversation(scope).submit(command('failure')), /Projector/);
+  const failed = await host.conversation(scope).submit(command('failure'));
+  assert.deepEqual(failed.receipt.state, { kind: 'uncertain', reason: 'output-rejected' });
+  assert.deepEqual(await host.reconcile(scope, 'failure'), failed.receipt);
   assert.equal((await host.conversation(scope).receipt('failure')).state.kind, 'uncertain');
   assert.deepEqual((await snapshot(host.conversation(scope))).document.domain, []);
   const denied = f.open({ authorize: () => false });

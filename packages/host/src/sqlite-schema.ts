@@ -3,9 +3,10 @@ import { DatabaseSync } from 'node:sqlite';
 export function openDatabase(path: string): DatabaseSync {
   const db = new DatabaseSync(path);
   try {
+    db.exec('PRAGMA busy_timeout=5000;');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
     if (typeof version !== 'number' || (version !== 0 && version !== 1)) throw new Error('Unsupported database version');
-    db.exec('PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;');
+    db.exec('PRAGMA foreign_keys=ON;');
     if (version === 0) {
       db.exec('BEGIN IMMEDIATE');
       const lockedVersion = db.prepare('PRAGMA user_version').get()?.user_version;
@@ -38,7 +39,9 @@ export function openDatabase(path: string): DatabaseSync {
         PRAGMA user_version=1;`);
       db.exec('COMMIT');
     }
-    db.exec('PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;');
+    const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
+    if (mode !== 'wal') throw new Error('Database requires WAL mode');
+    db.exec('PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS host_limits (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);');
     return db;
   } catch (error) {
     db.close();

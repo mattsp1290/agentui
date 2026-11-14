@@ -1,7 +1,7 @@
 import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
-import type { ConversationPort, ConversationScope, Projection } from '@agentui/contracts';
+import type { ConversationPort, ConversationScope, Projection, Receipt } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
-import { budgets, installation } from './durable-model.js';
+import { budgets, installation, nonempty } from './durable-model.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
@@ -13,10 +13,22 @@ export interface LocalHostOptions<E, P> {
   readonly authorize: (scope: ConversationScope) => boolean;
   readonly budgets?: Partial<HostBudgets>;
 }
-export function openLocalHost<E, P>(options: LocalHostOptions<E, P>) {
+export interface LocalHost<E, P> {
+  createConversation(scope: ConversationScope, target: Installation): void;
+  append(scope: ConversationScope, output: HostOutput<E>): void;
+  conversation(scope: ConversationScope): ConversationPort<E, P>;
+  reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
+  close(): void;
+}
+export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
   const store = new SqliteStore(options.path, options.projection, budgets(options.budgets));
   const journal = new Journal(store);
   let closed = false;
+  let active = 0;
+  const finished = () => {
+    active--;
+    if (closed && active === 0) store.close();
+  };
   const authorized = (value: ConversationScope): ConversationScope => {
     const scope = parseScope(value);
     if (closed) throw new Error('Host is closed');
@@ -52,14 +64,17 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>) {
             recordIntent: () => store.verifyIntent(stored),
             dispatchNative: () => options.driver.dispatch(stored.command, stored.target),
           });
-          const observed = await operation.run();
-          const receipt = store.settle(scope, command.clientCommandId, observed.observation);
-          journal.wake();
-          return { kind: 'receipt', receipt };
+          active++;
+          try {
+            const observed = await operation.run();
+            const receipt = store.settle(scope, command.clientCommandId, observed.observation);
+            journal.wake();
+            return { kind: 'receipt', receipt };
+          } finally { finished(); }
         },
         async receipt(id) {
           authorized(scope);
-          const stored = store.command(scope, id);
+          const stored = store.command(scope, nonempty(id));
           return stored ? store.exposedReceipt(stored) : null;
         },
         watch(request, receive) {
@@ -70,25 +85,38 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>) {
     },
     async reconcile(scope: ConversationScope, id: string) {
       authorized(scope);
-      const stored = store.command(scope, id);
+      const stored = store.command(scope, nonempty(id));
       if (!stored) return null;
+      if (stored.observation?.kind === 'conclusive' && stored.receipt.state.kind === 'uncertain' && stored.receipt.state.reason === 'output-rejected') {
+        const receipt = store.settle(scope, id, stored.observation);
+        journal.wake();
+        return receipt;
+      }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       const lookup = options.driver.lookup;
       const operation = createDispatchOperation({ mode: 'recovery', identity: stored.target.identity,
         previous: store.recoveryPrevious(stored),
         ...(lookup ? { reconcileNative: () => lookup.call(options.driver, stored.command, stored.target) } : {}),
       });
+      active++;
+      try {
       const result = await operation.reconcile(new AbortController().signal);
-      if (result.kind !== 'ok') return store.exposedReceipt(stored);
+      if (result.kind !== 'ok') {
+        if (stored.observation !== null) return stored.receipt;
+        const receipt = store.settle(scope, id, { kind: 'outcome-unknown' });
+        journal.wake();
+        return receipt;
+      }
       const receipt = store.settle(scope, id, result.value.observation);
       journal.wake();
       return receipt;
+      } finally { finished(); }
     },
     close(): void {
       if (closed) return;
       closed = true;
       journal.close();
-      store.close();
+      if (active === 0) store.close();
     },
   };
 }

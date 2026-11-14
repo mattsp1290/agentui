@@ -7,7 +7,7 @@ export type { ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contra
 
 export const hostRuntime = 'node';
 export { openLocalHost } from './local-host.js';
-export type { LocalHostOptions } from './local-host.js';
+export type { LocalHost, LocalHostOptions } from './local-host.js';
 export { createRecordedDriver } from './recorded-driver.js';
 export type { RecordedDriverOptions } from './recorded-driver.js';
 export type { Installation, NativeRun, NativeDecision, HostOutput, CommandResult, CapturedTarget, ProviderDriver, HostBudgets } from './durable-model.js';
