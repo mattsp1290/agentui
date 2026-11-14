@@ -2,13 +2,20 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { readFileSync, readdirSync, existsSync, lstatSync } from 'node:fs';
-import { isAbsolute, join, basename, relative } from 'node:path';
+import { isAbsolute, join, basename, relative, resolve, sep } from 'node:path';
 import { gunzipSync } from 'node:zlib';
 
 const parseJson = (body) => JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
 const readJson = (path) => parseJson(readFileSync(path));
 const digest = (body, algorithm = 'sha256', encoding = 'hex') => createHash(algorithm).update(body).digest(encoding);
 const printableAsciiWithoutBackslash = /^[\x20-\x5b\x5d-\x7e]+$/u;
+
+function forkFile(folder, file) {
+  const target = resolve(folder, file);
+  const local = relative(folder, target);
+  assert.ok(!isAbsolute(file) && local !== '' && local !== '..' && !local.startsWith(`..${sep}`), `${file}: must stay inside the fork folder`);
+  return target;
+}
 
 export function resolveLockedFork(root) {
   assert.ok(typeof root === 'string' && isAbsolute(root), 'fork root must be an absolute filesystem path');
@@ -48,7 +55,7 @@ const nativeVersions = {
 const codexVersion = nativeVersions['@openai/codex'];
 function tar(args, label) {
   const env = { ...process.env, LC_ALL: 'C' };
-  delete env.TAR_OPTIONS;
+  for (const key of ['TAR_OPTIONS', 'TAR_READER_OPTIONS', 'TAR_WRITER_OPTIONS', 'GZIP', 'TAPE']) delete env[key];
   try {
     return execFileSync('tar', args, {
       env, timeout: 60_000, maxBuffer: 16 * 1024 * 1024, stdio: ['ignore', 'pipe', 'pipe'],
@@ -70,7 +77,7 @@ export function verifyArchives(fork) {
   for (const artifact of metadata.artifacts) {
     assert.equal(basename(artifact.artifact), artifact.artifact, 'archive must be inside fork folder');
     assert.ok(!expected.has(artifact.package), `duplicate artifact ${artifact.package}`);
-    const archive = join(folder, artifact.artifact);
+    const archive = forkFile(folder, artifact.artifact);
     const body = readFileSync(archive);
     assert.equal(body.length, artifact.bytes, `${archive}: bytes`);
     assert.equal(digest(body), artifact.sha256, `${archive}: sha256`);
@@ -93,21 +100,21 @@ export function verifyArchives(fork) {
     assert.ok(!JSON.stringify(manifest).includes('workspace:'), `${archive}: workspace reference`);
     assert.equal(manifest.license, 'MIT', `${archive}: license`);
     const prefix = artifact.package.replace('@', '').replace('/', '-');
-    assert.deepEqual(manifest, readJson(join(folder, 'manifests', `${prefix}.json`)), `${archive}: retained manifest`);
+    assert.deepEqual(manifest, readJson(forkFile(folder, `manifests/${prefix}.json`)), `${archive}: retained manifest`);
     const notice = extract('package/LICENSE');
-    assert.deepEqual(notice, readFileSync(join(folder, 'notices', `${prefix}.LICENSE`)), `${archive}: retained license`);
+    assert.deepEqual(notice, readFileSync(forkFile(folder, `notices/${prefix}.LICENSE`)), `${archive}: retained license`);
     assert.ok(notice.includes(Buffer.from('MIT License')), `${archive}: MIT notice`);
     if (artifact.package === '@ag-ui/pi') {
       assert.ok(notice.includes(Buffer.from('Copyright (c) 2026 YS-BW')), `${archive}: donor copyright`);
       const donor = extract('package/PROVENANCE.md');
-      assert.deepEqual(donor, readFileSync(join(folder, 'notices/ag-ui-pi.PROVENANCE.md')), `${archive}: donor notice`);
+      assert.deepEqual(donor, readFileSync(forkFile(folder, 'notices/ag-ui-pi.PROVENANCE.md')), `${archive}: donor notice`);
       assert.ok(donor.includes(Buffer.from('ee810dfb9ad3fe81d8854e9121b84ddee4c59148')), `${archive}: donor revision`);
     }
     expected.set(artifact.package, { filename: artifact.artifact, integrity, manifest });
   }
   assert.deepEqual([...expected.keys()].sort(), aguiPackages.toSorted(), 'exact six AG-UI archives');
   for (const entry of metadata.evidence) {
-    const packed = readFileSync(join(folder, entry.path));
+    const packed = readFileSync(forkFile(folder, entry.path));
     assert.equal(packed.length, entry.compressedBytes, `${entry.path}: compressed bytes`);
     assert.equal(digest(packed), entry.compressedSha256, `${entry.path}: compressed hash`);
     const raw = gunzipSync(packed);
@@ -116,14 +123,14 @@ export function verifyArchives(fork) {
     assert.equal(digest(raw), entry.rawSha256, `${entry.path}: raw hash`);
     assert.equal(digest(raw), entry.retainedSha256, `${entry.path}: retained hash`);
   }
-  assert.equal(digest(gunzipSync(readFileSync(join(folder, 'evidence/source-pnpm-lock.yaml.gz')))), metadata.sourceLockSha256, 'source lock digest');
-  const fixtureBody = readFileSync(join(folder, metadata.qualification.fixtureProvenance));
+  assert.equal(digest(gunzipSync(readFileSync(forkFile(folder, 'evidence/source-pnpm-lock.yaml.gz')))), metadata.sourceLockSha256, 'source lock digest');
+  const fixtureBody = readFileSync(forkFile(folder, metadata.qualification.fixtureProvenance));
   assert.equal(digest(fixtureBody), metadata.qualification.fixtureProvenanceSha256, 'fixture provenance digest');
   const fixtures = parseJson(fixtureBody);
   assert.equal(fixtures.sourceRevision, metadata.sourceRevision, 'fixture source revision');
   assert.ok(fixtures.unchangedSourceCopies, 'fixtures must be unchanged source copies');
   for (const fixture of fixtures.files) {
-    const body = readFileSync(join(folder, fixture.path));
+    const body = readFileSync(forkFile(folder, fixture.path));
     assert.equal(digest(body), fixture.sha256, `${fixture.path}: fixture hash`);
     assert.equal(body.length, fixture.bytes, `${fixture.path}: fixture bytes`);
     assert.equal(countByteLines(body), fixture.rawLines, `${fixture.path}: fixture lines`);

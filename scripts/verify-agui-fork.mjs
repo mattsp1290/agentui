@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, copyFile, cp, mkdir, mkdtemp, readFile, rm } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,7 +15,8 @@ const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const checks = join(root, 'tests/dependencies/ag-ui');
 const consumerScripts = ['all-imports.mjs', 'codex-esm.mjs', 'codex-commonjs.cjs'];
 const runtime = { node: process.version, execPath: process.execPath, platform: process.platform, arch: process.arch,
-  inheritedRuntimeConfig: Object.keys(process.env).filter((key) => /^(NODE_OPTIONS$|npm_config_)/iu.test(key)).sort() };
+  inheritedRuntimeConfig: Object.keys(process.env).filter((key) => /^(NODE_OPTIONS$|npm_config_)/iu.test(key)).sort(),
+  nodeOptionsSha256: process.env.NODE_OPTIONS === undefined ? null : createHash('sha256').update(process.env.NODE_OPTIONS).digest('hex') };
 const sourceSha256 = Object.fromEntries(await Promise.all([
   'scripts/lib/agui-fork.mjs', 'scripts/verify-agui-fork.mjs',
   ...consumerScripts.map((name) => `tests/dependencies/ag-ui/${name}`),
@@ -32,6 +33,12 @@ if (offline) {
     sourceRevision: fork.metadata.sourceRevision, localAguiArchives: expected.size, installed: false, ...runtime, sourceSha256, tar }));
 } else {
   await qualifyInstalledConsumer(fork, expected);
+}
+
+async function copyExactly(source, target, names, label) {
+  assert.deepEqual((await readdir(source)).sort(), [...names].sort(), `${label}: unexpected or missing inputs in ${source}`);
+  await mkdir(target, { recursive: true });
+  for (const name of names) await copyFile(join(source, name), join(target, name));
 }
 
 async function qualifyInstalledConsumer(fork, expected) {
@@ -54,12 +61,15 @@ async function qualifyInstalledConsumer(fork, expected) {
   }
   let npm;
   try {
-    await cp(join(checks, 'consumer'), consumer, { recursive: true });
+    await copyExactly(join(checks, 'consumer'), consumer, ['package.json', 'package-lock.json'], 'frozen consumer');
     await mkdir(join(directory, 'artifacts'));
     for (const artifact of fork.metadata.artifacts) {
       await copyFile(join(fork.folder, artifact.artifact), join(directory, 'artifacts', artifact.artifact));
     }
-    await cp(join(fork.folder, 'qualification-fixtures/pi'), join(consumer, 'test'), { recursive: true });
+    const piPrefix = 'qualification-fixtures/pi/';
+    const piFixtures = JSON.parse(await readFile(join(fork.folder, fork.metadata.qualification.fixtureProvenance), 'utf8')).files
+      .filter((file) => file.path.startsWith(piPrefix)).map((file) => file.path.slice(piPrefix.length));
+    await copyExactly(join(fork.folder, 'qualification-fixtures/pi'), join(consumer, 'test'), piFixtures, 'Pi fixtures');
     await copyFile(join(fork.folder, 'qualification-fixtures/codex/codex-exec.mjs'), env.AGUI49_CODEX_FIXTURE);
     await chmod(env.AGUI49_CODEX_FIXTURE, 0o755);
     for (const name of consumerScripts) {

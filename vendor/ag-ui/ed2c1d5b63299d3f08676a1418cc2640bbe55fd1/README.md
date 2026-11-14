@@ -20,7 +20,7 @@ node scripts/verify-agui-fork.mjs --offline
 node scripts/verify-agui-fork.mjs
 ```
 
-The first command verifies bytes, manifests, notices, compressed evidence, fixture hashes and the independent frozen consumer lock without installing dependencies. Both commands require POSIX, system `tar` and Node >=22.19. GNU tar also requires `gzip` for these archives. The second also requires npm. It creates an isolated consumer in the host temporary directory, copies the retained archives and consumer inputs, and runs `npm ci --ignore-scripts --include=optional --no-audit --no-fund`. It may download the lock's registry dependencies. Nothing installs automatically from normal tests. It removes the successful temporary consumer and preserves a failed one for inspection.
+The first command verifies bytes, manifests, notices, compressed evidence, fixture hashes and the independent frozen consumer lock without installing dependencies. Both commands require POSIX and system `tar`. The driver enforces Node >=22.19, the Pi package floor; all retained replays used Node24.22.3 and other Node versions are unmeasured. GNU tar also requires `gzip` for these archives. The second also requires npm. It creates an isolated consumer in the host temporary directory, copies the retained archives and consumer inputs, and runs `npm ci --ignore-scripts --include=optional --no-audit --no-fund`. It may download the lock's registry dependencies. Nothing installs automatically from normal tests. It removes the successful temporary consumer and preserves a failed one for inspection.
 
 The consumer pins all six AG-UI packages to these local bytes, Codex SDK and CLI to `0.167.1`, all three Pi peers to `1.5.0`, and zod to `3.25.76`. The independent inputs are `tests/dependencies/ag-ui/consumer/package.json` and `package-lock.json`. All six Codex optional platform packages remain in that lock; the applicable native payload must be installed but is never executed. The verifier rejects registry AG-UI resolution, nested or extra AG-UI copies, mismatched installed manifests and incorrect SRI. Qualification imports every public package, runs Codex first turn and continuation through ESM and CommonJS against the controlled executable, and runs the 15 unchanged Pi tests with its controlled provider. Pi's exported example server only listens on loopback. No native provider credential or real agent is used.
 
@@ -49,6 +49,13 @@ and emits hashes for itself, the fork module and all three consumer assertion sc
 Older replay records retain their original paths and state their runtime-binding scope.
 
 `evidence/archive-identity-node-qualification.log.gz` retains the separate offline
-and full replay of the current package verifier. Its emitted source hashes bind
-the fork module, driver and all three consumer assertion scripts. Runtime binaries
-are pinned to the driver executable; ambient runtime configuration names are recorded.
+and full replay of the archive-identity verifier. Its emitted source hashes bind
+the fork module, driver and all three consumer assertion scripts. Node children use the driver's executable; npm resolves with that directory
+first on PATH and its version is recorded. The tar version identifies the host
+archive reader; GNU tar also uses host gzip. Ambient runtime settings are inherited.
+
+`evidence/closed-input-node-qualification.log.gz` retains the exact-copy verifier
+replay. Consumer inputs and Pi fixtures must match their verified filename sets
+before copying; retained file paths must be relative and stay within the fork
+directory. The emitted record includes runtime configuration names and a digest
+of NODE_OPTIONS, without its value.
