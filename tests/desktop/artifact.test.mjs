@@ -7,7 +7,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { readArtifact, readInstalledArtifact } from '../../apps/host/build/tsc/artifact.js';
-import { parseArtifactManifest } from '@agentui/contracts/artifact';
+import { parseArtifactManifest, artifactIdentityText } from '@agentui/contracts/artifact';
 
 const generator = fileURLToPath(new URL('../../scripts/artifact-manifest.mjs', import.meta.url));
 function fixture(t) {
@@ -146,4 +146,26 @@ test('browser development build records its own asset identity and cannot pass a
   assert.throws(() => readInstalledArtifact(directory), /requires a host artifact/);
   f.put('apps/desktop/web-dist-browser/assets/main.js', 'tampered browser code');
   assert.throws(() => readArtifact(directory, 'browser-development'), /digest mismatch/);
+});
+
+
+test('source folders named like outputs remain part of the dirty identity', t => {
+  const f = fixture(t);
+  let previous = f.build();
+  for (const name of ['build', 'gen', 'target', 'dist']) {
+    f.put(`packages/contracts/src/${name}/codec.ts`, 'export const value = 1;\n');
+    f.git('add', '--force', `packages/contracts/src/${name}/codec.ts`);
+    const next = f.build();
+    assert.equal(next.sourceDirty.kind, 'dirty');
+    assert.notEqual(next.sourceDirty.fingerprint, previous.sourceDirty.fingerprint);
+    previous = next;
+  }
+});
+
+test('installed host rejects a declared artifact runtime that differs from the running Node', t => {
+  const f = fixture(t), manifest = f.build();
+  const different = { ...manifest, artifactRuntime: { ...manifest.artifactRuntime, version: '0.0.0' } };
+  different.artifactId = createHash('sha256').update(artifactIdentityText(different)).digest('hex');
+  f.put('apps/host/dist/artifact.json', JSON.stringify(different));
+  assert.throws(() => readInstalledArtifact(f.directory), /runtime does not match/);
 });

@@ -7,6 +7,9 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
 import { createBrowserConnection } from '@agentui/client/service';
+import { createConversationStore } from '@agentui/client';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import { DatabaseSync } from 'node:sqlite';
 
 const root = new URL('../../', import.meta.url);
 const deferred = () => {
@@ -313,4 +316,48 @@ test('SIGTERM during playback retains exclusive process ownership until the acce
   assert.equal((await f.ok({ op: 'receipt', scope, id: intent.clientCommandId }, alice.cookie)).state.kind, 'completed');
   assert.equal((await f.ok({ op: 'submit', command: intent }, alice.cookie)).receipt.state.kind, 'completed');
   assert.equal(readFileSync(path, 'utf8').trim().split('\n').length, 1);
+});
+
+
+test('a post-admission storage fault is unavailable and retains the original command and newer draft', { timeout: 20_000 }, async t => {
+  const f = await fixture(t), alice = await f.pair();
+  const scope = { hostId: f.hostId, conversationId: 'settlement-storage-fault' };
+  await f.ok({ op: 'create', scope }, alice.cookie);
+  const db = new DatabaseSync(join(f.directory, 'host.sqlite'));
+  t.after(() => db.close());
+  db.exec(`CREATE TRIGGER fail_settlement BEFORE INSERT ON events
+    WHEN json_extract(NEW.payload, '$.event.event.role') = 'assistant'
+      AND json_extract(NEW.payload, '$.event.event.revision') = 3
+    BEGIN SELECT RAISE(ABORT, 'injected final settlement failure'); END`);
+  const responses = [];
+  const connection = createBrowserConnection({ fetch: async (url, init) => {
+    const response = await fetch(new URL(url, f.origin), { ...init,
+      headers: { ...init.headers, Origin: f.origin, Cookie: alice.cookie } });
+    if (JSON.parse(init.body).op === 'submit') responses.push({ status: response.status, body: await response.clone().json() });
+    return response;
+  } });
+  let persisted = null;
+  const store = createConversationStore({ scope, port: connection.conversation(scope), projection: transcriptProjection,
+    createCommandId: () => 'original-failed-settlement',
+    drafts: { load: async () => persisted, save: async value => { persisted = structuredClone(value); } } });
+  t.after(() => store.disconnect());
+  await store.ready;
+  await store.setDraft('Keep this admitted intent');
+  await assert.rejects(store.send(), error => error.kind === 'unavailable');
+  assert.equal(responses.length, 1);
+  assert.equal(responses[0].status, 503);
+  assert.equal(responses[0].body.error.kind, 'unavailable');
+  assert.match(responses[0].body.error.message, /Reconcile before retrying/);
+  assert.equal((await connection.conversation(scope).receipt('original-failed-settlement')).state.kind, 'pending');
+  const original = store.getSnapshot().outbox[0].command;
+  await store.setDraft('Newer unsent draft');
+  await store.refreshReceipt(original.clientCommandId);
+  assert.deepEqual(store.getSnapshot().outbox[0].command, original);
+  db.exec('DROP TRIGGER fail_settlement');
+  assert.equal((await connection.reconcile(scope, original.clientCommandId)).state.kind, 'completed');
+  await store.refreshReceipt(original.clientCommandId);
+  assert.deepEqual(store.getSnapshot().outbox, []);
+  assert.equal(store.getSnapshot().draft, 'Newer unsent draft');
+  const accepted = readFileSync(join(f.directory, 'recorded.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
+  assert.equal(accepted.length, 1);
 });

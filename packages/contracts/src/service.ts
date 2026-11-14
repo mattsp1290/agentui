@@ -55,7 +55,9 @@ export interface ServiceValueMap {
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: { readonly kind: ServiceFailureKind; readonly message: string } };
-/** Host-classified failures reject with ServiceError; transport failures may be inconclusive. */
+/** Host-classified failures reject with ServiceError. Every failed submit promise may follow admission.
+ * A resolved rejection concerns this attempt and cannot rule out an earlier same-ID attempt.
+ * Preserve previously uncertain commands until authoritative receipt settlement. */
 export interface ServiceConnection {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
@@ -127,7 +129,7 @@ function feedItem(value: unknown): FeedItem<TranscriptEvent, Transcript> {
   }
   exact(input, ['kind', 'events']);
   if (input.kind !== 'events' || !Array.isArray(input.events) || input.events.length > SERVICE_EVENT_PAGE.events) throw new Error('Invalid service feed item');
-  if (utf8Bytes(canonicalJson(input)) > SERVICE_EVENT_PAGE.bytes) throw new Error('Service event page exceeds byte limit');
+  if (input.events.reduce((bytes, event) => bytes + utf8Bytes(canonicalJson(event)), 0) > SERVICE_EVENT_PAGE.bytes) throw new Error('Service event page exceeds byte limit');
   return { kind: 'events', events: input.events.map(value => {
     const envelope = record(value, ['scope', 'sequence', 'event']);
     const scope = parseScope(envelope.scope), sequence = integer(envelope.sequence);

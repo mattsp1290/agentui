@@ -1,9 +1,11 @@
 import { canonicalJson } from '@agentui/contracts';
+import { utf8Bytes } from '@agentui/contracts/decode';
 import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import type { ClientCommand } from '@agentui/contracts';
+import type { ClientCommand, Envelope } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun } from './durable-model.js';
+import { budgets } from './durable-model.js';
+import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { openLocalHost } from './local-host.js';
 import type { LocalHost } from './local-host.js';
 import { createRecordedDriver } from './recorded-driver.js';
@@ -70,7 +72,7 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
         detail: error instanceof Error ? error.message : 'Unknown progress failure' });
     }
   };
-  const driver = createRecordedDriver<TranscriptEvent>({ backendPath: options.backendPath,
+  const recorded = createRecordedDriver<TranscriptEvent>({ backendPath: options.backendPath,
     decodeEvent: transcriptProjection.decodeEvent,
     resolve: async (command, target) => finalResult(command, target),
     async afterAcceptance(command, target) {
@@ -83,6 +85,16 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
       await pause();
     },
   });
+  const limits = budgets();
+  const driver: ProviderDriver<TranscriptEvent> = { ...recorded,
+    capability(command) {
+      for (const event of userEvents(command, '0'.repeat(36))) {
+        const envelope: Envelope<TranscriptEvent> = { scope: command.scope, sequence: Number.MAX_SAFE_INTEGER, event: { kind: 'domain', event } };
+        if (utf8Bytes(canonicalJson(envelope)) > limits.maxEventBytes) return { kind: 'unsupported', reason: 'message-too-large' };
+      }
+      return recorded.capability(command);
+    },
+  };
   const host = openLocalHost({ path: options.path, projection: transcriptProjection, driver,
     authorize: scope => scope.hostId === options.hostId });
   return { ...host,

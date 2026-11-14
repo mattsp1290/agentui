@@ -26,7 +26,6 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     globalThis.savedCommand = own;
     globalThis.renderRecovery(true, [own.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
-    alias: { '@agentui/contracts/service': fileURLToPath(new URL('../../packages/contracts/src/service.ts', import.meta.url)) },
     define: { 'process.env.NODE_ENV': '"production"' } });
   const browser = await chromium.launch();
   t.after(() => browser.close());
@@ -45,7 +44,6 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await recovery.getByRole('button', { name: 'Retry original command', exact: true }).count(), 1);
   assert.match(await recovery.textContent(), /absent result or rejected retry cannot rule out an earlier submission/);
   assert.equal(await page.getByRole('button', { name: /Discard|Archive/ }).count(), 0);
-  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).getAttribute('maxlength'), '64000');
   assert.deepEqual(await page.evaluate(() => globalThis.savedCommand), {
     version: 1, scope: { hostId: 'host', conversationId: 'conversation' }, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' },
   });

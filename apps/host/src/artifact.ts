@@ -53,6 +53,9 @@ export function readArtifactBytes(directory: string, platform: ArtifactManifest[
 }
 export function readInstalledArtifact(directory: string, options: { readonly desiredGitRevision?: string } = {}): { readonly manifest: ArtifactManifest; readonly compatibility: HostCompatibility } {
   const manifest = readArtifact(directory, 'host');
+  if (manifest.artifactRuntime.engine !== 'node' || manifest.artifactRuntime.version !== process.versions.node || manifest.artifactRuntime.format !== 'esm') {
+    throw new Error('Installed host runtime does not match this Node version');
+  }
   return { manifest, compatibility: {
     wireVersion: manifest.wireVersion,
     extensionSdkVersion: manifest.extensionSdkVersion,

@@ -250,3 +250,13 @@ test('a host change without an active conversation replaces the loaded recovery 
   assert.equal(f.created[0].hostId, 'replacement-host');
   assert.deepEqual(f.views.get('original-view/host'), original);
 });
+
+
+test('a storage acquisition failure stops the loading status and blocks commands', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.acquire = async () => { throw new Error('Storage cannot be owned'); };
+  await f.app.start();
+  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+  assert.match(f.app.getSnapshot().storageFailure, /Storage cannot be owned/);
+});

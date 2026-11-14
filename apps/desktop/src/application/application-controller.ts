@@ -214,7 +214,7 @@ export function createApplicationController(deps: {
       publish(initialSnapshot());
       return run(async owner => {
         try { owner.view = { storage: await acquire(owner, null), saved: null }; }
-        catch (cause) { failStorage(owner, null, cause); return; }
+        catch (cause) { failStorage(owner, null, cause); if (session === owner) publish({ host: { kind: 'unavailable' } }); return; }
         try { await refresh(owner); }
         catch (cause) {
           if (session === owner && !(cause instanceof ServiceError && cause.kind === 'unauthorized')) publish({ host: { kind: 'unavailable' } });

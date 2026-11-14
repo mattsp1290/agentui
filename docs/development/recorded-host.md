@@ -50,6 +50,8 @@ Access records and conversations share the existing host database. The applicati
 
 This listener binds to loopback and serves only the recorded backend. Browser credentials use an HttpOnly, SameSite Strict cookie, expire after one hour, and belong to the browser development credential class. Cookies do not isolate loopback ports. Use this entry for local recorded development; it is not the native credential transport or a remote host deployment. Pairing codes, cookies, and provider secrets do not belong in customization Git or URLs.
 
+The absolute data-directory path plus `/control.sock` must fit within 103 UTF-8 bytes for the local control socket. Choose a shorter private directory if startup reports that limit.
+
 HTTP/1.1 browsers share a small connection pool across tabs on one origin. Long polls return within two seconds to leave room for commands; opening many simultaneous views can still delay requests.
 
 Production Tauri keeps its network-denying CSP and disconnected entry. Native desktop and iOS need their own protected credential storage and transport adapters. Browser results do not qualify a packaged macOS or iOS application.

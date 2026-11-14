@@ -33,10 +33,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       host?.close();
       const deadline = setTimeout(() => http.closeAllConnections(), 2000);
       try {
-        await Promise.all([
+        const results = await Promise.allSettled([
           new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
           control?.close(), host?.drained,
         ]);
+        const failure = results.find(result => result.status === 'rejected');
+        if (failure?.status === 'rejected') throw failure.reason;
       } finally { clearTimeout(deadline); }
       access?.close();
       owner.close();

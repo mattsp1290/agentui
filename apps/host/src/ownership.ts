@@ -4,6 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 
 export function ownDirectory(directory: string): { readonly directory: string; close(): void } {
   const path = resolve(directory);
+  if (Buffer.byteLength(join(path, 'control.sock')) >= 104) throw new Error('--data-dir path is too long for the host control socket; choose a shorter directory');
   mkdirSync(path, { recursive: true, mode: 0o700 });
   const stat = lstatSync(path);
   if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() || (stat.mode & 0o077) !== 0) {

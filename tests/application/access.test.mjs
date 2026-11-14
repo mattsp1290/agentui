@@ -71,3 +71,9 @@ test('exclusive directory ownership recovers after a killed process without stal
   const again = ownDirectory(path);
   again.close();
 });
+
+
+test('a control socket path that exceeds the portable limit is rejected before creating a directory', t => {
+  const path = join(directory(t), 'x'.repeat(110));
+  assert.throws(() => ownDirectory(path), /--data-dir path is too long/);
+});

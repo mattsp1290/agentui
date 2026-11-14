@@ -33,7 +33,10 @@ function assetsAt(path) {
 
 function isProductSource(path) {
   const parts = path.split('/');
-  if (parts.some(part => ['node_modules', 'dist', 'web-dist', 'web-dist-browser', 'build', '.audit', 'target', 'gen', '.git'].includes(part))) return false;
+  if (parts.some(part => ['node_modules', '.audit', '.git'].includes(part))) return false;
+  if (/^(?:apps|packages|examples)\/[^/]+\/dist\//.test(path) ||
+      ['apps/host/build/', 'apps/desktop/web-dist/', 'apps/desktop/web-dist-browser/',
+        'apps/desktop/src-tauri/target/', 'apps/desktop/src-tauri/gen/'].some(output => path.startsWith(output))) return false;
   if (parts.some(part => /^\.env|\.pem$|\.key$|\.p12$/i.test(part))) return false;
   return ['apps', 'packages', 'scripts', 'tests', 'examples'].includes(parts[0]) ||
     (parts.length === 1 && /^(?:package(?:-lock)?\.json|tsconfig[^/]*\.json|[^/]*config\.[cm]?[jt]s|\.npmrc)$/.test(path));

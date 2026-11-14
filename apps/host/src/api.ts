@@ -36,12 +36,17 @@ export function createApi(options: {
     }
   }
   return async (principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> => {
-    if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
-    if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
-    const scope = requestScope(request);
-    if (scope !== null && scope.hostId !== principal.hostId) throw new HostFailure('forbidden', 'Conversation belongs to another host');
-    const value = await apply(principal, request);
-    if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
-    return value;
+    try {
+      if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
+      if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
+      const scope = requestScope(request);
+      if (scope !== null && scope.hostId !== principal.hostId) throw new HostFailure('forbidden', 'Conversation belongs to another host');
+      const value = await apply(principal, request);
+      if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
+      return value;
+    } catch (error) {
+      if (error instanceof HostFailure) throw error;
+      throw new HostFailure('unavailable', 'The host could not confirm this operation. Reconcile before retrying.');
+    }
   };
 }

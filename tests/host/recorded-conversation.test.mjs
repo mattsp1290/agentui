@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
-import { foldDocument } from '@agentui/contracts';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, foldDocument } from '@agentui/contracts';
 import { parseTranscript, parseTranscriptEvent, transcriptProjection } from '@agentui/contracts/conversation';
 import { createConversationStore } from '@agentui/client';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
@@ -142,6 +142,47 @@ test('reconciliation overtakes delayed progress without regressing completion or
   assert.equal((await port.submit(intent)).receipt.state.kind, 'completed');
   assert.equal(f.entries().length, 1);
 });
+
+test('a recorded send at the command byte limit is refused before admission or backend acceptance', async t => {
+  const f = harness(t, 0), host = f.open();
+  host.createConversation(scope, recordedInstallation);
+  const intent = command('00000000-0000-0000-0000-000000000000', { kind: 'send', text: '' });
+  intent.body.text = 'x'.repeat(DEFAULT_MAX_COMMAND_BYTES - Buffer.byteLength(canonicalJson(intent)));
+  assert.equal(Buffer.byteLength(canonicalJson(intent)), DEFAULT_MAX_COMMAND_BYTES);
+  const port = host.conversation(scope);
+  assert.deepEqual(await port.submit(intent), { kind: 'rejected', reason: 'message-too-large' });
+  assert.equal(await port.receipt(intent.clientCommandId), null);
+  assert.deepEqual(f.entries(), []);
+});
+
+for (const [label, unit] of [['ASCII', 'x'], ['multibyte', '🙂'], ['escaped', '\0"\\']]) {
+  test(`the largest recorded ${label} user event completes and one extra byte is refused`, async t => {
+    const f = harness(t, 0), host = f.open();
+    host.createConversation(scope, recordedInstallation);
+    const envelope = { scope, sequence: Number.MAX_SAFE_INTEGER, event: { kind: 'domain', event: {
+      kind: 'message-updated', messageId: '00000000-0000-0000-0000-000000000000:user', revision: 1,
+      role: 'user', text: '', complete: true,
+    } } };
+    const room = 64_000 - Buffer.byteLength(canonicalJson(envelope));
+    const unitBytes = Buffer.byteLength(canonicalJson(unit)) - 2;
+    const text = unit.repeat(Math.floor(room / unitBytes)) + 'x'.repeat(room % unitBytes);
+    envelope.event.event.text = text;
+    assert.equal(Buffer.byteLength(canonicalJson(envelope)), 64_000);
+    const port = host.conversation(scope), oversized = command('too-large', { kind: 'send', text: text + 'x' });
+    assert.deepEqual(await port.submit(oversized), { kind: 'rejected', reason: 'message-too-large' });
+    assert.equal(await port.receipt(oversized.clientCommandId), null);
+    assert.deepEqual(f.entries(), []);
+    const intent = command('largest-fitting', { kind: 'send', text });
+    const result = await port.submit(intent);
+    assert.equal(result.kind, 'receipt');
+    assert.equal(result.receipt.state.kind, 'completed');
+    assert.equal((await port.receipt(intent.clientCommandId)).state.kind, 'completed');
+    assert.equal(f.entries().length, 1);
+    const observed = f.watch(host);
+    await until(() => observed.document);
+    assert.equal(observed.document.domain.messages[0].text, text);
+  });
+}
 
 test('a killed recorded process recovers final evidence with the original command ID', { timeout: 10_000 }, async t => {
   const f = harness(t);
