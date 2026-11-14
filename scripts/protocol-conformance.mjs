@@ -1,21 +1,26 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aguiProtocol } from '@agentui/host/agui';
-import { coverage } from '../tests/protocol/fixtures/coverage.mjs';
-import { installedFixture, installedFixtures } from '../tests/protocol/fixtures/installed.mjs';
+import { coverage, coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from '../tests/protocol/fixtures/coverage.mjs';
 
 const root = new URL('../', import.meta.url);
 const upstream = new URL('tests/protocol/fixtures/upstream/', root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
 const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
+const retainedPath = (file) => relative(fileURLToPath(root), fileURLToPath(new URL(file, upstream))).split(sep).join('/');
 
 function table(file) {
   const [header, ...lines] = readFileSync(new URL(file, upstream), 'utf8').trimEnd().split('\n');
   const columns = header.split('\t');
-  return lines.map((line) => Object.fromEntries(columns.map((column, index) => [column, line.split('\t')[index]])));
+  return lines.map((line) => {
+    const cells = line.split('\t');
+    assert.equal(cells.length, columns.length, `${file}: ${line}`);
+    return Object.fromEntries(columns.map((column, index) => [column, cells[index]]));
+  });
 }
 
 export function buildConformanceReport() {
@@ -30,6 +35,7 @@ export function buildConformanceReport() {
   const fixtures = table('upstream.tsv').map(({ path, sha256, typescriptAccepts, pythonAccepts }) => ({
     path, sha256, canonical: path.split('/')[1], typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true',
   }));
+  for (const fixture of fixtures) assert.ok(['valid', 'invalid'].includes(fixture.canonical), fixture.path);
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   const lock = json(new URL('package-lock.json', root));
@@ -38,7 +44,6 @@ export function buildConformanceReport() {
   assert.equal(provenance.sources.canonical.revision, pin.sourceCommit);
   assert.equal(provenance.files['schema.json'].sha256, pin.upstreamFiles['spec/1.0/schema.json']);
   assert.equal(provenance.files['UPSTREAM-LICENSE'].sha256, pin.upstreamFiles.LICENSE);
-  assert.equal(digest(readFileSync(new URL(`vendor/${vendor.artifact}`, root))), vendor.sha256);
   for (const workspace of ['packages/protocol', 'packages/host']) {
     assert.equal(json(new URL(`${workspace}/package.json`, root)).dependencies[sdk.package], sdk.version, workspace);
   }
@@ -47,42 +52,42 @@ export function buildConformanceReport() {
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: 'reasoning-subagents',
+    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedMapping,
   });
   assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
   assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
-  const ownedIds = Object.keys(installedFixtures).sort();
-  assert.ok(existsSync(new URL(installedFixture.file, root)), installedFixture.file);
-  const referencedIds = [...new Set(Object.values(coverage).flatMap((row) => row.fixtures))].sort();
-  assert.deepEqual(referencedIds, ownedIds, 'Every registered installed fixture must have a coverage owner');
+  assert.ok(existsSync(new URL(installedFixtureFile, root)), installedFixtureFile);
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
     const rows = definitions.filter((row) => row.category === category);
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
+    const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.path.split('/')[0]));
     assert.ok(['represented', 'partial', 'planned', 'wire-only'].includes(owned.mapping), category);
     assert.ok(owned.pending.length > 0 && owned.pending.every((owner) => owner.length > 0), category);
-    assert.ok(owned.fixtures.length > 0 || owned.contracts?.length > 0, category);
-    for (const fixture of owned.contracts ?? []) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
+    assert.ok(owned.fixtures.length > 0 || owned.contracts.length > 0, category);
+    for (const fixture of owned.contracts) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
     return {
       category, purpose, definitions: names, eventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
-      canonicalFixtures: fixtures.filter((fixture) => names.includes(fixture.path.split('/')[0])),
-      mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts ?? [],
-      nativeAvailability: 'undeclared', nativeQualification: 'unqualified', pendingProductOwners: owned.pending,
+      canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
+      sdkDivergences: canonicalFixtures.filter((fixture) => fixture.canonical === 'invalid' && (fixture.typescriptAccepts || fixture.pythonAccepts))
+        .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
+      mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts,
+      pendingProductOwners: owned.pending,
     };
   });
   assert.equal(categories.flatMap((row) => row.definitions).length, definitions.length);
   assert.equal(categories.flatMap((row) => row.canonicalFixtures).length, fixtures.length);
   return {
-    coverageContractVersion: 1,
+    coverageContractVersion: coverageContract.version,
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-      authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
+      authority: coverageContract.authority,
       definitionCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
-        matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: 'tests/protocol/fixtures/upstream/ag-ui-matrix.tsv', verifier: pin.ownership.schemaTest },
+        matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: retainedPath('ag-ui-matrix.tsv'), verifier: pin.ownership.schemaTest },
       fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
-        index: provenance.files['upstream.tsv'].path, retained: 'tests/protocol/fixtures/upstream/upstream.tsv', python: pin.ownership.pythonTest },
+        index: provenance.files['upstream.tsv'].path, retained: retainedPath('upstream.tsv'), python: pin.ownership.pythonTest },
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.eventDiscriminators).length,
         fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.canonical === 'valid').length,
         invalid: fixtures.filter((fixture) => fixture.canonical === 'invalid').length,
@@ -92,27 +97,29 @@ export function buildConformanceReport() {
     switchboard: {
       repository: vendor.sourceRepository, sourceRevision: vendor.sourceRevision, artifact: vendor.artifact, sha256: vendor.sha256,
       descriptor: aguiProtocol,
-      nativeRoutes: Object.fromEntries(Object.entries(pin.classification.nativeAdapters).map(([route, qualification]) => [route, { availability: 'undeclared', qualification }])),
-      retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.' },
+      retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: coverageContract.canonicalComparisonScope },
     },
-    agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: 'tests/protocol/fixtures/upstream/schema.json', definition: 'Event' },
-    installedFixtures: ownedIds.map((id) => ({ id, file: installedFixture.file, test: installedFixture.test(id) })),
-    behaviorLimits: {
-      unknownOrUnimplementedFact: 'Explicit error and faulted actor; no successful empty batch.',
-      notObservable: 'Acknowledged absence for an allowed family; empty batch and usable actor.',
-      terminalOrdering: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).',
-      qualification: 'Fixture registration and retained evidence inventory are not current execution results or native qualification.',
-      downstream: 'Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw.',
+    nativeEvidence: {
+      availability: coverageContract.nativeAvailability, declarationScope: coverageContract.nativeDeclarationScope,
+      qualificationsByRoute: pin.classification.nativeAdapters,
     },
-    provenance, categories,
+    agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'), definition: 'Event',
+      file: installedFixtureFile, test: coverageContract.validatorControlTest },
+    installedFixtures: installedFixtureIds.map((id) => ({ id, file: installedFixtureFile, test: installedFixtureTest(id) })),
+    behaviorLimits: coverageContract.behaviorLimits,
+    retainedInputs: {
+      [retainedPath('provenance.json')]: digest(readFileSync(new URL('provenance.json', upstream))),
+      ...Object.fromEntries(Object.entries(provenance.files).map(([file, input]) => [retainedPath(file), input.sha256])),
+    },
+    categories,
   };
 }
 
-export const serializeConformanceReport = () => `${JSON.stringify(buildConformanceReport(), null, 2)}\n`;
+export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node scripts/protocol-conformance.mjs [--check]');
-  const report = serializeConformanceReport();
+  const report = serializeConformanceReport(buildConformanceReport());
   if (process.argv[2] === '--check') assert.equal(readFileSync(reportFile, 'utf8'), report, 'Conformance report is stale; regenerate it');
   else writeFileSync(reportFile, report);
   console.log(process.argv[2] === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');

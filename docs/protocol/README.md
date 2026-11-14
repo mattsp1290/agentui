@@ -22,8 +22,8 @@ The matrix keeps these facts separate:
 | Published SDK results | Expected TypeScript and Python acceptance of indexed payloads |
 | Mapping coverage | Facts represented by the pinned Switchboard projection |
 | Installed fixtures | AgentUI tests of actual returned events through public exports |
-| Native availability | A backend declaration, currently undeclared for the pinned native routes |
-| Native qualification | Execution evidence, currently unqualified for all six native routes |
+| Native availability | One explicit undeclared scope because no backend declaration input exists |
+| Native qualification | The pinned record's route assessments, currently unqualified for all six routes |
 | Pending consumers | Product owners for provider admission, transport, reducers, replay and UI |
 
 SDK acceptance does not establish canonical validity. The pinned TypeScript SDK
@@ -78,8 +78,11 @@ npm run verify
 ```
 
 The generator derives definitions, event discriminators and raw fixture paths
-from the retained inventories. Owned fixture references resolve to the same
-function map registered by the test runner. The freshness test rejects stale
+from the retained inventories. It lists SDK divergences and references hashed
+inputs instead of copying their complete rows. Coverage owns the expected fixture
+IDs. The test runner checks them against the actual function map before registering
+every fixture. Report generation loads data without executing fixture code.
+Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. Normal verification needs no upstream download or Python.
 The earlier exact-source TS/Python comparison is retained with the
 [Switchboard qualification](../../vendor/README.md); new installed-output

@@ -3,25 +3,19 @@ import { readFileSync } from 'node:fs';
 import Ajv from 'ajv/dist/2020.js';
 import { createAguiProjection, describeProjection, aguiProtocol } from '@agentui/host/agui';
 
-let validateEvent;
 const ref = (id, scope = ['fixture']) => ({ id, scope });
 const bounds = { maxEntities: 64, maxPayloadBytes: 16384, maxJsonDepth: 24, maxJsonNodes: 2048 };
+const projectionFamilies = ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'];
+const plannedFamilies = ['reasoning', 'subagents'];
+const schema = JSON.parse(readFileSync(new URL('./upstream/schema.json', import.meta.url), 'utf8'));
+const ajv = new Ajv({ strict: false });
+ajv.addSchema(schema);
+export const validateEvent = ajv.getSchema(`${schema.$id}#/$defs/Event`);
+assert.equal(typeof validateEvent, 'function');
 
 function mapped(projection, fact) {
   const result = projection.accept(fact);
   assert.equal(result.kind, 'mapped', JSON.stringify(result));
-  if (!validateEvent) {
-    const schema = JSON.parse(readFileSync(new URL('./upstream/schema.json', import.meta.url), 'utf8'));
-    const ajv = new Ajv({ strict: false });
-    ajv.addSchema(schema);
-    validateEvent = ajv.getSchema(`${schema.$id}#/$defs/Event`);
-    assert.equal(typeof validateEvent, 'function');
-    assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
-    assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm' }), true);
-    assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', unexpected: true }), false);
-    assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled' } }), true);
-    assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled', interrupts: [] } }), false);
-  }
   for (const event of result.events) {
     assert.equal(validateEvent(event), true, JSON.stringify(validateEvent.errors));
   }
@@ -34,11 +28,6 @@ function actor({ start = true, sourceKey = 'agentui.fixture' } = {}) {
   if (start) mapped(made.value, { kind: 'run-started' });
   return made.value;
 }
-
-export const installedFixture = {
-  file: 'tests/protocol/conformance.test.mjs',
-  test: (id) => `protocol installed fixture: ${id}`,
-};
 
 export const installedFixtures = {
   'lifecycle-text-tools'() {
@@ -209,7 +198,7 @@ export const installedFixtures = {
   },
 
   'availability-description'() {
-    for (const family of ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage']) {
+    for (const family of projectionFamilies) {
       assert.deepEqual(describeProjection(family), { kind: 'ok', value: {
         family, representability: 'represented', availability: 'undeclared', qualification: 'undeclared',
       } });
@@ -219,7 +208,7 @@ export const installedFixtures = {
         family: 'state', representability: 'represented', availability, qualification: 'unqualified',
       } });
     }
-    for (const family of ['reasoning', 'subagents']) {
+    for (const family of plannedFamilies) {
       assert.deepEqual(describeProjection(family), { kind: 'error', error: { code: 'invalid-input' } });
     }
   },
@@ -233,7 +222,7 @@ export const installedFixtures = {
 
   'acknowledged-absence-and-fault'() {
     const projection = actor();
-    for (const family of ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage']) {
+    for (const family of projectionFamilies) {
       assert.deepEqual(mapped(projection, { kind: 'not-observable', family }), []);
     }
     assert.equal(mapped(projection, { kind: 'state-snapshot', snapshot: false })[0].snapshot, false);
@@ -242,7 +231,7 @@ export const installedFixtures = {
     assert.deepEqual(projection.accept({ kind: 'run-finished', outcome: 'success' }), { kind: 'error', error: { code: 'closed' } });
     for (const fact of [
       ...['unknown-fact', 'reasoning-started', 'subagent-started'].map((kind) => ({ kind })),
-      ...['reasoning', 'subagents', 'unknown-family'].map((family) => ({ kind: 'not-observable', family })),
+      ...[...plannedFamilies, 'unknown-family'].map((family) => ({ kind: 'not-observable', family })),
     ]) {
       const rejected = actor();
       assert.deepEqual(rejected.accept(fact), { kind: 'error', error: { code: 'invalid-input' } });
