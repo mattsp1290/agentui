@@ -31,7 +31,7 @@ function fixture() {
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
       nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
-    async catalog(after) { await behavior.catalog(); cursors.push(after); return after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []; },
+    async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []); },
     async create(value) { created.push(value); await behavior.create(); return value; },
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
@@ -80,12 +80,12 @@ test('a synchronous storage failure blocks actions captured before failure', asy
   assert.match(f.app.getSnapshot().storageFailure, /Storage unavailable/);
 });
 
-test('late writes and draft reports from a replaced owner cannot poison the reopened view', async t => {
+test('late writes from a replaced storage owner cannot poison the reopened view', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.views.set('original-view/host', { ...empty(), route: scope });
   f.views.set('restored-view/host', { ...empty(), route: scope });
   await f.app.start();
-  const old = f.app.getSnapshot().active, actions = f.app.conversationActions(old);
+  const old = f.app.getSnapshot().active;
   const gate = deferred(), entered = deferred();
   f.behavior.write = async () => { entered.resolve(); await gate.promise; };
   const pending = old.store.setDraft('Old edit');
@@ -94,7 +94,6 @@ test('late writes and draft reports from a replaced owner cannot poison the reop
   await f.app.reopenView('restored-view');
   gate.reject(new Error('Old write failed'));
   await failed;
-  actions.reportDraftFailure(new Error('Late React catch'));
   assert.equal(f.app.getSnapshot().storageFailure, '');
   assert.equal(f.app.getSnapshot().active.viewId, 'restored-view');
   assert.equal(f.leases[0].closed, true);
@@ -307,4 +306,25 @@ test('a late saved-view read failure cannot change a replacement session', async
   assert.equal(applicationEnabled(replacement), true);
   assert.equal(replacement.storageFailure, '');
   assert.equal(replacement.error, '');
+});
+
+
+test('confirmed creation preserves expanded catalog pages and later paging does not duplicate it', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const pages = Array.from({ length: 210 }, (_, index) => ({ hostId: 'host', conversationId: `c-${String(index).padStart(3, '0')}` }));
+  f.behavior.catalog = async after => after === null ? pages.slice(0, 100)
+    : after === 'c-099' ? pages.slice(100, 200) : [...pages.slice(200), f.created[0]];
+  await f.app.start();
+  await f.app.moreConversations();
+  assert.equal(f.app.getSnapshot().catalog.items.length, 200);
+  const cursor = f.app.getSnapshot().catalog.after;
+  await f.app.create();
+  assert.equal(f.app.getSnapshot().catalog.items.length, 201);
+  assert.equal(f.app.getSnapshot().catalog.items[0].conversationId, f.created[0].conversationId);
+  assert.equal(f.app.getSnapshot().catalog.after, cursor);
+  assert.deepEqual(f.cursors, [null, 'c-099']);
+  await f.app.moreConversations();
+  assert.equal(f.app.getSnapshot().catalog.items.length, 211);
+  assert.equal(f.app.getSnapshot().catalog.items.filter(scope => scope.conversationId === f.created[0].conversationId).length, 1);
+  assert.equal(f.app.getSnapshot().catalog.after, null);
 });

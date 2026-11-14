@@ -1,4 +1,4 @@
-import { canonicalJson, parseScope } from '@agentui/contracts';
+import { canonicalJson, DocumentScopeMismatchError, parseScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
@@ -43,7 +43,10 @@ async function readResponse<K extends keyof ServiceValueMap>(response: Response,
     throw error;
   } finally { reader.releaseLock(); }
   try { return parseServiceResponse<K>(request, JSON.parse(body)); }
-  catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
+  catch (error) {
+    if (error instanceof DocumentScopeMismatchError) throw error;
+    throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response');
+  }
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
@@ -134,7 +137,7 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
           else cursor = result.item.events.at(-1)?.sequence ?? cursor;
         }
       } catch (error) {
-        finish({ kind: error instanceof ServiceProtocolError ? 'resync' : 'failed', cursor,
+        finish({ kind: error instanceof DocumentScopeMismatchError ? 'refused' : error instanceof ServiceProtocolError ? 'resync' : 'failed', cursor,
           reason: error instanceof Error ? error.message : 'Service connection failed' });
       }
     };

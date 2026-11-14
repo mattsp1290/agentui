@@ -1,4 +1,4 @@
-import { record as object, nonempty, count as integer, identifier, exact } from './decode.js';
+import { record, nonempty, count, identifier, exact } from './decode.js';
 import type { ConversationScope } from './index.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -125,15 +125,15 @@ export function foldDocument<E, P>(document: ConversationDocument<P>, event: Hos
   }
 }
 export function parseScope(value: unknown): ConversationScope {
-  const input = object(value);
+  const input = record(value);
   exact(input, ['hostId', 'conversationId']);
   return { hostId: identifier(input.hostId), conversationId: identifier(input.conversationId) };
 }
 export function parseCommand(value: unknown): ClientCommand {
-  const input = object(value);
+  const input = record(value);
   exact(input, ['version', 'scope', 'clientCommandId', 'body']);
   if (input.version !== 1) throw new Error('Unsupported command version');
-  const body = object(input.body);
+  const body = record(input.body);
   let parsed: CommandBody;
   switch (body.kind) {
     case 'send':
@@ -153,16 +153,16 @@ export function parseCommand(value: unknown): ClientCommand {
   return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
 }
 export function parseDecision(value: unknown): PendingDecision {
-  const input = object(value, ['pendingId', 'runId', 'choices', 'prompt']);
+  const input = record(value, ['pendingId', 'runId', 'choices', 'prompt']);
   if (!Array.isArray(input.choices)) throw new Error('Expected array');
   const choices = input.choices.map(nonempty);
   if (choices.length === 0 || new Set(choices).size !== choices.length) throw new Error('Invalid choices');
   return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt) };
 }
 export function parseReceipt(value: unknown): Receipt {
-  const input = object(value, ['scope', 'clientCommandId', 'hostOperationId', 'sequence', 'state']), state = object(input.state);
+  const input = record(value, ['scope', 'clientCommandId', 'hostOperationId', 'sequence', 'state']), state = record(input.state);
   const base = { scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId),
-    hostOperationId: nonempty(input.hostOperationId), sequence: integer(input.sequence) };
+    hostOperationId: nonempty(input.hostOperationId), sequence: count(input.sequence) };
   switch (state.kind) {
     case 'pending': case 'accepted': case 'completed':
       exact(state, ['kind']); return { ...base, state: { kind: state.kind } };
@@ -172,9 +172,26 @@ export function parseReceipt(value: unknown): Receipt {
     default: throw new Error('Invalid receipt');
   }
 }
+export class DocumentScopeMismatchError extends Error {}
+export function parseDocument<P>(value: unknown, decodeState: (value: unknown) => P,
+  scope: ConversationScope, cursor: number): ConversationDocument<P> {
+  const input = record(value, ['domain', 'receipts', 'decisions']);
+  const receipts = Object.fromEntries(Object.entries(record(input.receipts)).map(([id, value]) => {
+    const receipt = parseReceipt(value);
+    if (!sameScope(receipt.scope, scope)) throw new DocumentScopeMismatchError('Host scope mismatch; connect to the requested host and conversation');
+    if (id !== receipt.clientCommandId || receipt.sequence > cursor) throw new Error('Snapshot receipt identity or cursor mismatch');
+    return [id, receipt];
+  }));
+  const decisions = Object.fromEntries(Object.entries(record(input.decisions)).map(([id, value]) => {
+    const decision = parseDecision(value);
+    if (id !== decision.pendingId) throw new Error('Snapshot decision identity mismatch');
+    return [id, decision];
+  }));
+  return { domain: decodeState(input.domain), receipts, decisions };
+}
 export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequence: number,
   projection: Pick<Projection<E, unknown>, 'decodeEvent'>): HostEvent<E> {
-  const event = object(value);
+  const event = record(value);
   switch (event.kind) {
     case 'domain': exact(event, ['kind', 'event']); return { kind: 'domain', event: projection.decodeEvent(event.event) };
     case 'receipt': {

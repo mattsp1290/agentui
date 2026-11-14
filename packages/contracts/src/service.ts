@@ -1,10 +1,10 @@
-import { record, exact, identifier as text, count as integer, utf8Bytes } from './decode.js';
+import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility } from './compatibility.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
 import { transcriptProjection } from './conversation.js';
-import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope } from './durable.js';
-import type { ClientCommand, ConversationDocument, ConversationPort, FeedEnd, FeedItem, Receipt, SubmitResult } from './durable.js';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseDocument, parseHostEvent, parseReceipt, parseScope } from './durable.js';
+import type { ClientCommand, ConversationPort, FeedEnd, FeedItem, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -66,7 +66,7 @@ export interface ServiceConnection {
   conversation(scope: ConversationScope): ConversationPort<TranscriptEvent, Transcript>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
-function cursor(value: unknown): number | null { return value === null ? null : integer(value); }
+function cursor(value: unknown): number | null { return value === null ? null : count(value); }
 function nil(value: unknown): null {
   if (value !== null) throw new Error('Expected null service result');
   return null;
@@ -75,13 +75,13 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
   canonicalJson(value);
   const input = record(value);
   switch (input.op) {
-    case 'pair': exact(input, ['op', 'code']); return { op: 'pair', code: text(input.code) };
+    case 'pair': exact(input, ['op', 'code']); return { op: 'pair', code: identifier(input.code) };
     case 'metadata': exact(input, ['op']); return { op: 'metadata' };
     case 'catalog': {
       exact(input, ['op', 'after', 'limit']);
-      const limit = integer(input.limit);
+      const limit = count(input.limit);
       if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
-      return { op: 'catalog', after: input.after === null ? null : text(input.after), limit };
+      return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
     }
     case 'create': exact(input, ['op', 'scope']); return { op: 'create', scope: parseScope(input.scope) };
     case 'submit': {
@@ -92,17 +92,17 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
     }
     case 'receipt': case 'reconcile':
       exact(input, ['op', 'scope', 'id']);
-      return { op: input.op, scope: parseScope(input.scope), id: text(input.id) };
+      return { op: input.op, scope: parseScope(input.scope), id: identifier(input.id) };
     case 'watch': {
       exact(input, ['op', 'scope', 'after', 'projectionVersion']);
-      const projectionVersion = integer(input.projectionVersion);
+      const projectionVersion = count(input.projectionVersion);
       if (!projectionVersion) throw new Error('Invalid projection version');
       return { op: 'watch', scope: parseScope(input.scope), after: cursor(input.after), projectionVersion };
     }
     case 'pull':
       exact(input, ['op', 'feedId', 'ack']);
-      return { op: 'pull', feedId: text(input.feedId), ack: cursor(input.ack) };
-    case 'close': exact(input, ['op', 'feedId']); return { op: 'close', feedId: text(input.feedId) };
+      return { op: 'pull', feedId: identifier(input.feedId), ack: cursor(input.ack) };
+    case 'close': exact(input, ['op', 'feedId']); return { op: 'close', feedId: identifier(input.feedId) };
     default: throw new Error('Unknown service operation');
   }
 }
@@ -110,29 +110,26 @@ function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
   const runtime = record(input.nativeRuntime, ['engine', 'version', 'format']);
   const artifact = record(input.appliedArtifact, ['artifactId', 'gitRevision']);
-  return { wireVersion: integer(input.wireVersion), extensionSdkVersion: text(input.extensionSdkVersion),
-    nativeRuntime: { engine: text(runtime.engine), version: text(runtime.version), format: text(runtime.format) },
-    desiredGitRevision: text(input.desiredGitRevision),
-    appliedArtifact: { artifactId: text(artifact.artifactId), gitRevision: text(artifact.gitRevision) } };
+  return { wireVersion: count(input.wireVersion), extensionSdkVersion: identifier(input.extensionSdkVersion),
+    nativeRuntime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
+    desiredGitRevision: identifier(input.desiredGitRevision),
+    appliedArtifact: { artifactId: identifier(artifact.artifactId), gitRevision: identifier(artifact.gitRevision) } };
 }
 function feedItem(value: unknown): FeedItem<TranscriptEvent, Transcript> {
   const input = record(value);
   if (input.kind === 'snapshot') {
     exact(input, ['kind', 'snapshot']);
     const snapshot = record(input.snapshot, ['scope', 'projectionVersion', 'cursor', 'document']);
-    const raw = record(snapshot.document, ['domain', 'receipts', 'decisions']);
-    const receipts = Object.fromEntries(Object.entries(record(raw.receipts)).map(([id, item]) => [id, parseReceipt(item)]));
-    const decisions = Object.fromEntries(Object.entries(record(raw.decisions)).map(([id, item]) => [id, parseDecision(item)]));
-    const document: ConversationDocument<Transcript> = { domain: transcriptProjection.decodeState(raw.domain), receipts, decisions };
-    return { kind: 'snapshot', snapshot: { scope: parseScope(snapshot.scope), projectionVersion: integer(snapshot.projectionVersion),
-      cursor: integer(snapshot.cursor), document } };
+    const scope = parseScope(snapshot.scope), cursor = count(snapshot.cursor);
+    const document = parseDocument(snapshot.document, value => transcriptProjection.decodeState(value), scope, cursor);
+    return { kind: 'snapshot', snapshot: { scope, projectionVersion: count(snapshot.projectionVersion), cursor, document } };
   }
   exact(input, ['kind', 'events']);
   if (input.kind !== 'events' || !Array.isArray(input.events) || input.events.length > SERVICE_EVENT_PAGE.events) throw new Error('Invalid service feed item');
   if (input.events.reduce((bytes, event) => bytes + utf8Bytes(canonicalJson(event)), 0) > SERVICE_EVENT_PAGE.bytes) throw new Error('Service event page exceeds byte limit');
   return { kind: 'events', events: input.events.map(value => {
     const envelope = record(value, ['scope', 'sequence', 'event']);
-    const scope = parseScope(envelope.scope), sequence = integer(envelope.sequence);
+    const scope = parseScope(envelope.scope), sequence = count(envelope.sequence);
     return { scope, sequence, event: parseHostEvent(envelope.event, scope, sequence, transcriptProjection) };
   }) };
 }
@@ -141,7 +138,7 @@ export function parseServicePull(value: unknown): ServicePull {
   switch (input.kind) {
     case 'page': {
       exact(input, ['kind', 'page', 'item']);
-      const page = integer(input.page);
+      const page = count(input.page);
       if (!page) throw new Error('Invalid service page number');
       return { kind: 'page', page, item: feedItem(input.item) };
     }
@@ -160,7 +157,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
   pair: nil, close: nil,
   metadata(value) {
     const input = record(value, ['hostId', 'principalId', 'compatibility']);
-    return { hostId: text(input.hostId), principalId: text(input.principalId), compatibility: compatibility(input.compatibility) };
+    return { hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
   },
   catalog(value) {
     if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
@@ -176,7 +173,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
   },
   receipt: value => value === null ? null : parseReceipt(value),
   reconcile: value => value === null ? null : parseReceipt(value),
-  watch(value) { const input = record(value, ['feedId']); return { feedId: text(input.feedId) }; },
+  watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
 };
 export function parseServiceResponse<K extends keyof ServiceValueMap>(request: { readonly op: K }, value: unknown): ServiceResponse<ServiceValueMap[K]> {

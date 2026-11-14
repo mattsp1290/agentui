@@ -28,8 +28,8 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
     {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
     {app.error && <p className="application-alert" role="alert">{app.error}</p>}
-    {app.host.kind === 'ready' && app.host.compatibility.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
-      {app.host.compatibility.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
+    {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
+      {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
     {app.host.kind === 'unpaired' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="action-row">

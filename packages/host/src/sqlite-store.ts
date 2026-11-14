@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
@@ -64,15 +64,10 @@ export class SqliteStore<E, P> {
       .all(hostId, after ?? '', limit)
       .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
-  private decodeDocument(value: unknown): ConversationDocument<P> {
-    const input = object(value), receipts = object(input.receipts), decisions = object(input.decisions);
-    return { domain: this.projection.decodeState(input.domain),
-      receipts: Object.fromEntries(Object.entries(receipts).map(([id, value]) => [id, parseReceipt(value)])),
-      decisions: Object.fromEntries(Object.entries(decisions).map(([id, value]) => [id, parseDecision(value)])) };
-  }
   snapshot(scope: ConversationScope): Snapshot<P> {
-    const row = this.conversation(scope);
-    return { scope, projectionVersion: this.projection.version, cursor: integer(row.head), document: this.decodeDocument(json(row.document)) };
+    const row = this.conversation(scope), cursor = integer(row.head);
+    const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
+    return { scope, projectionVersion: this.projection.version, cursor, document };
   }
   head(scope: ConversationScope): number {
     const row = this.db.prepare('SELECT head, version FROM conversations WHERE host=? AND conversation=?').get(...key(scope));

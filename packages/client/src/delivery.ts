@@ -1,4 +1,5 @@
-import { canonicalJson, foldDocument, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, foldDocument, parseDocument, DocumentScopeMismatchError, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { record, exact } from '@agentui/contracts/decode';
 import type { ConversationDocument, ConversationScope, FeedItem, Projection, Receipt } from '@agentui/contracts';
 import { copyJson, integer, object } from './local-state.js';
 
@@ -23,23 +24,19 @@ export interface DeliveryState<P> {
 export function applyDelivery<E, P>(state: DeliveryState<P>, item: FeedItem<E, P>, scope: ConversationScope, projection: Projection<E, P>): DeliveryState<P> {
   const input = object(copyJson(item));
   if (input.kind === 'snapshot') {
-    const snapshot = object(input.snapshot);
+    exact(input, ['kind', 'snapshot']);
+    const snapshot = record(input.snapshot, ['scope', 'projectionVersion', 'cursor', 'document']);
     checkScope(snapshot.scope, scope);
     if (snapshot.projectionVersion !== projection.version) throw new DeliveryError('mismatch', 'Projection version mismatch; update the client or select a compatible host');
     const cursor = integer(snapshot.cursor);
     if (state.cursor !== null && cursor < state.cursor) throw new DeliveryError('resync', 'Host snapshot cursor regressed; reconnect for a fresh snapshot');
-    const document = object(snapshot.document);
-    const receipts = Object.fromEntries(Object.entries(object(document.receipts)).map(([id, value]) => {
-      const receipt = decodeReceipt(value, scope);
-      if (id !== receipt.clientCommandId || receipt.sequence > cursor) throw new Error('Snapshot receipt identity or cursor mismatch');
-      return [id, receipt];
-    }));
-    const decisions = Object.fromEntries(Object.entries(object(document.decisions)).map(([id, value]) => {
-      const parsed = parseDecision(value);
-      if (id !== parsed.pendingId) throw new Error('Snapshot decision identity mismatch');
-      return [id, parsed];
-    }));
-    return { document: { domain: projection.decodeState(document.domain), receipts, decisions }, cursor, identities: new Map() };
+    try {
+      const document = parseDocument(snapshot.document, value => projection.decodeState(value), scope, cursor);
+      return { document, cursor, identities: new Map() };
+    } catch (error) {
+      if (error instanceof DocumentScopeMismatchError) throw new DeliveryError('mismatch', error.message);
+      throw error;
+    }
   }
   if (input.kind !== 'events' || !Array.isArray(input.events)) throw new Error('Invalid feed item');
   if (state.cursor === null) throw new DeliveryError('resync', 'Events arrived before a snapshot; reconnect for a snapshot');

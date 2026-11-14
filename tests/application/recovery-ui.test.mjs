@@ -16,13 +16,18 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     let view = { submitting: ['own-original'], draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }],
       connection: { kind: 'connected' }, cursor: 1,
       document: { domain: { messages: [] }, decisions: {}, receipts: { 'foreign-pending': foreign } } };
-    const store = { getSnapshot: () => view, subscribe: () => () => {} };
+    const listeners = new Set();
+    globalThis.edits = [];
+    const store = { getSnapshot: () => view, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+      setDraft: value => new Promise((resolve, reject) => globalThis.edits.push({ value, reject,
+        resolve() { view = { ...view, draft: value }; for (const listener of listeners) listener(); resolve(); } })) };
     const active = { scope, store };
     globalThis.checked = [];
     const actions = { enabled: false, storageFailure: '',
       reconcile: async id => globalThis.checked.push(id) };
     const root = createRoot(document.getElementById('root'));
-    globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; actions.enabled = !busy; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
+    globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; actions.enabled = !busy && !actions.storageFailure; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
+    globalThis.storageUnavailable = () => { actions.storageFailure = 'Storage unavailable'; globalThis.renderRecovery(false); };
     globalThis.savedCommand = own;
     globalThis.renderRecovery(true, [own.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
@@ -47,4 +52,29 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.deepEqual(await page.evaluate(() => globalThis.savedCommand), {
     version: 1, scope: { hostId: 'host', conversationId: 'conversation' }, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' },
   });
+  const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  await message.fill('Keep this unsaved text');
+  assert.equal(await send.isDisabled(), true);
+  await page.evaluate(() => globalThis.edits[0].reject(new Error('Draft revision exhausted')));
+  assert.match(await page.getByRole('alert').textContent(), /Draft not saved.*Draft revision exhausted/);
+  assert.equal(await message.inputValue(), 'Keep this unsaved text');
+  assert.equal(await send.isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check pending command', exact: true }).isEnabled(), true);
+  await message.fill('Older edit');
+  await message.fill('Newest saved edit');
+  await page.evaluate(() => { globalThis.edits[1].reject(new Error('Older edit failed')); globalThis.edits[2].resolve(); });
+  await page.waitForFunction(() => [...document.querySelectorAll('button')].find(button => button.textContent === 'Send')?.disabled === false);
+  assert.equal(await message.inputValue(), 'Newest saved edit');
+  assert.equal(await page.getByRole('alert').count(), 0);
+  await message.fill('Copy this text before reloading');
+  await page.evaluate(() => { globalThis.storageUnavailable(); globalThis.edits[3].reject(new Error('Storage write failed')); });
+  assert.match(await page.getByRole('note').textContent(), /Copy your text before reloading/);
+  assert.equal(await message.isEnabled(), true);
+  await message.focus();
+  await message.press('Control+A');
+  assert.equal(await message.evaluate(input => input.value.slice(input.selectionStart, input.selectionEnd)), 'Copy this text before reloading');
+  await message.press('x');
+  assert.equal(await message.inputValue(), 'Copy this text before reloading');
+  assert.equal(await send.isDisabled(), true);
 });

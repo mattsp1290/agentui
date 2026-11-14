@@ -361,3 +361,19 @@ test('a post-admission storage fault is unavailable and retains the original com
   const accepted = readFileSync(join(f.directory, 'recorded.jsonl'), 'utf8').trim().split('\n').map(JSON.parse);
   assert.equal(accepted.length, 1);
 });
+
+
+test('a catalog storage fault gives a neutral retry message without command recovery instructions', { timeout: 20_000 }, async t => {
+  const f = await fixture(t), alice = await f.pair();
+  const db = new DatabaseSync(join(f.directory, 'host.sqlite'));
+  try {
+    db.exec('ALTER TABLE conversations RENAME TO temporarily_unavailable');
+    const response = await f.call({ op: 'catalog', after: null, limit: 100 }, alice.cookie);
+    denied(response, 503, 'unavailable');
+    assert.equal(response.body.error.message, 'Host operation failed. Try again.');
+  } finally {
+    db.exec('ALTER TABLE temporarily_unavailable RENAME TO conversations');
+    db.close();
+  }
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }, alice.cookie), []);
+});

@@ -5,7 +5,7 @@ import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service
 import type { LocalHost } from '@agentui/host';
 import { recordedInstallation } from '@agentui/host/recorded';
 import type { Access, CredentialClass, Principal } from './access.js';
-import { HostFailure } from './errors.js';
+import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
 
 type Request = Exclude<ServiceRequest, { op: 'pair' }>;
@@ -37,16 +37,18 @@ export function createApi(options: {
   }
   return async (principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> => {
     try {
-      if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
-      if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
+      if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
+      if (!access.authorized(principal, options.credentialClass)) throw new ServiceError('unauthorized', 'Device access was revoked');
       const scope = requestScope(request);
-      if (scope !== null && scope.hostId !== principal.hostId) throw new HostFailure('forbidden', 'Conversation belongs to another host');
+      if (scope !== null && scope.hostId !== principal.hostId) throw new ServiceError('forbidden', 'Conversation belongs to another host');
       const value = await apply(principal, request);
-      if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
+      if (!access.authorized(principal, options.credentialClass)) throw new ServiceError('unauthorized', 'Device access was revoked');
       return value;
     } catch (error) {
-      if (error instanceof HostFailure) throw error;
-      throw new HostFailure('unavailable', 'The host could not confirm this operation. Reconcile before retrying.');
+      if (error instanceof ServiceError) throw error;
+      const message = request.op === 'submit' || request.op === 'reconcile'
+        ? 'The host could not confirm this operation. Reconcile before retrying.' : 'Host operation failed. Try again.';
+      throw new ServiceError('unavailable', message);
     }
   };
 }
