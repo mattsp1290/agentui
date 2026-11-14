@@ -30,12 +30,14 @@ The host's recorded Switchboard driver remains a separate integration.
 Its create, send, cancel, decide, reconcile, and observe capabilities are supported or explicitly unsupported with a reason.
 The single reconcile capability covers both reconciliation methods.
 The methods remain present when unsupported. Actual results describe the invocation even when a capability was previously supported.
+Discovery and snapshot support are determined per call by their results.
 Read and connection failures distinguish unavailability, authentication failure, authorization denial, incompatible version, and unsupported operation.
 Derive request and result types with `Parameters` and `ReturnType`, such as `Parameters<BackendProvider<M, I>['connect']>[0]` and `Awaited<ReturnType<ConnectedProvider<M, I>['discover']>>`.
 
-`ProviderOutcome<T>` distinguishes confirmed evidence with a value, pending admission without a required binding, authoritative rejection, no dispatch, uncertainty, and explicit failures.
-A confirmed command effect records acceptance or completion. Acceptance does not mean terminal execution.
-A pending creation can be admitted before a session binding is known.
+`ProviderOutcome<T>` distinguishes confirmed evidence with a value, pending processing, authoritative rejection, no dispatch, uncertainty, and explicit failures.
+`pending` means the provider accepted the operation for processing but has not confirmed a result value, run, or session binding.
+`uncertain` lacks conclusive evidence of acceptance or outcome. Both remain unresolved and cannot authorize replay.
+A confirmed command effect records acceptance for execution or completion. Acceptance does not mean terminal execution.
 
 ## Runtime obligations
 
@@ -48,18 +50,27 @@ Operation IDs and bodies remain fixed across restart and reconciliation.
 Any native request mapping needed for recovery must also survive dispatch.
 
 Reconciliation reads evidence for the original operation and never redispatches.
-Missing or failed lookup preserves uncertainty. Unsupported lookup does not settle an earlier uncertain operation.
+Missing, failed, or rejected reconciliation lookup preserves the prior admitted, pending, or uncertain outcome.
+Unsupported lookup does not settle an earlier uncertain operation.
 The host quarantines pending or uncertain operations when reconciliation lookup is unsupported, preserving the original intent and unresolved status without replay.
 A later refusal cannot disprove an earlier ambiguous dispatch.
 `not-dispatched` describes this invocation and cannot erase prior uncertainty.
+A thrown error or rejected promise from `create` or `submit` leaves the persisted operation uncertain, never proving no dispatch.
+Providers return known outcomes as resolved values. They use `not-dispatched` or operational failures from these calls only when effectful nonacceptance is known.
+Otherwise they return `uncertain`. A failure label alone cannot prove nonacceptance or free an operation ID.
 Authentication, authorization, version, and availability failures also leave earlier uncertain dispatch unresolved.
 No automatic replay or universal exactly-once execution guarantee is supplied.
 
 The host verifies saved creation provenance, scope, actual instance, generation, protocol, authority binding, and local authority host.
 The host determines the expected authority kind for each installation and rejects a provider-reported authority of a different kind.
 It checks nested run, decision, and choice association with the admitted conversation.
+A `decide` choice must belong to the addressed decision in the latest applied snapshot or decision event.
+The execution authority validates current decision validity and rejects invalid or stale pairings before applying them.
+Snapshot bindings, snapshot cursors, observation request cursors, and feed item bindings and cursors must match the requested conversation.
+The host rejects mismatches without applying them.
 Optional private variance markers reject accidental instance and model widening while permitting ordinary object construction.
-Installation isolation relies on retaining literal identities. Registries that erase `I` to `string` must re-establish identity at runtime.
+Installation isolation relies on retaining literal identities. Widening `I` to `string` is not implicitly assignable.
+Registries that erase identity through casts or wrappers must re-establish it at runtime.
 Unmarked structural intermediates can discard the optional variance markers.
 Types cannot prove authorization, runtime identity equality, or whether creation intent was persisted.
 Full-trust extensions can fabricate structurally valid records.
@@ -68,8 +79,12 @@ Observation callbacks resolve only after durable application. Delivery is serial
 A rejected callback is not an acknowledgement. The provider stops delivery and ends the feed with `disconnected` and the last acknowledged cursor, or `null` if none exists.
 The end cursor includes only acknowledged items. The snapshot cursor describes exactly its projected state.
 Expired cursors, incompatible projections, or an unbridgeable snapshot-to-feed gap require `resync` and a fresh snapshot.
+Observation support requires fresh snapshot recovery. If a snapshot call reports `unsupported`, the host keeps observation stopped and reports that limitation.
 Opaque cursors have no numeric or lexical ordering requirement.
-Closing a feed or connection releases local resources and never cancels execution.
+Feed termination resolves `ended` with its reason and last acknowledged cursor, or `null`, and never rejects.
+`close()` is idempotent and prevents new `receive` calls. It resolves `ended` with `closed` without waiting for an in-flight callback.
+An already-started callback may finish, but cannot advance the terminated feed's cursor. An already-ended feed retains its original end reason and cursor.
+Closing a connection closes each open feed. Closing a feed or connection releases local resources and never cancels execution.
 
 Credential resolution, credential storage, disable and replacement admission rules, persisted decoding, and version migration remain host work.
 Credentials stay outside client projections. The authority determines who owns execution and approvals.
