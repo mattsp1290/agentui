@@ -67,8 +67,5 @@ The qualification used an isolated Node installation created with
 `/tmp/agentui-ios-tools/node_modules/.bin` to PATH. Any installation manager that
 provides the exact required versions works.
 
-The retained deployment-mode preparation used an already generated tree at one
-checkout path on one Mac. Fresh generation with the current deployment-mode
-script has not been separately qualified. The historical clean-preparation log
-predates that enforcement. Codegen podspec checksum stability across checkout
-paths is untested.
+Preparation evidence and checkout-path limits are recorded in
+[the qualification results](../../docs/qualification/ios-updates.md#results).

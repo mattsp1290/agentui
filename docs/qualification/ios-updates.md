@@ -71,6 +71,9 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
 | Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
 
+Deployment-mode lock verification was exercised at one checkout path on one Mac.
+Codegen podspec checksum stability across checkout paths is untested.
+
 Follow the [probe procedure](../../spikes/ios-updates/README.md) to reproduce the
 commands. Screenshots require visual inspection. The scripts report build and
 installation completion, not automatic visual acceptance. Full local build output and the generated app are under ignored
@@ -79,8 +82,6 @@ Bundle hashes are read back from the installed app.
 Retained evidence is in [the evidence directory](../../spikes/ios-updates/evidence/).
 
 The initial A and B experiment used two generated trees, with DerivedData retained.
-The retained clean-preparation log was created before the deployment-mode change
-in `230f062`; it does not qualify the current script on a newly generated tree.
 The follow-up uses deployment-mode CocoaPods installation, then A, source edit
 without rebuild, and B in the same existing generated tree. Restart logs retain
 the source label, installed bundle hash, Metro port check, and launch PID.
@@ -96,7 +97,14 @@ ShellCheck and Bash syntax checks passed for all three probe scripts. See
 `evidence/shellcheck.txt`. The retained restart logs report distinct A and B
 installed-bundle hashes and no Metro listener. Screenshots were visually checked.
 
-The archived [Mac review summary](../../spikes/ios-updates/evidence/review-summary.md) describes `f62723a`, before integration.
-Integration commits `39ae785` and `f4f8fcf` merged main `6dbc4b1` and added the
-architecture cross-links. They changed no probe scripts, dependency inputs, or
-native evidence. The historical review archive remains unchanged.
+Probe scripts and dependency inputs are byte-identical to native-tested
+`7d250ae54c3267997dc0f56b00281fd8076424d0`. From the repository root, verify with:
+
+```sh
+git diff --exit-code 7d250ae54c3267997dc0f56b00281fd8076424d0 -- \
+  spikes/ios-updates/*.sh spikes/ios-updates/package*.json \
+  spikes/ios-updates/Podfile.lock
+```
+
+The archived [Mac review summary](../../spikes/ios-updates/evidence/review-summary.md)
+describes `f62723a`, before integration. The historical review archive is unchanged.
