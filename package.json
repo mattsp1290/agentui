@@ -11,6 +11,7 @@
   },
   "workspaces": [
     "packages/contracts",
+    "packages/client",
     "packages/sdk",
     "packages/theme",
     "packages/ui-primitives",
@@ -24,7 +25,7 @@
     "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/client/*.test.mjs",
     "verify": "npm run build && npm run check && npm run lint && npm test",
     "preview:theme": "node tests/theme/preview.mjs",
     "setup:browser": "playwright install --with-deps chromium",
