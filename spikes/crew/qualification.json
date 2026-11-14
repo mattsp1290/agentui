@@ -67,12 +67,14 @@
     {
       "id": "switchboard-r-3rkv",
       "status": "open",
+      "statusSource": "observed local hub state via --no-fetch during the dated assessment; not current delivery proof",
       "readCommand": "bn request show switchboard-r-3rkv --no-fetch",
       "agentuiGate": "agentui-9xfk"
     },
     {
       "id": "crew-r-xndc",
       "status": "open",
+      "statusSource": "observed local hub state via --no-fetch during the dated assessment; not current delivery proof",
       "readCommand": "bn request show crew-r-xndc --no-fetch",
       "requires": "switchboard-r-3rkv",
       "agentuiGate": "agentui-b3aj"
