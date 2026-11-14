@@ -20,3 +20,9 @@ export interface RunIdentity {
   readonly runId: string;
   readonly authority: RunAuthority;
 }
+
+export { canonicalJson, parseCommand, parseScope, sameScope, foldDocument } from './durable.js';
+export type {
+  Json, CommandBody, ClientCommand, ReceiptState, Receipt, SubmitResult, PendingDecision,
+  ConversationDocument, HostEvent, Envelope, Snapshot, FeedItem, FeedEnd, Feed, ConversationPort, Projection,
+} from './durable.js';
