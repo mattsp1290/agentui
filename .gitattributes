@@ -1,0 +1,4 @@
+tests/protocol/fixtures/upstream/** -text
+vendor/ag-ui/** -text
+tests/dependencies/ag-ui/consumer/** -text
+docs/protocol/conformance.json text eol=lf
