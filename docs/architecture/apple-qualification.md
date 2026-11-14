@@ -3,7 +3,9 @@
 All GitHub Actions jobs use Linux runners.
 Native macOS and iOS compilation, signing, installation, and device checks run outside Actions.
 
-This foundation has no Tauri Rust project, Xcode project, Metro bundle, signing setup, or mounted application.
+The product has no Tauri Rust project, Xcode project, Metro bundle, signing setup, or mounted application.
+The independent [iOS update probe](../qualification/ios-updates.md) qualifies simulator rebuild and reinstall with an embedded Release bundle.
+It does not qualify the integrated app, live updates, physical-device signing, or VoiceOver.
 Its package builds verify separate real platform declarations.
 A successful TypeScript build does not prove native application functionality.
 

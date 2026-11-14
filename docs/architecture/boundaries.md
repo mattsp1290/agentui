@@ -100,8 +100,9 @@ Metro is the React Native bundling candidate.
 React Native is pinned to 0.86.0 because its public declarations pass strict compilation with this toolchain.
 Version 0.88.1 produced three errors inside its generated declarations with library checking enabled.
 This pin is package type compatibility evidence, not an Apple runtime qualification.
-Expo remains an option for developer installation and updates.
-Native compatibility and Mac-delivered committed updates require separate qualification.
+The v1 iOS update strategy is [rebuild-only](../qualification/ios-updates.md).
+The standalone probe qualifies simulator Release rebuild and reinstall, without a Metro server.
+Compatible live updates, physical-device signing, and integrated Mac-delivered customization remain unqualified.
 No layout or state library is selected.
 
 ## Verification limits

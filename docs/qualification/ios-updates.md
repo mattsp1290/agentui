@@ -81,10 +81,9 @@ The follow-up after review uses deployment-mode CocoaPods installation, then A,
 source edit without rebuild, and B in the same generated tree. Restart logs retain
 the source label, installed bundle hash, Metro port check, and launch PID.
 
-This is a bounded v1 update recommendation. Existing architecture documents still
-list broader future options. The Linux coordinator owns their cross-links and
-reconciliation when integrating this task; no product update policy is implemented
-by this probe. Native-incompatible changes remain rebuild-required in all cases.
+This bounded v1 decision is referenced from the shared architecture and Apple
+qualification documents. The probe does not implement product update delivery or
+notifications. Native-incompatible changes remain rebuild-required in all cases.
 
 ShellCheck and Bash syntax checks passed for all three probe scripts. See
 `evidence/shellcheck.txt`. The retained restart logs report distinct A and B
