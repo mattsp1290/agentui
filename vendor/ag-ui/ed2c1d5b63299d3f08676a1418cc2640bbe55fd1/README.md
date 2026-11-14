@@ -24,7 +24,7 @@ node scripts/verify-agui-fork.mjs --offline
 node scripts/verify-agui-fork.mjs
 ```
 
-The offline command verifies archive bytes, ordered members, packed manifests, notices, acquisition and qualification evidence, the source lock, fixture contents and the independent consumer lock. The full command repeats these checks, then installs and exercises an isolated consumer. Normal application tests do not install this consumer.
+The offline command verifies archive bytes, ordered members, packed manifests, notices, acquisition and qualification evidence, the source lock, fixture contents and the independent consumer lock. The full command repeats these checks, then installs and exercises an isolated consumer. Normal application tests do not install this consumer. They run the offline checks with the host `tar`. On macOS that exercises the host reader; the separate Mac qualification requires a labelled frozen-input record.
 
 Both commands require POSIX and system `tar`. The driver enforces Node >=22.19, the Pi package floor. Retained Node replays used Node `24.22.3`; other Node versions are unmeasured. GNU tar also requires host `gzip`. The full command requires npm and may download the frozen lock's registry dependencies. It uses `npm ci --ignore-scripts --include=optional --no-audit --no-fund`, removes a successful temporary consumer and preserves a failed one for inspection. Process timeouts terminate the direct child; descendants may survive.
 
@@ -38,7 +38,7 @@ Verification rejects altered package, fixture and consumer inputs. Retained path
 
 Node children use the driver's executable, and npm resolves with that executable's directory first on PATH. Reports identify the measured runtime and all verifier and consumer-script source hashes. Ambient Node and npm settings remain inherited. A `NODE_OPTIONS` digest identifies the inherited value without printing it; it does not conceal short or guessable values.
 
-The replay index names verified full-consumer logs and their measurement bases. Earlier coordinator observations remain in the metadata-history snapshot and their original logs remain verified evidence. Each emitted qualification digest identifies the input ledger at invocation time. Appending evidence produces a different ledger; it does not alter the earlier measurement.
+The replay index names verified full-consumer logs and their measurement bases. Provenance path and digest must match the frozen identity whenever a record carries them. The earliest logs predate those fields. Recorded child results must be successful when present. Earlier coordinator observations remain in the metadata-history snapshot and their original logs remain verified evidence. Each emitted qualification digest identifies the input ledger at invocation time. Appending evidence produces a different ledger; it does not alter the earlier measurement.
 
 `metadataHistory` names a compressed, byte-for-byte snapshot of the previous qualification metadata. It preserves earlier coordinator observations, source-retrieval details and textual clarifications. The recorded host gzip version is explicitly a coordinator observation in that snapshot. Historical explanations remain there without an overlay on the frozen identity.
 

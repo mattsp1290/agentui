@@ -117,6 +117,8 @@ No layout or state library is selected.
 
 ## Verification limits
 
+`npm test` and `npm run verify` include offline checks of the retained AG-UI archives, evidence and fixtures. These gates require POSIX and system `tar`; GNU tar also requires `gzip`. A Mac run exercises the host reader. Mac qualification requires its own labelled record of the requested frozen source and inputs.
+
 `npm run verify` builds emitted exports, checks strict types, lints, and exercises package imports.
 It tests platform ambient isolation and real Switchboard observation through the host package.
 It does not qualify native execution, proxies, full AG-UI support, authorization, durable dispatch, or reconnect.

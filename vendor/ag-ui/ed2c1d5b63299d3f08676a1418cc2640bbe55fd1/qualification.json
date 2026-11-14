@@ -53,7 +53,12 @@
     {
       "log": "evidence/ledger-owner-node-qualification.log.gz",
       "measuredBase": "7b39edef133c1dd488a7bea09c404a3387262366",
-      "note": "Measured working source over the recorded base. The verified full-consumer report supplies every current checker/driver/consumer-script hash and the ledger input digest before this evidence was appended."
+      "note": "Measured working source over the recorded base. The verified full-consumer report records the checker, driver and consumer-script hashes measured by that invocation and the ledger input digest before this evidence was appended."
+    },
+    {
+      "log": "evidence/replay-integrity-node-qualification.log.gz",
+      "measuredBase": "3b3b7e90839e6848ca59898fa00c9058a0eb06cf",
+      "note": "Measured working source over the recorded base. Source hashes, frozen identity, successful child results and the input-ledger digest describe this invocation; later source changes need a new qualification record."
     }
   ],
   "evidence": [
@@ -210,6 +215,17 @@
       "compressedSha256": "5be3ac2643f376d915ff891750b126dd6e8446ff77ab7585af7878fc41678f82",
       "encoding": "gzip; raw retained without edits",
       "role": "Controlled Linux full-consumer qualification after consolidating ledger ownership and deriving checker source hashes from the module directory."
+    },
+    {
+      "path": "evidence/replay-integrity-node-qualification.log.gz",
+      "rawBytes": 55992,
+      "rawSha256": "27b67b7e344a356f6021060466e673aa059119af7fb69c3a8e9fb8093e76e6b8",
+      "retainedBytes": 55992,
+      "retainedSha256": "27b67b7e344a356f6021060466e673aa059119af7fb69c3a8e9fb8093e76e6b8",
+      "compressedBytes": 6894,
+      "compressedSha256": "65162e00d530f77d3eeaad4ddaaf8f4dc3685e9239028739ea26ebaa624aa428",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer replay after enforcing historical identity/result binding and physical installed-package/payload boundaries."
     }
   ],
   "metadataHistory": "evidence/qualification-metadata-history.json.gz"

@@ -10,7 +10,8 @@ import { RETAINED_CONSUMER_RECORD_SCOPE, readConsumerPassRecord, verifyEvidence,
 const revision = 'a'.repeat(40);
 const pass = { result: 'PASS', scope: 'controlled package consumer; no native provider or Apple qualification', sourceRevision: revision, sourceSha256: { 'checker.mjs': 'b'.repeat(64) } };
 const log = (...records) => Buffer.from(records.map((record) => typeof record === 'string' ? record : JSON.stringify(record)).join('\n'));
-const read = (body) => readConsumerPassRecord(body, 'test.log', revision);
+const provenance = { path: 'provenance.json', sha256: 'f'.repeat(64) };
+const read = (body) => readConsumerPassRecord(body, 'test.log', revision, provenance);
 const digest = (body) => createHash('sha256').update(body).digest('hex');
 
 test('retained full-consumer record discriminator stays compatible with historical logs', () => {
@@ -38,11 +39,11 @@ for (const [label, body, error] of [
   ['invalid UTF-8', Buffer.from([0xff]), /encoded data/u],
 ]) test(`full consumer records reject ${label}`, () => assert.throws(() => read(body), error));
 
-function evidenceFixture(context) {
+function evidenceFixture(context, report = pass) {
   const folder = mkdtempSync(join(tmpdir(), 'agentui-ledger-test-'));
   context.after(() => rmSync(folder, { recursive: true, force: true }));
   mkdirSync(join(folder, 'evidence'));
-  const files = { 'source-pnpm-lock.yaml': Buffer.from('frozen lock'), history: Buffer.from('historical metadata'), replay: log(pass) };
+  const files = { 'source-pnpm-lock.yaml': Buffer.from('frozen lock'), history: Buffer.from('historical metadata'), replay: log(report) };
   const evidence = Object.entries(files).map(([name, raw]) => {
     const path = `evidence/${name}.gz`;
     const compressed = gzipSync(raw);
@@ -50,7 +51,7 @@ function evidenceFixture(context) {
     return { path, rawBytes: raw.length, retainedBytes: raw.length, rawSha256: digest(raw), retainedSha256: digest(raw), compressedBytes: compressed.length, compressedSha256: digest(compressed) };
   });
   return {
-    fork: { folder, provenanceSha256: 'f'.repeat(64), metadata: { evidence, sourceRevision: revision, sourceLockSha256: digest(files['source-pnpm-lock.yaml']) } },
+    fork: { folder, provenancePath: provenance.path, provenanceSha256: provenance.sha256, metadata: { evidence, sourceRevision: revision, sourceLockSha256: digest(files['source-pnpm-lock.yaml']) } },
     qualification: { sourceRevision: revision, identityProvenanceSha256: 'f'.repeat(64), evidence: [], metadataHistory: 'evidence/history.gz', knownLimitations: [], nodeReplays: [{ log: 'evidence/replay.gz', measuredBase: 'd'.repeat(40) }] },
   };
 }
@@ -62,6 +63,7 @@ test('verified evidence supplies the uniformly shaped replay report', (context) 
 
 for (const [label, mutate, error] of [
   ['extra replay fields', (q) => { q.nodeReplays[0].kind = 'self-reported'; }, /unexpected replay fields/u],
+  ['duplicate replay log', (q) => { q.nodeReplays.push({ ...q.nodeReplays[0], measuredBase: 'e'.repeat(40) }); }, /replay logs must be indexed once/u],
   ['unverified replay log', (q) => { q.nodeReplays[0].log = 'unverified.gz'; }, /verified evidence/u],
   ['abbreviated base', (q) => { q.nodeReplays[0].measuredBase = 'ddddddd'; }, /full commit SHA/u],
   ['non-string note', (q) => { q.nodeReplays[0].note = {}; }, /note must be a string/u],
@@ -112,4 +114,40 @@ for (const [label, mutate, error] of [
   const { fork, qualification } = evidenceFixture(context);
   mutate(fork, qualification);
   assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), error);
+});
+
+const successfulSteps = [{ command: ['controlled-child'], exitCode: 0, signal: null }];
+test('full consumer records accept the exact measured identity and successful child results', () => {
+  const bound = { ...pass, provenance, results: successfulSteps };
+  assert.deepEqual(read(log(bound)), bound);
+});
+
+for (const [label, fields, error] of [
+  ['foreign identity digest', { provenance: { ...provenance, sha256: 'e'.repeat(64) } }, /replay frozen identity/u],
+  ['foreign identity path', { provenance: { ...provenance, path: 'other.json' } }, /replay frozen identity/u],
+  ['null identity', { provenance: null }, /replay frozen identity/u],
+  ['array identity', { provenance: [] }, /replay frozen identity/u],
+  ['missing identity digest', { provenance: { path: provenance.path } }, /replay frozen identity/u],
+  ['extra identity field', { provenance: { ...provenance, extra: true } }, /replay frozen identity/u],
+  ['non-array child results', { results: {} }, /replay child results/u],
+  ['empty child results', { results: [] }, /replay child results/u],
+  ['null child step', { results: [null] }, /replay child results/u],
+  ['failed child step', { results: [{ exitCode: 1, signal: null }] }, /replay child results/u],
+  ['signalled child step', { results: [{ exitCode: 0, signal: 'SIGTERM' }] }, /replay child results/u],
+  ['missing child exit', { results: [{ signal: null }] }, /replay child results/u],
+  ['missing child signal', { results: [{ exitCode: 0 }] }, /replay child results/u],
+]) test(`full consumer records reject ${label}`, () => {
+  assert.throws(() => read(log({ ...pass, ...fields })), error);
+});
+
+test('verified ledger admits a replay bound to its resolved identity', (context) => {
+  const bound = { ...pass, provenance, results: successfulSteps };
+  const { fork, qualification } = evidenceFixture(context, bound);
+  assert.deepEqual(verifyEvidence(fork, qualification)[0].report, bound);
+  assert.equal(verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), digest(Buffer.from(JSON.stringify(qualification))));
+});
+
+test('verified ledger rejects a replay bound to another resolved identity', (context) => {
+  const { fork, qualification } = evidenceFixture(context, { ...pass, provenance: { ...provenance, sha256: 'e'.repeat(64) } });
+  assert.throws(() => verifyLedger(fork, Buffer.from(JSON.stringify(qualification))), /replay frozen identity/u);
 });

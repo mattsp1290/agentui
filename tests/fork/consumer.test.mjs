@@ -90,7 +90,7 @@ test('installed verification accepts the exact package graph and optional payloa
 });
 
 for (const [label, mutate, error] of [
-  ['linked package', (folder) => { const target = join(folder, 'linked-core'); renameSync(join(folder, corePath), target); symlinkSync(target, join(folder, corePath), 'dir'); }, /linked AG-UI/u],
+  ['linked package', (folder) => { const target = join(folder, 'linked-core'); renameSync(join(folder, corePath), target); symlinkSync(target, join(folder, corePath), 'dir'); }, /linked package root/u],
   ['nested package', (folder) => { writeJson(join(folder, 'node_modules/wrapper/package.json'), { name: 'wrapper' }); const target = join(folder, 'node_modules/wrapper', corePath); mkdirSync(dirname(target), { recursive: true }); renameSync(join(folder, corePath), target); }, /nested or aliased/u],
   ['aliased package', (folder) => { renameSync(join(folder, corePath), join(folder, 'node_modules/alias')); }, /nested or aliased/u],
   ['duplicate package', (folder) => { writeJson(join(folder, 'node_modules/wrapper/package.json'), { name: 'wrapper' }); writeJson(join(folder, 'node_modules/wrapper', corePath, 'package.json'), packages.get('@ag-ui/core').manifest); }, /unexpected or repeated/u],
@@ -99,6 +99,27 @@ for (const [label, mutate, error] of [
   ['native version drift', (folder) => { writeJson(join(folder, 'node_modules/@openai/codex-sdk/package.json'), { version: '0.0.0' }); }, /installed native version/u],
   ['optional version drift', (folder) => { writeJson(join(folder, 'node_modules', optionalName, 'package.json'), { version: '0.0.0' }); }, /installed optional Codex/u],
   ['absent native payload', (folder) => { rmSync(join(folder, 'node_modules', optionalName, 'vendor/bin/codex')); }, /payload absent/u],
+  ['native payload directory only', (folder) => {
+    const payload = join(folder, 'node_modules', optionalName, 'vendor/bin/codex');
+    rmSync(payload); mkdirSync(payload);
+  }, /payload absent/u],
+  ['linked AG-UI scope', (folder) => {
+    const target = join(folder, 'linked-ag-ui');
+    renameSync(join(folder, 'node_modules/@ag-ui'), target);
+    symlinkSync(target, join(folder, 'node_modules/@ag-ui'), 'dir');
+  }, /linked package scope/u],
+  ['linked nested modules hiding a duplicate', (folder) => {
+    writeJson(join(folder, 'node_modules/wrapper/package.json'), { name: 'wrapper' });
+    const target = join(folder, 'hidden-modules');
+    writeJson(join(target, '@ag-ui/core/package.json'), packages.get('@ag-ui/core').manifest);
+    symlinkSync(target, join(folder, 'node_modules/wrapper/node_modules'), 'dir');
+  }, /linked or non-directory node_modules/u],
+  ['linked wrapper hiding a duplicate', (folder) => {
+    const target = join(folder, 'hidden-wrapper');
+    writeJson(join(target, 'package.json'), { name: 'wrapper' });
+    writeJson(join(target, corePath, 'package.json'), packages.get('@ag-ui/core').manifest);
+    symlinkSync(target, join(folder, 'node_modules/wrapper'), 'dir');
+  }, /linked package root/u],
 ]) test(`installed verification rejects ${label}`, (context) => {
   const folder = installedFixture(context);
   mutate(folder);
