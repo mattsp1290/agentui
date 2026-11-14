@@ -6,7 +6,10 @@ import { tmpdir } from 'node:os';
 import { delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { verifyFork, verifyConsumerLock, verifyInstalled, tarVersion, fullConsumerScope } from './lib/agui-fork.mjs';
+import { verifyFork } from './lib/agui-fork.mjs';
+import { verifyConsumerLock, verifyInstalled } from './lib/agui-fork/consumer.mjs';
+import { tarVersion } from './lib/agui-fork/archives.mjs';
+import { RETAINED_CONSUMER_RECORD_SCOPE } from './lib/agui-fork/ledger.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--offline'), 'Usage: node scripts/verify-agui-fork.mjs [--offline]');
@@ -23,17 +26,19 @@ const runtime = { node: process.version, execPath: process.execPath, platform: p
   nodeOptionsSha256: process.env.NODE_OPTIONS === undefined ? null : sha256(process.env.NODE_OPTIONS) };
 const sourceBytes = new Map(await Promise.all([
   'scripts/lib/agui-fork.mjs', 'scripts/verify-agui-fork.mjs',
+  ...['bytes', 'identity', 'archives', 'ledger', 'consumer'].map((name) => `scripts/lib/agui-fork/${name}.mjs`),
   ...consumerScripts.map((name) => `tests/dependencies/ag-ui/${name}`),
 ].map(async (file) => [file, await readFile(join(root, file))])));
 const sourceSha256 = Object.fromEntries([...sourceBytes].map(([file, body]) => [file, sha256(body)]));
 const tar = tarVersion();
 const fork = verifyFork(root);
 const provenance = { path: fork.provenancePath, sha256: fork.provenanceSha256 };
-const qualificationSha256 = fork.qualificationSha256;
+const baseRecord = { result: 'PASS', sourceRevision: fork.metadata.sourceRevision, provenance,
+  qualificationSha256: fork.qualificationSha256, ...runtime, sourceSha256, tar };
 verifyConsumerLock(join(checks, 'consumer'), fork);
 if (offline) {
-  console.log(JSON.stringify({ result: 'PASS', scope: 'retained archives, evidence, source lock, fixtures and frozen consumer lock',
-    sourceRevision: fork.metadata.sourceRevision, provenance, qualificationSha256, localAguiArchives: fork.packages.size, installed: false, ...runtime, sourceSha256, tar }));
+  console.log(JSON.stringify({ ...baseRecord, scope: 'retained archives, evidence, source lock, fixtures and frozen consumer lock',
+    localAguiArchives: fork.packages.size, installed: false }));
 } else {
   await qualifyInstalledConsumer(fork);
 }
@@ -89,6 +94,5 @@ async function qualifyInstalledConsumer(fork) {
     throw error;
   }
   await rm(directory, { recursive: true, force: true });
-  console.log(JSON.stringify({ result: 'PASS', scope: fullConsumerScope,
-    sourceRevision: fork.metadata.sourceRevision, provenance, qualificationSha256, ...runtime, npm, temporaryDirectory: tmpdir(), sourceSha256, tar, results }));
+  console.log(JSON.stringify({ ...baseRecord, scope: RETAINED_CONSUMER_RECORD_SCOPE, npm, temporaryDirectory: tmpdir(), results }));
 }

@@ -1,12 +1,6 @@
 {
   "sourceRevision": "ed2c1d5b63299d3f08676a1418cc2640bbe55fd1",
   "identityProvenanceSha256": "0f37ab5f9d1257bab72c9676bd3af012be731354da2e5c1cd7e4bf2ea1d6fcd8",
-  "command": "node scripts/verify-agui-fork.mjs",
-  "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
-  "historicalOfflineCommand": {
-    "command": "python3 tests/dependencies/ag-ui/verify-consumer.py",
-    "scope": "Used by qualification.replay and qualification.standard10Replay before the Node verifier replaced it. Not a current reproduction command."
-  },
   "knownLimitations": [
     {
       "package": "@ag-ui/codex-sdk",
@@ -22,62 +16,39 @@
   ],
   "nodeReplays": [
     {
-      "kind": "coordinator-observed",
-      "log": "evidence/node-qualification.log.gz",
-      "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
-        "tests/dependencies/ag-ui/verify-consumer.mjs": "87f6642e50f59e2974d2e13a14b9cf65f99ba5ab2362484be391510a426ede9a",
-        "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
-      },
-      "note": "Coordinator-observed working bytes over the recorded base. The pre-cleanup consumer helper was not committed; the other two recorded module hashes match the later 96996daa3d699875ade53397dabe12e4bba1cd35 snapshot."
-    },
-    {
-      "kind": "coordinator-observed",
-      "log": "evidence/node-qualification-final.log.gz",
-      "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
-        "tests/dependencies/ag-ui/verify-consumer.mjs": "a70455adbf519b1892e72c30408605bd447d284762d6f8c71f95a518d020bc40",
-        "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
-      },
-      "note": "Coordinator-observed working bytes over the recorded base. All three recorded module hashes match the later 96996daa3d699875ade53397dabe12e4bba1cd35 snapshot; the measurement preceded that commit."
-    },
-    {
-      "kind": "self-reported",
       "log": "evidence/single-owner-node-qualification.log.gz",
       "measuredBase": "3a1064d09c0b2cb6aaef112c32d84645ee11aa67",
       "note": "Measured working code over the recorded base."
     },
     {
-      "kind": "self-reported",
       "log": "evidence/archive-identity-node-qualification.log.gz",
       "measuredBase": "e2817a927389a6d85b5ac69de0b75d007c2041a3",
       "note": "Measured working code over the recorded base."
     },
     {
-      "kind": "self-reported",
       "log": "evidence/closed-input-node-qualification.log.gz",
       "measuredBase": "b5acd0a2bf331177bc4c845c7afa3f0798393750",
       "note": "Measured working code over the recorded base."
     },
     {
-      "kind": "self-reported",
       "log": "evidence/verified-model-node-qualification.log.gz",
       "measuredBase": "843d217a876aef4d2d51a0258f4a2af3a8970383",
       "note": "Measured working code over the recorded base. The five source files match the later 0e8d4c4274247b646b3a5cd86446931227cad073 snapshot; this does not identify later metadata annotations."
     },
     {
-      "kind": "self-reported",
       "log": "evidence/thin-ledger-node-qualification.log.gz",
       "measuredBase": "bf28d916fd19bd7b7532d6275554a09d96114837",
       "note": "Dependency verifier measured on working source over the recorded base. Source hashes and runtime facts are authoritative in the retained full-consumer PASS record."
     },
     {
-      "kind": "self-reported",
       "log": "evidence/shared-format-node-qualification.log.gz",
       "measuredBase": "a289cf85595689f93c7ae661265aecb60ec1707e",
       "note": "Dependency verifier measured on working source over the recorded base. The verified full-consumer record supplies actual source hashes, runtime facts and command results."
+    },
+    {
+      "log": "evidence/modular-node-qualification.log.gz",
+      "measuredBase": "e6996901b004d54cb5109c4da95959448e731bac",
+      "note": "Measured working source after integrating main4a01 and modular verifier fixes. The full-consumer report records all ten source hashes and the input ledger digest before this evidence was appended."
     }
   ],
   "evidence": [
@@ -212,6 +183,17 @@
       "compressedSha256": "ab128de7ad523907a5c9e686f89e661f97e8f68b5b911bc2194f0f589bde22c7",
       "encoding": "gzip; raw retained without edits",
       "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/modular-node-qualification.log.gz",
+      "rawBytes": 55993,
+      "rawSha256": "353dbe676680938b3ba930257b33e5f3a2f17d9916445510212b84b86aab6d3b",
+      "retainedBytes": 55993,
+      "retainedSha256": "353dbe676680938b3ba930257b33e5f3a2f17d9916445510212b84b86aab6d3b",
+      "compressedBytes": 6903,
+      "compressedSha256": "3dc4f1f56676b34021bfc0d961bf067f440ff49ed286f0a2a7607446188745c0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Controlled Linux full-consumer qualification of the modular verifier, with all ten verifier and consumer-script hashes."
     }
   ],
   "metadataHistory": "evidence/qualification-metadata-history.json.gz"

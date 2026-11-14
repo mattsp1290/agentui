@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
+import { resolveLockedFork } from '../../scripts/lib/agui-fork/identity.mjs';
 import { aguiProtocol } from '@agentui/host/agui';
 import { retained } from './inputs.mjs';
 import { coverage, projectionFacts } from './coverage.mjs';
