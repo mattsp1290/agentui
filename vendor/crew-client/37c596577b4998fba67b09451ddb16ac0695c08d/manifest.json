@@ -1,15 +1,15 @@
 {
   "package": "@birbcrew/client",
   "version": "0.1.0",
-  "sourceRevision": "07b011ea01656f3e677a481a6e9b01855d2efe21",
-  "sourcePackageTree": "63e54d027f6970b1d6caad60610cf4669e92c328",
+  "sourceRevision": "37c596577b4998fba67b09451ddb16ac0695c08d",
+  "sourcePackageTree": "7968b05bf317f9036ca2cb6d7a998d2856025099",
   "sourceRepository": "git@github.com:mattsp1290/crew.git",
   "sourceWasClean": true,
   "sourceArchive": "source.tar.gz",
-  "sourceArchiveSha256": "be5ca11f1fbf1c6018b087db18d4ace43bfb49cd5ca1af8bb5b28ef0d7a05a6e",
+  "sourceArchiveSha256": "18c2f6d2a826f528831b35d044703c809a95f1252146e4581a8896541df2114f",
   "packageArchive": "birbcrew-client-0.1.0.tgz",
-  "packageArchiveSha256": "9ac7af18a8cb304cd1fd706539031731351ac6b3ced0cee9968fb7dd1322ec89",
-  "npmIntegrity": "sha512-3HVm0jD4Br88WcbH50Y6RZ+9jp29VRcfBA7lFiPGRehPCehnWrt/I562hjz1EKV6hiHRzASCa1+Lz2swyCqAzg==",
+  "packageArchiveSha256": "00a7060f3441e4a77adef3da34e480e1fc3c86035de3e40438bbcbccee255c2b",
+  "npmIntegrity": "sha512-ADlLZ24lmozM1EmAbYHpSPp5IDpzRu3/rzA66va9jzVhNBtoQdD4KRAPiQB/hQzwvS0ErI2rNwed6Cf/pnBeNg==",
   "build": {
     "node": "24.22.3",
     "npm": "11.19.1",
@@ -18,5 +18,6 @@
     "sourceExtraction": "git archive <sourceRevision> packages/client",
     "dependencySource": "npm ci --ignore-scripts in a clean full source archive of sourceRevision; no Crew native build or service required"
   },
-  "license": "MIT"
+  "license": "MIT",
+  "sourceTree": "304b892eccc22d1f6a7d4e3a70a30e840bc1d856"
 }

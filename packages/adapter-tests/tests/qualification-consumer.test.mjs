@@ -29,8 +29,8 @@ test('controlled qualification retains a separate development archive and produc
   assert.equal(installedManifest.exports['./testkit'].import, './dist/testkit/index.js');
   assert.equal(installedManifest.exports['./testkit'].types, './dist/testkit/index.d.ts');
   assert.match(await readFile(new URL(`node_modules/${alias}/LICENSE`, root), 'utf8'), /MIT License/u);
-  assert.equal(manifest.sourceRevision, '401ec23b4371942b4398c1d9390da443da098a5d');
-  assert.equal(manifest.sourceTree, '5312d72ce384a40dd08b882a4d2cbda6da4ea124');
+  assert.equal(manifest.sourceRevision, '71d204015f573e1399d8ba19a33a2d4b4067fa1a');
+  assert.equal(manifest.sourceTree, 'a398efdf464b31141802751ecef081b9fb6f72c3');
   assert.equal(manifest.artifact, `switchboard-${manifest.sourceRevision}.tgz`);
   const archive = `vendor/dev-qualification/${manifest.artifact}`;
   const bytes = await readFile(new URL(archive, root));

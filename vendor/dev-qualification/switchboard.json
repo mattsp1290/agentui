@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "401ec23b4371942b4398c1d9390da443da098a5d",
-  "sourceTree": "5312d72ce384a40dd08b882a4d2cbda6da4ea124",
-  "artifact": "switchboard-401ec23b4371942b4398c1d9390da443da098a5d.tgz",
-  "sha256": "197e04ace7bfa667bc2d0a18e35d905b48c00c6a418dd2e83d20767441223552",
+  "sourceRevision": "71d204015f573e1399d8ba19a33a2d4b4067fa1a",
+  "sourceTree": "a398efdf464b31141802751ecef081b9fb6f72c3",
+  "artifact": "switchboard-71d204015f573e1399d8ba19a33a2d4b4067fa1a.tgz",
+  "sha256": "9a3a5a1cde6ad2c432c8949c7815b7f8d916d76aa9fb597562650a42dbf49ae1",
   "license": "MIT",
   "consumerPackage": "@agentui/adapter-tests",
   "dependencyAlias": "@agentui/switchboard-qualification",

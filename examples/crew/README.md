@@ -37,6 +37,6 @@ A nonterminal or unknown request blocks another send. Once a completed, failed o
 
 `npm test` includes the example's HTTP-boundary tests. They exercise the actual packed SDK against a local controlled server, including dropped replies, exact retry bodies, read-only lookup, failed local saves and foreign authority rejection. The host/client proof in `tests/client/host-integration.test.mjs` separately uses real SQLite and a versioned recorded provider fixture.
 
-The archive under `vendor/crew-client/07b011ea01656f3e677a481a6e9b01855d2efe21/` was built from a clean Git archive of that exact revision. Its manifest records the source package tree, both archive digests, build versions and npm integrity. The retained MIT license covers the package. This is a candidate pin awaiting the upstream review gate, not a release qualification claim.
+The archive under `vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/` was built from a clean Git archive of that exact revision. Its manifest records the source package tree, both archive digests, build versions and npm integrity. The retained MIT license covers the package. The pin identifies the merged public SDK source. The controlled example tests do not establish release qualification.
 
 The root SDK and `/contract` imports need no AG-UI runtime. This example does not import `/agui`. AgentUI's existing pinned AG-UI fork remains unchanged. The SDK supports Node 22 and 24 independently of Crew's full service runtime. AgentUI's host tests require the repository's pinned Node 24 runtime.
