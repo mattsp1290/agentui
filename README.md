@@ -24,18 +24,19 @@ Run `npm run preview:theme` after building to inspect the local visual fixture.
 
 ## Launch the desktop app
 
-On macOS, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and the pinned Node and npm versions above. From the repository root, run:
+On macOS, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and make Node.js and npm available. From the repository root, run:
+
+```sh
+./agentui
+```
+
+The launcher selects the pinned Node and npm versions, installs locked dependencies, builds the macOS bundle, and opens a fresh app instance. A failed install or build stops the launch. You can also invoke the script by its absolute path from another directory.
+
+For development with a live server, use the pinned toolchain and run:
 
 ```sh
 npm ci
 npm run desktop:dev
-```
-
-To build a local application bundle:
-
-```sh
-npm run desktop:bundle
-open apps/desktop/src-tauri/target/release/bundle/macos/AgentUI.app
 ```
 
 The bundle loads embedded assets without a development server. This is a local build, without distribution signing or notarization. Read the [desktop packaging guide](docs/qualification/desktop-macos.md) for checks and limitations.
