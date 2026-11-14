@@ -98,3 +98,8 @@ prove artifact installation, public contract consumption and controlled continua
 behavior. Mac package verification is a separate measurement of the same bytes.
 Neither measurement qualifies live native operations or integrated Apple clients.
 Broader Apple qualification remains `agentui-onxu`.
+
+The [Mac consumer record](../qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
+qualifies installation, workspace compilation and five controlled tests at AgentUI
+source `54065e2`. The artifact and all eleven frozen inputs matched before and
+after the run. This adds Mac package compatibility evidence within the limits above.

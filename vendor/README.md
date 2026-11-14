@@ -62,3 +62,7 @@ These commands check the installed package through `@agentui/host`.
 They qualify package compatibility and controlled continuation fixtures.
 They do not authorize a client reply, consume a pending decision, dispatch to a
 native process or qualify integrated desktop and iOS applications.
+
+The [Mac measurement](../docs/qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
+passed this consumer unit at AgentUI source `54065e2`. It installed the committed
+artifact and verified all eleven requested frozen inputs without repacking it.
