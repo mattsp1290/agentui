@@ -88,7 +88,7 @@ test('page payload reads obey encoded byte budget before loading next row', asyn
   assert.equal((await feed.ended).cursor, 0);
 });
 
-test('oversized event rolls back; oversized snapshot is refused before domain decoding', async t => {
+test('oversized event rolls back; incompatible snapshot budget is refused before domain decoding', async t => {
   const f = fixture(t), host = f.open({ budgets: { maxEventBytes: 250, pageBytes: 250 } });
   host.createConversation(scope, installed);
   assert.throws(() => host.append(scope, note('x'.repeat(500))), /byte budget/);
@@ -98,16 +98,14 @@ test('oversized event rolls back; oversized snapshot is refused before domain de
   const db = new DatabaseSync(f.path);
   const documentBytes = db.prepare('SELECT bytes FROM conversations').get().bytes;
   db.close();
-  const tiny = f.open({ projection: { ...projection, decodeState: value => { decodes++; return projection.decodeState(value); } }, budgets: { snapshotBytes: documentBytes + 1 } });
-  const feed = tiny.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => assert.fail('No oversized snapshot delivery'));
-  assert.equal((await feed.ended).reason, 'snapshot-overflow');
+  assert.throws(() => f.open({ projection: { ...projection, decodeState: value => { decodes++; return projection.decodeState(value); } }, budgets: { maxEventBytes: 250, snapshotBytes: documentBytes + 1 } }), /persistent host budgets/);
   assert.equal(decodes, 0);
 });
 
 test('invalid cursor, incompatible projection and unknown scope refuse without callbacks', async t => {
   const f = fixture(t), host = f.open();
   host.createConversation(scope, installed);
-  for (const after of [-1, 1, 0.5, NaN]) {
+  for (const after of [-1, 0.5, NaN]) {
     const feed = host.conversation(scope).watch({ after, projectionVersion: 1 }, async () => assert.fail('Invalid cursor delivered'));
     assert.equal((await feed.ended).kind, 'refused');
   }

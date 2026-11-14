@@ -56,14 +56,13 @@ export class Journal<E, P> {
     };
     const run = async () => {
       if (stopped) return;
-      if (this.closed || this.feeds.size > this.store.limits.subscribers) { stop('refused', 'subscriber-limit-or-host-closed'); return; }
       const plan = this.store.plan(scope, request.after, request.projectionVersion);
-      if (plan.kind === 'refused') { stop('refused', plan.reason); return; }
       let through: number;
       if (plan.kind === 'snapshot') {
         through = plan.snapshot.cursor;
         await deliver({ kind: 'snapshot', snapshot: plan.snapshot }, through);
-      } else through = plan.through;
+      } else if (plan.kind === 'resume') through = plan.through;
+      else { stop(plan.kind, plan.reason); return; }
       while (!stopped) {
         const generation = this.generation;
         if (cursor !== null && cursor < through) {
@@ -78,6 +77,10 @@ export class Journal<E, P> {
         await idle(generation);
       }
     };
+    if (this.closed || this.feeds.size >= this.store.limits.subscribers) {
+      stop('refused', 'subscriber-limit-or-host-closed');
+      return { close, ended };
+    }
     this.feeds.add(close);
     queueMicrotask(() => { void run().catch(error => stop('failed', error instanceof Error ? error.message : 'feed-failed')); });
     return { close, ended };

@@ -26,7 +26,7 @@ test('real file reopen retains exact projection, scoped receipts and immutable p
   assert.deepEqual((await snapshot(reopened.conversation(other))).document.domain, []);
   const foreign = await reopened.conversation(other).submit(command('cancel', { kind: 'cancel', runId: 'run-a' }, other));
   assert.equal(foreign.kind, 'rejected');
-  assert.throws(() => reopened.append(other, { ...empty(), runs: [run()] }), /Foreign/);
+  assert.throws(() => reopened.append(other, { ...empty(), runs: [run()] }), error => /Foreign/.test(error.cause?.message));
   const changed = run();
   changed.reference.opaque = 'changed';
   changed.identity.authority.binding.opaqueSessionId = 'changed';
@@ -41,7 +41,7 @@ test('exact id retries deduplicate across independent connections; changed inten
   const first = a.conversation(scope).submit(command('id'));
   await entered.promise;
   const retry = await b.conversation(scope).submit(command('id'));
-  assert.equal(retry.receipt.state.kind, 'uncertain');
+  assert.equal(retry.receipt.state.kind, 'pending');
   assert.equal((await b.conversation(scope).submit(command('id', { kind: 'send', text: 'different' }))).reason, 'command-id-conflict');
   release.resolve();
   const done = await first;
@@ -69,9 +69,11 @@ test('projection failure rolls all output and reservation changes back', async t
   const f = fixture(t), host = f.open();
   host.createConversation(scope, installed);
   const before = state(f.path);
-  assert.throws(() => host.append(scope, { ...note('projector-failure'), runs: [run()], decisions: [question()] }), /Projector/);
+  assert.throws(() => host.append(scope, { ...note('projector-failure'), runs: [run()], decisions: [question()] }), error => /Projector/.test(error.cause?.message));
   assert.deepEqual(state(f.path), before);
-  const tiny = f.open({ budgets: { maxEventBytes: 50 } });
+  assert.throws(() => f.open({ budgets: { maxEventBytes: 50 } }), /persistent host budgets/);
+  const tinyFixture = fixture(t), tiny = tinyFixture.open({ budgets: { maxEventBytes: 50 } });
+  tiny.createConversation(scope, installed);
   await assert.rejects(tiny.conversation(scope).submit(command('too-big')), /byte budget/);
   assert.deepEqual(state(f.path), before);
 });

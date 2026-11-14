@@ -12,6 +12,7 @@ export interface ClientCommand {
   readonly body: CommandBody;
 }
 export type ReceiptState =
+  /** Admitted and possibly executing. Retrying this id never dispatches again. */
   | { readonly kind: 'pending' }
   | { readonly kind: 'accepted' }
   | { readonly kind: 'completed' }
@@ -25,6 +26,7 @@ export interface Receipt {
   readonly sequence: number;
   readonly state: ReceiptState;
 }
+/** Rejections are not persisted and leave the command id available. Storage faults reject the promise. */
 export type SubmitResult =
   | { readonly kind: 'receipt'; readonly receipt: Receipt }
   | { readonly kind: 'rejected'; readonly reason: string };
@@ -36,6 +38,7 @@ export interface PendingDecision {
 }
 export interface ConversationDocument<P> {
   readonly domain: P;
+  /** All unresolved receipts and the latest 128 terminal receipts. Older receipts remain available through receipt(id). */
   readonly receipts: Readonly<Record<string, Receipt>>;
   readonly decisions: Readonly<Record<string, PendingDecision>>;
 }
@@ -74,6 +77,11 @@ export interface ConversationPort<E, P> {
   watch(request: { readonly after: number | null; readonly projectionVersion: number },
     receive: (item: FeedItem<E, P>) => Promise<void>): Feed;
 }
+/**
+ * Version changes are refused; no in-place upgrader is provided. A migration must preserve commands,
+ * evidence, captured targets, private runs, decisions, reservations and deduplication identities.
+ * Replaying domain events alone does not preserve those guarantees.
+ */
 export interface Projection<E, P> {
   readonly version: number;
   initial(): P;
@@ -88,7 +96,14 @@ export function foldDocument<E, P>(document: ConversationDocument<P>, event: Hos
   projection: Projection<E, P>): ConversationDocument<P> {
   switch (event.kind) {
     case 'domain': return { ...document, domain: projection.apply(document.domain, event.event) };
-    case 'receipt': return { ...document, receipts: { ...document.receipts, [event.receipt.clientCommandId]: event.receipt } };
+    case 'receipt': {
+      const receipts = { ...document.receipts, [event.receipt.clientCommandId]: event.receipt };
+      const terminal = Object.values(receipts).filter(value => value.state.kind === 'completed' ||
+        value.state.kind === 'rejected' || value.state.kind === 'not-dispatched')
+        .sort((a, b) => b.sequence - a.sequence);
+      for (const value of terminal.slice(128)) delete receipts[value.clientCommandId];
+      return { ...document, receipts };
+    }
     case 'decision-opened': return { ...document, decisions: { ...document.decisions, [event.decision.pendingId]: event.decision } };
     case 'decision-closed': {
       const decisions = { ...document.decisions };
@@ -105,13 +120,18 @@ function nonempty(value: unknown): string {
   if (typeof value !== 'string' || value.length === 0) throw new Error('Expected nonempty string');
   return value;
 }
+function identifier(value: unknown): string {
+  const parsed = nonempty(value);
+  if (parsed.length > 1024) throw new Error('Identifier exceeds length limit');
+  return parsed;
+}
 function exact(value: Record<string, unknown>, keys: readonly string[]): void {
   if (Object.keys(value).some(key => !keys.includes(key))) throw new Error('Unexpected field');
 }
 export function parseScope(value: unknown): ConversationScope {
   const input = object(value);
   exact(input, ['hostId', 'conversationId']);
-  return { hostId: nonempty(input.hostId), conversationId: nonempty(input.conversationId) };
+  return { hostId: identifier(input.hostId), conversationId: identifier(input.conversationId) };
 }
 export function parseCommand(value: unknown): ClientCommand {
   const input = object(value);
@@ -126,15 +146,15 @@ export function parseCommand(value: unknown): ClientCommand {
       break;
     case 'approve':
       exact(body, ['kind', 'pendingId', 'choiceId']);
-      parsed = { kind: 'approve', pendingId: nonempty(body.pendingId), choiceId: nonempty(body.choiceId) };
+      parsed = { kind: 'approve', pendingId: identifier(body.pendingId), choiceId: identifier(body.choiceId) };
       break;
     case 'cancel':
       exact(body, ['kind', 'runId']);
-      parsed = { kind: 'cancel', runId: nonempty(body.runId) };
+      parsed = { kind: 'cancel', runId: identifier(body.runId) };
       break;
     default: throw new Error('Unsupported command kind');
   }
-  return { version: 1, scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId), body: parsed };
+  return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
 }
 export function canonicalJson(value: unknown): string {
   const ancestors = new Set<object>();

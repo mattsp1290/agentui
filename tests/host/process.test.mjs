@@ -30,7 +30,7 @@ test('child crash after external acceptance leaves recovery-only intent; retry n
   assert.equal(readFileSync(f.backendPath, 'utf8').trim().split('\n').length, 1);
   const recovered = f.open();
   const retry = await recovered.conversation(scope).submit(command('process-command'));
-  assert.equal(retry.receipt.state.kind, 'uncertain');
+  assert.equal(retry.receipt.state.kind, 'pending');
   assert.equal(readFileSync(f.backendPath, 'utf8').trim().split('\n').length, 1);
   assert.equal((await recovered.reconcile(scope, 'process-command')).state.kind, 'completed');
   assert.deepEqual((await snapshot(recovered.conversation(scope))).document.domain, ['external-effect']);

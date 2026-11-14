@@ -1,6 +1,6 @@
 import { canonicalJson, parseScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationScope, Json, PendingDecision, Projection, Receipt, RunIdentity } from '@agentui/contracts';
-import { parseSessionReference } from '@mattsp1290/switchboard';
+import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
 import type { DispatchIdentity, DispatchObservation, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
 export interface Installation {
@@ -29,19 +29,33 @@ export interface CapturedTarget {
   readonly run: NativeRun | null;
   readonly decision: NativeDecision | null;
 }
+/**
+ * Output and evidence must satisfy canonicalJson, including its depth, node and 16,000,000-character limits.
+ * An invalid driver result can leave an admitted intent unresolved. Exact-id retries never dispatch again;
+ * reconcile records uncertainty when lookup is unavailable and can settle later valid authoritative evidence.
+ */
+/**
+ * Output and evidence must satisfy canonicalJson, including its depth, node and 16,000,000-character limits.
+ * An invalid driver result can leave an admitted intent unresolved. Exact-id retries never dispatch again;
+ * reconcile records uncertainty when lookup is unavailable and can settle later valid authoritative evidence.
+ */
 export interface ProviderDriver<E> {
   readonly source: 'recorded';
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
   dispatch(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
   lookup?(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
 }
-export interface StoredCommand<E> {
+export type ObservedResult =
+  | { readonly kind: 'completed'; readonly output: unknown }
+  | { readonly kind: 'rejected'; readonly reason: string };
+export interface StoredCommand {
   readonly command: ClientCommand;
   readonly target: CapturedTarget;
   readonly receipt: Receipt;
-  readonly observation: DispatchObservation<CommandResult<E>> | null;
+  readonly observation: DispatchObservation<ObservedResult> | null;
 }
 export interface HostBudgets {
+  readonly maxCommandBytes: number;
   readonly maxEventBytes: number;
   readonly pageEvents: number;
   readonly pageBytes: number;
@@ -53,9 +67,13 @@ export interface HostBudgets {
   readonly pollMs: number;
 }
 export function budgets(input: Partial<HostBudgets> = {}): HostBudgets {
-  const result = { maxEventBytes: 64_000, pageEvents: 64, pageBytes: 256_000,
+  const result = { maxCommandBytes: 64_000, maxEventBytes: 64_000, pageEvents: 64, pageBytes: 256_000,
     replayEvents: 1000, replayBytes: 2_000_000, snapshotBytes: 4_000_000,
     subscribers: 100, deliveryMs: 30_000, pollMs: 100, ...input };
+  for (const name of Object.keys(input)) {
+    if (!['maxCommandBytes', 'maxEventBytes', 'pageEvents', 'pageBytes', 'replayEvents', 'replayBytes', 'snapshotBytes', 'subscribers', 'deliveryMs', 'pollMs'].includes(name)) throw new Error('Unknown host budget');
+  }
+  if (result.deliveryMs > 2_147_483_647 || result.pollMs > 2_147_483_647) throw new Error('Timer budget exceeds platform limit');
   for (const value of Object.values(result)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid host budget');
   }
@@ -66,17 +84,27 @@ export function integer(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid integer');
   return value;
 }
+export function positiveInteger(value: unknown): number {
+  const parsed = integer(value);
+  if (parsed === 0) throw new Error('Expected positive integer');
+  return parsed;
+}
 export function array(value: unknown): unknown[] {
   if (!Array.isArray(value)) throw new Error('Expected array');
   return value;
 }
 export function installation(value: unknown): Installation {
   const input = object(value), binding = object(input.binding);
-  return { installationId: nonempty(input.installationId), binding: {
+  const parsed = { installationId: nonempty(input.installationId), binding: {
     engine: nonempty(binding.engine), nativeVersion: nonempty(binding.nativeVersion),
     account: nonempty(binding.account), authorizedScope: nonempty(binding.authorizedScope),
     nativeFormat: nonempty(binding.nativeFormat),
   } };
+  try {
+    createDispatchOperation({ mode: 'recovery', identity: { hostOperationId: 'binding-probe',
+      target: { kind: 'new-session', binding: parsed.binding } } });
+  } catch { throw new Error('Invalid installation binding'); }
+  return parsed;
 }
 export function decision(value: unknown): PendingDecision {
   const input = object(value);
