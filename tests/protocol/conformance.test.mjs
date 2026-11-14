@@ -15,11 +15,11 @@ test(coverageContract.validatorControlTest, () => {
 });
 
 test(coverageContract.requestControlTest, () => {
-  const request = validateDefinition('RunAgentInput');
+  const request = validateDefinition(coverageContract.canonicalValidator.contracts.request);
   const minimal = { threadId: 't', runId: 'r', messages: [] };
   assert.equal(request(minimal), true);
   for (const extra of [{ state: null }, { forwardedProps: null }, { unexpected: 1 }]) assert.equal(request({ ...minimal, ...extra }), false);
-  const capabilities = validateDefinition('AgentCapabilities');
+  const capabilities = validateDefinition(coverageContract.canonicalValidator.contracts.capabilities);
   assert.equal(capabilities({ multiAgent: { supported: true } }), true);
   assert.equal(capabilities({ multiAgent: { supported: true, unexpected: true } }), false);
 });

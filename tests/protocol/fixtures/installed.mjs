@@ -15,7 +15,7 @@ export function validateDefinition(name) {
   assert.equal(typeof validate, 'function', name);
   return validate;
 }
-export const validateEvent = validateDefinition('Event');
+export const validateEvent = validateDefinition(coverageContract.canonicalValidator.event);
 
 function mapped(projection, fact, count = 1) {
   const result = projection.accept(fact);

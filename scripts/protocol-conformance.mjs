@@ -1,17 +1,17 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { aguiProtocol } from '@agentui/host/agui';
 import { coverage, coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from '../tests/protocol/fixtures/coverage.mjs';
 
 const root = new URL('../', import.meta.url);
-const upstream = new URL('tests/protocol/fixtures/upstream/', root);
+const retainedDir = 'tests/protocol/fixtures/upstream/';
+const upstream = new URL(retainedDir, root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
 const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const retainedPath = (file) => relative(fileURLToPath(root), fileURLToPath(new URL(file, upstream))).split(sep).join('/');
+const retainedPath = (file) => `${retainedDir}${file}`;
 
 function table(file) {
   const [header, ...lines] = readFileSync(new URL(file, upstream), 'utf8').trimEnd().split('\n');
@@ -63,6 +63,10 @@ function verifiedInputs() {
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
   assert.ok(existsSync(new URL(installedFixtureFile, root)), installedFixtureFile);
+  for (const [name, limit] of Object.entries(coverageContract.behaviorLimits)) {
+    assert.ok(limit.claim.length > 0 && limit.fixtures.length > 0, name);
+    for (const id of limit.fixtures) assert.ok(installedFixtureIds.includes(id), `${name}: ${id}`);
+  }
   return { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project };
 }
 
@@ -72,7 +76,7 @@ function projectCategories({ pin, definitions, fixtures }) {
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
     const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.path.split('/')[0]));
-    assert.ok(['represented', 'partial', 'planned', 'wire-only'].includes(owned.mapping), category);
+    assert.ok(['represented', 'partial', 'wire-only'].includes(owned.mapping), category);
     assert.ok(owned.pending.length > 0 && owned.pending.every((owner) => owner.length > 0), category);
     assert.ok(owned.fixtures.length > 0 || owned.contracts.length > 0, category);
     for (const fixture of owned.contracts) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
@@ -125,7 +129,7 @@ export function buildConformanceReport() {
       qualificationsByRoute: pin.classification.nativeAdapters,
     },
     agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'),
-      emittedEventDefinition: 'Event', contractDefinitions: ['RunAgentInput', 'AgentCapabilities'], file: installedFixtureFile,
+      emittedEventDefinition: coverageContract.canonicalValidator.event, contractDefinitions: Object.values(coverageContract.canonicalValidator.contracts), file: installedFixtureFile,
       tests: [coverageContract.validatorControlTest, coverageContract.requestControlTest] },
     installedFixtures: installedFixtureIds.map((id) => ({ id, file: installedFixtureFile, test: installedFixtureTest(id) })),
     behaviorLimits: coverageContract.behaviorLimits,

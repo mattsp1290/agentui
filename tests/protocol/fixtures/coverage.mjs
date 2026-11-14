@@ -1,6 +1,5 @@
 import { alignmentContract, protocolContract } from './contracts.mjs';
 
-const contracts = [{ file: protocolContract.file, test: protocolContract.test }];
 export const installedFixtureFile = 'tests/protocol/conformance.test.mjs';
 
 export const coverageContract = {
@@ -8,6 +7,7 @@ export const coverageContract = {
   projectionFamilies: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'],
   plannedFamilies: ['reasoning', 'subagents'],
   plannedDescriptor: 'reasoning-subagents',
+  canonicalValidator: { event: 'Event', contracts: { request: 'RunAgentInput', capabilities: 'AgentCapabilities' } },
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.',
   sdkRuntimeEvidenceKind: 'historical-upstream-runtime-validators',
@@ -17,18 +17,16 @@ export const coverageContract = {
   nativeAvailability: { kind: 'undeclared' },
   nativeDeclarationScope: 'No backend availability declaration input exists. Contracts belong to agentui-k4zj, admission to agentui-7s6y and qualification to agentui-ckpw.',
   behaviorLimits: {
-    unknownOrUnimplementedFact: 'Explicit error and faulted actor; no successful empty batch.',
-    notObservable: 'Acknowledged absence for an allowed family; empty batch and usable actor.',
-    terminalOrdering: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).',
-    repeatedEntityIds: 'Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.',
-    ownerAttribution: 'Owner references map to subagentRunId without emitted subagent lifecycle events; partial-stream reconciliation belongs to agentui-ckpw.',
-    nullTerminalResult: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.',
-    qualification: 'Fixture registration and retained evidence inventory are not current execution results or native qualification.',
-    downstream: 'Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw.',
+    unknownOrUnimplementedFact: { claim: 'Explicit error and faulted actor; no successful empty batch.', fixtures: ['acknowledged-absence-and-fault'] },
+    notObservable: { claim: 'Acknowledged absence for an allowed family; empty batch and usable actor.', fixtures: ['acknowledged-absence-and-fault'] },
+    terminalOrdering: { claim: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).', fixtures: ['terminal-ordering-limit'] },
+    repeatedEntityIds: { claim: 'Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.', fixtures: ['lifecycle-text-tools'] },
+    ownerAttribution: { claim: 'Owner references map to subagentRunId without emitted subagent lifecycle events; partial-stream reconciliation belongs to agentui-ckpw.', fixtures: ['lifecycle-text-tools'] },
+    nullTerminalResult: { claim: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.', fixtures: ['terminal-interrupts-usage'] },
   },
 };
 
-const canonicalContracts = [...contracts, { file: installedFixtureFile, test: coverageContract.requestControlTest }];
+const canonicalContracts = [protocolContract, { file: installedFixtureFile, test: coverageContract.requestControlTest }];
 
 export const coverage = {
   envelope: {

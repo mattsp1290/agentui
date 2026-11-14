@@ -103,9 +103,14 @@ inputs instead of copying their complete rows. Coverage owns the expected fixtur
 IDs. A test checks them against the actual function map, and every function is
 registered under its coverage-owned name. Report generation loads data without
 executing fixture code.
-The adapter-test workspace and protocol suite share compiler fixture data from this checkout.
+The adapter-test workspace owns compiler probes; the protocol suite and generator
+share their contract names from this checkout. Behavior limits name the registered
+fixtures that substantiate each claim. Qualification scope and pending ownership
+remain separate from those behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale
-committed output. Normal verification needs no upstream download or Python.
+committed output. `protocol:check` provides the same freshness comparison as a fast
+read-only command; `verify` already includes the test. Normal verification needs
+no upstream download or Python.
 AgentUI uses Ajv 8.20.0 after a dependency advisory check. The historical upstream
 verifier used 8.17.1. Both use the unchanged retained canonical schema.
 The earlier exact-source TS/Python comparison is retained with the
