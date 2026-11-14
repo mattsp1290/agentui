@@ -4,10 +4,11 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { execFileSync } from 'node:child_process';
 
-const directory = new URL('../../../vendor/crew-client/80c9804cfae7d5c323dbbdda77071ac9d0939877/', import.meta.url);
+const directory = new URL('../../../vendor/crew-client/07b011ea01656f3e677a481a6e9b01855d2efe21/', import.meta.url);
 test('retained Crew package and source archives match the exact-revision manifest', async () => {
   const manifest = JSON.parse(await readFile(new URL('manifest.json', directory), 'utf8'));
-  assert.equal(manifest.sourceRevision, '80c9804cfae7d5c323dbbdda77071ac9d0939877');
+  assert.equal(manifest.sourceRevision, '07b011ea01656f3e677a481a6e9b01855d2efe21');
+  assert.equal(manifest.sourcePackageTree, '63e54d027f6970b1d6caad60610cf4669e92c328');
   for (const [file, digest] of [[manifest.packageArchive, manifest.packageArchiveSha256],
     [manifest.sourceArchive, manifest.sourceArchiveSha256]]) {
     const bytes = await readFile(new URL(file, directory));

@@ -16,9 +16,10 @@ export async function fixture(t) {
   const path = join(directory, 'intent.json');
   const intents = fileIntents(path);
   const calls = [], accepted = new Map();
-  const state = { dropReply: false, missingStatus: false, remoteMember: memberId, entries: 0 };
+  const state = { dropReply: false, missingStatus: false, remoteMember: memberId, initiator: undefined, entries: 0 };
   function receipt(requestId) {
     return { apiVersion: '1', conversationId, requestId, status: 'completed', result: { text: 'Recorded Crew result' },
+      ...(state.initiator ? { initiator: state.initiator } : {}),
       acceptance: { boundary: 'sql_admission_and_temporal_queue' } };
   }
   const server = createServer((request, response) => {

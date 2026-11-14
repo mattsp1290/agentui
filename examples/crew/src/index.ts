@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { canonicalJson, parseScope } from '@agentui/contracts';
 import type { ConversationScope, RunIdentity } from '@agentui/contracts';
 import { CrewClient } from '@birbcrew/client';
-import { openConversationSchema, requestReceiptSchema, submitRequestSchema } from '@birbcrew/client/contract';
+import { openConversationSchema, requestReceiptResponseSchema, submitRequestSchema } from '@birbcrew/client/contract';
 
 const localRecord = z.strictObject({
   version: z.literal(1),
@@ -13,7 +13,7 @@ const localRecord = z.strictObject({
   }) }),
   memberId: z.string().uuid(),
   command: submitRequestSchema,
-  receipt: requestReceiptSchema.nullable(),
+  receipt: requestReceiptResponseSchema.nullable(),
 });
 type IntentRecord = z.infer<typeof localRecord>;
 export interface IntentStorage {

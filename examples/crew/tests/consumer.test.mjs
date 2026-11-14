@@ -91,3 +91,25 @@ test('conversation-member mismatch rejects using GET without creating or registe
   await assert.rejects(f.open(), /another member/);
   assert.deepEqual(f.calls.map(call => call.method), ['GET']);
 });
+
+test('future observed initiator survives receipt persistence and reopening without authoring authority', async t => {
+  const f = await fixture(t), conversation = await f.open();
+  f.state.initiator = { kind: 'future-scheduler', id: 'remote-schedule-42', displayName: 'Future source' };
+  const receipt = await conversation.send('Retain this observed source');
+  assert.deepEqual(receipt.initiator, f.state.initiator);
+  const writes = f.calls.filter(call => call.method === 'POST');
+  assert.equal(writes.length, 1);
+  assert.deepEqual(Object.keys(writes[0].body).sort(), ['requestId', 'text']);
+  const restored = await f.open();
+  assert.deepEqual(restored.intent().receipt, receipt);
+  assert.deepEqual(restored.runIdentity(), conversation.runIdentity());
+  assert.deepEqual((await restored.reconcile()).initiator, f.state.initiator);
+  assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
+  await assert.rejects(f.open({ installationId: 'foreign-installation' }), /another scope or remote authority/);
+  const stored = restored.intent();
+  stored.command.initiator = f.state.initiator;
+  await writeFile(f.path, JSON.stringify(stored));
+  const calls = f.calls.length;
+  await assert.rejects(f.open(), /Unrecognized key/u);
+  assert.equal(f.calls.length, calls);
+});

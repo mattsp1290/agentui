@@ -1,0 +1,22 @@
+{
+  "package": "@birbcrew/client",
+  "version": "0.1.0",
+  "sourceRevision": "07b011ea01656f3e677a481a6e9b01855d2efe21",
+  "sourcePackageTree": "63e54d027f6970b1d6caad60610cf4669e92c328",
+  "sourceRepository": "git@github.com:mattsp1290/crew.git",
+  "sourceWasClean": true,
+  "sourceArchive": "source.tar.gz",
+  "sourceArchiveSha256": "be5ca11f1fbf1c6018b087db18d4ace43bfb49cd5ca1af8bb5b28ef0d7a05a6e",
+  "packageArchive": "birbcrew-client-0.1.0.tgz",
+  "packageArchiveSha256": "9ac7af18a8cb304cd1fd706539031731351ac6b3ced0cee9968fb7dd1322ec89",
+  "npmIntegrity": "sha512-3HVm0jD4Br88WcbH50Y6RZ+9jp29VRcfBA7lFiPGRehPCehnWrt/I562hjz1EKV6hiHRzASCa1+Lz2swyCqAzg==",
+  "build": {
+    "node": "24.22.3",
+    "npm": "11.19.1",
+    "typescript": "5.9.3",
+    "command": "npm pack --json --pack-destination <output>",
+    "sourceExtraction": "git archive <sourceRevision> packages/client",
+    "dependencySource": "npm ci --ignore-scripts in a clean full source archive of sourceRevision; no Crew native build or service required"
+  },
+  "license": "MIT"
+}

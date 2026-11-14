@@ -31,10 +31,12 @@ Reopening performs no submission. To send new work, explicitly call `await conve
 
 An installation ID must consistently identify one Crew endpoint and credential authority. Changing it, the member, or either conversation scope requires a separate journal. Credentials stay in the SDK instance and are not persisted in the intent.
 
+Observed receipts preserve future initiator kinds and additive initiator fields when saved and reopened. Submission commands retain strict validation.
+
 A nonterminal or unknown request blocks another send. Once a completed, failed or cancelled receipt is saved, a new send receives a new UUID. Crew owns request admission and deduplication. This example preserves that identity; its controlled HTTP fixture does not qualify real Crew SQL, Temporal, native execution, credentials, or provider effects.
 
 `npm test` includes the example's HTTP-boundary tests. They exercise the actual packed SDK against a local controlled server, including dropped replies, exact retry bodies, read-only lookup, failed local saves and foreign authority rejection. The host/client proof in `tests/client/host-integration.test.mjs` separately uses real SQLite and a versioned recorded provider fixture.
 
-The archive under `vendor/crew-client/80c9804cfae7d5c323dbbdda77071ac9d0939877/` was built from a clean Git archive of that exact revision. Its manifest records the source package tree, both archive digests, build versions and npm integrity. The retained MIT license covers the package. This is a candidate pin awaiting the upstream review gate, not a release qualification claim.
+The archive under `vendor/crew-client/07b011ea01656f3e677a481a6e9b01855d2efe21/` was built from a clean Git archive of that exact revision. Its manifest records the source package tree, both archive digests, build versions and npm integrity. The retained MIT license covers the package. This is a candidate pin awaiting the upstream review gate, not a release qualification claim.
 
 The root SDK and `/contract` imports need no AG-UI runtime. This example does not import `/agui`. AgentUI's existing pinned AG-UI fork remains unchanged. The SDK supports Node 22 and 24 independently of Crew's full service runtime. AgentUI's host tests require the repository's pinned Node 24 runtime.

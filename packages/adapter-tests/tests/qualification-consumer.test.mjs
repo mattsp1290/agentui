@@ -29,8 +29,8 @@ test('controlled qualification retains a separate development archive and produc
   assert.equal(installedManifest.exports['./testkit'].import, './dist/testkit/index.js');
   assert.equal(installedManifest.exports['./testkit'].types, './dist/testkit/index.d.ts');
   assert.match(await readFile(new URL(`node_modules/${alias}/LICENSE`, root), 'utf8'), /MIT License/u);
-  assert.equal(manifest.sourceRevision, '65e88a4ffe6b283318647e68f9ef5a17807e33dd');
-  assert.equal(manifest.sourceTree, 'a97a2f47e6df64cb598fe0f948c8a91fcf9b9def');
+  assert.equal(manifest.sourceRevision, '7c6b2d781a037af6a8586b8f92830c68659e65bf');
+  assert.equal(manifest.sourceTree, '5775e57b7fef6f20885c9e4e9bcc30b616bc47a1');
   assert.equal(manifest.artifact, `switchboard-${manifest.sourceRevision}.tgz`);
   const archive = `vendor/dev-qualification/${manifest.artifact}`;
   const bytes = await readFile(new URL(archive, root));
@@ -60,7 +60,7 @@ test('controlled qualification alias exposes public runtime imports and rejects 
   assert.equal(core.contracts, undefined);
   assert.equal(core.createFakeFixture, undefined);
   await assert.rejects(import('@mattsp1290/switchboard/testkit'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
-  for (const path of ['src/index.ts', 'src/testkit/index.ts', 'dist/testkit/fake.js']) {
+  for (const path of ['src/index.ts', 'src/testkit/index.ts', 'dist/testkit/index.js', 'dist/testkit/contracts.js', 'dist/testkit/fake.js']) {
     await assert.rejects(import(`${alias}/${path}`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   }
 });
