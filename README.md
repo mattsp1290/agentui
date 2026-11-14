@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. Host connections, pairing, conversations, and agent execution remain separate work.
+The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. A separate browser development entry connects the desktop shell to a persistent recorded host. Native host connections remain separate work.
 
 Use Node 24.22.3 and npm 11.19.1.
 
@@ -19,6 +19,8 @@ The [AG-UI conformance matrix](docs/protocol/README.md) separates canonical wire
 
 Linux CI runs the same package checks and browser fixtures with the pinned toolchain.
 Apple application builds remain separate.
+
+Read [recorded host development](docs/development/recorded-host.md) to run paired browser views against the independent host process.
 
 Read the [default theme and primitives](docs/design/theme.md) and [T3 Code design findings](docs/design/t3-code.md).
 Run `npm run preview:theme` after building to inspect the local visual fixture.

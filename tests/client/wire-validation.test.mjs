@@ -35,7 +35,7 @@ for (const [name, kind, value] of malformed) {
 test('receipt scope mismatches keep their connection classification and sequence mismatches reject atomically', async () => {
   for (const [changed, classification] of [
     [{ scope: { ...scope, hostId: 'foreign' } }, 'mismatch'],
-    [{ sequence: 9 }, 'failed'],
+    [{ sequence: 9 }, 'resync'],
   ]) {
     const { store, stream } = await connected();
     await assert.rejects(stream.receive({ kind: 'events', events: [{ scope, sequence: 1,

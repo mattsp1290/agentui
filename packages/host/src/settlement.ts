@@ -24,7 +24,9 @@ function compatibleNative(a: DispatchEvidence['nativeOperation'], b: DispatchEvi
   return a === null || b === null || (a.namespace === b.namespace && a.id === b.id);
 }
 
-export function settlement(previous: Observation | null, incoming: Observation, quarantined: boolean): Settlement {
+export function settlement(previous: Observation | null, incoming: Observation, context: { readonly quarantined: boolean; readonly live: boolean }): Settlement {
+  const { quarantined, live } = context;
+  if (live && incoming.kind === 'outcome-unknown') return { kind: 'keep' };
   let observed = incoming;
   if ((previous?.kind === 'accepted' || previous?.kind === 'conclusive') &&
       (observed.kind === 'accepted' || observed.kind === 'conclusive')) {

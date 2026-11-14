@@ -104,7 +104,7 @@ for (const initialKnown of [false, true]) {
 }
 
 for (const lookup of [undefined, async () => { throw new Error('offline'); }]) {
-  test(`reconciliation journals uncertainty when lookup is ${lookup ? 'failing' : 'absent'}`, async t => {
+  test(`live reconciliation stays pending until dispatch reports uncertainty with ${lookup ? 'failing' : 'absent'} lookup`, async t => {
     const f = fixture(t), entered = deferred(), release = deferred();
     const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }), lookup,
       dispatch: async () => { entered.resolve(); await release.promise; return { kind: 'outcome-unknown' }; },
@@ -113,10 +113,12 @@ for (const lookup of [undefined, async () => { throw new Error('offline'); }]) {
     const submitting = host.conversation(scope).submit(command('id')); await entered.promise;
     const pending = await host.conversation(scope).receipt('id');
     assert.deepEqual(pending, (await snapshot(host.conversation(scope))).document.receipts.id);
-    const uncertain = await host.reconcile(scope, 'id');
+    assert.deepEqual(await host.reconcile(scope, 'id'), pending);
+    assert.deepEqual(pending, (await snapshot(host.conversation(scope))).document.receipts.id);
+    release.resolve();
+    const uncertain = (await submitting).receipt;
     assert.equal(uncertain.state.kind, 'uncertain'); assert.ok(uncertain.sequence > pending.sequence);
     assert.deepEqual(uncertain, (await snapshot(host.conversation(scope))).document.receipts.id);
-    release.resolve(); await submitting;
   });
 }
 

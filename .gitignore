@@ -3,6 +3,8 @@ dist/
 .audit/
 .DS_Store
 apps/desktop/web-dist/
+apps/desktop/web-dist-browser/
+apps/host/build/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
 apps/ios/native/ios/Pods/

@@ -1,0 +1,20 @@
+import { useEffect, useState, useSyncExternalStore } from 'react';
+import { createBrowserConnection } from '@agentui/client/service';
+import { BrowserViewStorage } from './browser-storage.js';
+import { createApplicationController } from './application-controller.js';
+import type { ApplicationController, ApplicationSnapshot } from './application-controller.js';
+
+export function useApplication(): { readonly controller: ApplicationController; readonly snapshot: ApplicationSnapshot } {
+  const [controller] = useState(() => createApplicationController({ createConnection: createBrowserConnection,
+    ownedViewStorage: BrowserViewStorage, createId: () => crypto.randomUUID() }));
+  const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
+  useEffect(() => {
+    void controller.start();
+    const close = () => controller.dispose();
+    const resume = (event: PageTransitionEvent) => { if (event.persisted) window.location.reload(); };
+    window.addEventListener('pagehide', close);
+    window.addEventListener('pageshow', resume);
+    return () => { close(); window.removeEventListener('pagehide', close); window.removeEventListener('pageshow', resume); };
+  }, [controller]);
+  return { controller, snapshot };
+}

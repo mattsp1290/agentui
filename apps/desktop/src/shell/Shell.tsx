@@ -46,7 +46,13 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children }: { readonly children?: ReactNode }) {
+export function DesktopShell({ children, defaultView, protectedContent, status, buildLabel }: {
+  readonly children?: ReactNode;
+  readonly defaultView?: ReactNode;
+  readonly protectedContent?: ReactNode;
+  readonly status?: ReactNode;
+  readonly buildLabel?: string;
+}) {
   const [view, setView] = useState<{ readonly kind: 'initial' } | { readonly kind: 'default'; readonly revision: number }>({ kind: 'initial' });
   return <ThemeScope className="desktop-shell">
     <header className="shell-header">
@@ -56,11 +62,12 @@ export function DesktopShell({ children }: { readonly children?: ReactNode }) {
         <Button tone="secondary" onClick={() => window.location.reload()}>Reload app</Button>
       </nav>
     </header>
+    {protectedContent}
     <main id="main-content">
       <ContentBoundary key={view.kind === 'initial' ? 0 : view.revision}>
-        {view.kind === 'initial' ? children ?? <DefaultView /> : <DefaultView />}
+        {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
       </ContentBoundary>
     </main>
-    <footer className="shell-footer"><span className="footer-status">Disconnected</span><span>Local app · No host connection</span></footer>
+    <footer className="shell-footer"><span className="footer-status">{status ?? 'Disconnected'}</span><span>{buildLabel ?? 'Local app · No host connection'}</span></footer>
   </ThemeScope>;
 }

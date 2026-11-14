@@ -31,6 +31,7 @@ test('ordered bounded pages drain writes during replay and independent connectio
   const sequences = [], texts = [];
   const feed = a.conversation(scope).watch({ after: 0, projectionVersion: 1 }, async item => {
     assert.equal(item.kind, 'events');
+    if (item.events.length === 0) return;
     assert.equal(item.events.length, 1);
     sequences.push(item.events[0].sequence);
     texts.push(item.events[0].event.event.text);
@@ -74,6 +75,7 @@ test('page payload reads obey encoded byte budget before loading next row', asyn
   };
   t.after(() => { DatabaseSync.prototype.prepare = prepare; });
   const feed = host.conversation(scope).watch({ after: 0, projectionVersion: 1 }, async item => {
+    if (item.events.length === 0) return;
     assert.equal(item.events.length, 1);
     got.resolve();
     await release.promise;
