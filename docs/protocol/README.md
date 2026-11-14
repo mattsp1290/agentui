@@ -13,8 +13,8 @@ TypeScript assignability and canonical wire validity differ.
 `JSON.parse` returns `any` and bypasses TypeScript checking. Canonical schema
 validation establishes wire validity. Compiler controls separately check the
 plain discriminator value set and constructing an SDK event with enum members.
-Producers import the enum directly from the pinned `@ag-ui/core` dependency;
-`@agentui/protocol` deliberately exports types only.
+Workspaces constructing SDK events declare the pinned `@ag-ui/core` dependency
+and import the enum from it. `@agentui/protocol` deliberately exports types only.
 
 AgentUI consumes the installed Switchboard projection through
 `@agentui/host/agui`. The host core entry remains independent of AG-UI imports.
@@ -44,13 +44,12 @@ The matrix keeps these facts separate:
 | Native qualification | The pinned record's route assessments, currently unqualified for all six routes |
 | Pending consumers | Product owners for provider admission, transport, reducers, replay and UI |
 
-SDK acceptance does not establish canonical validity. The upstream runtime
-validators accept eight canonically invalid indexed fixtures in TypeScript and
-twenty-two in Python. Those results use zod 4.0.17 and pydantic 2.11.7, not the
-published TypeScript types AgentUI imports. The AgentUI conformance suite runs no
-SDK validator.
-The upstream verifier owns all 98 definitions, while the concrete index names
-219 payloads. Those are upstream evidence inputs, not 219 AgentUI tests.
+SDK acceptance does not establish canonical validity. The report records
+historical runtime acceptance in `canonical.counts` and each category's
+`sdkRuntimeDivergences`. These flags describe upstream zod/pydantic validators,
+not published TypeScript assignability. The AgentUI suite runs no SDK validator.
+Canonical definitions and payload paths in the retained inventories are upstream
+evidence inputs, not AgentUI test counts.
 
 The owned fixtures validate every emitted event against the retained canonical
 `Event` definition. They assert returned values and related IDs for text, tools,
@@ -102,9 +101,15 @@ From the repository root with the pinned toolchain:
 ```sh
 npm ci
 npm run build
-npm run protocol:matrix
 npm run protocol:check
 npm run verify
+```
+
+After an intentional input or coverage change, regenerate and inspect the diff:
+
+```sh
+npm run protocol:matrix
+git diff -- docs/protocol/conformance.json
 ```
 
 `tests/protocol/report.mjs` derives definitions, event discriminators and raw
@@ -119,24 +124,30 @@ The version 2 report has one `evidence.registrar` path and three literal evidenc
 fields. Each kind has sorted `ids` and a `testName` template. Replacing `<id>` in
 that template with an ID gives the name registered in
 `tests/protocol/conformance.test.mjs`. Category fields cite those same IDs by
-kind. The registrar path is descriptive metadata; no self-referential location
-assertion is retained. Compiler bodies use the shared adapter-test helper, which
-requires a compiling positive control first.
+kind. Compiler bodies use the shared adapter-test helper, which requires a
+compiling positive control first.
 
-Direct report generation checks retained input digests before importing evidence
-modules. It imports body definitions without invoking fixture callbacks or
-starting compiler processes. Loading the canonical module initializes Ajv against
-the retained schema. The host import still precedes input verification, and the
-suite statically imports evidence to register its named tests. Digest-first
-ordering applies to direct report generation before evidence initialization.
+Canonical validation and report generation consume one verified snapshot from
+`tests/protocol/inputs.mjs`. It checks all provenance-listed file digests before
+parsing those same bytes. Corrupt retained inputs stop the protocol suite before
+its named tests register. This ordering covers canonical validator construction,
+not unrelated dependency loading. The snapshot lasts for its process; start a
+fresh process to check changed retained files.
+
+Report generation imports body definitions without invoking fixture callbacks or
+starting compiler processes. `npm test` and `npm run verify` also run the named
+installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
+matrix checks retained inputs and writes the expected report. Neither command
+asserts installed SDK and validator pins.
 A separate identity fixture checks cross-run, source and reference scoping.
 Qualification scope and pending ownership remain separate from behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. `protocol:check` provides the same freshness comparison as a fast
 read-only command; `verify` already includes the test. Normal verification needs
 no upstream download or Python.
-AgentUI uses Ajv 8.20.0 after a dependency advisory check. The historical upstream
-verifier used 8.17.1. Both use the unchanged retained canonical schema.
+The report's `agentuiCanonicalValidator` identifies the validator AgentUI runs.
+`canonical.sdkRuntimeEvidence.canonicalLabels` identifies the historical upstream
+verifier. Both use the unchanged retained canonical schema.
 The earlier exact-source TS/Python comparison is retained with the
 [Switchboard qualification](../../vendor/README.md); new installed-output
 validation is a separate check.
@@ -150,7 +161,7 @@ git -C /path/to/switchboard show 58c7922d8fade3617cc86fedcf41677f897025ef:docs/p
 git -C /path/to/switchboard show 58c7922d8fade3617cc86fedcf41677f897025ef:tests/agui/fixtures/upstream.tsv | sha256sum
 ```
 
-The index's 219 payload digests refer to upstream files that are not copied here.
+The index's payload digests refer to upstream files that are not copied here.
 Checking those payload bytes requires the pinned upstream source and verifier.
 
 Provider operation contracts and runtime admission remain `agentui-k4zj` and

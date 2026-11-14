@@ -7,8 +7,6 @@ export const projectionFacts = {
   nativeAvailability: { kind: 'undeclared' },
 };
 
-export const canonicalDefinitions = { event: 'Event', contracts: { request: 'RunAgentInput', capabilities: 'AgentCapabilities' } };
-
 export const reportText = {
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and SDK runtime validator comparison using zod/pydantic. It does not evaluate published TypeScript types, native behavior or installed AgentUI output.',

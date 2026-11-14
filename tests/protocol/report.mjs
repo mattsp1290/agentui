@@ -1,70 +1,15 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { aguiProtocol } from '@agentui/host/agui';
-import { behaviorLimits, canonicalDefinitions, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
+import { retained } from './inputs.mjs';
+import { canonicalDefinitions } from './canonical.mjs';
+import { evidenceKinds, evidenceTest, validateCoverage } from './evidence.mjs';
+import { behaviorLimits, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
 
 const root = new URL('../../', import.meta.url);
-const retainedDir = 'tests/protocol/fixtures/upstream/';
-const upstream = new URL(retainedDir, root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
 const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
-const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
-const retainedPath = (file) => `${retainedDir}${file}`;
-
-function table(file) {
-  const [header, ...lines] = readFileSync(new URL(file, upstream), 'utf8').trimEnd().split('\n');
-  const columns = header.split('\t');
-  return lines.map((line) => {
-    const cells = line.split('\t');
-    assert.equal(cells.length, columns.length, `${file}: ${line}`);
-    return Object.fromEntries(columns.map((column, index) => [column, cells[index]]));
-  });
-}
-
-function verifiedInputs() {
-  const provenance = json(new URL('provenance.json', upstream));
-  for (const [file, input] of Object.entries(provenance.files)) {
-    assert.equal(digest(readFileSync(new URL(file, upstream))), input.sha256, `Retained upstream input changed: ${file}`);
-  }
-  const pin = json(new URL('ag-ui-pin.json', upstream));
-  const vendor = json(new URL('vendor/switchboard.json', root));
-  const schema = json(new URL('schema.json', upstream));
-  const definitions = table('ag-ui-matrix.tsv');
-  const fixtures = table('upstream.tsv').map(({ path, typescriptAccepts, pythonAccepts }) => {
-    const [definition, validity] = path.split('/');
-    assert.ok(['valid', 'invalid'].includes(validity), path);
-    for (const accepted of [typescriptAccepts, pythonAccepts]) assert.ok(['true', 'false'].includes(accepted), `${path}: ${accepted}`);
-    return { path, definition, valid: validity === 'valid', typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true' };
-  });
-  const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
-  const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
-  const lock = json(new URL('package-lock.json', root));
-  const project = json(new URL('package.json', root));
-  assert.equal(provenance.sources.switchboard.revision, vendor.sourceRevision);
-  assert.equal(provenance.sources.canonical.revision, pin.sourceCommit);
-  assert.equal(provenance.files['schema.json'].sha256, pin.upstreamFiles['spec/1.0/schema.json']);
-  assert.equal(provenance.files['UPSTREAM-LICENSE'].sha256, pin.upstreamFiles.LICENSE);
-  assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256);
-  for (const workspace of ['packages/protocol', 'packages/host']) {
-    assert.equal(json(new URL(`${workspace}/package.json`, root)).dependencies[sdk.package], sdk.version, workspace);
-  }
-  assert.equal(lock.packages['node_modules/@ag-ui/core'].version, sdk.version);
-  assert.equal(lock.packages['node_modules/@ag-ui/core'].integrity, sdk.integrity);
-  assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
-  assert.equal(json(new URL('node_modules/@ag-ui/core/package.json', root)).version, sdk.version);
-  assert.equal(json(new URL('node_modules/ajv/package.json', root)).version, project.devDependencies.ajv);
-  assert.deepEqual(aguiProtocol, {
-    version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: projectionFacts.plannedDescriptor,
-  });
-  assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
-  assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
-  assert.deepEqual(definitions.flatMap((row) => row.event ? [row.event] : []).sort(), [...schema.$defs.EventType.enum].sort());
-  assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
-  assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
-  return { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project };
-}
+const retainedPath = (file) => `${retained.retainedDir}${file}`;
 
 function projectCategories({ pin, definitions, fixtures }, registry) {
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
@@ -91,12 +36,27 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
   return categories;
 }
 
-export async function buildConformanceReport() {
-  const inputs = verifiedInputs();
-  const { evidenceKinds, evidenceTest, validateCoverage } = await import('./evidence.mjs');
-  const { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project } = inputs;
+export function buildConformanceReport() {
+  const { provenance, pin, schema, definitions, fixtures } = retained;
+  const vendor = json(new URL('vendor/switchboard.json', root));
+  const project = json(new URL('package.json', root));
+  const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
+  const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
+  assert.equal(provenance.sources.switchboard.revision, vendor.sourceRevision);
+  assert.equal(provenance.sources.canonical.revision, pin.sourceCommit);
+  assert.equal(provenance.files['schema.json'].sha256, pin.upstreamFiles['spec/1.0/schema.json']);
+  assert.equal(provenance.files['UPSTREAM-LICENSE'].sha256, pin.upstreamFiles.LICENSE);
+  assert.deepEqual(aguiProtocol, {
+    version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
+    mapping: pin.classification.switchboardMapping, planned: projectionFacts.plannedDescriptor,
+  });
+  assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
+  assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
+  assert.deepEqual(definitions.flatMap((row) => row.event ? [row.event] : []).sort(), [...schema.$defs.EventType.enum].sort());
+  assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
+  assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
   const registry = validateCoverage();
-  const categories = projectCategories(inputs, registry);
+  const categories = projectCategories(retained, registry);
   const kindEvidence = (kind) => ({ testName: evidenceTest(kind, '<id>'), ids: Object.keys(evidenceKinds[kind].bodies).sort() });
   const count = (predicate) => fixtures.filter(predicate).length;
   return {
@@ -141,7 +101,7 @@ export async function buildConformanceReport() {
     },
     behaviorLimits,
     retainedInputs: {
-      [retainedPath('provenance.json')]: digest(readFileSync(new URL('provenance.json', upstream))),
+      [retainedPath('provenance.json')]: retained.provenanceDigest,
       ...Object.fromEntries(Object.entries(provenance.files).map(([file, input]) => [retainedPath(file), input.sha256])),
     },
     categories,
@@ -150,13 +110,14 @@ export async function buildConformanceReport() {
 
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
-export async function assertReportFresh() {
-  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(await buildConformanceReport()), 'Conformance report is stale; regenerate it');
+export function assertReportFresh() {
+  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()), 'Conformance report is stale; regenerate it');
 }
 
 if (import.meta.main) {
-  assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node tests/protocol/report.mjs [--check]');
-  if (process.argv[2] === '--check') await assertReportFresh();
-  else writeFileSync(reportFile, serializeConformanceReport(await buildConformanceReport()));
-  console.log(process.argv[2] === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');
+  const [mode, ...extra] = process.argv.slice(2);
+  assert.ok(extra.length === 0 && (mode === undefined || mode === '--check'), 'Usage: node tests/protocol/report.mjs [--check]');
+  if (mode === '--check') assertReportFresh();
+  else writeFileSync(reportFile, serializeConformanceReport(buildConformanceReport()));
+  console.log(mode === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');
 }

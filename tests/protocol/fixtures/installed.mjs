@@ -269,6 +269,7 @@ export const installedFixtures = {
     mapped(open, { kind: 'text-started', message: ref('m'), role: 'assistant' });
     assert.deepEqual(open.accept({ kind: 'run-finished', outcome: 'success' }), { kind: 'error', error: { code: 'invalid-order' } });
     assert.deepEqual(open.accept({ kind: 'run-failed', failure: 'native-failure' }), { kind: 'error', error: { code: 'closed' } });
+    open.close();
   },
 
   'acknowledged-absence-and-fault'() {

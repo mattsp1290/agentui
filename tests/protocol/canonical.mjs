@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
+import { retained } from './inputs.mjs';
 import Ajv from 'ajv/dist/2020.js';
-import { canonicalDefinitions } from './coverage.mjs';
 
-const schema = JSON.parse(readFileSync(new URL('./fixtures/upstream/schema.json', import.meta.url), 'utf8'));
+export const canonicalDefinitions = { event: 'Event', contracts: { request: 'RunAgentInput', capabilities: 'AgentCapabilities' } };
+const { schema } = retained;
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(schema);
 function validateDefinition(name) {
