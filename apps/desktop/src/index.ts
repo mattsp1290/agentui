@@ -8,5 +8,3 @@ export interface DesktopMount {
   readonly root: Root;
   readonly module: ConversationModule;
 }
-
-export { Button, Text, Surface, TextField, ThemeScope } from '@agentui/ui-primitives/desktop';

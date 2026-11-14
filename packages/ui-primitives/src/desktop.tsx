@@ -1,38 +1,53 @@
-import { useContext, useId, useSyncExternalStore, type CSSProperties, type HTMLAttributes, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react';
-import { type ButtonTone, type TextVariant, type Theme } from '@agentui/theme';
-import { ThemeProvider, ThemeContext, useTheme, type ThemeProviderProps } from '@agentui/theme/react';
+import { useCallback, useId, useSyncExternalStore, type HTMLAttributes, type ButtonHTMLAttributes, type InputHTMLAttributes } from 'react';
+import { buttonTones, textVariantColor, control, type ButtonTone, type TextVariant, type Theme } from '@agentui/theme';
+import { ThemeProvider, useProvidedTheme, useTheme, type ThemeProviderProps } from '@agentui/theme/react';
+
+function colorVariable(role: string): `--aui-color-${string}` {
+  return `--aui-color-${role.replace(/[A-Z]/g, (letter) => `-${letter.toLowerCase()}`)}`;
+}
+function buttonCssVariables(tone: ButtonTone) {
+  const roles = buttonTones[tone];
+  return {
+    '--aui-button-bg': `var(${colorVariable(roles.background)})`,
+    '--aui-button-fg': `var(${colorVariable(roles.foreground)})`,
+    '--aui-button-border': `var(${colorVariable(roles.border)})`,
+  };
+}
 
 export function toCssVariables(theme: Theme): Record<`--aui-${string}`, string> {
   const variables: Record<`--aui-${string}`, string> = {};
-  for (const [key, value] of Object.entries(theme.colors)) variables[`--aui-${key}`] = value;
+  for (const [key, value] of Object.entries(theme.colors)) variables[colorVariable(key)] = value;
   for (const [key, value] of Object.entries(theme.spacing)) variables[`--aui-space-${key}`] = `${value / 16}rem`;
   for (const [key, value] of Object.entries(theme.radius)) variables[`--aui-radius-${key}`] = `${value / 16}rem`;
   for (const [key, value] of Object.entries(theme.typography)) {
-    variables[`--aui-text-${key}`] = `${value.size / 16}rem`;
+    variables[`--aui-font-size-${key}`] = `${value.size / 16}rem`;
     variables[`--aui-leading-${key}`] = String(value.lineHeight);
     variables[`--aui-weight-${key}`] = String(value.weight);
   }
+  for (const [variant, role] of Object.entries(textVariantColor)) variables[`--aui-text-color-${variant}`] = theme.colors[role];
   for (const [key, value] of Object.entries(theme.motion)) variables[`--aui-motion-${key}`] = `${value}ms`;
+  variables['--aui-control-min-target'] = `${control.minTarget}px`;
+  variables['--aui-control-scaled-target'] = `${control.minTarget / 16}rem`;
+  variables['--aui-disabled-opacity'] = String(control.disabledOpacity);
+  Object.assign(variables, buttonCssVariables('primary'));
   return variables;
 }
-const mediaQueries = ['(prefers-color-scheme: dark)', '(prefers-reduced-motion: reduce)'] as const;
-function readEnvironment(): number {
-  if (typeof window === 'undefined') return 0;
-  return (window.matchMedia(mediaQueries[0]).matches ? 1 : 0) + (window.matchMedia(mediaQueries[1]).matches ? 2 : 0);
+function useMediaQuery(query: string, enabled: boolean): boolean {
+  const subscribe = useCallback((notify: () => void) => {
+    if (!enabled) return () => {};
+    const list = window.matchMedia(query);
+    list.addEventListener('change', notify);
+    return () => list.removeEventListener('change', notify);
+  }, [query, enabled]);
+  return useSyncExternalStore(subscribe, () => enabled && window.matchMedia(query).matches, () => false);
 }
-function subscribeEnvironment(notify: () => void): () => void {
-  const queries = mediaQueries.map((query) => window.matchMedia(query));
-  for (const query of queries) query.addEventListener('change', notify);
-  return () => { for (const query of queries) query.removeEventListener('change', notify); };
-}
-const readServerEnvironment = () => 0;
-const subscribeNothing = () => () => {};
 export interface ThemeScopeProps extends ThemeProviderProps, Omit<HTMLAttributes<HTMLDivElement>, 'color' | 'children'> {}
 export function ThemeScope({ appearance, reducedMotion, colors, children, ...props }: ThemeScopeProps) {
-  const parent = useContext(ThemeContext);
-  const system = useSyncExternalStore(parent ? subscribeNothing : subscribeEnvironment, readEnvironment, readServerEnvironment);
-  return <ThemeProvider appearance={appearance ?? parent?.appearance ?? (system % 2 ? 'dark' : 'light')}
-    reducedMotion={reducedMotion ?? parent?.reducedMotion ?? system >= 2} {...(colors ? { colors } : {})}>
+  const isRoot = useProvidedTheme() === undefined;
+  const prefersDark = useMediaQuery('(prefers-color-scheme: dark)', isRoot);
+  const prefersReducedMotion = useMediaQuery('(prefers-reduced-motion: reduce)', isRoot);
+  return <ThemeProvider colors={colors} appearance={appearance ?? (isRoot ? (prefersDark ? 'dark' : 'light') : undefined)}
+    reducedMotion={reducedMotion ?? (isRoot ? prefersReducedMotion : undefined)}>
     <ThemeSurface {...props}>{children}</ThemeSurface>
   </ThemeProvider>;
 }
@@ -42,8 +57,8 @@ function ThemeSurface({ children, style, className = '', ...props }: HTMLAttribu
     data-reduced-motion={theme.reducedMotion} style={{ ...toCssVariables(theme), ...style }}>{children}</div>;
 }
 export interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> { readonly tone?: ButtonTone }
-export function Button({ tone = 'primary', className = '', type = 'button', ...props }: ButtonProps) {
-  return <button {...props} type={type} className={`aui-button ${className}`} data-tone={tone} />;
+export function Button({ tone = 'primary', className = '', type = 'button', style, ...props }: ButtonProps) {
+  return <button {...props} type={type} style={{ ...buttonCssVariables(tone), ...style }} className={`aui-button ${className}`} data-tone={tone} />;
 }
 export interface TextProps extends HTMLAttributes<HTMLElement> {
   readonly variant?: TextVariant;
@@ -65,4 +80,3 @@ export function TextField({ label, id, className = '', ...props }: TextFieldProp
     <input {...props} id={inputId} className={`aui-input ${className}`} />
   </label>;
 }
-export type ThemeStyle = CSSProperties & Record<`--aui-${string}`, string>;

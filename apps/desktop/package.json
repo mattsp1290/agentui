@@ -20,8 +20,7 @@
     "@agentui/contracts": "0.0.0",
     "@agentui/sdk": "0.0.0",
     "react": "19.3.1",
-    "react-dom": "19.3.1",
-    "@agentui/ui-primitives": "0.0.0"
+    "react-dom": "19.3.1"
   },
   "devDependencies": {
     "@types/react": "19.3.0",

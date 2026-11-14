@@ -8,7 +8,7 @@ Use Node 24.22.3 and npm 11.19.1.
 
 ```sh
 npm ci
-npx --no-install playwright install --with-deps chromium
+npm run setup:browser
 npm run verify
 ```
 

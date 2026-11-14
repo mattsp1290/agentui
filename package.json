@@ -15,18 +15,19 @@
     "packages/theme",
     "packages/ui-primitives",
     "packages/host",
-    "packages/adapter-tests",
     "apps/desktop",
-    "apps/ios"
+    "apps/ios",
+    "packages/adapter-tests"
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && npm run build -w @agentui/contracts && npm run build -w @agentui/sdk && npm run build -w @agentui/theme && npm run build -w @agentui/ui-primitives && npm run build -w @agentui/host && npm run build -w @agentui/desktop && npm run build -w @agentui/ios && npm run build -w @agentui/adapter-tests",
+    "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests",
     "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs",
     "verify": "npm run build && npm run check && npm run lint && npm test",
-    "preview:theme": "node tests/theme/preview.mjs"
+    "preview:theme": "node tests/theme/preview.mjs",
+    "setup:browser": "playwright install --with-deps chromium"
   },
   "devDependencies": {
     "@types/node": "24.19.2",

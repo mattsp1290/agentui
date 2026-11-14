@@ -33,6 +33,13 @@ The action in this example has no agent connection.
 Controls have a 44-pixel minimum target, keyboard focus outlines, and text that can wrap.
 Desktop text uses `rem` units and responds to browser text scaling.
 
+`toCssVariables(theme)` from `@agentui/ui-primitives/desktop` exposes the same values for custom DOM controls.
+Color variables use `--aui-color-*` with kebab-case role names.
+Font sizes use `--aui-font-size-*`.
+The other families are `--aui-space-*`, `--aui-radius-*`, `--aui-leading-*`, `--aui-weight-*`, `--aui-text-color-*`, `--aui-motion-*`, `--aui-control-*`, `--aui-button-*`, and `--aui-disabled-opacity`.
+`ThemeScope` applies them automatically.
+The stylesheet contract test checks every theme variable reference against the emitted variables.
+
 ## Native modules
 
 Import `Button`, `Text`, `Surface`, `TextField`, and `ThemeProvider` from `@agentui/ui-primitives/native`.
@@ -65,7 +72,7 @@ Custom overrides have no automatic contrast correction.
 
 ## Verify the fixture
 
-After `npm ci`, install the test browser with `npx --no-install playwright install --with-deps chromium`.
+After `npm ci`, install the test browser with `npm run setup:browser`.
 Run `npm run verify` to build all packages and check their types, boundaries, lint, contrast, and browser behavior.
 Run `npm run preview:theme` after building to open the workbench at `http://127.0.0.1:4173`.
 The workbench is a local fixture with example content.

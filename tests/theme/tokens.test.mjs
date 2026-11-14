@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { createTheme } from '@agentui/theme';
+import { createTheme, buttonTones } from '@agentui/theme';
 
 function contrast(foreground, background) {
   const luminance = (hex) => {
@@ -23,7 +23,7 @@ for (const appearance of ['light', 'dark']) {
         assert.ok(contrast(colors[foreground], colors[background]) >= 3, `${foreground} on ${background}`);
       }
     }
-    for (const [foreground, background] of [['onAccent', 'accent'], ['onDanger', 'danger']]) {
+    for (const { foreground, background } of Object.values(buttonTones)) {
       assert.ok(contrast(colors[foreground], colors[background]) >= 4.5, `${foreground} on ${background}`);
     }
   });

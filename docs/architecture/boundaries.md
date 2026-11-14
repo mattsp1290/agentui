@@ -19,6 +19,9 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | `@agentui/ios` | React Native client entry contracts | React Native, without DOM |
 
 The app files are compilation probes. No application is mounted.
+Modules import the platform primitive package directly; the app entries do not re-export it.
+The root owns the browser workbench and its tooling because it checks integration across the theme and primitive packages.
+The adapter-test workspace separately owns package and ambient-boundary checks.
 Tauri Rust setup and native application lifecycle belong to later tasks.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. Imports resolve built package exports.

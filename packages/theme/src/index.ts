@@ -24,11 +24,22 @@ export const typography = {
   code: { size: 14, lineHeight: 1.6, weight: 400 },
 } as const;
 export type TextVariant = keyof typeof typography;
-export type ButtonTone = 'primary' | 'secondary' | 'danger';
+export const buttonTones = {
+  primary: { background: 'accent', foreground: 'onAccent', border: 'accent' },
+  secondary: { background: 'raised', foreground: 'text', border: 'controlBorder' },
+  danger: { background: 'danger', foreground: 'onDanger', border: 'danger' },
+} as const satisfies Record<string, Record<'background' | 'foreground' | 'border', keyof ThemeColors>>;
+export type ButtonTone = keyof typeof buttonTones;
+export const textVariantColor = {
+  body: 'text', muted: 'muted', label: 'text', title: 'text', code: 'text',
+} as const satisfies Record<TextVariant, keyof ThemeColors>;
+export const control = { minTarget: 44, disabledOpacity: 0.6 } as const;
+export const motion = { quick: 120, standard: 180 } as const;
+export type ThemeColorOverrides = Readonly<Partial<Record<keyof ThemeColors, string | undefined>>>;
 export interface ThemeOptions {
-  readonly appearance?: Appearance;
-  readonly reducedMotion?: boolean;
-  readonly colors?: Partial<ThemeColors>;
+  readonly appearance?: Appearance | undefined;
+  readonly reducedMotion?: boolean | undefined;
+  readonly colors?: ThemeColorOverrides | undefined;
 }
 export interface Theme {
   readonly appearance: Appearance;
@@ -47,13 +58,13 @@ export function createTheme(options: ThemeOptions = {}, parent?: Theme): Theme {
   const reducedMotion = (parent?.reducedMotion ?? false) || (options.reducedMotion ?? false);
   const inheritedColors = parent?.appearance === appearance ? parent.colors : palettes[appearance];
   const overrides = Object.fromEntries<string>(Object.entries(options.colors ?? {}).filter(
-    ([key, value]) => Object.hasOwn(inheritedColors, key) && typeof value === 'string' && value.trim() !== '',
+    (entry): entry is [string, string] => Object.hasOwn(inheritedColors, entry[0]) && typeof entry[1] === 'string' && entry[1].trim() !== '',
   ));
   return {
     appearance, reducedMotion,
     colors: { ...inheritedColors, ...overrides },
     spacing, radius, typography,
-    motion: reducedMotion ? { quick: 0, standard: 0 } : { quick: 120, standard: 180 },
+    motion: reducedMotion ? { quick: 0, standard: 0 } : motion,
   };
 }
 export const defaultTheme = createTheme();
