@@ -80,6 +80,10 @@ test('public clients converge through SQLite and a versioned recording while app
   await entered.promise;
   const losing = await bob.approve('question-a', 'no');
   assert.deepEqual(losing, { kind: 'rejected', reason: 'decision-unavailable' });
+  assert.deepEqual(bob.getSnapshot().outbox, []);
+  const recreatedBob = f.client(b, 'bob');
+  await recreatedBob.ready;
+  assert.deepEqual(recreatedBob.getSnapshot().outbox, []);
   release.resolve();
   const approved = await winning;
   await Promise.all([alice, bob].map(store => observe(store,

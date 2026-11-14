@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CrewClient } from '@birbcrew/client';
 import { connectCrewConversation } from '../dist/index.js';
-import { fileIntents } from '../dist/file-intents.js';
+import { fileIntents } from '@agentui/example-crew/file-intents';
 
 export const conversationId = '22222222-2222-4222-8222-222222222222';
 export const memberId = '33333333-3333-4333-8333-333333333333';
@@ -16,9 +16,9 @@ export async function fixture(t) {
   const path = join(directory, 'intent.json');
   const intents = fileIntents(path);
   const calls = [], accepted = new Map();
-  const state = { dropReply: false, missingStatus: false, remoteMember: memberId, initiator: undefined, entries: 0 };
+  const state = { dropReply: false, missingStatus: false, remoteMember: memberId, initiator: undefined, entries: 0, refusal: null, status: 'completed', receiptRequestId: null };
   function receipt(requestId) {
-    return { apiVersion: '1', conversationId, requestId, status: 'completed', result: { text: 'Recorded Crew result' },
+    return { apiVersion: '1', conversationId, requestId: state.receiptRequestId ?? requestId, status: state.status, ...(state.status === 'completed' ? { result: { text: 'Recorded Crew result' } } : {}),
       ...(state.initiator ? { initiator: state.initiator } : {}),
       acceptance: { boundary: 'sql_admission_and_temporal_queue' } };
   }
@@ -41,6 +41,7 @@ export async function fixture(t) {
       } else if (request.method === 'POST' && request.url === `${prefix}/requests`) {
         const saved = await intents.load();
         assert.deepEqual(saved.command, { conversationId, ...body }, 'exact intent must exist before HTTP entry');
+        if (state.refusal) { send(state.refusal.status, { error: state.refusal.code }); return; }
         const prior = accepted.get(body.requestId);
         if (prior) assert.deepEqual(body, prior, 'same request UUID must retain the original body');
         else { accepted.set(body.requestId, body); state.entries++; }

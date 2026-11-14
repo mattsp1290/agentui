@@ -2,18 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { canonicalJson, parseScope } from '@agentui/contracts';
 import type { ConversationScope, RunIdentity } from '@agentui/contracts';
-import { CrewClient } from '@birbcrew/client';
+import { CrewClient, CrewHttpError } from '@birbcrew/client';
 import { openConversationSchema, requestReceiptResponseSchema, submitRequestSchema } from '@birbcrew/client/contract';
 
 const localRecord = z.strictObject({
-  version: z.literal(1),
+  version: z.literal(2),
   scope: z.strictObject({ hostId: z.string().min(1), conversationId: z.string().min(1) }),
   authority: z.strictObject({ kind: z.literal('remote-provider'), binding: z.strictObject({
     namespace: z.literal('crew'), installationId: z.string().min(1), opaqueSessionId: z.string().uuid(),
   }) }),
   memberId: z.string().uuid(),
   command: submitRequestSchema,
-  receipt: requestReceiptResponseSchema.nullable(),
+  outcome: z.discriminatedUnion('kind', [
+    z.strictObject({ kind: z.literal('unresolved') }),
+    z.strictObject({ kind: z.literal('rejected'), status: z.int().min(400).max(499), code: z.string() }),
+    z.strictObject({ kind: z.literal('receipt'), receipt: requestReceiptResponseSchema }),
+  ]),
 });
 type IntentRecord = z.infer<typeof localRecord>;
 export interface IntentStorage {
@@ -37,10 +41,11 @@ export async function connectCrewConversation(options: CrewConversationOptions) 
   } });
   const stored = await options.intents.load();
   let record = stored === null ? null : localRecord.parse(stored);
+  const savedReceipt = record?.outcome.kind === 'receipt' ? record.outcome.receipt : null;
   if (record && (canonicalJson(record.scope) !== canonicalJson(scope) ||
     canonicalJson(record.authority) !== canonicalJson(authority) || record.memberId !== target.memberId ||
-    record.command.conversationId !== target.conversationId || (record.receipt &&
-    (record.receipt.requestId !== record.command.requestId || record.receipt.conversationId !== target.conversationId)))) {
+    record.command.conversationId !== target.conversationId || (savedReceipt &&
+    (savedReceipt.requestId !== record.command.requestId || savedReceipt.conversationId !== target.conversationId)))) {
     throw new Error('Stored Crew intent belongs to another scope or remote authority');
   }
   const remote = await options.client.conversation({ conversationId: target.conversationId });
@@ -56,9 +61,15 @@ export async function connectCrewConversation(options: CrewConversationOptions) 
     await options.intents.save(structuredClone(next));
     record = next;
   }
-  async function dispatch(intent: IntentRecord) {
-    const receipt = await options.client.submit(intent.command);
-    await save({ ...intent, receipt });
+  async function dispatch(intent: IntentRecord, canReject: boolean) {
+    const receipt = await options.client.submit(intent.command).catch(async error => {
+      // A refusal now cannot disprove an earlier unknown submission.
+      if (canReject && error instanceof CrewHttpError && error.status >= 400 && error.status < 500) {
+        await save({ ...intent, outcome: { kind: 'rejected', status: error.status, code: error.code } });
+      }
+      throw error;
+    });
+    await save({ ...intent, outcome: { kind: 'receipt', receipt } });
     return receipt;
   }
   return {
@@ -69,27 +80,32 @@ export async function connectCrewConversation(options: CrewConversationOptions) 
     intent() { return structuredClone(record); },
     send(text: string) {
       return exclusive(async () => {
-        if (record && !['completed', 'failed', 'cancelled'].includes(record.receipt?.status ?? 'unknown')) {
+        if (record && record.outcome.kind !== 'rejected' &&
+          !(record.outcome.kind === 'receipt' && ['completed', 'failed', 'cancelled'].includes(record.outcome.receipt.status))) {
           throw new Error('Reconcile or retry the original Crew request before sending another');
         }
-        const next: IntentRecord = { version: 1, scope, authority, memberId: target.memberId,
-          command: submitRequestSchema.parse({ conversationId: target.conversationId, requestId: randomUUID(), text }), receipt: null };
+        const next: IntentRecord = { version: 2, scope, authority, memberId: target.memberId,
+          command: submitRequestSchema.parse({ conversationId: target.conversationId, requestId: randomUUID(), text }), outcome: { kind: 'unresolved' } };
         await save(next);
-        return dispatch(next);
+        return dispatch(next, true);
       });
     },
     retry() {
       return exclusive(async () => {
         if (!record) throw new Error('No saved Crew request');
-        await options.intents.save(structuredClone(record));
-        return dispatch(record);
+        const canReject = record.outcome.kind === 'rejected';
+        // Invalidate known non-admission durably before another reply can be lost.
+        // Re-saving other outcomes verifies storage health before an external effect.
+        const next: IntentRecord = canReject ? { ...record, outcome: { kind: 'unresolved' } } : record;
+        await save(next);
+        return dispatch(next, canReject);
       });
     },
     reconcile() {
       return exclusive(async () => {
         if (!record) return null;
         const receipt = await options.client.requestStatus(record.command);
-        await save({ ...record, receipt });
+        await save({ ...record, outcome: { kind: 'receipt', receipt } });
         return receipt;
       });
     },

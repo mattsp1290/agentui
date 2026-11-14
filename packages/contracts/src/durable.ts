@@ -85,6 +85,7 @@ export interface ConversationPort<E, P> {
 /**
  * E and P must be plain JSON values accepted by canonicalJson. Decoders must accept their own outputs,
  * because appended and stored values are decoded again on read and write.
+ * apply must return the next domain state without mutating its state or event input.
  * Version changes are refused; no in-place upgrader is provided. A migration must preserve commands,
  * evidence, captured targets, private runs, decisions, reservations and deduplication identities.
  * Replaying domain events alone does not preserve those guarantees.

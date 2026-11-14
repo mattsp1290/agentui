@@ -26,7 +26,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   const scope = immutable(parseScope(options.scope));
   if (!sameScope(scope, port.scope)) throw new Error('Port scope mismatch');
   let local = restore(null, scope);
-  let delivery: DeliveryState<P> = { document: { domain: projection.initial(), receipts: {}, decisions: {} }, cursor: null, identities: new Map() };
+  let delivery: DeliveryState<P> = { document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null, identities: new Map() };
   let connection: ConnectionState = { kind: 'disconnected' };
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
@@ -34,13 +34,17 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let generation = 0;
   const inFlight = new Set<string>();
   function makeView(): ClientView<P> {
-    return immutable({ document: delivery.document, cursor: delivery.cursor, draft: local.draft, outbox: local.outbox, connection });
+    return Object.freeze({ document: delivery.document, cursor: delivery.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection) });
   }
   function publish(): void {
     view = makeView();
     for (const listener of listeners) listener();
   }
   const ready = drafts.load(scope).then(value => { local = restore(value, scope); publish(); });
+  void ready.catch(error => {
+    connection = { kind: 'failed', reason: error instanceof Error ? error.message : 'Local storage load failed' };
+    publish();
+  }).catch(() => undefined);
   let saves: Promise<void> = ready;
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
     const result = saves.then(operation);
@@ -59,13 +63,20 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     previous?.close();
     publish();
   }
-  async function dispatch(entry: OutboxEntry): Promise<SubmitResult> {
+  async function dispatch(entry: OutboxEntry, attempt: 'initial' | 'retry'): Promise<SubmitResult> {
     const id = entry.command.clientCommandId;
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
       const result = await port.submit(entry.command);
-      if (result.kind === 'rejected') return result;
+      if (result.kind === 'rejected') {
+        // A retry refusal cannot disprove admission during an earlier lost reply.
+        if (attempt === 'initial') await enqueue(async () => {
+          await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
+          publish();
+        });
+        return result;
+      }
       if (result.kind !== 'receipt') throw new Error('Unsupported submit result');
       const receipt = immutable(decodeReceipt(copyJson(result.receipt), scope));
       if (receipt.clientCommandId !== id) throw new Error('Submit receipt command ID mismatch');
@@ -86,7 +97,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       publish();
       return created;
     });
-    return dispatch(entry);
+    return dispatch(entry, 'initial');
   }
   return {
     ready,
@@ -108,10 +119,11 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       const entry = await enqueue(async () => {
         const found = local.outbox.find(value => value.command.clientCommandId === clientCommandId);
         if (!found) throw new Error('Command is not in the outbox');
+        // Verify storage is writable before another possible external effect.
         await drafts.save(local);
         return found;
       });
-      return dispatch(entry);
+      return dispatch(entry, 'retry');
     },
     async connect() {
       stop({ kind: 'connecting' });
@@ -132,7 +144,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
             if (current !== generation) return;
             firstDelivery = false;
             if (next === delivery && connection.kind === 'connected') return;
-            delivery = next;
+            delivery = { ...next, document: immutable(next.document) };
             connection = { kind: 'connected' };
             publish();
           } catch (error) {

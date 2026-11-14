@@ -12,9 +12,9 @@ export function fileIntents(path: string): IntentStorage {
       }
     },
     async save(record) {
-      await mkdir(dirname(path), { recursive: true });
+      await mkdir(dirname(path), { recursive: true, mode: 0o700 });
       const handle = await open(`${path}.next`, 'w', 0o600);
-      try { await handle.writeFile(JSON.stringify(record)); await handle.sync(); }
+      try { await handle.chmod(0o600); await handle.writeFile(JSON.stringify(record)); await handle.sync(); }
       finally { await handle.close(); }
       await rename(`${path}.next`, path);
       const directory = await open(dirname(path), 'r');

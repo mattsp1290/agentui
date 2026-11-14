@@ -4,12 +4,12 @@ This standalone integration example attaches an AgentUI conversation to an exist
 
 `connectCrewConversation` verifies the existing conversation through GET. Its local journal binds the AgentUI host/conversation scope, Crew installation, Crew conversation, member, original request UUID and exact request body. A send saves that intent before HTTP submission. A lost reply leaves it available after process recreation. `retry()` submits the original identity and body. `reconcile()` reads request status through GET and updates the local receipt; it never dispatches or creates a request. A missing status remains unresolved. No automatic retry runs.
 
-Run `npm ci` and `npm run build` from the repository root. Use a separate journal file and a single owner for each conversation. The filesystem storage flushes the file, renames it, and flushes its directory before returning. Concurrent processes sharing the same journal require a separate locking/storage design.
+Run `npm ci` and `npm run build` from the repository root. Use a separate journal file and a single owner for each conversation. The filesystem adapter targets POSIX filesystems and creates private directories and files. It reapplies file permissions when a temporary file already exists. The storage flushes the file, renames it, and flushes its directory before returning. Concurrent processes sharing the same journal require a separate locking/storage design.
 
 ```js
 import { CrewClient } from '@birbcrew/client';
 import { connectCrewConversation } from '@agentui/example-crew';
-import { fileIntents } from './examples/crew/dist/file-intents.js';
+import { fileIntents } from '@agentui/example-crew/file-intents';
 
 const conversation = await connectCrewConversation({
   client: new CrewClient({
@@ -33,7 +33,9 @@ An installation ID must consistently identify one Crew endpoint and credential a
 
 Observed receipts preserve future initiator kinds and additive initiator fields when saved and reopened. Submission commands retain strict validation.
 
-A nonterminal or unknown request blocks another send. Once a completed, failed or cancelled receipt is saved, a new send receives a new UUID. Crew owns request admission and deduplication. This example preserves that identity; its controlled HTTP fixture does not qualify real Crew SQL, Temporal, native execution, credentials, or provider effects.
+The version 2 journal records an unresolved outcome, a definitive initial rejection, or an observed receipt. A definitive HTTP 4xx on the first submission is saved as rejected and permits a corrected send with a new UUID. An explicit retry of that rejected request durably invalidates the rejection before HTTP; a lost retry reply therefore blocks new work after reopening. A 4xx refusal after an earlier unknown outcome cannot establish that the earlier request was absent and never releases that identity. A failed save prevents dispatch or retains the previous recovery record.
+
+A nonterminal or unknown request blocks another send. Crew's `uncertain` receipt means native execution reconciliation could not establish a safe final result. It remains blocking until authoritative status resolves it; it is not proof of no effect and must not be acknowledged away or replayed as new work. `reconcile()` can refresh that status without dispatching. Once a completed, failed or cancelled receipt is saved, a new send receives a new UUID. Crew owns request admission and deduplication. This example preserves that identity; its controlled HTTP fixture does not qualify real Crew SQL, Temporal, native execution, credentials, or provider effects.
 
 `npm test` includes the example's HTTP-boundary tests. They exercise the actual packed SDK against a local controlled server, including dropped replies, exact retry bodies, read-only lookup, failed local saves and foreign authority rejection. The host/client proof in `tests/client/host-integration.test.mjs` separately uses real SQLite and a versioned recorded provider fixture.
 

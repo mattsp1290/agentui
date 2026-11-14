@@ -104,11 +104,57 @@ test('port and storage scope mismatches fail before submission', async () => {
   assert.equal(other.port.submitted.length, 0);
 });
 
-test('an admission rejection preserves the original command for explicit retry', async () => {
-  const { store, port } = fixture();
-  port.submit = async () => ({ kind: 'rejected', reason: 'Unsupported cancel' });
-  assert.deepEqual(await store.cancel('run-a'), { kind: 'rejected', reason: 'Unsupported cancel' });
-  assert.deepEqual(store.getSnapshot().outbox[0].command.body, { kind: 'cancel', runId: 'run-a' });
+test('initial admission rejection durably removes the command and retains the draft', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('correct this draft');
+  const refusal = { kind: 'rejected', reason: 'command-too-large' };
+  port.submit = async () => refusal;
+  assert.equal(await store.send(), refusal);
+  assert.deepEqual(store.getSnapshot().outbox, []);
+  assert.equal(store.getSnapshot().draft, 'correct this draft');
+  const recreated = fixture({ drafts: storage(drafts.value) });
+  await recreated.store.ready;
+  assert.deepEqual(recreated.store.getSnapshot().outbox, []);
+  assert.equal(recreated.store.getSnapshot().draft, 'correct this draft');
+});
+
+test('rejection removal save failure retains recoverable original command and draft', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('keep');
+  const save = drafts.save.bind(drafts);
+  port.submit = async () => {
+    drafts.save = async () => { throw new Error('removal save failed'); };
+    return { kind: 'rejected', reason: 'conversation-capacity' };
+  };
+  await assert.rejects(store.send(), /removal save failed/);
+  assert.equal(store.getSnapshot().draft, 'keep');
+  const [entry] = store.getSnapshot().outbox;
+  const recreated = fixture({ drafts: storage(drafts.value) });
+  await recreated.store.ready;
+  assert.deepEqual(recreated.store.getSnapshot().outbox, [entry]);
+  drafts.save = save;
+  port.submit = async command => ({ kind: 'receipt', receipt: receipt(command, 'completed') });
+  await store.retry(entry.command.clientCommandId);
+  assert.deepEqual(store.getSnapshot().outbox, []);
+});
+
+test('lost reply followed by retry refusal retains original identity after recreation', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('one effect');
+  port.submit = async () => { throw new Error('reply lost'); };
+  await assert.rejects(store.send(), /reply lost/);
+  const [entry] = store.getSnapshot().outbox;
+  for (const reason of ['invalid-or-unauthorized-command', 'command-id-conflict']) {
+    port.submit = async command => {
+      assert.deepEqual(command, entry.command);
+      return { kind: 'rejected', reason };
+    };
+    assert.deepEqual(await store.retry(entry.command.clientCommandId), { kind: 'rejected', reason });
+    assert.deepEqual(store.getSnapshot().outbox, [entry]);
+  }
+  const recreated = fixture({ drafts: storage(drafts.value) });
+  await recreated.store.ready;
+  assert.deepEqual(recreated.store.getSnapshot().outbox, [entry]);
 });
 
 test('wrong-command receipt and duplicate generated IDs never remove the saved command', async () => {
@@ -149,4 +195,19 @@ test('failed hydration prevents all submission and connection becomes failed', a
   assert.equal(store.getSnapshot().connection.kind, 'failed');
   assert.equal(port.submitted.length, 0);
   assert.equal(drafts.writes.length, 0);
+});
+
+test('delayed initial refusal preserves an edited draft while removing only its command', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('original');
+  const entered = deferred(), reply = deferred();
+  port.submit = async () => { entered.resolve(); return reply.promise; };
+  const sending = store.send();
+  await entered.promise;
+  await store.setDraft('newer draft');
+  reply.resolve({ kind: 'rejected', reason: 'command-too-large' });
+  await sending;
+  assert.equal(store.getSnapshot().draft, 'newer draft');
+  assert.equal(drafts.value.draft, 'newer draft');
+  assert.deepEqual(drafts.value.outbox, []);
 });

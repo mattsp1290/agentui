@@ -17,7 +17,7 @@ test('packed SDK sends saved intent for an existing Crew member and retains remo
     authority: { kind: 'remote-provider', binding: { namespace: 'crew',
       installationId: 'crew-fixture-installation', opaqueSessionId: conversationId } } });
   const saved = JSON.parse(await readFile(f.path, 'utf8'));
-  assert.deepEqual(saved.receipt, receipt);
+  assert.deepEqual(saved.outcome.receipt, receipt);
   assert.equal(saved.memberId, memberId);
   assert.equal(f.state.entries, 1);
   assertRequestOnlyWrites(f.calls);
@@ -32,7 +32,7 @@ test('unknown outcome survives recreation, read-only missing lookup and explicit
   f.state.dropReply = true;
   await assert.rejects(conversation.send('Do this once'), CrewUnknownOutcomeError);
   const original = conversation.intent();
-  assert.equal(original.receipt, null);
+  assert.deepEqual(original.outcome, { kind: 'unresolved' });
   assert.equal(f.state.entries, 1);
   await assert.rejects(conversation.send('A different request'), /original Crew request/);
   const restored = await f.open();
@@ -79,7 +79,7 @@ test('stored intent rejects foreign scope, remote installation and corrupted rec
   await assert.rejects(f.open({ scope: { ...scope, conversationId: 'foreign' } }), /another scope or remote authority/);
   await assert.rejects(f.open({ installationId: 'another-crew-service' }), /another scope or remote authority/);
   const stored = conversation.intent();
-  stored.receipt.requestId = '44444444-4444-4444-8444-444444444444';
+  stored.outcome.receipt.requestId = '44444444-4444-4444-8444-444444444444';
   await writeFile(f.path, JSON.stringify(stored));
   await assert.rejects(f.open(), /another scope or remote authority/);
   assert.equal(f.calls.length, calls);
@@ -101,7 +101,7 @@ test('future observed initiator survives receipt persistence and reopening witho
   assert.equal(writes.length, 1);
   assert.deepEqual(Object.keys(writes[0].body).sort(), ['requestId', 'text']);
   const restored = await f.open();
-  assert.deepEqual(restored.intent().receipt, receipt);
+  assert.deepEqual(restored.intent().outcome.receipt, receipt);
   assert.deepEqual(restored.runIdentity(), conversation.runIdentity());
   assert.deepEqual((await restored.reconcile()).initiator, f.state.initiator);
   assert.equal(f.calls.filter(call => call.method === 'POST').length, 1);
