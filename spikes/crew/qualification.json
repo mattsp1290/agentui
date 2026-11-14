@@ -17,6 +17,7 @@
     "npm": "11.19.1",
     "platform": "linux"
   },
+  "logRetention": "All .audit/ logs and extracted evidence are local-only, untracked, gitignored, and not retained by this branch.",
   "checks": [
     {
       "command": "npm ci",
