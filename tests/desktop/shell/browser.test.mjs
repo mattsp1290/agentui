@@ -29,9 +29,12 @@ test('production desktop renders disconnected, follows appearance, and reloads',
     configFile: fileURLToPath(new URL('vite.config.mjs', desktop)),
     preview: { host: '127.0.0.1', port: 0, headers: { 'Content-Security-Policy': config.app.security.csp } },
   });
-  t.after(() => new Promise((resolve) => server.httpServer.close(resolve)));
-  const browser = await chromium.launch();
-  t.after(() => browser.close());
+  let browser;
+  t.after(async () => {
+    try { await browser?.close(); }
+    finally { await server.close(); }
+  });
+  browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 1120, height: 780 }, colorScheme: 'light', offline: false });
   const violations = await observeCspViolations(page);
   const errors = [];
@@ -84,9 +87,12 @@ test('content failure leaves shell controls usable and restores the built-in vie
   });
   server.listen(0, '127.0.0.1');
   await once(server, 'listening');
-  t.after(() => new Promise((resolve) => server.close(resolve)));
-  const browser = await chromium.launch();
-  t.after(() => browser.close());
+  let browser;
+  t.after(async () => {
+    try { await browser?.close(); }
+    finally { await new Promise((resolve) => server.close(resolve)); }
+  });
+  browser = await chromium.launch();
   const page = await browser.newPage();
   const violations = await observeCspViolations(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);

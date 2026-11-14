@@ -1,0 +1,30 @@
+{
+  "sourceRevision": "ed2c1d5b63299d3f08676a1418cc2640bbe55fd1",
+  "unchangedSourceCopies": true,
+  "files": [
+    {
+      "path": "qualification-fixtures/pi/adapter.test.ts",
+      "sourcePath": "integrations/community/pi/typescript/test/adapter.test.ts",
+      "sha256": "202dc649a67e22fa8a160099cc57e391a4171725557d713bdaec5222be3d4f2b",
+      "bytes": 9911,
+      "rawLines": 348,
+      "task": "agentui-iqml"
+    },
+    {
+      "path": "qualification-fixtures/pi/example.test.ts",
+      "sourcePath": "integrations/community/pi/typescript/test/example.test.ts",
+      "sha256": "04b40fa4a9f4401ebb1bd61f4804a1bcbfe11ca375367c7d7c086594fa8b82d2",
+      "bytes": 14552,
+      "rawLines": 435,
+      "task": "agentui-ed5a"
+    },
+    {
+      "path": "qualification-fixtures/codex/codex-exec.mjs",
+      "sourcePath": "integrations/community/codex-sdk/typescript/examples/testing/codex-exec.mjs",
+      "sha256": "5170a3ec4cdd065129caaeeda6e452404d2a3a255fdca408dbdc7e0f2f607d39",
+      "bytes": 3001,
+      "rawLines": 90,
+      "task": "agentui-wtdo"
+    }
+  ]
+}
