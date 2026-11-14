@@ -1,0 +1,17 @@
+{
+  "name": "AgentUIUpdateProbe",
+  "version": "0.0.1",
+  "private": true,
+  "dependencies": {
+    "react": "19.3.1",
+    "react-native": "0.86.0"
+  },
+  "devDependencies": {
+    "@babel/core": "7.29.0",
+    "@react-native-community/cli": "20.2.0",
+    "@react-native-community/cli-platform-ios": "20.2.0",
+    "@react-native/babel-preset": "0.86.0",
+    "@react-native/metro-config": "0.86.0"
+  },
+  "engines": { "node": "24.22.3", "npm": "11.19.1" }
+}
