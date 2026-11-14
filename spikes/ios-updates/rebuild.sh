@@ -23,7 +23,8 @@ function Probe() {
 AppRegistry.registerComponent('AgentUIUpdateProbe', () => Probe);
 JS
 # Release embeds its bundle and never uses a development Metro server.
-export NODE_BINARY="$(command -v node)"
+NODE_BINARY="$(command -v node)"
+export NODE_BINARY
 printf 'export NODE_BINARY="%s"\n' "$NODE_BINARY" > "$app/ios/.xcode.env.local"
 { git rev-parse HEAD; xcodebuild -version; } > ".work/evidence/build-$revision.log"
 xcodebuild -workspace "$app/ios/AgentUIUpdateProbe.xcworkspace" \
