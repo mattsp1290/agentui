@@ -24,7 +24,8 @@ function compatibleNative(a: DispatchEvidence['nativeOperation'], b: DispatchEvi
   return a === null || b === null || (a.namespace === b.namespace && a.id === b.id);
 }
 
-export function settlement(previous: Observation | null, incoming: Observation, quarantined: boolean): Settlement {
+export function settlement(previous: Observation | null, incoming: Observation, context: { readonly quarantined: boolean }): Settlement {
+  const { quarantined } = context;
   let observed = incoming;
   if ((previous?.kind === 'accepted' || previous?.kind === 'conclusive') &&
       (observed.kind === 'accepted' || observed.kind === 'conclusive')) {

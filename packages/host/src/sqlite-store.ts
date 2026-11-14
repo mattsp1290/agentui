@@ -1,20 +1,19 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, foldDocument, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
 import { nonempty, object, installation, integer, nativeRun, output, capturedTarget, observation, cloneJson, assertDispatchIdentity } from './codec.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { CapturedTarget, ObservedResult, HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
+import { scopeKey as key } from './durable-model.js';
 
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
 class OutputApplicationError extends Error {}
 class CapacityError extends Error {}
-// Covers receipt growth from pending/accepted to an uncertain quarantine reason.
-const QUARANTINE_RESERVE_BYTES = 128;
-function key(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
+const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
 export class SqliteStore<E, P> {
   readonly db;
@@ -60,15 +59,15 @@ export class SqliteStore<E, P> {
         .run(...key(scope), canonicalJson(installed), this.projection.version, document, Buffer.byteLength(document));
     });
   }
-  private decodeDocument(value: unknown): ConversationDocument<P> {
-    const input = object(value), receipts = object(input.receipts), decisions = object(input.decisions);
-    return { domain: this.projection.decodeState(input.domain),
-      receipts: Object.fromEntries(Object.entries(receipts).map(([id, value]) => [id, parseReceipt(value)])),
-      decisions: Object.fromEntries(Object.entries(decisions).map(([id, value]) => [id, parseDecision(value)])) };
+  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
+    return this.db.prepare('SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ORDER BY conversation LIMIT ?')
+      .all(hostId, after ?? '', limit)
+      .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   snapshot(scope: ConversationScope): Snapshot<P> {
-    const row = this.conversation(scope);
-    return { scope, projectionVersion: this.projection.version, cursor: integer(row.head), document: this.decodeDocument(json(row.document)) };
+    const row = this.conversation(scope), cursor = integer(row.head);
+    const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
+    return { scope, projectionVersion: this.projection.version, cursor, document };
   }
   head(scope: ConversationScope): number {
     const row = this.db.prepare('SELECT head, version FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
@@ -90,8 +89,13 @@ export class SqliteStore<E, P> {
   }
   private encodeDocument(scope: ConversationScope, document: ConversationDocument<P>): string {
     const reserve = Object.values(document.receipts).filter(value =>
-      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RESERVE_BYTES;
-    const encoded = canonicalJson(document);
+      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RECEIPT_GROWTH_BYTES;
+    let encoded: string;
+    try { encoded = canonicalJson(document, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET); }
+    catch (error) {
+      if (error instanceof JsonLimitError) throw new CapacityError('Document exceeds snapshot structural budget');
+      throw error;
+    }
     if (Buffer.byteLength(encoded) + this.snapshotOverheadBytes(scope) + reserve > this.limits.snapshotBytes) {
       throw new CapacityError('Document exceeds snapshot budget');
     }
@@ -103,7 +107,7 @@ export class SqliteStore<E, P> {
     for (const event of events) {
       const envelope: Envelope<E> = { scope, sequence: ++sequence, event };
       const payload = canonicalJson(envelope), bytes = Buffer.byteLength(payload);
-      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? QUARANTINE_RESERVE_BYTES : 0;
+      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? QUARANTINE_RECEIPT_GROWTH_BYTES : 0;
       if (bytes + reserve > this.limits.maxEventBytes) throw new OutputApplicationError('Event exceeds byte budget');
       try { document = foldDocument(document, event, this.projection); }
       catch (error) { throw new OutputApplicationError('Projection rejected output', { cause: error }); }
@@ -189,7 +193,7 @@ export class SqliteStore<E, P> {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      const transition = settlement(stored.observation, observation(value, stored.target), isQuarantined(stored));
+      const transition = settlement(stored.observation, observation(value, stored.target), { quarantined: isQuarantined(stored) });
       switch (transition.kind) {
         case 'keep': return stored.receipt;
         case 'conflict': throw new Error(`Conflicting ${transition.reason}`);
@@ -265,7 +269,6 @@ export class SqliteStore<E, P> {
         .get(...key(scope), after ?? through, through);
       if (after === null || integer(totals?.count) > this.limits.replayEvents || integer(totals?.bytes) > this.limits.replayBytes) {
         const wrapperBytes = this.snapshotOverheadBytes(scope);
-        // Every supported write enforces this bound; overflow indicates incompatible or corrupt storage.
         if (integer(row.bytes) + wrapperBytes > this.limits.snapshotBytes) return { kind: 'refused', reason: 'snapshot-overflow' };
         return { kind: 'snapshot', snapshot: this.snapshot(scope) };
       }

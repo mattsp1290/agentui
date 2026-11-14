@@ -61,8 +61,11 @@ export class Journal<E, P> {
       if (plan.kind === 'snapshot') {
         through = plan.snapshot.cursor;
         await deliver({ kind: 'snapshot', snapshot: plan.snapshot }, through);
-      } else if (plan.kind === 'resume') through = plan.through;
-      else { stop(plan.kind, plan.reason); return; }
+      } else if (plan.kind === 'resume') {
+        if (cursor === null) { stop('resync', 'resume-without-cursor'); return; }
+        through = plan.through;
+        await deliver({ kind: 'events', events: [] }, cursor);
+      } else { stop(plan.kind, plan.reason); return; }
       while (!stopped) {
         const generation = this.generation;
         if (cursor !== null && cursor < through) {

@@ -5,6 +5,14 @@ import type { DeliveryState } from './delivery.js';
 import { copyJson, immutable, restore } from './local-state.js';
 import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
+type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
+type ReplayState<P> = { readonly delivery: DeliveryState<P> } &
+  ({ readonly kind: 'valid' } | { readonly kind: 'untrusted'; readonly cause: ReplayCause });
+function baseline<P>(replay: ReplayState<P>): DeliveryState<P> {
+  if (replay.kind === 'valid') return replay.delivery;
+  return { document: replay.delivery.document, cursor: null, identities: new Map<number, string>() };
+}
+
 function acknowledgementBoundary(): Promise<void> { return Promise.resolve(); }
 function settled(receipt: Receipt): boolean {
   return receipt.state.kind !== 'pending' && receipt.state.kind !== 'uncertain';
@@ -23,15 +31,17 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   const scope = immutable(parseScope(options.scope));
   if (!sameScope(scope, port.scope)) throw new Error('Port scope mismatch');
   let local = restore(null, scope);
-  let delivery: DeliveryState<P> = { document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null, identities: new Map() };
+  let replay: ReplayState<P> = { kind: 'untrusted', cause: { kind: 'cold' },
+    delivery: { document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null, identities: new Map() } };
   let connection: ConnectionState = { kind: 'disconnected' };
+  const inFlight = new Set<string>();
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
   let feed: Feed | null = null;
   let generation = 0;
-  const inFlight = new Set<string>();
   function makeView(): ClientView<P> {
-    return Object.freeze({ document: delivery.document, cursor: delivery.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection) });
+    const applied = replay.delivery;
+    return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection), submitting: Object.freeze([...inFlight]) });
   }
   function publish(): void {
     view = makeView();
@@ -53,6 +63,13 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     local = next;
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
+  function requireCompatible(): void {
+    if (replay.kind === 'untrusted' && replay.cause.kind === 'mismatch') throw new Error(replay.cause.reason);
+  }
+  function invalidate(cause: ReplayCause): void {
+    if (replay.kind === 'untrusted' && replay.cause.kind === 'mismatch' && cause.kind !== 'mismatch') cause = replay.cause;
+    replay = { kind: 'untrusted', delivery: replay.delivery, cause };
+  }
   function stop(next: ConnectionState): void {
     generation++;
     const previous = feed;
@@ -62,10 +79,12 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     publish();
   }
   async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
+    requireCompatible();
     const id = entry.command.clientCommandId;
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
+      publish();
       const result = await port.submit(entry.command);
       if (result.kind === 'rejected') {
         if (admission === 'known-absent') await enqueue(async () => {
@@ -82,13 +101,14 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         if (next !== local) { await persist(next); publish(); }
       });
       return { kind: 'receipt', receipt };
-    } finally { inFlight.delete(id); }
+    } finally { inFlight.delete(id); publish(); }
   }
   async function submit(body: CommandBody | null): Promise<SubmitResult> {
     await ready;
     const entry = await enqueue(async () => {
+      requireCompatible();
       const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? { kind: 'send', text: local.draft } }));
-      if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(delivery.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
+      if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
       const created = immutable({ command, draftRevision: command.body.kind === 'send' ? local.draftRevision : null });
       await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
       publish();
@@ -114,6 +134,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     async retry(clientCommandId) {
       await ready;
       const entry = await enqueue(async () => {
+        requireCompatible();
         const found = local.outbox.find(value => value.command.clientCommandId === clientCommandId);
         if (!found) throw new Error('Command is not in the outbox');
         await requireWritableRetryStorage();
@@ -121,30 +142,44 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       });
       return dispatch(entry, 'unknown-or-observed');
     },
+    async refreshReceipt(clientCommandId) {
+      await ready;
+      const value = await port.receipt(clientCommandId);
+      if (value === null) return null;
+      const receipt = immutable(decodeReceipt(copyJson(value), scope));
+      if (receipt.clientCommandId !== clientCommandId) throw new Error('Lookup receipt command ID mismatch');
+      await enqueue(async () => {
+        const next = settle(local, receipt);
+        if (next !== local) { await persist(next); publish(); }
+      });
+      return receipt;
+    },
     async connect() {
       stop({ kind: 'connecting' });
       const current = generation;
       let receiving = false;
-      let firstDelivery = true;
       try {
         await ready;
         if (current !== generation) return;
-        const opened = port.watch({ after: null, projectionVersion: projection.version }, async item => {
+        const after = baseline(replay).cursor;
+        const opened = port.watch({ after, projectionVersion: projection.version }, async item => {
           if (current !== generation) return;
-          if (receiving) { stop({ kind: 'failed', reason: 'Host delivered concurrent callbacks' }); return; }
+          if (receiving) { invalidate({ kind: 'invalid' }); stop({ kind: 'failed', reason: 'Host delivered concurrent callbacks' }); return; }
           receiving = true;
           try {
-            const previous = firstDelivery ? { ...delivery, cursor: null } : delivery;
+            const previous = baseline(replay);
             const next = applyDelivery(previous, item, scope, projection);
             await acknowledgementBoundary();
             if (current !== generation) return;
-            firstDelivery = false;
-            if (next === delivery) return;
-            delivery = { ...next, document: immutable(next.document) };
+            if (next === previous && connection.kind === 'connected') return;
+            replay = { kind: 'valid', delivery: { ...next, document: immutable(next.document) } };
             connection = { kind: 'connected' };
             publish();
           } catch (error) {
-            if (current === generation) stop({ kind: error instanceof DeliveryError ? error.kind : 'failed', reason: error instanceof Error ? error.message : 'Feed delivery failed' });
+            if (current === generation) {
+              invalidate(error instanceof DeliveryError && error.kind === 'mismatch' ? { kind: 'mismatch', reason: error.message } : { kind: 'invalid' });
+              stop({ kind: error instanceof DeliveryError ? error.kind : 'resync', reason: error instanceof Error ? error.message : 'Feed delivery failed' });
+            }
             throw error;
           } finally { receiving = false; }
         });
@@ -154,6 +189,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           if (current !== generation) return;
           const next: ConnectionState = end.kind === 'closed' ? { kind: 'disconnected' }
             : { kind: end.kind === 'refused' ? 'mismatch' : end.kind, reason: end.reason };
+          if (end.kind === 'resync' || end.kind === 'refused') invalidate(end.kind === 'refused' ? { kind: 'mismatch', reason: end.reason } : { kind: 'invalid' });
           stop(next);
         }, error => {
           if (current === generation) stop({ kind: 'failed', reason: error instanceof Error ? error.message : 'Feed failed' });

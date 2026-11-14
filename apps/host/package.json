@@ -1,0 +1,14 @@
+{
+  "name": "@agentui/host-app",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node ../../scripts/build-host.mjs && node ../../scripts/artifact-manifest.mjs host",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentui/contracts": "0.0.0",
+    "@agentui/host": "0.0.0"
+  }
+}

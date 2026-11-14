@@ -17,14 +17,16 @@
     "check": "tsc -p tsconfig.json --noEmit",
     "dev:web": "vite",
     "tauri:dev": "tauri dev",
-    "tauri:bundle": "tauri build --bundles app"
+    "tauri:bundle": "tauri build --bundles app",
+    "build:browser": "vite build --mode browser && node ../../scripts/artifact-manifest.mjs browser-development"
   },
   "dependencies": {
     "@agentui/contracts": "0.0.0",
     "@agentui/sdk": "0.0.0",
     "react": "19.3.1",
     "react-dom": "19.3.1",
-    "@agentui/ui-primitives": "0.0.0"
+    "@agentui/ui-primitives": "0.0.0",
+    "@agentui/client": "0.0.0"
   },
   "devDependencies": {
     "@types/react": "19.3.0",

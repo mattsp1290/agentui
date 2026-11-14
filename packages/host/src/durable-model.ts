@@ -1,5 +1,9 @@
-import type { ClientCommand, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
 import type { DispatchIdentity, DispatchObservation, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
+
+export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
+export function commandKey(scope: ConversationScope, id: string): string { return canonicalJson([...scopeKey(scope), id]); }
 
 export interface Installation {
   readonly installationId: string;
@@ -63,8 +67,9 @@ export interface HostBudgets {
   readonly deliveryMs: number;
   readonly pollMs: number;
 }
-const DEFAULT_BUDGETS: HostBudgets = { maxCommandBytes: 64_000, maxEventBytes: 64_000, pageEvents: 64, pageBytes: 256_000,
-    replayEvents: 1000, replayBytes: 2_000_000, snapshotBytes: 4_000_000,
+const DEFAULT_BUDGETS: HostBudgets = { maxCommandBytes: DEFAULT_MAX_COMMAND_BYTES, maxEventBytes: 64_000,
+    pageEvents: HOST_DEFAULT_PAGE_EVENTS, pageBytes: HOST_DEFAULT_PAGE_BYTES,
+    replayEvents: 1000, replayBytes: 2_000_000, snapshotBytes: HOST_DEFAULT_SNAPSHOT_BYTES,
     subscribers: 100, deliveryMs: 30_000, pollMs: 100 };
 export function budgets(input: Partial<HostBudgets> = {}): HostBudgets {
   const result = { ...DEFAULT_BUDGETS, ...input };
