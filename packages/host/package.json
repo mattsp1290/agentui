@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./recorded": {
+      "types": "./dist/recorded-conversation.d.ts",
+      "import": "./dist/recorded-conversation.js"
+    },
     "./agui": {
       "types": "./dist/agui.d.ts",
       "import": "./dist/agui.js"

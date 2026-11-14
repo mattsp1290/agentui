@@ -12,7 +12,6 @@ export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snaps
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
 class OutputApplicationError extends Error {}
 class CapacityError extends Error {}
-// Covers receipt growth from pending/accepted to an uncertain quarantine reason.
 const QUARANTINE_RESERVE_BYTES = 128;
 function key(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
 
@@ -59,6 +58,11 @@ export class SqliteStore<E, P> {
       this.db.prepare('INSERT INTO conversations(host, conversation, installation, head, version, document, bytes) VALUES (?, ?, ?, 0, ?, ?, ?)')
         .run(...key(scope), canonicalJson(installed), this.projection.version, document, Buffer.byteLength(document));
     });
+  }
+  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
+    return this.db.prepare('SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ORDER BY conversation LIMIT ?')
+      .all(hostId, after ?? '', limit)
+      .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   private decodeDocument(value: unknown): ConversationDocument<P> {
     const input = object(value), receipts = object(input.receipts), decisions = object(input.decisions);
@@ -265,7 +269,6 @@ export class SqliteStore<E, P> {
         .get(...key(scope), after ?? through, through);
       if (after === null || integer(totals?.count) > this.limits.replayEvents || integer(totals?.bytes) > this.limits.replayBytes) {
         const wrapperBytes = this.snapshotOverheadBytes(scope);
-        // Every supported write enforces this bound; overflow indicates incompatible or corrupt storage.
         if (integer(row.bytes) + wrapperBytes > this.limits.snapshotBytes) return { kind: 'refused', reason: 'snapshot-overflow' };
         return { kind: 'snapshot', snapshot: this.snapshot(scope) };
       }

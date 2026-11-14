@@ -16,7 +16,9 @@ export interface LocalHostOptions<E, P> {
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
+  readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
+  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
@@ -28,12 +30,20 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   store.onCommit = () => journal.wake();
   let closed = false;
   let active = 0;
+  let resolveDrained!: () => void;
+  let rejectDrained!: (error: unknown) => void;
+  const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
+  const finishClosing = () => {
+    if (!closed || active !== 0) return;
+    try { store.close(); resolveDrained(); }
+    catch (error) { rejectDrained(error); }
+  };
   const inFlight = async <T>(work: () => Promise<T>): Promise<T> => {
     active++;
     try { return await work(); }
     finally {
       active--;
-      if (closed && active === 0) store.close();
+      finishClosing();
     }
   };
   const authorized = (value: ConversationScope): ConversationScope => {
@@ -43,8 +53,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     return scope;
   };
   return {
+    drained,
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
+    },
+    listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
+      const input = parseScope({ hostId, conversationId: after === null ? 'catalog' : after });
+      if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid catalog limit');
+      if (closed) throw new Error('Host is closed');
+      return store.listConversations(input.hostId, after === null ? null : input.conversationId, limit).map(authorized);
     },
     append(scope: ConversationScope, output: HostOutput<E>): void {
       store.append(authorized(scope), output);
@@ -111,7 +128,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (closed) return;
       closed = true;
       journal.close();
-      if (active === 0) store.close();
+      finishClosing();
     },
   };
 }
