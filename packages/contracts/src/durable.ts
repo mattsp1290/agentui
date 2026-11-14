@@ -132,7 +132,7 @@ function integer(value: unknown): number {
   if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid integer');
   return value;
 }
-function identifier(value: unknown): string {
+function localIdentifier(value: unknown): string {
   const parsed = nonempty(value);
   if (parsed.length > 1024) throw new Error('Identifier exceeds length limit');
   return parsed;
@@ -143,8 +143,15 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): void {
 export function parseScope(value: unknown): ConversationScope {
   const input = object(value);
   exact(input, ['hostId', 'conversationId']);
-  return { hostId: identifier(input.hostId), conversationId: identifier(input.conversationId) };
+  return { hostId: localIdentifier(input.hostId), conversationId: localIdentifier(input.conversationId) };
 }
+/**
+ * Local scope and command IDs are limited to 1024 UTF-16 units. Approval and cancel targets preserve
+ * nonempty provider-owned IDs. Semantic parsing does not enforce host resource budgets.
+ * New host admission checks canonical command bytes and event and snapshot capacity before durable
+ * persistence and dispatch. Earlier driver capability calls and application-owned draft storage are
+ * outside those host limits.
+ */
 export function parseCommand(value: unknown): ClientCommand {
   const input = object(value);
   exact(input, ['version', 'scope', 'clientCommandId', 'body']);
@@ -158,15 +165,15 @@ export function parseCommand(value: unknown): ClientCommand {
       break;
     case 'approve':
       exact(body, ['kind', 'pendingId', 'choiceId']);
-      parsed = { kind: 'approve', pendingId: identifier(body.pendingId), choiceId: identifier(body.choiceId) };
+      parsed = { kind: 'approve', pendingId: nonempty(body.pendingId), choiceId: nonempty(body.choiceId) };
       break;
     case 'cancel':
       exact(body, ['kind', 'runId']);
-      parsed = { kind: 'cancel', runId: identifier(body.runId) };
+      parsed = { kind: 'cancel', runId: nonempty(body.runId) };
       break;
     default: throw new Error('Unsupported command kind');
   }
-  return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
+  return { version: 1, scope: parseScope(input.scope), clientCommandId: localIdentifier(input.clientCommandId), body: parsed };
 }
 export function parseDecision(value: unknown): PendingDecision {
   const input = object(value);
