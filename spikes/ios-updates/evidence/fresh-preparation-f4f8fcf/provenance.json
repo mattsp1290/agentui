@@ -1,0 +1,163 @@
+{
+  "started_utc": "2026-11-14T01:52:17.466291+00:00",
+  "source": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit_status": 0,
+    "output": "f4f8fcfda7ac3afde2bad94b36223a2cc25bc661\n"
+  },
+  "branch": {
+    "command": [
+      "git",
+      "branch",
+      "--show-current"
+    ],
+    "exit_status": 0,
+    "output": "codex/ios-fresh-preparation\n"
+  },
+  "working_tree_before": {
+    "command": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "inputs": {
+    "spikes/ios-updates/prepare.sh": {
+      "git_blob": "6de8cf8576270709a82ab59ce699936f22ad159b",
+      "sha256": "bf767856fc72b66388cd9530ce20a72bcbeb76f31f220ba3fb6560e1fdb564cb",
+      "matches_native_tested_7d250ae": true
+    },
+    "spikes/ios-updates/rebuild.sh": {
+      "git_blob": "dd0d4e955dda302919fbf6afd7a40f7fdf61d1ad",
+      "sha256": "4b8f5453ed75280de77818851ff94ff87fa0ea4bfb031465f6ecd6f68a86beef",
+      "matches_native_tested_7d250ae": true
+    },
+    "spikes/ios-updates/restart.sh": {
+      "git_blob": "3bae393ae545f896d551485199ae12f543097a94",
+      "sha256": "d92e0f0a5f79743eb176bf8477100a9f0ef0e8e5dd5fb58f61beeb8e477da392",
+      "matches_native_tested_7d250ae": true
+    },
+    "spikes/ios-updates/package.json": {
+      "git_blob": "88316cfa7432b890d83a12dc64396fca76ba45d8",
+      "sha256": "66b48446f728a7a919c671d0061396bf24a53ab3a18c3cfa0af71179c61b1481",
+      "matches_native_tested_7d250ae": true
+    },
+    "spikes/ios-updates/package-lock.json": {
+      "git_blob": "23c264020f84c5d2b58959a2fd28801d2ef7ad64",
+      "sha256": "50b3a5c0c2d9a5cdd5de3c21ae2d70324e2e0f43666832e7e84e938b33ad5028",
+      "matches_native_tested_7d250ae": true
+    },
+    "spikes/ios-updates/Podfile.lock": {
+      "git_blob": "b5ead2be50dd069ff97db7d405676384b1801cf6",
+      "sha256": "2262ad4d53493fdcbf46c15cbaceac7e3f3a00d96e30467d06cc981968327a2f",
+      "matches_native_tested_7d250ae": true
+    }
+  },
+  "warm_native_cache": true,
+  "derived_data_retained": true,
+  "qualification_scope": "Fresh preparation only; no new native runtime or physical-device qualification",
+  "tools": [
+    {
+      "command": [
+        "node",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "v24.22.3\n"
+    },
+    {
+      "command": [
+        "npm",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "11.19.1\n"
+    },
+    {
+      "command": [
+        "pod",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "1.16.2\n"
+    },
+    {
+      "command": [
+        "xcodebuild",
+        "-version"
+      ],
+      "exit_status": 0,
+      "output": "Xcode 26.2\nBuild version 17C52\n"
+    },
+    {
+      "command": [
+        "sw_vers"
+      ],
+      "exit_status": 0,
+      "output": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n"
+    },
+    {
+      "command": [
+        "ruby",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "ruby 3.4.6 (2025-09-16 revision dbd83256b1) +PRISM [arm64-darwin24]\n"
+    }
+  ],
+  "derived_data_before": {
+    "exists": true,
+    "inode": 298360689
+  },
+  "backup": "spikes/ios-updates/.work/app-before-fresh-f4f8fcf",
+  "app_absent_before_prepare": true,
+  "invocation": {
+    "command": [
+      "bash",
+      "spikes/ios-updates/prepare.sh"
+    ],
+    "cwd": "~/git/agentui",
+    "toolchain_path_prefix": "/tmp/agentui-ios-tools/node_modules/.bin"
+  },
+  "prepare_exit_status": 0,
+  "lock_comparison": {
+    "command": [
+      "cmp",
+      "spikes/ios-updates/Podfile.lock",
+      "spikes/ios-updates/.work/app/ios/Podfile.lock"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "generated_lock_sha256": "2262ad4d53493fdcbf46c15cbaceac7e3f3a00d96e30467d06cc981968327a2f",
+  "derived_data_after": {
+    "exists": true,
+    "inode": 298360689
+  },
+  "backup_preserved": true,
+  "working_tree_after": {
+    "command": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "finished_utc": "2026-11-14T01:52:33.587067+00:00",
+  "output_capture": {
+    "file": "prepare.log.gz",
+    "raw_output_sha256": "db6a29a4339aa68cd68b886a65084a3acb107430baad0694957ef469b2f082a9",
+    "retained_uncompressed_output_sha256": "9e6650a7c929d660e36ed5283f9fe966ebf7813004b4a93d1d21dda1ff9109ac",
+    "redactions": [
+      "Local home-directory prefix replaced with ~; no lines omitted"
+    ],
+    "raw_local_output": "spikes/ios-updates/.work/evidence/fresh-preparation/prepare.log"
+  }
+}
