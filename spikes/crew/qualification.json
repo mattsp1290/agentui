@@ -80,6 +80,9 @@
       "agentuiGate": "agentui-b3aj"
     }
   ],
+  "knownContractGaps": [
+    "Example fresh-submit blanket 4xx rejection permits a new UUID in the same conversation, contrary to pinned integration-api-v1.md L254-L256 and L277-L285 409 guidance. Reconcile the original identity without silent UUID replacement. usage_limit permits the same request after budget recovery; usage_limit_closed requires a new conversation. agentui-osyo must not inherit the blanket policy. Live behavior remains unqualified."
+  ],
   "notRun": [
     "live endpoint, installed revision, credential, owner or member/profile assessment",
     "Crew PostgreSQL, Temporal namespace, workers or native execution",
