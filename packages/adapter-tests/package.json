@@ -29,6 +29,6 @@
     "@agentui/ui-primitives": "0.0.0"
   },
   "devDependencies": {
-    "@agentui/switchboard-qualification": "file:../../vendor/dev-qualification/switchboard-7c6b2d781a037af6a8586b8f92830c68659e65bf.tgz"
+    "@agentui/switchboard-qualification": "file:../../vendor/dev-qualification/switchboard-401ec23b4371942b4398c1d9390da443da098a5d.tgz"
   }
 }
