@@ -1,0 +1,93 @@
+{
+  "task": "agentui-4wpa",
+  "assessmentDate": "2026-11-14",
+  "result": "controlled-contract-evidence-with-explicit-live-blockers",
+  "agentuiRevision": "85ad5e423d231c628cb60e9a11908ccec3bb2239",
+  "crewRevision": "37c596577b4998fba67b09451ddb16ac0695c08d",
+  "crewSourceTree": "304b892eccc22d1f6a7d4e3a70a30e840bc1d856",
+  "crewClientSourceTree": "7968b05bf317f9036ca2cb6d7a998d2856025099",
+  "retainedPackage": {
+    "name": "@birbcrew/client",
+    "version": "0.1.0",
+    "packageSha256": "00a7060f3441e4a77adef3da34e480e1fc3c86035de3e40438bbcbccee255c2b",
+    "sourceArchiveSha256": "18c2f6d2a826f528831b35d044703c809a95f1252146e4581a8896541df2114f"
+  },
+  "runtime": {
+    "node": "24.22.3",
+    "npm": "11.19.1",
+    "platform": "linux"
+  },
+  "checks": [
+    {
+      "command": "npm ci",
+      "exitCode": 0,
+      "log": ".audit/mvp/crew/npm-ci.log",
+      "installationFindings": [
+        "npm reported two high-severity vulnerabilities",
+        "npm reported an uncovered esbuild postinstall script"
+      ]
+    },
+    {
+      "command": "npm run build --workspace=@agentui/contracts --workspace=@agentui/example-crew",
+      "exitCode": 0,
+      "log": ".audit/mvp/crew/build.log"
+    },
+    {
+      "command": "npm run check --workspace=@agentui/example-crew",
+      "exitCode": 0,
+      "log": ".audit/mvp/crew/check.log"
+    },
+    {
+      "command": "node --test examples/crew/tests/*.test.mjs",
+      "exitCode": 0,
+      "passed": 20,
+      "failed": 0,
+      "log": ".audit/mvp/crew/example-tests.log"
+    },
+    {
+      "sourceCommand": "git -C /home/punk1290/git/crew show 37c596577b4998fba67b09451ddb16ac0695c08d:tests/client/client.test.mts > .audit/mvp/crew/upstream-client.test.mts",
+      "testSourceSha256": "174360e7eec9b54de89b880198307cc5bfd93abb5c4b794471a21c0c8e627b24",
+      "command": "node --test .audit/mvp/crew/upstream-client.test.mts",
+      "exitCode": 0,
+      "passed": 21,
+      "failed": 0,
+      "log": ".audit/mvp/crew/upstream-client-tests.log"
+    },
+    {
+      "command": "npm run verify",
+      "exitCode": 0,
+      "stages": ["build", "check", "lint", "test"],
+      "passed": 327,
+      "failed": 0,
+      "log": ".audit/mvp/verify.log"
+    }
+  ],
+  "upstreamRequests": [
+    {
+      "id": "switchboard-r-3rkv",
+      "status": "open",
+      "readCommand": "bn request show switchboard-r-3rkv --no-fetch",
+      "agentuiGate": "agentui-9xfk"
+    },
+    {
+      "id": "crew-r-xndc",
+      "status": "open",
+      "readCommand": "bn request show crew-r-xndc --no-fetch",
+      "requires": "switchboard-r-3rkv",
+      "agentuiGate": "agentui-b3aj"
+    }
+  ],
+  "notRun": [
+    "live endpoint, installed revision, credential, owner or member/profile assessment",
+    "Crew PostgreSQL, Temporal namespace, workers or native execution",
+    "AgentUI-owned remote conversation creation and creation-response loss recovery",
+    "full pagination or two-installation discovery qualification",
+    "AG-UI observation, reconnect, cursor expiry or disposal behavior",
+    "real approvals, decision reconciliation, cancellation or process replacement recovery",
+    "frontend tool definition/call/result continuation",
+    "Node 22 or Apple client qualification"
+  ],
+  "productionMutation": false,
+  "credentialRead": false,
+  "liveServiceContact": false
+}
