@@ -7,6 +7,7 @@ export const publishedTypeContracts = {
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
 import { EventType } from '@ag-ui/core';
 export const knownEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm' };
+export const knownDiscriminator: \`\${Event['type']}\` = 'TEXT_MESSAGE_END';
 export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
 export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
 const widenedCapabilities = { multiAgent: { supported: true, unexpected: true } };
@@ -30,6 +31,8 @@ export function describe(value: BackendAvailability): string {
     cases: [
       ['', null],
       ["export const unknownEvent: Event = { type: 'UNKNOWN_EVENT' };", /TS2322.*UNKNOWN_EVENT/u],
+      ["export const unknownDiscriminator: `${Event['type']}` = 'UNKNOWN_EVENT';", /TS2322.*UNKNOWN_EVENT/u],
+      ["export const literalWire: Event = { type: 'TEXT_MESSAGE_END', messageId: 'm' };", /TS2820.*TEXT_MESSAGE_END/u],
       ["export const fresh: AgentCapabilities = { multiAgent: { supported: true, unexpected: true } };", /TS2353.*unexpected/u],
       ["export const silent: BackendAvailability = { kind: 'unsupported' };", /Property 'reason' is missing/u],
       ["export const silent: BackendAvailability = { kind: 'unavailable' };", /Property 'reason' is missing/u],

@@ -171,9 +171,16 @@
       ]
     },
     "terminalOrdering": {
-      "claim": "Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
+      "claim": "Per-event canonical validation only. The pinned projection maps RUN_ERROR after RUN_FINISHED and before any RUN_STARTED; it faults on finish with open streams. Single-terminal and start-first enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
       "evidence": [
         "terminal-ordering-limit"
+      ]
+    },
+    "derivedIdentifiers": {
+      "claim": "Projected IDs encode [1, sourceKey, entity kind, native scope, native id] as reversible JSON; they are neither opaque nor run-scoped or per-invocation identifiers. Client exposure and redaction belong to agentui-7s6y/agentui-ckpw.",
+      "evidence": [
+        "identity-run-source-scope",
+        "messages-and-opaque-content"
       ]
     },
     "repeatedEntityIds": {
@@ -847,7 +854,7 @@
       "canonicalFixtures": [],
       "sdkRuntimeDivergences": [],
       "mapping": "represented",
-      "scope": "Observed terminal accounting; omitted values remain distinct from explicit zero.",
+      "scope": "Observed terminal accounting; omitted usage arrays remain absent and explicit zero counts are preserved.",
       "installedFixtures": [
         "terminal-interrupts-usage"
       ],

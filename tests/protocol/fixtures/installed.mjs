@@ -78,6 +78,8 @@ export const installedFixtures = {
     assert.notEqual(text.messageId, '');
     assert.equal(typeof text.subagentRunId, 'string');
     assert.notEqual(text.subagentRunId, '');
+    assert.deepEqual(JSON.parse(text.messageId), [1, 'agentui.fixture', 'message', ['fixture'], 'same']);
+    assert.deepEqual(JSON.parse(text.subagentRunId), [1, 'agentui.fixture', 'subagent', ['fixture'], 'same']);
     assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
     assert.deepEqual(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome, { type: 'success' });
     const other = actor({ sourceKey: 'another.source' });
@@ -166,6 +168,7 @@ export const installedFixtures = {
     assert.equal(typeof user.content[0].id, 'string');
     assert.notEqual(user.content[0].id, '');
     assert.notEqual(user.content[0].id, parts[0].id.id);
+    assert.deepEqual(JSON.parse(user.content[0].id), [1, 'agentui.fixture', 'part', parts[0].id.scope, parts[0].id.id]);
     assert.equal(user.content[0].text, '');
     assert.deepEqual(user.content[0].metadata, { count: 0 });
     assert.deepEqual(activity.content, { done: false });
@@ -248,6 +251,13 @@ export const installedFixtures = {
     assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].type, 'RUN_FINISHED');
     assert.equal(mapped(projection, { kind: 'run-failed', failure: 'transport-failure' })[0].type, 'RUN_ERROR');
     projection.close();
+    const unstarted = actor({ start: false });
+    assert.deepEqual(mapped(unstarted, { kind: 'run-failed', failure: 'native-failure' }), [{ type: 'RUN_ERROR', code: 'native-failure', message: 'The native run failed.' }]);
+    unstarted.close();
+    const open = actor();
+    mapped(open, { kind: 'text-started', message: ref('m'), role: 'assistant' });
+    assert.deepEqual(open.accept({ kind: 'run-finished', outcome: 'success' }), { kind: 'error', error: { code: 'invalid-order' } });
+    assert.deepEqual(open.accept({ kind: 'run-failed', failure: 'native-failure' }), { kind: 'error', error: { code: 'closed' } });
   },
 
   'acknowledged-absence-and-fault'() {

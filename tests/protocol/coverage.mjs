@@ -20,7 +20,8 @@ export const reportText = {
 export const behaviorLimits = {
   unknownOrUnimplementedFact: { claim: 'Explicit error and faulted actor; no successful empty batch.', evidence: ['acknowledged-absence-and-fault'] },
   notObservable: { claim: 'Acknowledged absence for a family declared by describeProjection; empty batch and usable actor.', evidence: ['acknowledged-absence-and-fault'] },
-  terminalOrdering: { claim: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).', evidence: ['terminal-ordering-limit'] },
+  terminalOrdering: { claim: 'Per-event canonical validation only. The pinned projection maps RUN_ERROR after RUN_FINISHED and before any RUN_STARTED; it faults on finish with open streams. Single-terminal and start-first enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).', evidence: ['terminal-ordering-limit'] },
+  derivedIdentifiers: { claim: 'Projected IDs encode [1, sourceKey, entity kind, native scope, native id] as reversible JSON; they are neither opaque nor run-scoped or per-invocation identifiers. Client exposure and redaction belong to agentui-7s6y/agentui-ckpw.', evidence: ['identity-run-source-scope', 'messages-and-opaque-content'] },
   repeatedEntityIds: { claim: 'Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.', evidence: ['identity-run-source-scope'] },
   ownerAttribution: { claim: 'Owner attribution can reuse subagentRunId across runs without emitted lifecycle events; invocation reconciliation belongs to agentui-ckpw.', evidence: ['lifecycle-text-tools', 'identity-run-source-scope', 'acknowledged-absence-and-fault'] },
   nullTerminalResult: { claim: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.', evidence: ['terminal-interrupts-usage'] },
@@ -76,7 +77,7 @@ export const coverage = {
     evidence: ['terminal-interrupts-usage'], pending: ['Native interaction qualification and AgentUI continuation delivery; agentui-ckpw'],
   },
   usage: {
-    mapping: 'represented', scope: 'Observed terminal accounting; omitted values remain distinct from explicit zero.',
+    mapping: 'represented', scope: 'Observed terminal accounting; omitted usage arrays remain absent and explicit zero counts are preserved.',
     evidence: ['terminal-interrupts-usage'], pending: ['AgentUI usage persistence and display; agentui-ckpw'],
   },
   multimodal: {

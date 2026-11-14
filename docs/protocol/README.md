@@ -8,6 +8,9 @@ It requires `tools` and `context` arrays that the wire may omit. Schema validati
 establishes canonical validity. AgentUI consumes the installed
 Switchboard projection through `@agentui/host/agui`. The host core
 entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
+SDK `Event` discriminators use enum members;
+parsed wire objects with literal discriminators are not directly assignable.
+Compiler controls separately check the plain discriminator value set.
 
 The [versioned matrix](conformance.json) joins immutable upstream inventories to
 AgentUI's owned fixture coverage. Its version identifies canonical protocol 1.0,
@@ -66,12 +69,15 @@ no terminal outcome.
 
 Entity IDs can repeat across runs with the same source key and native reference.
 Owner references can reuse subagent attribution IDs across runs without lifecycle
-events. Consumers
+events. IDs reversibly encode the source key, entity kind and native reference.
+The encoding exposes those values to consumers. Client exposure and redaction belong
+to `agentui-7s6y`/`agentui-ckpw`. Consumers
 must retain run scope and handle partial streams in `agentui-7s6y`/`agentui-ckpw`.
 
 Validation covers individual events, not stream ordering. The pinned projection
-can map a failure after a finished terminal. A separate fixture records this
-limitation. Single-terminal enforcement belongs to AgentUI run coordination in
+can map a failure before start or after a finished terminal, while rejecting
+a finish with open streams. A separate fixture records these observations.
+Single-terminal and start-first enforcement belong to AgentUI run coordination in
 `agentui-7s6y` and complete qualification in `agentui-ckpw`.
 
 ## Capability declarations
@@ -114,8 +120,8 @@ canonical controls and published type contracts. Categories and behavior limits
 cite those IDs. Separate report fields retain each evidence kind's meaning.
 `tests/protocol/conformance.test.mjs` registers all catalog IDs and checks each
 kind against its actual function map. A report entry's `file` names this registrar,
-not the module defining its body. Compiler bodies use the unchanged shared
-adapter-test helper. Canonical controls have their own module and report section.
+not the module defining its body. Compiler bodies use the shared adapter-test
+helper, which requires a compiling positive control first. Canonical controls have their own module and report section.
 A separate identity fixture checks cross-run, source and reference scoping.
 Report generation imports metadata without executing evidence bodies. A fresh
 process checks that import graph. Qualification scope and pending ownership
