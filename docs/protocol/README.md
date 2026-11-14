@@ -145,12 +145,13 @@ not unrelated dependency loading. The snapshot lasts for its process; start a
 fresh process to check changed retained files.
 
 A named coherence test calls `loadConformanceInputs`, which checks retained
-revisions, schema inventories and the installed projection descriptor before
-returning the checked record and its historical SDK entries. Report generation
-uses a private pure projection over that record, the evidence registry and fork
-metadata. Coverage, behavior limits and report text remain module-owned definitions.
-Its command and freshness entry points use the same loader. Importing body definitions invokes no fixture callback or
-compiler process. `npm test` and `npm run verify` also run the named
+revisions, schema inventories and the installed projection descriptor, then
+resolves the frozen fork identity. It returns one checked record with the fork
+and historical SDK entries. Report generation uses a private pure projection over
+that record and the evidence registry. Coverage, behavior limits and report text
+remain module-owned definitions. The report's write command, `--check` command and
+freshness test all use the same loader. Importing body definitions invokes no
+fixture callback or compiler process. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
 matrix checks retained inputs and writes the expected report. Both check locked SDK
 metadata against fork provenance and workspace declarations. Actual archive bytes,

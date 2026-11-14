@@ -22,255 +22,56 @@
   ],
   "nodeReplays": [
     {
-      "command": "node scripts/verify-agui-fork.mjs",
-      "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+      "kind": "coordinator-observed",
+      "log": "evidence/node-qualification.log.gz",
       "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-      "sourceScope": "Measured on working code over base 153eac89d67de4d7651cee5d079b1162e43c78f0. The listed module SHA-256 values identify the observed working bytes. This measurement preceded the final private byte-line-counter rename and comment deletion; later committed implementations have separate replay records. No fork archive, native pin, consumer lock or fixture changed.",
       "sourceSha256": {
         "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
         "tests/dependencies/ag-ui/verify-consumer.mjs": "87f6642e50f59e2974d2e13a14b9cf65f99ba5ab2362484be391510a426ede9a",
         "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
       },
-      "log": "evidence/node-qualification.log.gz",
-      "exitCode": 0,
-      "node": "v24.22.3",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp/agentui-node-qualification-9ipkww2m",
-      "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification.",
-      "offlineCoverage": "Full mode executes the same archive and consumer-lock checks before installation; this retained log does not contain a separate --offline invocation.",
-      "runtimeBinding": "Child node and npm resolved from PATH; equality with the recorded driver runtime was observed by the coordinator, not enforced by this older driver.",
-      "sourceReachability": "The pre-cleanup tests/dependencies/ag-ui/verify-consumer.mjs bytes were a working-tree observation, not a committed retrieval target. Its other two module hashes match the later committed 96996daa3d699875ade53397dabe12e4bba1cd35 snapshot."
+      "note": "Coordinator-observed working bytes over the recorded base. The pre-cleanup consumer helper was not committed; the other two recorded module hashes match the later 96996daa3d699875ade53397dabe12e4bba1cd35 snapshot."
     },
     {
-      "command": "node scripts/verify-agui-fork.mjs",
-      "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+      "kind": "coordinator-observed",
+      "log": "evidence/node-qualification-final.log.gz",
       "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-      "sourceScope": "Measured from AgentUI 153eac8 with final working Node qualification code. Source hashes identify the code; no archive, native pin, consumer lock or fixture changed.",
       "sourceSha256": {
         "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
         "tests/dependencies/ag-ui/verify-consumer.mjs": "a70455adbf519b1892e72c30408605bd447d284762d6f8c71f95a518d020bc40",
         "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
       },
-      "log": "evidence/node-qualification-final.log.gz",
-      "exitCode": 0,
-      "node": "v24.22.3",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp",
-      "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification.",
-      "offlineCoverage": "Full mode executes the same archive and consumer-lock checks before installation; this retained log does not contain a separate --offline invocation.",
-      "runtimeBinding": "Child node and npm resolved from PATH; equality with the recorded driver runtime was observed by the coordinator, not enforced by this older driver.",
-      "matchingCommittedSource": {
-        "commit": "96996daa3d699875ade53397dabe12e4bba1cd35",
-        "scope": "All three recorded module hashes match this later committed snapshot. The measurement itself preceded that commit and retains its actual working-tree base."
-      }
+      "note": "Coordinator-observed working bytes over the recorded base. All three recorded module hashes match the later 96996daa3d699875ade53397dabe12e4bba1cd35 snapshot; the measurement preceded that commit."
     },
     {
-      "command": "node scripts/verify-agui-fork.mjs",
-      "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
-      "measuredBase": "3a1064d09c0b2cb6aaef112c32d84645ee11aa67",
-      "sourceScope": "Measured on working single-owner code over the recorded base. The self-reported five source hashes identify the executed driver, canonical fork module and consumer assertions. Historical replay module paths remain unchanged. No fork archive, native pin, consumer lock or fixture changed.",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "9fff641f471553f7cb5e86458c29fa3e360448b6a517f7cd2801d8694ca254a3",
-        "scripts/verify-agui-fork.mjs": "fe7b22158f1d0693a9346e16a2dfac3fbe9a3f84ac33b86c8dbd3b9d5bc04a03",
-        "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
-        "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
-        "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
-      },
+      "kind": "self-reported",
       "log": "evidence/single-owner-node-qualification.log.gz",
-      "exitCode": 0,
-      "commands": [
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs",
-            "--offline"
-          ],
-          "started": "2026-11-14T16:34:04.448034+00:00",
-          "finished": "2026-11-14T16:34:04.947462+00:00",
-          "exitCode": 0
-        },
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs"
-          ],
-          "started": "2026-11-14T16:34:04.947508+00:00",
-          "finished": "2026-11-14T16:34:13.568735+00:00",
-          "exitCode": 0
-        }
-      ],
-      "node": "v24.22.3",
-      "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
-      "npm": "11.19.1",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp",
-      "inheritedRuntimeConfig": [
-        "NODE_OPTIONS"
-      ],
-      "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same child environment. Ambient runtime settings, including NODE_OPTIONS when listed, were inherited; their names but not their values were retained.",
-      "offlineCoverage": "Both separate --offline and full invocations are retained in this log, with exact commands, times and zero exits.",
-      "scope": "All six public imports, controlled Codex ESM/CommonJS first turn and continuation, all 15 Pi tests and installed dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
+      "measuredBase": "3a1064d09c0b2cb6aaef112c32d84645ee11aa67",
+      "note": "Measured working code over the recorded base."
     },
     {
-      "command": "node scripts/verify-agui-fork.mjs",
-      "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
-      "measuredBase": "e2817a927389a6d85b5ac69de0b75d007c2041a3",
-      "sourceScope": "Measured on working archive-identity and canonical consumer-execution code over the recorded base. The emitted five source hashes identify the executed Node qualifier and all consumer assertion scripts. Protocol coherence is separately checked by the AgentUI test suite. No fork archive, native pin, consumer lock or fixture changed.",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "3f23f04df2a5d016d4db7bebef36ce3dc6ccccb8eb9a3de642b443501dd7a601",
-        "scripts/verify-agui-fork.mjs": "4026b09d5d70df3c764e594a30fa77f7ac248da60481b40a3b61b0b856a095c7",
-        "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
-        "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
-        "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
-      },
+      "kind": "self-reported",
       "log": "evidence/archive-identity-node-qualification.log.gz",
-      "exitCode": 0,
-      "commands": [
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs",
-            "--offline"
-          ],
-          "started": "2026-11-14T17:04:16.126531+00:00",
-          "finished": "2026-11-14T17:04:16.634741+00:00",
-          "exitCode": 0
-        },
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs"
-          ],
-          "started": "2026-11-14T17:04:16.634788+00:00",
-          "finished": "2026-11-14T17:04:26.031121+00:00",
-          "exitCode": 0
-        }
-      ],
-      "node": "v24.22.3",
-      "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
-      "npm": "11.19.1",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp",
-      "inheritedRuntimeConfig": [
-        "NODE_OPTIONS"
-      ],
-      "runtimeBinding": "Node child binaries use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same environment. Ambient runtime settings are inherited; their names but not values are retained.",
-      "offlineCoverage": "Both separate --offline and full invocations are retained with exact commands, UTC times and zero exits.",
-      "scope": "All six public imports, controlled Codex ESM/CommonJS first turn and continuation, all 15 Pi tests and installed dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
+      "measuredBase": "e2817a927389a6d85b5ac69de0b75d007c2041a3",
+      "note": "Measured working code over the recorded base."
     },
     {
-      "command": "node scripts/verify-agui-fork.mjs",
-      "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
-      "measuredBase": "b5acd0a2bf331177bc4c845c7afa3f0798393750",
-      "sourceScope": "Measured working closed-copy/path-boundary implementation over the recorded base. The emitted five source hashes identify the driver, fork module and consumer assertions. No fork archive, native pin, consumer lock or donor fixture changed.",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "ddc53fa3920db3cd28c92bd442442de629285d80d19d38a1141563233fab51d4",
-        "scripts/verify-agui-fork.mjs": "9070c5fce7a7a072bb3323ba88d28050b1612ff9107f986cad932c7cd3810c05",
-        "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
-        "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
-        "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
-      },
+      "kind": "self-reported",
       "log": "evidence/closed-input-node-qualification.log.gz",
-      "exitCode": 0,
-      "commands": [
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs",
-            "--offline"
-          ],
-          "started": "2026-11-14T17:38:39.709828+00:00",
-          "finished": "2026-11-14T17:38:40.194681+00:00",
-          "exitCode": 0
-        },
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs"
-          ],
-          "started": "2026-11-14T17:38:40.194726+00:00",
-          "finished": "2026-11-14T17:38:49.293844+00:00",
-          "exitCode": 0
-        }
-      ],
-      "node": "v24.22.3",
-      "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
-      "npm": "11.19.1",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp",
-      "inheritedRuntimeConfig": [
-        "NODE_OPTIONS"
-      ],
-      "nodeOptionsSha256": "7905de2be2802b9027f6e79643583f59739afa09f6960521f5f9b2a81168fabc",
-      "runtimeBinding": "Node child binaries use process.execPath; npm resolves with its directory first on PATH and the actual npm version is recorded. Tar and gzip remain host tools. Ambient runtime settings remain inherited; names and the NODE_OPTIONS value digest are retained without values.",
-      "offlineCoverage": "Separate offline and full invocations retained with UTC times and zero exits. Exact copy-set closure is enforced before npm in full mode.",
-      "scope": "Six frozen package imports, controlled Codex ESM/CommonJS first turn and continuation, 15 Pi tests and dependency graph. Linux GNU tar only; no native provider or Apple qualification."
+      "measuredBase": "b5acd0a2bf331177bc4c845c7afa3f0798393750",
+      "note": "Measured working code over the recorded base."
     },
     {
-      "measuredBase": "843d217a876aef4d2d51a0258f4a2af3a8970383",
-      "sourceSha256": {
-        "scripts/lib/agui-fork.mjs": "ffb131a4a736823c8584dc413a7ba6a3e1ea7fce2e4af3c7e45e93eb2930326c",
-        "scripts/verify-agui-fork.mjs": "3225a320000d3a53042f9c88a06fa069ce144a1c4badebc4b0d9e53ddf2509ae",
-        "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
-        "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
-        "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
-      },
-      "identityProvenanceSha256": "0f37ab5f9d1257bab72c9676bd3af012be731354da2e5c1cd7e4bf2ea1d6fcd8",
-      "qualificationInputSha256": "ceb486865a87bec9c2b5e7404f966988a6f1db4bf48d1d7e7f18ac8096ff1599",
+      "kind": "self-reported",
       "log": "evidence/verified-model-node-qualification.log.gz",
-      "commands": [
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs",
-            "--offline"
-          ],
-          "started": "2026-11-14T18:19:42.637851+00:00",
-          "finished": "2026-11-14T18:19:43.201087+00:00",
-          "exitCode": 0
-        },
-        {
-          "command": [
-            "node",
-            "scripts/verify-agui-fork.mjs"
-          ],
-          "started": "2026-11-14T18:19:43.201178+00:00",
-          "finished": "2026-11-14T18:19:52.846026+00:00",
-          "exitCode": 0
-        }
-      ],
-      "node": "v24.22.3",
-      "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
-      "npm": "11.19.1",
-      "platform": "linux",
-      "architecture": "arm64",
-      "tar": "tar (GNU tar) 1.35",
-      "temporaryDirectory": "/tmp",
-      "inheritedRuntimeConfig": [
-        "NODE_OPTIONS"
-      ],
-      "nodeOptionsSha256": "7905de2be2802b9027f6e79643583f59739afa09f6960521f5f9b2a81168fabc",
-      "scope": "Six frozen public package imports, controlled Codex ESM/CommonJS first turn and continuation, 15 Pi tests and dependency graph. Linux GNU tar only; no real native provider or Apple qualification.",
-      "coordinatorObservations": {
-        "gzip": "gzip 1.12",
-        "scope": "Observed by the coordinator on the measuring host while preparing this record; not emitted by the driver and not present in evidence/verified-model-node-qualification.log.gz."
-      },
-      "sourceScope": "Measured on working source over 843d217a876aef4d2d51a0258f4a2af3a8970383. The five listed source hashes match the later committed 0e8d4c4274247b646b3a5cd86446931227cad073 files. No archive, native pin, consumer lock or fixture changed.",
-      "matchingCommittedSource": {
-        "commit": "0e8d4c4274247b646b3a5cd86446931227cad073",
-        "scope": "Library, driver and three consumer-assertion Git blobs match the measured sourceSha256 map. This identifies executable source, not later qualification-ledger annotations."
-      },
-      "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in that environment. Tar is a host tool. Ambient Node/npm settings remain inherited, with runtime variable names and NODE_OPTIONS digest recorded. No hermetic runtime claim."
+      "measuredBase": "843d217a876aef4d2d51a0258f4a2af3a8970383",
+      "note": "Measured working code over the recorded base. The five source files match the later 0e8d4c4274247b646b3a5cd86446931227cad073 snapshot; this does not identify later metadata annotations."
+    },
+    {
+      "kind": "self-reported",
+      "log": "evidence/thin-ledger-node-qualification.log.gz",
+      "measuredBase": "bf28d916fd19bd7b7532d6275554a09d96114837",
+      "note": "Dependency verifier measured on working source over the recorded base. Source hashes and runtime facts are authoritative in the retained full-consumer PASS record."
     }
   ],
   "evidence": [
@@ -372,27 +173,29 @@
       "compressedSha256": "1078071eb6ac0ca2c471cef7c3b540f1b6a34ba066046f050ad590945851489c",
       "encoding": "gzip; raw retained without edits",
       "role": "Offline and controlled installed-package replay"
+    },
+    {
+      "path": "evidence/qualification-metadata-history.json.gz",
+      "rawBytes": 23373,
+      "rawSha256": "1ae28751c1ecf16cd62d786f5df0c2a0c57870d389a0d30df3d10f3f2facbdc1",
+      "retainedBytes": 23373,
+      "retainedSha256": "1ae28751c1ecf16cd62d786f5df0c2a0c57870d389a0d30df3d10f3f2facbdc1",
+      "compressedBytes": 5587,
+      "compressedSha256": "c02dc4de3083b8821c705238123622d1de2311cfef8aab30ce9a200fceff5494",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Historical qualification metadata snapshot, including prior coordinator observations and textual clarifications"
+    },
+    {
+      "path": "evidence/thin-ledger-node-qualification.log.gz",
+      "rawBytes": 57313,
+      "rawSha256": "64a5e90ab50003caa82248e2edd86b9c4aba2ef4303bb28137c08364c9584432",
+      "retainedBytes": 57313,
+      "retainedSha256": "64a5e90ab50003caa82248e2edd86b9c4aba2ef4303bb28137c08364c9584432",
+      "compressedBytes": 7499,
+      "compressedSha256": "51a67a48459a583f9869d405a92e2a679c970b6389e3723bd2c8a2701573fb53",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Offline and controlled installed-package replay"
     }
   ],
-  "historicalClarifications": [
-    {
-      "record": "evidence[evidence/upstream-license-policy.log.gz]",
-      "additions": {
-        "encoding": "gzip; raw retained without edits",
-        "role": "upstream license-policy failure"
-      }
-    },
-    {
-      "record": "evidence[evidence/standard10-replay.log.gz]",
-      "additions": {
-        "encoding": "gzip; raw retained without edits",
-        "role": "historical frozen-consumer replay with lock-derived readers and optimized-Python rejection"
-      }
-    },
-    {
-      "record": "qualification.standard10Replay.sourceScope",
-      "original": "AgentUI661216e plus current lock-derived metadata and fail-closed optimized Python fixes; measured working code later committed separately. Native/archive/consumerlock/fixtures unchanged.",
-      "clarification": "Measured from AgentUI 661216e with working lock-derived metadata readers and fail-closed optimized Python checks, later committed as 1ead448. Archive bytes, native pins, consumer lock and fixtures are unchanged."
-    }
-  ]
+  "metadataHistory": "evidence/qualification-metadata-history.json.gz"
 }

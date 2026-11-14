@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
-import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
 import { loadConformanceInputs } from './coherence.mjs';
 import { canonicalDefinitions } from './canonical.mjs';
 import { evidenceKinds, evidenceTest, buildEvidenceRegistry } from './evidence.mjs';
 import { behaviorLimits, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
 
 const root = new URL('../../', import.meta.url);
-const rootPath = fileURLToPath(root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
 const byKind = (project) => Object.fromEntries(Object.keys(evidenceKinds).map((kind) => [kind, project(kind)]));
 
@@ -33,7 +30,7 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
   return categories;
 }
 
-function buildConformanceReport({ inputs: { retained, vendor, project, descriptor, sdk, pythonSdk }, registry, fork }) {
+function buildConformanceReport({ inputs: { retained, vendor, project, descriptor, sdk, pythonSdk, fork }, registry }) {
   const { provenance, pin, definitions, fixtures } = retained;
   const { metadata, core: installedSdk } = fork;
   const retainedPath = (file) => `${retained.retainedDir}${file}`;
@@ -96,7 +93,7 @@ function buildConformanceReport({ inputs: { retained, vendor, project, descripto
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
 function currentConformanceReport() {
-  return buildConformanceReport({ inputs: loadConformanceInputs(), registry: buildEvidenceRegistry(), fork: resolveLockedFork(rootPath) });
+  return buildConformanceReport({ inputs: loadConformanceInputs(), registry: buildEvidenceRegistry() });
 }
 
 export function assertReportFresh() {

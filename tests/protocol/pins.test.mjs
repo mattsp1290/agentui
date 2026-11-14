@@ -3,17 +3,14 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { test } from 'node:test';
-import { fileURLToPath } from 'node:url';
-import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
 import { loadConformanceInputs } from './coherence.mjs';
 
 test('AG-UI SDK, validator and installed license match the retained pins', () => {
   const root = new URL('../../', import.meta.url);
   const json = (file) => JSON.parse(readFileSync(new URL(file, root), 'utf8'));
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
-  const { retained: { provenance }, sdk, project } = loadConformanceInputs();
+  const { retained: { provenance }, sdk, project, fork } = loadConformanceInputs();
   const lock = json('package-lock.json');
-  const fork = resolveLockedFork(fileURLToPath(root));
   assert.equal(digest(readFileSync(join(fork.folder, fork.core.artifact))), fork.core.sha256, 'Installed SDK archive digest must match fork provenance');
   assert.equal(fork.core.version, sdk.version, 'Installed SDK version must match the historical pin');
   assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256, 'Installed Switchboard license must match the retained digest');

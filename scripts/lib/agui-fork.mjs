@@ -118,11 +118,41 @@ function verifyArchive(folder, artifact) {
   }
   return { filename: artifact.artifact, integrity, manifest };
 }
+const replayKeys = {
+  'coordinator-observed': ['kind', 'log', 'measuredBase', 'sourceSha256', 'note'],
+  'self-reported': ['kind', 'log', 'measuredBase', 'note'],
+};
+function verifyReplay(replay, raws, sourceRevision) {
+  assert.ok(replay && typeof replay === 'object' && !Array.isArray(replay), 'replay must be an index record');
+  const allowed = Object.hasOwn(replayKeys, replay.kind) ? replayKeys[replay.kind] : undefined;
+  assert.ok(allowed, `${replay.log}: unknown replay kind`);
+  assert.deepEqual(Object.keys(replay).filter((key) => !allowed.includes(key)), [], `${replay.log}: unexpected replay fields`);
+  assert.ok(typeof replay.log === 'string' && raws.has(replay.log), `${replay.log}: replay log must be verified evidence`);
+  assert.ok(typeof replay.measuredBase === 'string' && /^[a-f0-9]{40}$/u.test(replay.measuredBase), `${replay.log}: replay base must be a full commit SHA`);
+  assert.ok(replay.note === undefined || typeof replay.note === 'string', `${replay.log}: replay note must be a string`);
+  let report;
+  if (replay.kind === 'self-reported') {
+    const reports = new TextDecoder('utf-8', { fatal: true }).decode(raws.get(replay.log)).split(/\r?\n/u)
+      .filter((line) => line.startsWith('{"result":"PASS"'))
+      .map((line) => parseJson(Buffer.from(line)))
+      .filter((entry) => typeof entry.scope === 'string' && entry.scope.startsWith('controlled package consumer'));
+    assert.equal(reports.length, 1, `${replay.log}: exactly one full consumer PASS record is required`);
+    [report] = reports;
+    assert.equal(report.result, 'PASS', `${replay.log}: full consumer result`);
+    assert.equal(report.sourceRevision, sourceRevision, `${replay.log}: full consumer source revision`);
+  }
+  const hashes = report ? report.sourceSha256 : replay.sourceSha256;
+  assert.ok(hashes && typeof hashes === 'object' && !Array.isArray(hashes)
+    && Object.keys(hashes).length > 0, `${replay.log}: replay source hashes must be a nonempty map`);
+  for (const [file, hash] of Object.entries(hashes)) {
+    assert.ok(typeof hash === 'string' && /^[a-f0-9]{64}$/u.test(hash), `${replay.log}: ${file}: replay source digest`);
+  }
+  return report ? { ...replay, report } : replay;
+}
 function verifyEvidence({ folder, metadata }, qualification) {
-  const paths = new Set();
+  const raws = new Map();
   for (const entry of [...metadata.evidence, ...qualification.evidence]) {
-    assert.ok(!paths.has(entry.path), `${entry.path}: duplicate evidence path`);
-    paths.add(entry.path);
+    assert.ok(!raws.has(entry.path), `${entry.path}: duplicate evidence path`);
     const packed = readFileSync(forkFile(folder, entry.path));
     assert.equal(packed.length, entry.compressedBytes, `${entry.path}: compressed bytes`);
     assert.equal(digest(packed), entry.compressedSha256, `${entry.path}: compressed hash`);
@@ -131,16 +161,18 @@ function verifyEvidence({ folder, metadata }, qualification) {
     assert.equal(raw.length, entry.retainedBytes, `${entry.path}: retained bytes`);
     assert.equal(digest(raw), entry.rawSha256, `${entry.path}: raw hash`);
     assert.equal(digest(raw), entry.retainedSha256, `${entry.path}: retained hash`);
+    raws.set(entry.path, raw);
   }
-  assert.equal(digest(gunzipSync(readFileSync(forkFile(folder, 'evidence/source-pnpm-lock.yaml.gz')))), metadata.sourceLockSha256, 'source lock digest');
-  for (const replay of qualification.nodeReplays) {
-    assert.ok(paths.has(replay.log), `${replay.log}: replay log must be verified evidence`);
-    assert.ok(replay.sourceSha256 && typeof replay.sourceSha256 === 'object' && !Array.isArray(replay.sourceSha256)
-      && Object.keys(replay.sourceSha256).length > 0, `${replay.log}: replay source hashes must be a nonempty map`);
-    for (const [file, hash] of Object.entries(replay.sourceSha256)) {
-      assert.ok(typeof hash === 'string' && /^[a-f0-9]{64}$/iu.test(hash), `${replay.log}: ${file}: replay source digest`);
+  const sourceLock = 'evidence/source-pnpm-lock.yaml.gz';
+  assert.ok(raws.has(sourceLock), 'source lock must be verified evidence');
+  assert.equal(digest(raws.get(sourceLock)), metadata.sourceLockSha256, 'source lock digest');
+  assert.ok(raws.has(qualification.metadataHistory), `${qualification.metadataHistory}: metadata history must be verified evidence`);
+  for (const limitation of qualification.knownLimitations) {
+    for (const field of ['failureEvidence', 'reproductionEvidence']) {
+      assert.ok(raws.has(limitation[field]), `${limitation[field]}: limitation ${field} must be verified evidence`);
     }
   }
+  return qualification.nodeReplays.map((replay) => verifyReplay(replay, raws, metadata.sourceRevision));
 }
 function verifyFixtures({ folder, metadata }) {
   const fixtureBody = readFileSync(forkFile(folder, metadata.qualification.fixtureProvenance));
@@ -164,6 +196,8 @@ export function verifyFork(root) {
   const fork = resolveLockedFork(root);
   const qualificationBody = readFileSync(forkFile(fork.folder, 'qualification.json'));
   const qualification = parseJson(qualificationBody);
+  assert.ok(qualification && Array.isArray(qualification.evidence) && Array.isArray(qualification.nodeReplays)
+    && Array.isArray(qualification.knownLimitations), 'qualification ledger must declare evidence, nodeReplays and knownLimitations arrays');
   assert.equal(qualification.sourceRevision, fork.metadata.sourceRevision, 'qualification source revision');
   assert.equal(qualification.identityProvenanceSha256, fork.provenanceSha256, 'qualification identity digest');
   assert.deepEqual(fork.metadata.artifacts.map((artifact) => artifact.package).toSorted(), aguiPackages.toSorted(), 'exact six AG-UI archives');
@@ -172,8 +206,8 @@ export function verifyFork(root) {
     assert.ok(!packages.has(artifact.package), `duplicate artifact ${artifact.package}`);
     packages.set(artifact.package, verifyArchive(fork.folder, artifact));
   }
-  verifyEvidence(fork, qualification);
-  return { ...fork, packages, ...verifyFixtures(fork), qualification, qualificationSha256: digest(qualificationBody) };
+  const replays = verifyEvidence(fork, qualification);
+  return { ...fork, packages, ...verifyFixtures(fork), qualification, qualificationSha256: digest(qualificationBody), replays };
 }
 export function verifyConsumerLock(consumer, verified) {
   const { metadata, packages: expected } = verified;

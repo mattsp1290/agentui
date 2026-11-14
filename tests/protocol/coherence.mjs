@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
 import { aguiProtocol } from '@agentui/host/agui';
 import { retained } from './inputs.mjs';
 import { coverage, projectionFacts } from './coverage.mjs';
@@ -13,7 +15,7 @@ export function loadConformanceInputs() {
     pythonSdk: retained.pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol'),
   };
   assertCoherent(inputs);
-  return inputs;
+  return { ...inputs, fork: resolveLockedFork(fileURLToPath(root)) };
 }
 
 function assertCoherent({ retained: { provenance, pin, schema, definitions, fixtures }, vendor, descriptor, sdk, pythonSdk }) {
