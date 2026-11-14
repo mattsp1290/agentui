@@ -1,30 +1,24 @@
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, foldDocument, parseCommand, sameScope } from '@agentui/contracts';
+import { canonicalJson, foldDocument, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
-import { createDispatchOperation } from '@mattsp1290/switchboard';
-import type { DispatchEvidence, DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
+import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { openDatabase } from './sqlite-schema.js';
-import { nonempty, object, decision, installation, integer, positiveInteger, nativeRun, output, receipt } from './durable-model.js';
+import { nonempty, object, decision, installation, integer, nativeRun, output, receipt, capturedTarget, observation, hostEvent, cloneJson, assertDispatchIdentity } from './codec.js';
+import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { CapturedTarget, ObservedResult, HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
 
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
-function fact(value: DispatchObservation<unknown>): string {
-  if (value.kind === 'accepted' || value.kind === 'conclusive') {
-    return canonicalJson({ kind: value.kind, identity: value.evidence.identity,
-      result: value.kind === 'conclusive' ? value.result : null });
-  }
-  return canonicalJson(value);
-}
-function compatibleNative(a: DispatchEvidence['nativeOperation'], b: DispatchEvidence['nativeOperation']): boolean {
-  return a === null || b === null || (a.namespace === b.namespace && a.id === b.id);
-}
 class OutputApplicationError extends Error {}
+class CapacityError extends Error {}
+// Covers receipt growth from pending/accepted to an uncertain quarantine reason.
+const QUARANTINE_RESERVE_BYTES = 128;
 function key(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
 
 export class SqliteStore<E, P> {
   readonly db;
+  onCommit: (() => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
     try {
@@ -32,7 +26,7 @@ export class SqliteStore<E, P> {
         const configured = canonicalJson({ maxEventBytes: limits.maxEventBytes, maxCommandBytes: limits.maxCommandBytes, snapshotBytes: limits.snapshotBytes });
         const persisted = this.db.prepare('SELECT value FROM host_limits WHERE id=1').get();
         if (persisted && persisted.value !== configured) throw new Error('Incompatible persistent host budgets');
-        if (!persisted) this.db.prepare('INSERT INTO host_limits VALUES (1, ?)').run(configured);
+        if (!persisted) this.db.prepare('INSERT INTO host_limits(id, value) VALUES (1, ?)').run(configured);
       });
       if (this.db.prepare('SELECT 1 FROM conversations WHERE version<>? LIMIT 1').get(projection.version)) throw new Error('Incompatible projection');
       if (this.db.prepare('SELECT 1 FROM conversations WHERE NOT json_valid(document) OR NOT json_valid(installation) LIMIT 1').get()) throw new Error('Corrupt stored JSON');
@@ -41,11 +35,14 @@ export class SqliteStore<E, P> {
   close(): void { this.db.close(); }
   private transaction<T>(work: () => T, write = true): T {
     this.db.exec(write ? 'BEGIN IMMEDIATE' : 'BEGIN');
-    try { const result = work(); this.db.exec('COMMIT'); return result; }
+    let result: T;
+    try { result = work(); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    if (write) this.onCommit?.();
+    return result;
   }
   private conversation(scope: ConversationScope) {
-    const row = this.db.prepare('SELECT * FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
+    const row = this.db.prepare('SELECT installation, head, version, document, bytes FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
     if (!row) throw new Error('Unknown conversation');
     if (row.version !== this.projection.version) throw new Error('Incompatible projection');
     return row;
@@ -59,7 +56,7 @@ export class SqliteStore<E, P> {
       }
       const initial = { domain: this.projection.initial(), receipts: {}, decisions: {} };
       const document = this.encodeDocument(scope, initial);
-      this.db.prepare('INSERT INTO conversations VALUES (?, ?, ?, 0, ?, ?, ?)')
+      this.db.prepare('INSERT INTO conversations(host, conversation, installation, head, version, document, bytes) VALUES (?, ?, ?, 0, ?, ?, ?)')
         .run(...key(scope), canonicalJson(installed), this.projection.version, document, Buffer.byteLength(document));
     });
   }
@@ -78,56 +75,26 @@ export class SqliteStore<E, P> {
     if (!row || row.version !== this.projection.version) throw new Error('Unknown or incompatible conversation');
     return integer(row.head);
   }
-  private target(value: unknown, scope: ConversationScope): CapturedTarget {
-    const input = object(value), installed = installation(input.installation), identity = object(input.identity);
-    const run = input.run === null ? null : nativeRun(input.run, installed, scope);
-    const storedDecision = input.decision === null ? null : object(input.decision);
-    const parsedDecision = storedDecision === null ? null : {
-      visible: decision(storedDecision.visible), continuation: JSON.parse(canonicalJson(storedDecision.continuation)),
-    };
-    const target: CapturedTarget = { installation: installed, run, decision: parsedDecision,
-      identity: { hostOperationId: nonempty(identity.hostOperationId), target: run
-        ? { kind: 'session', reference: run.reference } : { kind: 'new-session', binding: installed.binding } } };
-    if (canonicalJson(identity) !== canonicalJson(target.identity)) throw new Error('Corrupt captured target');
-    return target;
-  }
-  private observation(value: unknown, target: CapturedTarget): DispatchObservation<ObservedResult> {
-    const input = object(value);
-    if (input.kind === 'outcome-unknown') return { kind: 'outcome-unknown' };
-    if (input.kind === 'not-dispatched' && (input.reason === 'aborted' || input.reason === 'intent-failed')) return { kind: input.kind, reason: input.reason };
-    if (input.kind !== 'accepted' && input.kind !== 'conclusive') throw new Error('Invalid observation');
-    const evidence = object(input.evidence), extension = object(evidence.observation);
-    if (canonicalJson(evidence.identity) !== canonicalJson(target.identity)) throw new Error('Evidence identity mismatch');
-    if (evidence.source !== 'native-acknowledgement' && evidence.source !== 'authoritative-native-lookup') throw new Error('Invalid evidence source');
-    const native = evidence.nativeOperation === null ? null : object(evidence.nativeOperation);
-    const parsedEvidence: DispatchEvidence = { identity: target.identity, source: evidence.source,
-      nativeOperation: native ? { namespace: nonempty(native.namespace), id: nonempty(native.id) } : null,
-      observation: { namespace: nonempty(extension.namespace), schemaVersion: positiveInteger(extension.schemaVersion), data: JSON.parse(canonicalJson(extension.data)) },
-    };
-    if (input.kind === 'accepted') return { kind: 'accepted', evidence: parsedEvidence };
-    const result = object(input.result);
-    if (result.kind === 'rejected') return { kind: 'conclusive', evidence: parsedEvidence, result: { kind: 'rejected', reason: nonempty(result.reason) } };
-    if (result.kind !== 'completed') throw new Error('Invalid command result');
-    return { kind: 'conclusive', evidence: parsedEvidence, result: {
-      kind: 'completed', output: JSON.parse(canonicalJson(result.output)),
-    } };
-  }
   command(scope: ConversationScope, id: string): StoredCommand | null {
-    const row = this.db.prepare('SELECT * FROM commands WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
+    const row = this.db.prepare('SELECT intent, target, observation, receipt FROM commands WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
     if (!row) return null;
-    const command = parseCommand(json(row.intent)), target = this.target(json(row.target), scope);
+    const command = parseCommand(json(row.intent)), target = capturedTarget(json(row.target), scope);
     const parsedReceipt = receipt(json(row.receipt));
     if (!sameScope(command.scope, scope) || command.clientCommandId !== id || parsedReceipt.hostOperationId !== target.identity.hostOperationId) throw new Error('Corrupt command');
     return { command, target, receipt: parsedReceipt,
-      observation: row.observation === null ? null : this.observation(json(row.observation), target) };
+      observation: row.observation === null ? null : observation(json(row.observation), target) };
+  }
+  private snapshotOverheadBytes(scope: ConversationScope): number {
+    return Buffer.byteLength(canonicalJson({ scope, projectionVersion: this.projection.version,
+      cursor: Number.MAX_SAFE_INTEGER, document: null })) - 4;
   }
   private encodeDocument(scope: ConversationScope, document: ConversationDocument<P>): string {
     const reserve = Object.values(document.receipts).filter(value =>
-      value.state.kind === 'pending' || value.state.kind === 'accepted').length * 128;
+      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RESERVE_BYTES;
     const encoded = canonicalJson(document);
-    const wrapper = Buffer.byteLength(canonicalJson({ scope, projectionVersion: this.projection.version,
-      cursor: Number.MAX_SAFE_INTEGER, document: null })) - 4;
-    if (Buffer.byteLength(encoded) + wrapper + reserve > this.limits.snapshotBytes) throw new OutputApplicationError('Document exceeds snapshot budget');
+    if (Buffer.byteLength(encoded) + this.snapshotOverheadBytes(scope) + reserve > this.limits.snapshotBytes) {
+      throw new CapacityError('Document exceeds snapshot budget');
+    }
     return encoded;
   }
   private appendEvents(scope: ConversationScope, events: readonly HostEvent<E>[]): void {
@@ -136,21 +103,21 @@ export class SqliteStore<E, P> {
     for (const event of events) {
       const envelope: Envelope<E> = { scope, sequence: ++sequence, event };
       const payload = canonicalJson(envelope), bytes = Buffer.byteLength(payload);
-      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? 128 : 0;
+      const reserve = event.kind === 'receipt' && event.receipt.state.kind === 'pending' ? QUARANTINE_RESERVE_BYTES : 0;
       if (bytes + reserve > this.limits.maxEventBytes) throw new OutputApplicationError('Event exceeds byte budget');
       try { document = foldDocument(document, event, this.projection); }
       catch (error) { throw new OutputApplicationError('Projection rejected output', { cause: error }); }
-      this.db.prepare('INSERT INTO events VALUES (?, ?, ?, ?, ?)').run(...key(scope), sequence, payload, bytes);
+      this.db.prepare('INSERT INTO events(host, conversation, sequence, payload, bytes) VALUES (?, ?, ?, ?, ?)').run(...key(scope), sequence, payload, bytes);
     }
     const encoded = this.encodeDocument(scope, document);
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
   admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }): Admission {
-    return this.transaction(() => {
+    try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
       if (existing) return canonicalJson(existing.command) === canonicalJson(command)
-        ? { kind: 'existing', receipt: this.exposedReceipt(existing) }
+        ? { kind: 'existing', receipt: existing.receipt }
         : { kind: 'rejected', reason: 'command-id-conflict' };
       if (Buffer.byteLength(canonicalJson(command)) > this.limits.maxCommandBytes) return { kind: 'rejected', reason: 'command-too-large' };
       if (!this.db.prepare('SELECT 1 FROM conversations WHERE host=? AND conversation=?').get(...key(command.scope))) return { kind: 'rejected', reason: 'unknown-conversation' };
@@ -158,11 +125,11 @@ export class SqliteStore<E, P> {
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       let run = null, pending = null;
       if (command.body.kind === 'approve') {
-        const row = this.db.prepare('SELECT * FROM pending_decisions WHERE host=? AND conversation=? AND id=?')
+        const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?')
           .get(...key(scope), command.body.pendingId);
         if (!row || row.status !== 'open') return { kind: 'rejected', reason: 'decision-unavailable' };
         const data = object(json(row.data));
-        pending = { visible: decision(data.visible), continuation: JSON.parse(canonicalJson(data.continuation)) };
+        pending = { visible: decision(data.visible), continuation: cloneJson(data.continuation) };
         if (!pending.visible.choices.includes(command.body.choiceId)) return { kind: 'rejected', reason: 'invalid-choice' };
       }
       const runId = command.body.kind === 'cancel' ? command.body.runId : pending?.visible.runId;
@@ -175,19 +142,19 @@ export class SqliteStore<E, P> {
       const target: CapturedTarget = { installation: installed, run, decision: pending,
         identity: { hostOperationId: operation, target: run ? { kind: 'session', reference: run.reference }
           : { kind: 'new-session', binding: installed.binding } } };
-      createDispatchOperation({ mode: 'recovery', identity: target.identity });
+      assertDispatchIdentity(target.identity);
       const admitted: Receipt = { scope, clientCommandId: command.clientCommandId, hostOperationId: operation,
         sequence: this.head(scope) + 1, state: { kind: 'pending' } };
-      this.db.prepare('INSERT INTO commands VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
+      this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
       if (pending) this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
         .run(operation, ...key(scope), pending.visible.pendingId);
       this.appendEvents(scope, [{ kind: 'receipt', receipt: admitted }]);
       return { kind: 'owned', stored: { command, target, receipt: admitted, observation: null } };
-    });
-  }
-  exposedReceipt(stored: StoredCommand): Receipt {
-    return stored.receipt;
+    }); } catch (error) {
+      if (error instanceof CapacityError) return { kind: 'rejected', reason: 'conversation-capacity' };
+      throw error;
+    }
   }
   verifyIntent(stored: StoredCommand): void {
     const persisted = this.command(stored.command.scope, stored.command.clientCommandId);
@@ -201,12 +168,12 @@ export class SqliteStore<E, P> {
       const encoded = canonicalJson(run), id = run.identity.runId;
       const existing = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
       if (existing && existing.data !== encoded) throw new OutputApplicationError('Run reference is immutable');
-      if (!existing) this.db.prepare('INSERT INTO runs VALUES (?, ?, ?, ?)').run(...key(scope), id, encoded);
+      if (!existing) this.db.prepare('INSERT INTO runs(host, conversation, id, data) VALUES (?, ?, ?, ?)').run(...key(scope), id, encoded);
     }
     for (const pending of parsed.decisions) {
       if (this.db.prepare('SELECT 1 FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), pending.visible.pendingId)) throw new OutputApplicationError('Decision id already exists');
       if (!this.db.prepare('SELECT 1 FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), pending.visible.runId)) throw new OutputApplicationError('Decision run is missing');
-      this.db.prepare("INSERT INTO pending_decisions VALUES (?, ?, ?, ?, ?, 'open', NULL)")
+      this.db.prepare("INSERT INTO pending_decisions(host, conversation, id, run, data, status, operation) VALUES (?, ?, ?, ?, ?, 'open', NULL)")
       .run(...key(scope), pending.visible.pendingId, pending.visible.runId, canonicalJson(pending));
     }
     return [...parsed.events.map(event => ({ kind: 'domain', event }) as const),
@@ -222,29 +189,34 @@ export class SqliteStore<E, P> {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      let observed = this.observation(value, stored.target);
-      const previous = stored.observation;
-      if ((previous?.kind === 'accepted' || previous?.kind === 'conclusive') && (observed.kind === 'accepted' || observed.kind === 'conclusive')) {
-        if (!compatibleNative(previous.evidence.nativeOperation, observed.evidence.nativeOperation)) throw new Error('Conflicting native operation');
-        observed = { ...observed, evidence: { ...observed.evidence, nativeOperation: observed.evidence.nativeOperation ?? previous.evidence.nativeOperation } };
-      }
-      const retryOutput = stored.receipt.state.kind === 'uncertain' && stored.receipt.state.reason === 'output-rejected';
-      if (previous?.kind === 'conclusive' || previous?.kind === 'not-dispatched') {
-        if (observed.kind === previous.kind && fact(observed) !== fact(previous)) throw new Error('Conflicting terminal evidence');
-        if (!retryOutput) {
-          if (observed.kind === 'conclusive' && previous.kind === 'conclusive' && observed.evidence.nativeOperation !== null && previous.evidence.nativeOperation === null) this.db.prepare('UPDATE commands SET observation=? WHERE host=? AND conversation=? AND id=?').run(canonicalJson(observed), ...key(scope), id);
+      const transition = settlement(stored.observation, observation(value, stored.target), isQuarantined(stored));
+      switch (transition.kind) {
+        case 'keep': return stored.receipt;
+        case 'conflict': throw new Error(`Conflicting ${transition.reason}`);
+        case 'record-evidence':
+          this.writeObservation(stored, transition.observed);
           return stored.receipt;
-        }
-        observed = previous;
+        case 'apply': return this.applyObservation(stored, transition.observed);
       }
-      if (previous?.kind === 'accepted' && observed.kind === 'outcome-unknown') return stored.receipt;
-      if (previous?.kind === 'accepted' && observed.kind === 'not-dispatched') throw new Error('Conflicting acceptance evidence');
-      if (previous && !retryOutput && fact(previous) === fact(observed)) {
-        this.db.prepare('UPDATE commands SET observation=? WHERE host=? AND conversation=? AND id=?').run(canonicalJson(observed), ...key(scope), id);
-        return stored.receipt;
-      }
-      this.db.exec('SAVEPOINT output_application');
-      try {
+    });
+  }
+  private writeObservation(stored: StoredCommand, observed: DispatchObservation<ObservedResult>, next = stored.receipt): void {
+    this.db.prepare('UPDATE commands SET observation=?, receipt=? WHERE host=? AND conversation=? AND id=?')
+      .run(canonicalJson(observed), canonicalJson(next), ...key(stored.command.scope), stored.command.clientCommandId);
+  }
+  private quarantine(stored: StoredCommand, observed: DispatchObservation<ObservedResult>, error: OutputApplicationError | CapacityError): Receipt {
+    if (isQuarantined(stored)) return stored.receipt;
+    const scope = stored.command.scope;
+    const reason = error instanceof CapacityError && observed.kind !== 'conclusive' ? CAPACITY_EXHAUSTED : OUTPUT_REJECTED;
+    const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state: { kind: 'uncertain', reason } };
+    this.writeObservation(stored, observed, next);
+    this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
+    return next;
+  }
+  private applyObservation(stored: StoredCommand, observed: DispatchObservation<ObservedResult>): Receipt {
+    const scope = stored.command.scope;
+    this.db.exec('SAVEPOINT output_application');
+    try {
       let state: ReceiptState;
       const events: HostEvent<E>[] = [];
       switch (observed.kind) {
@@ -264,23 +236,15 @@ export class SqliteStore<E, P> {
         if (resolved) events.push({ kind: 'decision-closed', pendingId: pending.visible.pendingId });
       }
       const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state };
-      this.db.prepare('UPDATE commands SET observation=?, receipt=? WHERE host=? AND conversation=? AND id=?')
-        .run(canonicalJson(observed), canonicalJson(next), ...key(scope), id);
+      this.writeObservation(stored, observed, next);
       this.appendEvents(scope, [{ kind: 'receipt', receipt: next }, ...events]);
       this.db.exec('RELEASE output_application');
       return next;
-      } catch (error) {
-        this.db.exec('ROLLBACK TO output_application; RELEASE output_application');
-        if (!(error instanceof OutputApplicationError)) throw error;
-        if (retryOutput) return stored.receipt;
-        const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1,
-          state: { kind: 'uncertain', reason: 'output-rejected' } };
-        this.db.prepare('UPDATE commands SET observation=?, receipt=? WHERE host=? AND conversation=? AND id=?')
-          .run(canonicalJson(observed), canonicalJson(next), ...key(scope), id);
-        this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
-        return next;
-      }
-    });
+    } catch (error) {
+      this.db.exec('ROLLBACK TO output_application; RELEASE output_application');
+      if (!(error instanceof OutputApplicationError) && !(error instanceof CapacityError)) throw error;
+      return this.quarantine(stored, observed, error);
+    }
   }
   recoveryPrevious(stored: StoredCommand): NativeDispatchObservation<ObservedResult> {
     return stored.observation === null || stored.observation.kind === 'not-dispatched'
@@ -296,7 +260,8 @@ export class SqliteStore<E, P> {
       const totals = this.db.prepare('SELECT count(*) AS count, coalesce(sum(bytes),0) AS bytes FROM events WHERE host=? AND conversation=? AND sequence>? AND sequence<=?')
         .get(...key(scope), after ?? through, through);
       if (after === null || integer(totals?.count) > this.limits.replayEvents || integer(totals?.bytes) > this.limits.replayBytes) {
-        const wrapperBytes = Buffer.byteLength(canonicalJson({ scope, projectionVersion: version, cursor: through, document: null })) - 4;
+        const wrapperBytes = this.snapshotOverheadBytes(scope);
+        // Every supported write enforces this bound; overflow indicates incompatible or corrupt storage.
         if (integer(row.bytes) + wrapperBytes > this.limits.snapshotBytes) return { kind: 'refused', reason: 'snapshot-overflow' };
         return { kind: 'snapshot', snapshot: this.snapshot(scope) };
       }
@@ -314,21 +279,10 @@ export class SqliteStore<E, P> {
       if (bytes + size > this.limits.pageBytes) break;
       bytes += size;
       const payload = this.db.prepare('SELECT payload FROM events WHERE host=? AND conversation=? AND sequence=?').get(...key(scope), integer(row.sequence));
-      const input = object(json(payload?.payload)), event = object(input.event);
-      let decoded: HostEvent<E>;
-      switch (event.kind) {
-        case 'domain': decoded = { kind: 'domain', event: this.projection.decodeEvent(event.event) }; break;
-        case 'receipt': {
-          const parsed = receipt(event.receipt);
-          if (!sameScope(parsed.scope, scope) || parsed.sequence !== input.sequence) throw new Error('Corrupt receipt event');
-          decoded = { kind: 'receipt', receipt: parsed }; break;
-        }
-        case 'decision-opened': decoded = { kind: 'decision-opened', decision: decision(event.decision) }; break;
-        case 'decision-closed': decoded = { kind: 'decision-closed', pendingId: nonempty(event.pendingId) }; break;
-        default: throw new Error('Corrupt event');
-      }
-      if (canonicalJson(input.scope) !== canonicalJson(scope) || input.sequence !== row.sequence) throw new Error('Corrupt envelope');
-      events.push({ scope, sequence: integer(row.sequence), event: decoded });
+      const input = object(json(payload?.payload));
+      if (!sameScope(parseScope(input.scope), scope) || input.sequence !== row.sequence) throw new Error('Corrupt envelope');
+      const sequence = integer(row.sequence);
+      events.push({ scope, sequence, event: hostEvent(input.event, scope, sequence, this.projection) });
     }
     return events;
   }

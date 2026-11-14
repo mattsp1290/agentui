@@ -120,7 +120,7 @@ test('admission capacity and command budgets reject before provider entry', asyn
   const driver = { ...f.driver, dispatch: async () => { entries++; return { kind: 'outcome-unknown' }; } };
   const host = f.open({ driver, budgets: { snapshotBytes: 450, maxCommandBytes: 300 } }); host.createConversation(scope, installed);
   assert.equal((await host.conversation(scope).submit(command('big', { kind: 'send', text: 'x'.repeat(301) }))).reason, 'command-too-large');
-  await assert.rejects(host.conversation(scope).submit(command('small')), /snapshot budget/);
+  assert.deepEqual(await host.conversation(scope).submit(command('small')), { kind: 'rejected', reason: 'conversation-capacity' });
   assert.equal(entries, 0);
   assert.equal(await host.conversation(scope).receipt('small'), null);
   assert.deepEqual((await snapshot(host.conversation(scope))).document.receipts, {});
@@ -192,7 +192,7 @@ test('snapshot capacity admits the exact reserved envelope size and rejects one 
     };
     const host = f.open({ driver, budgets: { snapshotBytes } }); host.createConversation(scope, installed);
     if (snapshotBytes < boundary) {
-      await assert.rejects(host.conversation(scope).submit(command('boundary')), /snapshot budget/);
+      assert.deepEqual(await host.conversation(scope).submit(command('boundary')), { kind: 'rejected', reason: 'conversation-capacity' });
       assert.equal(entries, 0);
     } else {
       const result = await host.conversation(scope).submit(command('boundary'));

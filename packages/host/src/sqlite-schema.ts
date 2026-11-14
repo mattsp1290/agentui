@@ -29,6 +29,7 @@ export function openDatabase(path: string): DatabaseSync {
           host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, run TEXT NOT NULL,
           data TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('open','reserved','closed')),
           operation TEXT,
+          CHECK((status = 'reserved') = (operation IS NOT NULL)),
           PRIMARY KEY(host, conversation, id),
           FOREIGN KEY(host, conversation, run) REFERENCES runs(host, conversation, id));
         CREATE TABLE events (
@@ -36,12 +37,16 @@ export function openDatabase(path: string): DatabaseSync {
           payload TEXT NOT NULL, bytes INTEGER NOT NULL,
           PRIMARY KEY(host, conversation, sequence),
           FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE host_limits (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
         PRAGMA user_version=1;`);
       db.exec('COMMIT');
     }
+    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='host_limits'").get()) {
+      throw new Error('Incomplete database schema version 1: missing host_limits');
+    }
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
-    db.exec('PRAGMA synchronous=FULL; CREATE TABLE IF NOT EXISTS host_limits (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);');
+    db.exec('PRAGMA synchronous=FULL;');
     return db;
   } catch (error) {
     db.close();
