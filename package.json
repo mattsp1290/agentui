@@ -1,0 +1,33 @@
+{
+  "name": "agentui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "npm@11.19.1",
+  "engines": {
+    "node": ">=24.22.3 <25",
+    "npm": "11.19.1"
+  },
+  "workspaces": [
+    "packages/contracts",
+    "packages/sdk",
+    "packages/host",
+    "packages/adapter-tests",
+    "apps/desktop",
+    "apps/ios"
+  ],
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "npm run clean && npm run build -w @agentui/contracts && npm run build -w @agentui/sdk && npm run build -w @agentui/host && npm run build -w @agentui/desktop && npm run build -w @agentui/ios && npm run build -w @agentui/adapter-tests",
+    "check": "npm run check --workspaces",
+    "lint": "oxlint --deny-warnings packages apps scripts",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs",
+    "verify": "npm run build && npm run check && npm run lint && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "oxlint": "1.93.0",
+    "typescript": "7.0.2"
+  }
+}

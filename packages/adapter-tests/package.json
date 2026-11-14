@@ -1,0 +1,26 @@
+{
+  "name": "@agentui/adapter-tests",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@agentui/contracts": "0.0.0",
+    "@agentui/sdk": "0.0.0",
+    "@agentui/host": "0.0.0",
+    "@agentui/desktop": "0.0.0",
+    "@agentui/ios": "0.0.0"
+  }
+}

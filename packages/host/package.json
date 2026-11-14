@@ -1,0 +1,26 @@
+{
+  "name": "@agentui/host",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "engines": {
+    "node": ">=24.22.3 <25"
+  },
+  "dependencies": {
+    "@agentui/contracts": "0.0.0",
+    "@mattsp1290/switchboard": "file:../../vendor/switchboard-2eadb11cbfc01787956a3b18ee500a922e2a7904.tgz"
+  }
+}
