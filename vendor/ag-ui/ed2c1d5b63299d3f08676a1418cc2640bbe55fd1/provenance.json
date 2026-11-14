@@ -933,6 +933,17 @@
       "compressedSha256": "6aee08066c4e6011f619f8c2d2731b5ed8e8b7d7be20867ed9d12f1c36cda2dd",
       "encoding": "gzip; raw retained without edits",
       "role": "Final Node-only controlled consumer replay after byte-line-counter naming cleanup"
+    },
+    {
+      "path": "evidence/single-owner-node-qualification.log.gz",
+      "rawBytes": 56584,
+      "rawSha256": "60c8a866918d0079314b5191ea151d57ca60d42d75bc7d6a262dec3061f34176",
+      "retainedBytes": 56584,
+      "retainedSha256": "60c8a866918d0079314b5191ea151d57ca60d42d75bc7d6a262dec3061f34176",
+      "compressedBytes": 7093,
+      "compressedSha256": "c1f96ef622337a6a10f1b8762041b2b4a8e373a315c3b69d7c10da524c4625f8",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Fresh single-owner Node offline and full consumer qualification with enforced child runtime and self-reported source hashes"
     }
   ],
   "qualification": {
@@ -1075,7 +1086,9 @@
         "architecture": "arm64",
         "tar": "tar (GNU tar) 1.35",
         "temporaryDirectory": "/tmp/agentui-node-qualification-9ipkww2m",
-        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification."
+        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification.",
+        "offlineCoverage": "Full mode executes the same archive and consumer-lock checks before installation; this retained log does not contain a separate --offline invocation.",
+        "runtimeBinding": "Child node and npm resolved from PATH; equality with the recorded driver runtime was observed by the coordinator, not enforced by this older driver."
       },
       {
         "command": "node scripts/verify-agui-fork.mjs",
@@ -1094,7 +1107,58 @@
         "architecture": "arm64",
         "tar": "tar (GNU tar) 1.35",
         "temporaryDirectory": "/tmp",
-        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification."
+        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification.",
+        "offlineCoverage": "Full mode executes the same archive and consumer-lock checks before installation; this retained log does not contain a separate --offline invocation.",
+        "runtimeBinding": "Child node and npm resolved from PATH; equality with the recorded driver runtime was observed by the coordinator, not enforced by this older driver."
+      },
+      {
+        "command": "node scripts/verify-agui-fork.mjs",
+        "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+        "measuredBase": "3a1064d09c0b2cb6aaef112c32d84645ee11aa67",
+        "sourceScope": "Measured on working single-owner code over the recorded base. The self-reported five source hashes identify the executed driver, canonical fork module and consumer assertions. Historical replay module paths remain unchanged. No fork archive, native pin, consumer lock or fixture changed.",
+        "sourceSha256": {
+          "scripts/lib/agui-fork.mjs": "9fff641f471553f7cb5e86458c29fa3e360448b6a517f7cd2801d8694ca254a3",
+          "scripts/verify-agui-fork.mjs": "fe7b22158f1d0693a9346e16a2dfac3fbe9a3f84ac33b86c8dbd3b9d5bc04a03",
+          "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
+          "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
+          "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
+        },
+        "log": "evidence/single-owner-node-qualification.log.gz",
+        "exitCode": 0,
+        "commands": [
+          {
+            "command": [
+              "node",
+              "scripts/verify-agui-fork.mjs",
+              "--offline"
+            ],
+            "started": "2026-11-14T16:34:04.448034+00:00",
+            "finished": "2026-11-14T16:34:04.947462+00:00",
+            "exitCode": 0
+          },
+          {
+            "command": [
+              "node",
+              "scripts/verify-agui-fork.mjs"
+            ],
+            "started": "2026-11-14T16:34:04.947508+00:00",
+            "finished": "2026-11-14T16:34:13.568735+00:00",
+            "exitCode": 0
+          }
+        ],
+        "node": "v24.22.3",
+        "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
+        "npm": "11.19.1",
+        "platform": "linux",
+        "architecture": "arm64",
+        "tar": "tar (GNU tar) 1.35",
+        "temporaryDirectory": "/tmp",
+        "inheritedRuntimeConfig": [
+          "NODE_OPTIONS"
+        ],
+        "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same child environment.",
+        "offlineCoverage": "Both separate --offline and full invocations are retained in this log, with exact commands, times and zero exits.",
+        "scope": "All six public imports, controlled Codex ESM/CommonJS first turn and continuation, all15 Pi tests and installed dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
       }
     ],
     "historicalOfflineCommand": {
