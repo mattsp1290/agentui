@@ -9,19 +9,19 @@ export interface AppliedArtifactIdentity {
 }
 export interface HostCompatibility {
   readonly wireVersion: number;
-  readonly clientSdkVersion: string;
+  readonly extensionSdkVersion: string;
   readonly nativeRuntime: NativeRuntimeIdentity;
   readonly desiredGitRevision: string;
   readonly appliedArtifact: AppliedArtifactIdentity;
 }
 export interface ClientCompatibility {
   readonly supportedWireVersions: readonly number[];
-  readonly supportedClientSdkVersions: readonly string[];
+  readonly supportedExtensionSdkVersions: readonly string[];
   readonly supportedNativeRuntimes: readonly NativeRuntimeIdentity[];
   readonly expectedArtifactId: string | null;
 }
 export interface CompatibilityIssue {
-  readonly dimension: 'wire' | 'client-sdk' | 'native-runtime' | 'deployment' | 'artifact';
+  readonly dimension: 'wire' | 'extension-sdk' | 'native-runtime' | 'deployment' | 'artifact';
   readonly reason: string;
   readonly action: string;
 }
@@ -32,7 +32,7 @@ export type CompatibilityResult =
 export function checkCompatibility(client: ClientCompatibility, host: HostCompatibility): CompatibilityResult {
   const issues: CompatibilityIssue[] = [];
   if (!client.supportedWireVersions.includes(host.wireVersion)) issues.push({ dimension: 'wire', reason: `Host wire version ${host.wireVersion} is unsupported`, action: 'Update the client or connect to a host using a supported wire version.' });
-  if (!client.supportedClientSdkVersions.includes(host.clientSdkVersion)) issues.push({ dimension: 'client-sdk', reason: `Host client SDK contract ${host.clientSdkVersion} is unsupported`, action: 'Install a client supporting the host SDK contract.' });
+  if (!client.supportedExtensionSdkVersions.includes(host.extensionSdkVersion)) issues.push({ dimension: 'extension-sdk', reason: `Host extension SDK contract ${host.extensionSdkVersion} is unsupported`, action: 'Install extensions supporting the host SDK contract or update the host extension runtime.' });
   if (!client.supportedNativeRuntimes.some(runtime => runtime.engine === host.nativeRuntime.engine && runtime.version === host.nativeRuntime.version && runtime.format === host.nativeRuntime.format)) issues.push({ dimension: 'native-runtime', reason: `Native runtime ${host.nativeRuntime.engine} ${host.nativeRuntime.version} format ${host.nativeRuntime.format} is unsupported`, action: 'Select a supported native engine, runtime version and session format.' });
   if (host.desiredGitRevision !== host.appliedArtifact.gitRevision) issues.push({ dimension: 'deployment', reason: `Desired Git revision ${host.desiredGitRevision} differs from applied revision ${host.appliedArtifact.gitRevision}`, action: 'Finish applying the desired deployment before reconnecting.' });
   if (client.expectedArtifactId !== null && client.expectedArtifactId !== host.appliedArtifact.artifactId) issues.push({ dimension: 'artifact', reason: `Expected artifact ${client.expectedArtifactId} differs from applied artifact ${host.appliedArtifact.artifactId}`, action: 'Apply the expected artifact or explicitly update the client artifact expectation.' });
