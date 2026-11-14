@@ -5,3 +5,9 @@ dist/
 apps/desktop/web-dist/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/
+apps/ios/native/ios/Pods/
+apps/ios/native/ios/build/
+apps/ios/native/ios/AgentUI.xcworkspace/
+apps/ios/native/ios/.xcode.env.local
+apps/ios/native/.work/
+apps/ios/native/ios/**/xcuserdata/

@@ -31,7 +31,10 @@
     "desktop:prepare": "npm run build --workspace=@agentui/contracts --workspace=@agentui/sdk --workspace=@agentui/theme --workspace=@agentui/ui-primitives",
     "desktop:build": "npm run desktop:prepare && npm run build --workspace=@agentui/desktop",
     "desktop:dev": "npm run tauri:dev --workspace=@agentui/desktop",
-    "desktop:bundle": "npm run tauri:bundle --workspace=@agentui/desktop"
+    "desktop:bundle": "npm run tauri:bundle --workspace=@agentui/desktop",
+    "ios:prepare": "bash apps/ios/native/prepare.sh",
+    "ios:run": "bash apps/ios/native/run.sh",
+    "ios:verify": "bash apps/ios/native/verify.sh"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
