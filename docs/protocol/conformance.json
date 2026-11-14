@@ -1,0 +1,2165 @@
+{
+  "coverageContractVersion": 1,
+  "canonical": {
+    "version": "1.0",
+    "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+    "typescriptSdk": "1.0.4",
+    "pythonSdk": "1.0.0",
+    "authority": "Retained closed canonical schema. SDK acceptance never changes canonical validity.",
+    "definitionCoverageOwner": {
+      "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "matrix": "docs/protocol/ag-ui-matrix.tsv",
+      "verifier": "scripts/verify-agui-matrix.mjs"
+    },
+    "fixtureCoverageOwner": {
+      "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "index": "tests/agui/fixtures/upstream.tsv",
+      "python": "tests/agui/compare-python.py"
+    },
+    "counts": {
+      "categories": 16,
+      "definitions": 98,
+      "eventDiscriminators": 31,
+      "fixtures": 219,
+      "valid": 135,
+      "invalid": 84,
+      "typescriptPermissiveInvalid": 8,
+      "pythonPermissiveInvalid": 22
+    }
+  },
+  "switchboard": {
+    "repository": "https://github.com/mattsp1290/switchboard",
+    "sourceRevision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+    "artifact": "switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+    "sha256": "15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421",
+    "descriptor": {
+      "version": "1.0",
+      "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+      "typescriptSdk": "1.0.4",
+      "pythonSdk": "1.0.0",
+      "mapping": "basic-values-messages-and-terminals",
+      "planned": "reasoning-subagents"
+    },
+    "nativeRoutes": {
+      "claude-direct": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      },
+      "claude-litellm": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      },
+      "codex-direct": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      },
+      "codex-litellm": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      },
+      "pi-direct": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      },
+      "pi-litellm": {
+        "availability": "undeclared",
+        "qualification": "unqualified"
+      }
+    },
+    "retainedCanonicalComparison": {
+      "log": "vendor/qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-agui.log.gz",
+      "scope": "Historical canonical schema and published SDK comparison; not native or installed AgentUI output."
+    }
+  },
+  "agentuiCanonicalValidator": {
+    "package": "ajv",
+    "version": "8.20.0",
+    "schema": "tests/protocol/fixtures/upstream/schema.json",
+    "definition": "Event"
+  },
+  "installedFixtures": [
+    {
+      "id": "acknowledged-absence-and-fault",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: acknowledged-absence-and-fault"
+    },
+    {
+      "id": "availability-description",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: availability-description"
+    },
+    {
+      "id": "lifecycle-text-tools",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: lifecycle-text-tools"
+    },
+    {
+      "id": "messages-and-opaque-content",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: messages-and-opaque-content"
+    },
+    {
+      "id": "state-activity-public-extensions",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: state-activity-public-extensions"
+    },
+    {
+      "id": "terminal-interrupts-usage",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: terminal-interrupts-usage"
+    }
+  ],
+  "behaviorLimits": {
+    "unknownOrUnimplementedFact": "Explicit error and faulted actor; no successful empty batch.",
+    "notObservable": "Acknowledged absence for an allowed family; empty batch and usable actor.",
+    "qualification": "Fixture registration and retained evidence inventory are not current execution results or native qualification.",
+    "downstream": "Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw."
+  },
+  "provenance": {
+    "sources": {
+      "switchboard": {
+        "repository": "https://github.com/mattsp1290/switchboard",
+        "revision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+        "license": "SWITCHBOARD-LICENSE"
+      },
+      "canonical": {
+        "repository": "https://github.com/ag-ui-protocol/ag-ui",
+        "revision": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+        "license": "UPSTREAM-LICENSE"
+      }
+    },
+    "files": {
+      "ag-ui-pin.json": {
+        "owner": "switchboard",
+        "path": "docs/protocol/ag-ui-pin.json",
+        "sha256": "5f366a1f8b8a6b4ea03c2b403d98e0effca9ee73f42c69d561610400c7cd488d"
+      },
+      "ag-ui-matrix.tsv": {
+        "owner": "switchboard",
+        "path": "docs/protocol/ag-ui-matrix.tsv",
+        "sha256": "9ffc250d9af9081c126b2d455bb7fcab540ec0ce67ec7c6ef7e3242ae18a9b20"
+      },
+      "upstream.tsv": {
+        "owner": "switchboard",
+        "path": "tests/agui/fixtures/upstream.tsv",
+        "sha256": "a9677f83912c8edd950c7765cb884b12e32ca985d1b3be61ab6a90b161276e84"
+      },
+      "schema.json": {
+        "owner": "canonical",
+        "path": "spec/1.0/schema.json",
+        "sha256": "4b5c93226838a0e72d88e6c5df20633c686c49fcb75d9be2815c6cbf9e48e71a"
+      },
+      "SWITCHBOARD-LICENSE": {
+        "owner": "switchboard",
+        "path": "LICENSE",
+        "sha256": "a66e7d5fc718bb34c855454b134510e369cf3079296326434d31937337864309"
+      },
+      "UPSTREAM-LICENSE": {
+        "owner": "canonical",
+        "path": "LICENSE",
+        "sha256": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241"
+      }
+    }
+  },
+  "categories": [
+    {
+      "category": "envelope",
+      "purpose": "wire-envelope",
+      "definitions": [
+        "Event",
+        "EventType",
+        "BaseEvent",
+        "Attributable",
+        "SubagentRunId",
+        "Metadata"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [],
+      "mapping": "represented",
+      "scope": "Common event envelope on actual projection output.",
+      "installedFixtures": [
+        "lifecycle-text-tools"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI transport and UI event consumption; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "text",
+      "purpose": "native-observation",
+      "definitions": [
+        "TextMessageRole",
+        "TextMessageStartEvent",
+        "TextMessageContentEvent",
+        "TextMessageEndEvent",
+        "TextMessageChunkEvent"
+      ],
+      "eventDiscriminators": [
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "TEXT_MESSAGE_CHUNK"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "TextMessageChunkEvent/valid/minimal.json",
+          "sha256": "a654dbf07ffce15476fc2e1535e6115ffd24b12e60cef700138da9942243f295",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/invalid/delta-missing.json",
+          "sha256": "b6228748156ae19d423eb5c91286535f33335cef5e4981b32240d0449e59f24d",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "TextMessageContentEvent/invalid/delta-not-a-string.json",
+          "sha256": "a07ea56f1eb086e5893e156f34c46cf024b11026f799031f8944eefe1e884c12",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "TextMessageContentEvent/invalid/metadata-null.json",
+          "sha256": "b55d29ba2566a4857e482c2754d9b302d39a11241119791aa2ed392cea3c06fe",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/invalid/subagent-run-id-null.json",
+          "sha256": "5701c0622c7ccafbd2c4993629995421c78610b70adde73e1c146b78d84295f4",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/attributed-to-a-subagent.json",
+          "sha256": "60877f242d48dde4a5c01c7a4b89b28ffd841fb8adac335124b846cca20520e9",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/empty-delta.json",
+          "sha256": "b98f19db1ef5d074e25d440642b0c994793789e2e0c2b8472007174c80315372",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/metadata-absent.json",
+          "sha256": "1e297bc4f62991e9c2c0321e34aa3df65a3b06a2fa43741212bf68581231446e",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/metadata-empty.json",
+          "sha256": "c1fbeabd8a26025da3adba750ea7975933d1a13174857332824795cc901c43fe",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/metadata-reserved-key.json",
+          "sha256": "55a8d4f9b8a0c37cb0b418aa6fd22306fbe6132a8a8d90318cfa8ba7b62b9beb",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/metadata-value-null.json",
+          "sha256": "c0d6c2daabd180d4658cd7b319872ebef46a3bb5f1d478ade16c0cbc92e26f11",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/valid/minimal.json",
+          "sha256": "a9c6084925d24643aab8e44d5f564bcc275c30ecbf72c64c86d6e11ef1f9a21b",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/raw-event-null.json",
+          "sha256": "b57ebe228c7c2fe78720d8739b555aea48bfbb0468e0cce2e8101029112e64e1",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/timestamp-above-safe-integer.json",
+          "sha256": "67ee8c155f730dac929bef706fdefe2890a094be19a351fa4c307c472dd22b18",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/timestamp-below-safe-integer.json",
+          "sha256": "c46b9c3ba2aabad7a00a5f5fafd58fa0a3ac8042d69d580f33a81517f7aa324c",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/timestamp-float.json",
+          "sha256": "6663ccafb32284361bb57dde5fda2837c97e9c6d3e87f921bd57bda5011851f7",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/unknown-property.json",
+          "sha256": "be5d48d711499ee515ca065bb496a03b7cb1a5e9d2834b227d90f153a9b7cd30",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/metadata-prototype-named-key.json",
+          "sha256": "f6178bc2475c1281ffd30ac3410078f2bba2a0fb3cbc75d5d9d45bf2655b57c8",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/minimal.json",
+          "sha256": "677624fe069add50752076969632db33b81da653192588d6cf9e8f6cb2f2b9b2",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/raw-event-array.json",
+          "sha256": "54ee598a09168662393ad6e4386794040266076c47f17dee0a6340a9550376b7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/raw-event-number.json",
+          "sha256": "18380f15e63c7c977a84b246d566fdf4f2c93b5172915957d92f279b1761c6f3",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/raw-event-object.json",
+          "sha256": "fe9e6caf4f33faada51a782cf6f0f0d47048b46b48bfe2cf13279a8ac8de9123",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/raw-event-string.json",
+          "sha256": "81b776edc381fffdc333a64799c7a9e5e55dd4a062bbfd1492b5143b183d05b3",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/timestamp-at-safe-integer-maximum.json",
+          "sha256": "2ecd9c842746a6ce0319683daddd0dcd458d28affdc58afd4319cfa704d553e7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/valid/timestamp-at-safe-integer-minimum.json",
+          "sha256": "1842f9787fd284c7b0dd9514debca2027dadf2f4fa04788de26a63b874326f3c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageStartEvent/valid/minimal.json",
+          "sha256": "4bbc68380108b45c5c2710e349389656a912c756690a703a03e4285132106624",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed text boundaries and fragments, including empty deltas.",
+      "installedFixtures": [
+        "lifecycle-text-tools"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI streaming transport and text renderer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "tools",
+      "purpose": "native-interaction",
+      "definitions": [
+        "ToolCallStartEvent",
+        "ToolCallArgsEvent",
+        "ToolCallEndEvent",
+        "ToolCallChunkEvent",
+        "ToolCallResultEvent",
+        "ToolCall",
+        "FunctionCall",
+        "Tool"
+      ],
+      "eventDiscriminators": [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_CHUNK",
+        "TOOL_CALL_RESULT"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "Tool/invalid/name-missing.json",
+          "sha256": "f91e249d5a5a9bb830502ac2f518a144e1a7508e36f8395c42f346f69436baae",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "Tool/valid/parameters-absent.json",
+          "sha256": "580c4a3a1661a59886d82d89db817ac72112d51141da688a3d65bfefaf84c400",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "Tool/valid/parameters-array.json",
+          "sha256": "f9f24589ae62031b6839a255c49c628c307b092c3a9107fbf84a00939c918872",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "Tool/valid/parameters-number.json",
+          "sha256": "65b2082404ed0a03327ce2e5e27340e68769ea9547a094c02656c113fabd0a11",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "Tool/valid/parameters-object.json",
+          "sha256": "b70faf8893e65362157446c8e735e4f2bd8b51a496e1062c535c7d7f225d2e71",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "Tool/valid/parameters-string.json",
+          "sha256": "049e148edc0493b72964a26498af7c41623ab06b137db81199778d110d213f4d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallArgsEvent/valid/empty-delta.json",
+          "sha256": "b04f3bf5a7305e1493327e0f0553cbf7202365f7d9c6ebdd5c0bd35d007e954d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallArgsEvent/valid/minimal.json",
+          "sha256": "3174156a27f026bd37352c8053dc6402c8453f4563f902510c3f53e33f3cefb9",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallChunkEvent/invalid/parent-message-id-null.json",
+          "sha256": "9e9a5bc06d3ccad68fd94ba9df96d802207ce341db85764cac62798963093564",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallChunkEvent/valid/minimal.json",
+          "sha256": "f4b419c1d1ccb243517eaa4a056250dbe49579d0232816058f78ad4e47acdad9",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallEndEvent/valid/minimal.json",
+          "sha256": "80ca93d30c2eb316078dcd72de3a5f0b08c18e4a3336d1bd506a811ee0d41b28",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallResultEvent/invalid/content-object.json",
+          "sha256": "032249562600997d46f7c36be77d2d8f7216b6c7dd3f9ddd0fe9514039de5e7c",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolCallResultEvent/invalid/content-part-unknown-type.json",
+          "sha256": "c83d896e58db0262f840a14a151591093b96e1894b2583edfa7eb9a58eb21620",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolCallResultEvent/invalid/role-not-tool.json",
+          "sha256": "954581e9de2158673142b3fb90893236b279e4dfe665b46147c4d2cca35f52e5",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolCallResultEvent/valid/file-source-part.json",
+          "sha256": "ba5508a7d4c5fcc4331502d5656c0cadf65d31ffc057680ec594329a2bd29b52",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallResultEvent/valid/minimal.json",
+          "sha256": "72db070ca4441e6f27920f938727d450f7763d59a3c0c379f756917833a4287c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallResultEvent/valid/parts-content.json",
+          "sha256": "4e09f05237f7e50f031866fa73896e941dc6446d4993762f75a39db2fa29d3b7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallStartEvent/invalid/parent-message-id-null.json",
+          "sha256": "48bf00e75e6fc6e94cc1c29375daedc2809c565f12d8628fadd8a8779563a5a0",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallStartEvent/valid/minimal.json",
+          "sha256": "620d42a8de2eb331d20ed4fe5b227ac70d21726feb940c2d5f59850ee0ce00f8",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed tool calls, argument fragments and results with scoped references.",
+      "installedFixtures": [
+        "lifecycle-text-tools"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI tool renderer and provider operations; agentui-k4zj and agentui-ckpw"
+      ]
+    },
+    {
+      "category": "state",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "State",
+        "StateSnapshotEvent",
+        "StateDeltaEvent",
+        "JsonPatch",
+        "JsonPatchOperation",
+        "AddOperation",
+        "RemoveOperation",
+        "ReplaceOperation",
+        "MoveOperation",
+        "CopyOperation",
+        "TestOperation",
+        "JsonPointer"
+      ],
+      "eventDiscriminators": [
+        "STATE_SNAPSHOT",
+        "STATE_DELTA"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "StateDeltaEvent/invalid/delta-not-an-array.json",
+          "sha256": "2fb1fab700fdac4fb2df287e2d8c96208f31f4cb717923805c890853bbccf07a",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-add-without-value.json",
+          "sha256": "520bae87a2ffcafc9ab5682d486ca63226c0ec4af8a23d8f75efdac431852aa3",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-copy-without-from.json",
+          "sha256": "0d9a4398f8ea445408abf52ec4feef572b1e4fdc3d82eba8b07b4670934a8d67",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-move-without-from.json",
+          "sha256": "6081971ade53e2bfb62e2c00275091f2fe017a7b257f7c448f6bfc067ea8efa2",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-path-missing.json",
+          "sha256": "ffc8328acb7d740021f5745509ac332f3da73dc0d03543707528faddb3c61ae6",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-pointer-bad-tilde-escape.json",
+          "sha256": "8f2f7ca0b772869f42dc2e5b3765ff0740239f4aa55423ec9b829aa964216203",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-pointer-without-leading-slash.json",
+          "sha256": "c5f9ca55330c84ecaf4a55a7661cbeeda204c08b7603050cdb19b7ae932eb21a",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-replace-without-value.json",
+          "sha256": "a3ce2fdd6c8760a4ecadd75f3c43b4b642f511c0fc8d433b2338b51fceb8cd94",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-test-without-value.json",
+          "sha256": "55a71dcef17091d1dfb7bfb43064ca84aa2d102ec593900b96dd19491e14beab",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/invalid/patch-unknown-op.json",
+          "sha256": "164eea2691b1cfb01539f98cfcf5d1e9dca087f8605371ff56c10b00ca697b03",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateDeltaEvent/valid/minimal.json",
+          "sha256": "c3fb8d2fb3ac0df46a65576fb26a4221eef348c308a888096ca027a6cadb0284",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-add-null-value.json",
+          "sha256": "695731d08bc2c4d633c757f29e22780db330d1fb7166908c1d0cf58785de93f7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-add.json",
+          "sha256": "8ef98a7fa8e2b64baeb03a2e4fcc2fb4e51ccc57ad206d4c51afc553b1f510d0",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-copy.json",
+          "sha256": "cec7cc97878c579749dda4f9bb3cb88d06f6a653a657b91a7ca5535c7839692d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-empty.json",
+          "sha256": "09b47bb3f79d974ab5d0d594caa306cd3b4a4714a6a3f4a7927fbbd904a6ed14",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-escaped-pointer.json",
+          "sha256": "04872ffd500cd760cd1984e7f6f02aef07cb0e4bd56086e0ade52ed56b81e802",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-move.json",
+          "sha256": "0bdcd5ac66c80687960437ef701d86a1d20589d92c802764d3fce6255b4b7f57",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-remove-with-ignored-value.json",
+          "sha256": "8f9b9efdb2a89d06006475c48f353e70688afc1e809fbc3a299eb8e5f62825c6",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-remove.json",
+          "sha256": "a82e03d233c6270e49c6681261d54f672525a44a9f5d34310616e05d1e78860b",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-replace.json",
+          "sha256": "ec9b795a938213b90ae91ccb4d39c192d8576facacd71b35072cacf9c18faff0",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-test.json",
+          "sha256": "80290130d3877955d4788fcc136ae41fedaadc497fd89fcdeae05267bc67d825",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateDeltaEvent/valid/patch-whole-document-pointer.json",
+          "sha256": "af87f93cb871a33d6a68e804a803864f50ece0ac0e7655744bb87789bc33a22b",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateSnapshotEvent/invalid/snapshot-missing.json",
+          "sha256": "572ba28cb53783c9eb69487d7a6506031732dc64a2aa7c919fad767d648e7320",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "StateSnapshotEvent/valid/minimal.json",
+          "sha256": "37c71104b91273b5ebfba33c9cf6d049fc1413e7af022b5eed908a5981c50e5a",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateSnapshotEvent/valid/snapshot-array.json",
+          "sha256": "0609051cc665cc6162ea6906758cd2aa9c7d8b7ba79079204c9640d8070dba00",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateSnapshotEvent/valid/snapshot-number.json",
+          "sha256": "2fe10e6191bd2da0cdbea4c506d26a3fb8c85a9b9f6842f8b9776d61ca72bac3",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateSnapshotEvent/valid/snapshot-object.json",
+          "sha256": "9120d616eaeb8475ba80bd4d141c21074803ade2efad0f2240d50f06512e620a",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StateSnapshotEvent/valid/snapshot-string.json",
+          "sha256": "7225d1e10a80eb596f8d078af219c199c87fa43ea992502966917fd4829401ca",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Snapshot and patch payload preservation; no patch reducer.",
+      "installedFixtures": [
+        "state-activity-public-extensions"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI durable state, replay and reducer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "messages",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "Role",
+        "MessagesSnapshotEvent",
+        "Message",
+        "BaseMessage",
+        "DeveloperMessage",
+        "SystemMessage",
+        "AssistantMessage",
+        "UserMessage",
+        "ToolMessage"
+      ],
+      "eventDiscriminators": [
+        "MESSAGES_SNAPSHOT"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "MessagesSnapshotEvent/invalid/assistant-tool-call-not-a-tool-call.json",
+          "sha256": "0f9fc600a6b9097dab3ed38f57cce8285beb1a7359b02e039e97fd5a4e6c94d1",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/message-metadata-null.json",
+          "sha256": "b9f92fc6159d351e462edf010c7419e4a4fbf92b512b300dc5cfd6db7d6c055f",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/messages-item-not-a-message.json",
+          "sha256": "22226be4f1aafed32f7474a0b4d295fc731930fbc7d8961165fc081bbb9fb056",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/role-shaped-like-a-tool-message.json",
+          "sha256": "b7029533b50631f3fde0b047d4fbd4e7d9600c00b09ba38b3fac20e0f0b7314b",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/role-shaped-like-an-activity-message.json",
+          "sha256": "5f1bcc18bbf51dfa08f492e1b9cdef645645ca910148dc1ee443a6a8ad900632",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/role-shaped-like-an-assistant-message.json",
+          "sha256": "2714fa9b33d443199c35a0cf0565a62df5a831389be6f912aa3845237639df94",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/invalid/unknown-role.json",
+          "sha256": "d621e9bdb63592dcd5ba2277875aaf0f8900ba48e204195c6f4d3d6a5262f5c1",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "MessagesSnapshotEvent/valid/attributed-messages.json",
+          "sha256": "2d3512b013542eca45f9e36e4dc345b73d3cbab39099059181280aacb00cd966",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MessagesSnapshotEvent/valid/every-role.json",
+          "sha256": "56f908394457efd8d6649cc706e79c6fb871584bb5e0e881e87e0667691ca6d6",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MessagesSnapshotEvent/valid/minimal.json",
+          "sha256": "8e3072fd0d6fea695506803c61694e30e69d55082ce88a9147d97d197d1641a5",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MessagesSnapshotEvent/valid/user-content-empty-array.json",
+          "sha256": "07c1745fe314a6a5802395663ab8882f3d2dd33ae909f00f4409313b9ce90647",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolMessage/invalid/content-object.json",
+          "sha256": "5b32029de93ac67c3db0de9af62ca80678d885d8b190ff4eb78ef783282304f8",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolMessage/invalid/content-part-unknown-type.json",
+          "sha256": "372fddf9efc2be5b227dfa361e04d76b354d1fc1e6028b93cd0717b8a5e9aca0",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolMessage/invalid/tool-call-id-missing.json",
+          "sha256": "e9ec16feae63fbc84e68534804a47e2d42f0bef8e3bf54fd947e5080f6bf1275",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ToolMessage/valid/empty-parts-content.json",
+          "sha256": "b223bd8018ef99202bff6b4325900549aa54e71de2a9c88e1d54d1ef5b7df92c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolMessage/valid/file-source-part.json",
+          "sha256": "0fce35e4750673d9bc216547d396ac50c1aabb956ba7cc540eeb49c30440cbfc",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolMessage/valid/minimal.json",
+          "sha256": "407049442d32cbeff8f6be67c898b454a4bedefa38f12d6ace5499be0b26aa37",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolMessage/valid/parts-content.json",
+          "sha256": "0913e6ba4004d44c6c30cf550037f49b08fda7d5b4ce1a70671c02cec4fc90d7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "UserMessage/invalid/content-missing.json",
+          "sha256": "692e8b1928dcd66e1b0dd5715db477393eddde24b4b00727d68d824b52776fac",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/content-number.json",
+          "sha256": "8aa6246e99c5bc004d16fa2f697116a52229296f1844b68ce2f140f851de5b52",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/content-part-not-an-object.json",
+          "sha256": "a7719db82c951f4a736528a9053f857672198674e53e60a15a89a43a54ca6148",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/file-source-value-missing.json",
+          "sha256": "c758842cce16a77b91465264241e7eaddec1609707518ec1e3ce52213bb94017",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/legacy-binary-part.json",
+          "sha256": "bc0dfd77bb2747875234e7ff099a6988ad913bd446365640ee5955f484364b06",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/part-shaped-like-media-with-unknown-type.json",
+          "sha256": "90ff3d9d00e291b70d534d9a3e96c08d659b8be250e0ea9876b47e943b1dbdd8",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/invalid/part-shaped-like-text-with-unknown-type.json",
+          "sha256": "4c037a546546e8999e17a3003f22cd84265a5b91e891477aee93f817f76b711e",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "UserMessage/valid/file-source-content.json",
+          "sha256": "e17ddabaf4f805260e6e929d11d88044947de9b89350da08d5d4ee3b4a35e28f",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "UserMessage/valid/multimodal-content.json",
+          "sha256": "48d4645bf8ca198094c50552ca15810ae0f1a20d79e082f282b4430a2dfa47d9",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "UserMessage/valid/text-content.json",
+          "sha256": "125ab417568edfe59eda36c1cbd9d80c69e86c0522aa6a5233205981d601373f",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Ordered message snapshots and content parts.",
+      "installedFixtures": [
+        "messages-and-opaque-content"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI materialized message store and UI; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "activity",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "ActivitySnapshotEvent",
+        "ActivityDeltaEvent",
+        "ActivityMessage"
+      ],
+      "eventDiscriminators": [
+        "ACTIVITY_SNAPSHOT",
+        "ACTIVITY_DELTA"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "ActivityDeltaEvent/valid/minimal.json",
+          "sha256": "5e08a216882483b5d1266b9d463e6436d85b183dd7275bc89aa8abf2dbac3308",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ActivityDeltaEvent/valid/patch-every-operation.json",
+          "sha256": "cc860b50a13d9608a8397f54c27dce6a8b62123c60126464210ca4c225818e60",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ActivitySnapshotEvent/invalid/content-not-an-object.json",
+          "sha256": "ebfe6fa765655d111ed5dd580338d752c6ad4a51e168fe74c99e000eafd1511f",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ActivitySnapshotEvent/valid/minimal.json",
+          "sha256": "510d6e4e27b77f18fb610c78aad0d9fd329f117b4d38d7c1d2ba3ae09e1c205c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ActivitySnapshotEvent/valid/replace-absent.json",
+          "sha256": "03327d7e9f5d6f894de5604fc51583ce313df1726dc077e64c262b88994bfd8b",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ActivitySnapshotEvent/valid/replace-false.json",
+          "sha256": "b3998813754970a95b151e8d33ebec5d05aad3b108bec87b2761ac5df2dd1a8a",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Activity snapshot and delta payload preservation.",
+      "installedFixtures": [
+        "state-activity-public-extensions"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI activity reducer and renderer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "extensions",
+      "purpose": "explicit-extension",
+      "definitions": [
+        "RawEvent",
+        "CustomEvent"
+      ],
+      "eventDiscriminators": [
+        "RAW",
+        "CUSTOM"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "CustomEvent/invalid/name-missing.json",
+          "sha256": "2c4818e20b78e6792f3353b05466d0dfe774de6369a47d4c674a5767d080cba5",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "CustomEvent/invalid/value-missing.json",
+          "sha256": "4d97fd46c2c40c68f97d34f74be179a9033c0fe7a9c13979e7fea95048577d6d",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "CustomEvent/valid/minimal.json",
+          "sha256": "345fdc154f3124f0d40ec57fb8b7cd8d09d92df4d056c23ba59ed14ec39b77a8",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "CustomEvent/valid/value-array.json",
+          "sha256": "4aa23afe50a9588694ca34b37db413afb4751142f6f19d1f7ce68dae062f34cf",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "CustomEvent/valid/value-null.json",
+          "sha256": "7fdc2a8f2d3af2016ad37f60104e6d9824043f1bd3e2e73ba9e102a12e4fd1a4",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "CustomEvent/valid/value-number.json",
+          "sha256": "5129eea3774088a19c70256ddfce9f56bb3592fed4c751ac743b62bbf655b00e",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "CustomEvent/valid/value-object.json",
+          "sha256": "1e9ac05f02800cd26ed761dd5906baca48f04e7d781d5d98350699000011c580",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "CustomEvent/valid/value-string.json",
+          "sha256": "9f132366cfe674cbf435d3b814f51afd274c2b050902ecb4094852493a43f758",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/invalid/event-missing.json",
+          "sha256": "bda29b3d30af21b18f2202fe152ebc91bb4e5cbcc075a4543a3671365c0d3a7a",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RawEvent/valid/event-array.json",
+          "sha256": "8a7ff31086d910238acec7140ceed977a079f5304ad25c65936e5c1e95f10d97",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/valid/event-number.json",
+          "sha256": "2e0a785d72f6466d1d905223a6326637704d5b62dc84c32a246ff94aef725754",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/valid/event-object.json",
+          "sha256": "130d26eb82e0b06fcdba0a3310ea0eec7186792aaf5c4e74819dbeec74d86bd5",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/valid/event-string.json",
+          "sha256": "169b77acc24b23da5a6242ff7f714418c5e1af5333ab8c05a9b93900da517025",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/valid/minimal.json",
+          "sha256": "8222c2840b14201a8b2d5c1ea08d9ac88b6224ce88189fad1429a1829ffaa2c9",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RawEvent/valid/with-source.json",
+          "sha256": "11277f3909e09c0c4a0833e2c77c5097dffefc6f59e3df94fa9f24a0e83a1d23",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Explicit versioned public raw and custom envelopes.",
+      "installedFixtures": [
+        "state-activity-public-extensions"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI host admission, redaction and extension consumers; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "lifecycle",
+      "purpose": "native-observation",
+      "definitions": [
+        "RunStartedEvent",
+        "RunFinishedEvent",
+        "RunErrorEvent",
+        "StepStartedEvent",
+        "StepFinishedEvent"
+      ],
+      "eventDiscriminators": [
+        "RUN_STARTED",
+        "RUN_FINISHED",
+        "RUN_ERROR",
+        "STEP_STARTED",
+        "STEP_FINISHED"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "RunErrorEvent/invalid/usage-item-not-a-token-usage.json",
+          "sha256": "d466a263a80910dea5abbdfeab1d8e15dff57f77cee6ccb45a11db28a6d48123",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunErrorEvent/valid/minimal.json",
+          "sha256": "a2c17e5b0168947a4c9533c2372e4f3009b083050f3ecbaa748acb011e81f76e",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunErrorEvent/valid/usage-cache-breakdown.json",
+          "sha256": "7fa79af09774001ab6d5c81c5beaf7880d3bec26533b0f00cce22e8b3685be43",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json",
+          "sha256": "e02b73fa5cc84626d34581b965d5648ce74c940d3099e124f4ec7d9ffa36d66b",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.json",
+          "sha256": "c84ad0995684cbad43dee52eecf70cb37f5053b32b5b198e5083eea704d098e2",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.json",
+          "sha256": "84c40fa3bb89e4403df0538c6fe0b4f322c65eb56dfc8194c13478a8fec0dd5e",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-interrupt-with-no-interrupts.json",
+          "sha256": "63c95d51dfcb1fb87ffac1597e722cf6605645650c73b6b8d8b3e823bb8234b0",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-null.json",
+          "sha256": "26820c391b9627c98149e88780ad5aa5e29e7e30728f899c875bbeb8190cfe95",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json",
+          "sha256": "d26548aaaa536a98a29ad126f02b8f708eaa80ac7a0cb61dc71126b2f25922c7",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-success-pending-tool-call-id-not-a-string.json",
+          "sha256": "8506f663f958c92f7ff0b3fe6e2a7dd36d6f2d25c3bf43bf45585208de727ff7",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/invalid/usage-item-not-a-token-usage.json",
+          "sha256": "c4869edab733007a434086a2e7b1b0b700cfae2260fc75b4636667ff6c037082",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/invalid/usage-negative-cache-write-count.json",
+          "sha256": "87b4acb92adb4fa68e83040f287b65a274546471b7fd894697d472568b18c78c",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/invalid/usage-negative-token-count.json",
+          "sha256": "067fcb4fe69c1b404a409206b7df0314948487fa058901c61a9392f03d3c4e7f",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunFinishedEvent/valid/minimal.json",
+          "sha256": "bf068f59ecef39d5f35067b055055ead068d085860be3fb99b89222a45055cd6",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-absent.json",
+          "sha256": "bf068f59ecef39d5f35067b055055ead068d085860be3fb99b89222a45055cd6",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-cancelled.json",
+          "sha256": "c063fbf376fddeaf93be97dab33fe75cd2e8663957fd7299fca86aefa1ca9d73",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-interrupt-full.json",
+          "sha256": "90173cc55bb0b36ddeccfb50b4b52566563b57c9d1c36b06636376ced439106c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-interrupt.json",
+          "sha256": "2b43b0f6c01016d7fa0c66c55edbf2583f9ddaa3cd65d37efdc830f0352d8c43",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-success-pending-tool-call-ids.json",
+          "sha256": "d4cb2ed5fb6c0577958425991e7353dcd2ab89b8617ef29e46995404608392da",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/outcome-success.json",
+          "sha256": "ac1ef05b2890c4f2f6a3ec6c88ec24e327bc4e2ef0a75826adb6a61abdbc6b78",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/result-array.json",
+          "sha256": "fe019d77969ea72ad563f9d3a144be0f96c3527ab5b8c692feeaafabab30e620",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/result-number.json",
+          "sha256": "81a9e0fbb97b8e75163cd5cd10042adac857f89729499ce43f1b27a2fea992fe",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/result-object.json",
+          "sha256": "f1cb9c03075d2a8379916104a02bc78eb5a42ce620ec1ec5b45f411722470ffb",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/result-string.json",
+          "sha256": "b62634a14dad5c2f7693460e2c23bae0044d8a85173cb456527e2cb65b9c5c86",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/usage-cache-breakdown.json",
+          "sha256": "e52dca6875621e11c9cd5ffe3d36a8c297016dad15473242cf5b391f63cf97aa",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/valid/usage.json",
+          "sha256": "ae449a3878248c8944096e438aedd3e68fd8e354928ac83ba0f0257b825c7246",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunStartedEvent/valid/minimal.json",
+          "sha256": "18da153201f0e0bac4483e04607d0b94883f0e35d53c5f0d033a58ba069e45dc",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunStartedEvent/valid/with-input.json",
+          "sha256": "b1d3202d393fe4c8bc7e8b12fe1f1777eb3c66d59d26211a6f626f4999da0bae",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StepFinishedEvent/valid/minimal.json",
+          "sha256": "8af514a9763f6709c70683353646475178dde49d3a670c24c4c81a13cfc65429",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "StepStartedEvent/valid/minimal.json",
+          "sha256": "9d524ecfa98d32952a80cec0dd288763acdf9f9a1c42658fd1ce1caa4288efec",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed run and step boundaries and safe failures.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "terminal-interrupts-usage"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI run coordinator and lifecycle UI; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "reasoning",
+      "purpose": "native-observation-only",
+      "definitions": [
+        "ReasoningStartEvent",
+        "ReasoningMessageStartEvent",
+        "ReasoningMessageContentEvent",
+        "ReasoningMessageEndEvent",
+        "ReasoningMessageChunkEvent",
+        "ReasoningEndEvent",
+        "ReasoningEncryptedValueEvent",
+        "ReasoningEncryptedValueSubtype",
+        "ReasoningMessage"
+      ],
+      "eventDiscriminators": [
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_MESSAGE_CHUNK",
+        "REASONING_END",
+        "REASONING_ENCRYPTED_VALUE"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "ReasoningEncryptedValueEvent/invalid/unknown-subtype.json",
+          "sha256": "53825b8156403857a123967678e60ae48ae2ce5ec6f5c8ede121df48948208e9",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ReasoningEncryptedValueEvent/valid/minimal.json",
+          "sha256": "38054b4adc1b8d76a1147fbb79114b18f42dd9a82ccefc2154e9d4f6c39ef761",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningEncryptedValueEvent/valid/subtype-tool-call.json",
+          "sha256": "c2461b85a304b8c3d3b315cc11da97b0d49cdc5a0137bbac0711e2a15e72c5ed",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningEndEvent/valid/minimal.json",
+          "sha256": "91947b6c28dd8070255a74d455ec01edeb2a52ca753df52905cd9fd8cb035937",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageChunkEvent/valid/minimal.json",
+          "sha256": "fce5df326b9206e4d31b8e2ed49005c9fd8e8381131235a6d71180343eac930b",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageContentEvent/valid/empty-delta.json",
+          "sha256": "e4fd8f014bc82ba948491a044c9b184792f78ee810251d9f7574c47af248ff64",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageContentEvent/valid/minimal.json",
+          "sha256": "342cd90d85f0979150a3b754d0dd3e8b48cbe8543543e36a5ef6e25498cd44d8",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageEndEvent/valid/minimal.json",
+          "sha256": "2dc71299a90db9b50e59a4aeba4a6c1b542b0ff590ca23d0cd2f240176a1e8c3",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageStartEvent/invalid/role-missing.json",
+          "sha256": "028db771c9a8ae2dc19c560b9f033a2dc46b4c2b8dcd05edff59de62c5cc87a0",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningMessageStartEvent/valid/minimal.json",
+          "sha256": "d79cc7274107eb138b2e76d22f24e3228fe559841f74252cfd5a0975a586868d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ReasoningStartEvent/valid/minimal.json",
+          "sha256": "4a22d3c7a0871af1d098d5b1c8bd142bb73626b688abf21d529ad4d499a1ab11",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "partial",
+      "scope": "Opaque reasoning-role message content only; reasoning lifecycle mapping planned.",
+      "installedFixtures": [
+        "messages-and-opaque-content",
+        "acknowledged-absence-and-fault"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "Switchboard reasoning lifecycle mapping; AgentUI reasoning consumer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "subagents",
+      "purpose": "native-observation",
+      "definitions": [
+        "SubagentStartedEvent",
+        "SubagentFinishedEvent",
+        "SubagentErrorEvent",
+        "SubagentFinishedOutcome",
+        "SubagentFinishedSuccessOutcome",
+        "SubagentFinishedSuspendedOutcome",
+        "SubagentInfo"
+      ],
+      "eventDiscriminators": [
+        "SUBAGENT_STARTED",
+        "SUBAGENT_FINISHED",
+        "SUBAGENT_ERROR"
+      ],
+      "canonicalFixtures": [
+        {
+          "path": "SubagentErrorEvent/invalid/code-null.json",
+          "sha256": "c108802c60f3d30c89f39df2cdf5ae5746a655796cc125132270ba215b28c3da",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentErrorEvent/valid/minimal.json",
+          "sha256": "0518608557660020b3380bfd78355f3f3dc0b23fe736ba572526c8a01d3f654d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/invalid/outcome-null.json",
+          "sha256": "e6db579a48a782628435f0452d846d11c90255b5f26ff391acb0a7ebc0455c16",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/invalid/outcome-success-carrying-interrupt-ids.json",
+          "sha256": "e430c04b1898e177c82d2c8b05a897467fb999f4ef22b7eaf1b829a820eac2dd",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/invalid/outcome-suspended-interrupt-id-not-a-string.json",
+          "sha256": "ae5bc3bd621e0adc1cda3f2393e5011765f57ca1967696b7a0cae41e1f1967a2",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "SubagentFinishedEvent/valid/minimal.json",
+          "sha256": "1adbf221d62bbb7695a4cadf6316eea8334378d1a7d6ada034d9b1eedc850e80",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/valid/outcome-success.json",
+          "sha256": "10e4e63eb2e7ed7b9b1385d91d18f2b714919a8d48d4aa42f4dca29afeb0516a",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/valid/outcome-suspended-with-interrupt-ids.json",
+          "sha256": "b9a89afcd971931edd875b57f3d2647a2fc29c8259fb3f25b622dfc494f002b4",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/valid/outcome-suspended.json",
+          "sha256": "6ad1040d816e06524b58742310571e929d9f94801caa098d1cb90f8a711ddf1f",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentInfo/invalid/name-missing.json",
+          "sha256": "651b048a0bfc59aa5617035aa6fc53f660b5ab61c58cb36dd6ae71f3a0860729",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "SubagentInfo/valid/described.json",
+          "sha256": "047a09e6d5f5a4d24ef4ba4ced8b90002514a1125f39625a7394defa375ba599",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentInfo/valid/minimal.json",
+          "sha256": "37652c84adddd9dbf04baf9f3e524703ff73f857b05b3b450e2ab6d2fa23acb7",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentStartedEvent/invalid/description-null.json",
+          "sha256": "c9203e8dc975d625393ce58a76e0f7d5dc3cfd66c40f2e807a61b1f615256bb1",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentStartedEvent/invalid/name-missing.json",
+          "sha256": "91655f7b2722ce003ffc0e0f3560ed4c04471bc85d2c461f1a4ad651e442e9b6",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "SubagentStartedEvent/valid/full.json",
+          "sha256": "187854f3c008d15f2a719a2c3aad42f4c51a9f4f515da1e00d2b3276eb68e974",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentStartedEvent/valid/minimal.json",
+          "sha256": "61617a454d09696385c5ba447625ad54afdd16348c2937680543ade93a459a10",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "partial",
+      "scope": "Scoped owner attribution only; subagent lifecycle mapping planned.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "acknowledged-absence-and-fault"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "outcomes",
+      "purpose": "native-confirmed-outcome",
+      "definitions": [
+        "RunFinishedOutcome",
+        "RunFinishedSuccessOutcome",
+        "RunFinishedInterruptOutcome",
+        "RunFinishedCancelledOutcome"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [],
+      "mapping": "represented",
+      "scope": "Observed nested terminal outcomes; no native termination proof.",
+      "installedFixtures": [
+        "terminal-interrupts-usage"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
+      ]
+    },
+    {
+      "category": "interrupts",
+      "purpose": "native-interaction",
+      "definitions": [
+        "Interrupt",
+        "ResumeEntry"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [
+        {
+          "path": "Interrupt/invalid/reason-missing.json",
+          "sha256": "5e292c57f3c08c0f8f8ec58925fa8ffc93d95b87c1ed13cacdabb5d7ad9d13a5",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "Interrupt/valid/attributed.json",
+          "sha256": "9f3a3dbb3c6d57d2ff1b91a51c033485eed210baf40885643d8c4ef6b98342d4",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "Interrupt/valid/minimal.json",
+          "sha256": "24d9f6e2a4eea286c12201ce94e818958e4ec1c3142f01356546d6aef6f4d21c",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ResumeEntry/invalid/unknown-status.json",
+          "sha256": "d02f97b41f36b2441542ba79beba2199be9386bcf4b8fa714919724971ce7cfa",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ResumeEntry/valid/cancelled.json",
+          "sha256": "14a38c20ccfc2093e8b9ab7c2694f05371c28a2657d1a29467c2430a6917d674",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ResumeEntry/valid/resolved.json",
+          "sha256": "2ec645907c9ccf4430ba99859d6de52025f3cb1a482a7b338d0ea6963da3b25f",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed terminal interrupts and references; no native suspend or resume proof.",
+      "installedFixtures": [
+        "terminal-interrupts-usage"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "Native interaction qualification and AgentUI continuation delivery; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "usage",
+      "purpose": "native-reported-accounting",
+      "definitions": [
+        "TokenUsage"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [],
+      "mapping": "represented",
+      "scope": "Observed terminal accounting; omitted values remain distinct from explicit zero.",
+      "installedFixtures": [
+        "terminal-interrupts-usage"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI usage persistence and display; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "multimodal",
+      "purpose": "native-content",
+      "definitions": [
+        "ContentPart",
+        "TextPart",
+        "ImagePart",
+        "AudioPart",
+        "VideoPart",
+        "DocumentPart",
+        "PartSource",
+        "DataSource",
+        "UrlSource",
+        "FileSource"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [
+        {
+          "path": "FileSource/invalid/reference-record.json",
+          "sha256": "d40fe9c7c4d1e05699d6191edabd30d036e56ef16e1169bbf4c747259681f5c0",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "FileSource/invalid/value-missing.json",
+          "sha256": "460f51a7b67d2dc9aaa35dd0a84a6aa11554e01e78bab1aa22aa9a57665d0962",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "FileSource/valid/full.json",
+          "sha256": "fc4d839ea9517f061f9e10193373dd75a7224a62ceec60ad20fcabe664aecf5a",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "FileSource/valid/minimal.json",
+          "sha256": "0ea27b2471995d4a2200d2c8fee586479f4701bed1345f91fdc9d357d2989764",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Opaque ordered message and tool content; no provider media fetch.",
+      "installedFixtures": [
+        "messages-and-opaque-content"
+      ],
+      "contractFixtures": [],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI content admission, media policy and UI; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "request",
+      "purpose": "host-input-with-native-validation",
+      "definitions": [
+        "Context",
+        "RunAgentInput"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [
+        {
+          "path": "RunAgentInput/invalid/context-item-not-a-context.json",
+          "sha256": "df11cbbfd8c1ca85bceffdbd1d1b76941cccfa270909e5ca15f22cdf88388846",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunAgentInput/invalid/messages-item-not-a-message.json",
+          "sha256": "83f386e244b92009f190e3fcd3ee3ed93dfe708fa436a601a7c6534894a5f8fd",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunAgentInput/invalid/messages-missing.json",
+          "sha256": "e9e2353471c235d4813f2f211860012104f38c9bfeeff71e78ab54daa35a4dc5",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunAgentInput/invalid/resume-item-not-a-resume-entry.json",
+          "sha256": "8219990ad18e590873b6d4e3c8b0e7a7530ecb9223ea6d90bbaa2e375a76b860",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunAgentInput/invalid/tools-item-not-a-tool.json",
+          "sha256": "dc17a0061f90e47c5a05495f2b4ae993cd47d029e528bcb85b62afa65b7fdfe7",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "RunAgentInput/valid/forwarded-props-array.json",
+          "sha256": "287e633e879d5c746a6d4ee39644a8dcd3eed652fec1c4baeab07aaecc88fdb3",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/forwarded-props-number.json",
+          "sha256": "90cc15e39b282bec345f6eef7e45af9c34e12c5cc585566c45940c0555c400e0",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/forwarded-props-object.json",
+          "sha256": "edff1618a05ca33e9208ff67ee22f1f9a0f9ea7a0c07eaa6b7deebe9fe026fdf",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/forwarded-props-string.json",
+          "sha256": "2909a49b9967ed6c567e3887d87d51f19fa41eb03b2913599b38680a8471c287",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/full.json",
+          "sha256": "356146244470e5f521f8bfaf4b2b680868318526b84efea41f90fe5132a198ea",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/minimal.json",
+          "sha256": "9ad5b7d7451485d4a3eef539493a7e783537270fced50e7a5fb3eb6aa1f89d4d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/state-array.json",
+          "sha256": "30372cb0a1605624862e9b551a8278d88a2eaea30737118f5e84b7636a2a61fb",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/state-number.json",
+          "sha256": "97986924a0c8070911b3774567a72eb0498562d4350e175065a7b899c6415de8",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/state-object.json",
+          "sha256": "3015b0288d3a6f6099ff862668421a37f3c867890a79e00d275918548b3fb7ca",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/state-string.json",
+          "sha256": "f46d28ca854f51ed50f660fe0a7670f33f1cf4487208b5b0260ed46794b71607",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunAgentInput/valid/without-tools-or-context.json",
+          "sha256": "a0e5250b49246bece35b16c265fd2dd1e854206fa9526b0753128bd4cc1c2dba",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "wire-only",
+      "scope": "Canonical request type and schema inventory; no host admission implementation.",
+      "installedFixtures": [],
+      "contractFixtures": [
+        {
+          "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
+          "test": "protocol wire and availability contracts preserve declared limits"
+        }
+      ],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y"
+      ]
+    },
+    {
+      "category": "capabilities",
+      "purpose": "declared-configured-availability",
+      "definitions": [
+        "IdentityCapabilities",
+        "TransportCapabilities",
+        "ToolsCapabilities",
+        "OutputCapabilities",
+        "StateCapabilities",
+        "MultiAgentCapabilities",
+        "ReasoningCapabilities",
+        "MultimodalInputCapabilities",
+        "MultimodalOutputCapabilities",
+        "MultimodalCapabilities",
+        "ExecutionCapabilities",
+        "HumanInTheLoopCapabilities",
+        "AgentCapabilities"
+      ],
+      "eventDiscriminators": [],
+      "canonicalFixtures": [
+        {
+          "path": "AgentCapabilities/invalid/custom-null.json",
+          "sha256": "2f7940c03a7367ccb42c161bc0e69ac656f78d6ebc9980cef2b0d6cd82d17f20",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/fractional-max-iterations.json",
+          "sha256": "dc9def8656d5ee821790e01ef7a19366155eb9cd7af3fb1eeb6c10f766545a6e",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "AgentCapabilities/invalid/metadata-null.json",
+          "sha256": "bcf5dea5f021a97ce642ec7ecae24aa750406bd64ad0b148d884299e480d75ca",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/old-subagents-key.json",
+          "sha256": "b6ba79e535e0936a2eb4e889393e1d39dde7b0aea93363791c7acf59aa129201",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/streaming-not-boolean.json",
+          "sha256": "e569ebd3f4a0788bd0a8eb7582d573cb5aad00002183929decf01495d3892501",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/valid/full.json",
+          "sha256": "16c4fb2e4d8a2f03aa1d980a84b2760a0a696021fc99c2d192034eaa7c7991ba",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/valid/minimal.json",
+          "sha256": "ca3d163bab055381827226140568f3bef7eaac187cebd76878e0b63e9e442356",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/valid/open-values-null.json",
+          "sha256": "6cda4da38cda495f432f66c914f35f28430fa305c1acebc6f9a7c52a69882089",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/valid/partial.json",
+          "sha256": "9c7b0c3cff6340cd1f2f87ef3f1910c89692d94eea77422c2c175b8fb8eac796",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ExecutionCapabilities/invalid/max-iterations-over-maximum.json",
+          "sha256": "14e947da216de362c8deec3a8b8985b6047f59d06d720878a08fb01fd754b936",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ExecutionCapabilities/invalid/negative-max-execution-time.json",
+          "sha256": "4c3384b724cb99c4f68f12fb7626b1edb7ac1a9a92421032eee24ccf4b0aa8d3",
+          "canonical": "invalid",
+          "typescriptAccepts": false,
+          "pythonAccepts": false
+        },
+        {
+          "path": "ExecutionCapabilities/valid/limits-at-maximum.json",
+          "sha256": "3d602eb4ea6e3a5bccb3c101468f38e74694f85bd4df9798404a973d51a0618d",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MultiAgentCapabilities/invalid/old-subagents-key.json",
+          "sha256": "cd00deb93502b3c2f1dfee5a82b4e9fd23fe5fe2e76a564c93c00168063511c1",
+          "canonical": "invalid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MultiAgentCapabilities/valid/subagents.json",
+          "sha256": "ca5e58117be5c2bc9ce9042476000d72c5253b608fe3690c74405884a6f512b1",
+          "canonical": "valid",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "wire-only",
+      "scope": "Canonical declarations, four-state availability contract and seven-family projection description.",
+      "installedFixtures": [
+        "availability-description"
+      ],
+      "contractFixtures": [
+        {
+          "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
+          "test": "protocol wire and availability contracts preserve declared limits"
+        }
+      ],
+      "nativeAvailability": "undeclared",
+      "nativeQualification": "unqualified",
+      "pendingProductOwners": [
+        "AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y"
+      ]
+    }
+  ]
+}

@@ -1,0 +1,46 @@
+{
+  "sources": {
+    "switchboard": {
+      "repository": "https://github.com/mattsp1290/switchboard",
+      "revision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "license": "SWITCHBOARD-LICENSE"
+    },
+    "canonical": {
+      "repository": "https://github.com/ag-ui-protocol/ag-ui",
+      "revision": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+      "license": "UPSTREAM-LICENSE"
+    }
+  },
+  "files": {
+    "ag-ui-pin.json": {
+      "owner": "switchboard",
+      "path": "docs/protocol/ag-ui-pin.json",
+      "sha256": "5f366a1f8b8a6b4ea03c2b403d98e0effca9ee73f42c69d561610400c7cd488d"
+    },
+    "ag-ui-matrix.tsv": {
+      "owner": "switchboard",
+      "path": "docs/protocol/ag-ui-matrix.tsv",
+      "sha256": "9ffc250d9af9081c126b2d455bb7fcab540ec0ce67ec7c6ef7e3242ae18a9b20"
+    },
+    "upstream.tsv": {
+      "owner": "switchboard",
+      "path": "tests/agui/fixtures/upstream.tsv",
+      "sha256": "a9677f83912c8edd950c7765cb884b12e32ca985d1b3be61ab6a90b161276e84"
+    },
+    "schema.json": {
+      "owner": "canonical",
+      "path": "spec/1.0/schema.json",
+      "sha256": "4b5c93226838a0e72d88e6c5df20633c686c49fcb75d9be2815c6cbf9e48e71a"
+    },
+    "SWITCHBOARD-LICENSE": {
+      "owner": "switchboard",
+      "path": "LICENSE",
+      "sha256": "a66e7d5fc718bb34c855454b134510e369cf3079296326434d31937337864309"
+    },
+    "UPSTREAM-LICENSE": {
+      "owner": "canonical",
+      "path": "LICENSE",
+      "sha256": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241"
+    }
+  }
+}

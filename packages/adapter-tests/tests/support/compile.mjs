@@ -7,6 +7,7 @@ const root = new URL('../../../../', import.meta.url);
 const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root));
 
 export async function assertCompileCases({ config = 'tsconfig.base.json', prefix, cases }) {
+  assert.equal(cases[0]?.[1], null, 'the first compile case must be a compiling positive control');
   const base = new URL(config, root);
   const audit = new URL('.audit/', base);
   await mkdir(audit, { recursive: true });

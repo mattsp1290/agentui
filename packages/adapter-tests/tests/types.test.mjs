@@ -1,22 +1,23 @@
 import { test } from 'node:test';
 import { assertCompileCases } from './support/compile.mjs';
 const targets = [
-  ['packages/contracts', 'RunIdentity', '@agentui/contracts', ['document', 'process']],
-  ['packages/sdk', 'ExtensionManifest', '@agentui/sdk', ['document', 'process']],
-  ['packages/sdk', 'ConversationModule', '@agentui/sdk/react', ['document', 'process'], 'tsconfig.react.json'],
-  ['packages/theme', 'Theme', '@agentui/theme', ['document', 'process']],
-  ['packages/theme', 'ThemeProviderProps', '@agentui/theme/react', ['document', 'process'], 'tsconfig.react.json'],
-  ['packages/ui-primitives', 'ButtonProps', '@agentui/ui-primitives/desktop', ['process']],
-  ['packages/ui-primitives', 'ButtonProps', '@agentui/ui-primitives/native', ['document', 'process'], 'tsconfig.native.json'],
-  ['packages/host', 'EventObserver', '@agentui/host', ['document']],
-  ['apps/desktop', 'DesktopMount', '@agentui/desktop', ['process']],
-  ['apps/ios', 'IosConversationView', '@agentui/ios', ['document', 'process']],
+  { workspace: 'packages/contracts', type: 'RunIdentity', module: '@agentui/contracts', forbidden: ['document', 'process'] },
+  { workspace: 'packages/protocol', type: 'Event', module: '@agentui/protocol', forbidden: ['document', 'process'] },
+  { workspace: 'packages/sdk', type: 'ExtensionManifest', module: '@agentui/sdk', forbidden: ['document', 'process'] },
+  { workspace: 'packages/sdk', type: 'ConversationModule', module: '@agentui/sdk/react', forbidden: ['document', 'process'], config: 'tsconfig.react.json' },
+  { workspace: 'packages/theme', type: 'Theme', module: '@agentui/theme', forbidden: ['document', 'process'] },
+  { workspace: 'packages/theme', type: 'ThemeProviderProps', module: '@agentui/theme/react', forbidden: ['document', 'process'], config: 'tsconfig.react.json' },
+  { workspace: 'packages/ui-primitives', type: 'ButtonProps', module: '@agentui/ui-primitives/desktop', forbidden: ['process'] },
+  { workspace: 'packages/ui-primitives', type: 'ButtonProps', module: '@agentui/ui-primitives/native', forbidden: ['document', 'process'], config: 'tsconfig.native.json' },
+  { workspace: 'packages/host', type: 'EventObserver', probe: 'EventObserver<string>', module: '@agentui/host', forbidden: ['document'] },
+  { workspace: 'apps/desktop', type: 'DesktopMount', module: '@agentui/desktop', forbidden: ['process'] },
+  { workspace: 'apps/ios', type: 'IosConversationView', module: '@agentui/ios', forbidden: ['document', 'process'] },
 ];
 
-for (const [workspace, type, name, forbidden, configFile = 'tsconfig.json'] of targets) {
-  test(`${name} rejects foreign ambient globals`, () => assertCompileCases({
-    config: `${workspace}/${configFile}`,
-    prefix: `import type { ${type} } from '${name}';\nexport type Probe = ${type}${type === 'EventObserver' ? '<string>' : ''};\n`,
+for (const { workspace, type, module, forbidden, probe = type, config = 'tsconfig.json' } of targets) {
+  test(`${module} rejects foreign ambient globals`, () => assertCompileCases({
+    config: `${workspace}/${config}`,
+    prefix: `import type { ${type} } from '${module}';\nexport type Probe = ${probe};\n`,
     cases: [['', null], ...forbidden.map((global) => [`void ${global};\n`, new RegExp(`Cannot find name '${global}'`)])],
   }));
 }

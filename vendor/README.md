@@ -10,8 +10,9 @@ artifact bytes and lockfile together.
 The artifact contains built JavaScript, declarations, the upstream architecture
 record and upstream MIT license. Only core and `./agui` are public exports.
 Core has no required runtime dependency. The AG-UI entry requires the exact
-optional peer `@ag-ui/core@1.0.4`, which this host integration does not install.
-Protocol conformance is a separate AgentUI task.
+optional peer `@ag-ui/core@1.0.4`. The explicit `@agentui/host/agui` consumer and
+pure `@agentui/protocol` package each declare that exact SDK dependency.
+The host core entry imports no AG-UI code. See the [consumer conformance matrix](../docs/protocol/README.md).
 
 Linux arm64 qualification used Node 24.22.3, npm 11.19.1, uv 0.11.3 and Python
 3.13.12. Installation, lint, type checking, installed-package tests and canonical

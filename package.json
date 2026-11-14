@@ -11,6 +11,7 @@
   },
   "workspaces": [
     "packages/contracts",
+    "packages/protocol",
     "packages/sdk",
     "packages/theme",
     "packages/ui-primitives",
@@ -24,13 +25,16 @@
     "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs",
+    "protocol:matrix": "node scripts/protocol-conformance.mjs",
+    "protocol:check": "node scripts/protocol-conformance.mjs --check",
     "verify": "npm run build && npm run check && npm run lint && npm test",
     "preview:theme": "node tests/theme/preview.mjs",
     "setup:browser": "playwright install --with-deps chromium"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "ajv": "8.20.0",
     "axe-core": "4.14.0",
     "esbuild": "0.28.2",
     "oxlint": "1.93.0",
