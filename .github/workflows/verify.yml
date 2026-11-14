@@ -32,3 +32,5 @@ jobs:
       - name: Install theme test browser
         run: npm run setup:browser
       - run: npm run verify
+      - name: Verify frozen AG-UI fork packages
+        run: node scripts/verify-agui-fork.mjs

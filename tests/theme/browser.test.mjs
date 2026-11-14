@@ -7,9 +7,12 @@ import { createPreview } from './server.mjs';
 
 test('desktop controls work with system themes, scoped overrides and accessible settings', async (t) => {
   const preview = await createPreview();
-  t.after(() => preview.close());
-  const browser = await chromium.launch({ headless: true });
-  t.after(() => browser.close());
+  let browser;
+  t.after(async () => {
+    try { await browser?.close(); }
+    finally { await preview.close(); }
+  });
+  browser = await chromium.launch({ headless: true });
   const page = await browser.newPage({ viewport: { width: 1280, height: 1000 }, colorScheme: 'light' });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));

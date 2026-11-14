@@ -7,6 +7,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | Package | Responsibility | Type environment |
 | --- | --- | --- |
 | `@agentui/contracts` | Conversation scope, provider identity, run authority | ES2023 only |
+| `@agentui/protocol` | Published AG-UI SDK types, construction enum and availability declarations | ES2023 only |
 | `@agentui/sdk` | Full-trust extension entry manifests | ES2023 only |
 | `@agentui/sdk/react` | Conversation-scoped React module contracts | React, without DOM |
 | `@agentui/theme` | Semantic tokens and inherited theme resolution | ES2023 only |
@@ -14,6 +15,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | `@agentui/ui-primitives/desktop` | DOM controls and system theme scope | React and DOM |
 | `@agentui/ui-primitives/native` | React Native controls | React Native, without DOM |
 | `@agentui/host` | Public Switchboard consumption boundary | Node |
+| `@agentui/host/agui` | Installed Switchboard AG-UI projection consumer | Node |
 | `@agentui/adapter-tests` | Downstream package and boundary checks | Node |
 | `@agentui/desktop` | Tauri client entry contracts | React and DOM |
 | `@agentui/ios` | React Native client entry contracts | React Native, without DOM |
@@ -24,15 +26,22 @@ The root owns the browser workbench and its tooling because it checks integratio
 The adapter-test workspace separately owns package and ambient-boundary checks.
 The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Connection lifecycle and OS-protected credential storage remain gated on host pairing and shared client state.
 Each package compiles independently with strict TypeScript.
-There are no source aliases. Imports resolve built package exports.
+There are no source aliases. TypeScript package imports resolve built exports.
+Repository Node tests also consume explicit test-only exports from the adapter-test workspace.
+The test-only compile export assumes this repository's workspace layout.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
 
 The host is the only application workspace with a Switchboard dependency.
 Clients and customization declare no dependency on Node host APIs.
 The adapter-test workspace consumes the host public API.
 Packaged native adapters remain upstream work. The pinned library provides a
-limited AG-UI projection; AgentUI protocol and transport consumption remain separate work.
+limited AG-UI projection, consumed through the explicit host AG-UI entry.
+The [versioned conformance matrix](../protocol/README.md) names installed fixtures
+and pending consumers. Transport, replay and product UI consumption remain separate work.
 No adapter implementation or agent loop is copied here.
+
+`@agentui/protocol` exports published SDK types and the SDK's `EventType` construction enum.
+Runtime wire validation remains separate from TypeScript assignment checks.
 
 ## Run ownership
 
