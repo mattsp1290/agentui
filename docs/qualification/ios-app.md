@@ -26,7 +26,7 @@ From the repository root, replace `SIMULATOR_UDID` with the chosen UDID:
 
 The launcher selects Node 24.22.3 and npm 11.19.1. It runs `npm ci` in `apps/ios/native`, then `pod install --deployment`. Preparation compares `Podfile.lock` before and after installation and fails on drift.
 
-The build boots the selected simulator and compiles the shared `AgentUI` scheme in Release mode with signing disabled. It checks that `main.jsbundle` exists, installs the app, and launches `homes.birb.agentui`. Confirm that the screen says **AgentUI**, **Not connected**, and **This developer build**.
+The build checks the preparation input hashes, boots the selected simulator, and compiles the shared `AgentUI` scheme in Release mode with signing disabled. It removes the previous embedded JavaScript bundle and clears inherited React Native bundling overrides before building. It checks that `main.jsbundle` exists, installs the app, and launches `homes.birb.agentui`. Confirm that the screen says **AgentUI**, **Not connected**, and **This developer build**.
 
 The app is `apps/ios/native/.work/build/Build/Products/Release-iphonesimulator/AgentUI.app`. The native build log is `apps/ios/native/.work/build.log`. Installation or build failures stop the launcher.
 
@@ -36,6 +36,8 @@ To run preparation and build separately, use the pinned Node and npm versions:
 npm run ios:prepare
 npm run ios:run -- SIMULATOR_UDID
 ```
+
+If a preparation input changes, run `ios:prepare` again before `ios:run`. The preparation receipt covers the native manifest and locks, the platform manifest, the Podfile, and Hermes normalization.
 
 The native package has its own JavaScript lockfile. Root `npm ci` and `npm run verify` do not install CocoaPods or build the iOS app.
 
@@ -80,7 +82,7 @@ After `ios:run`, use the pinned toolchain to run:
 npm run ios:verify -- SIMULATOR_UDID
 ```
 
-The check rejects a listener on port 8081, compares the installed embedded bundle with the build product, and relaunches the app. It records the process, bundle hash, tool versions, and screenshot under `apps/ios/native/.work/evidence`. Inspect the screenshot to confirm the disconnected screen rendered.
+The check rejects a listener on port 8081, compares the installed embedded bundle with the build product, and relaunches the app. After a three-second settle period, it requires the same launched process to remain running. It records the process, bundle hash, tool versions, and screenshot under `apps/ios/native/.work/evidence`. Inspect the screenshot to confirm the disconnected screen rendered.
 
 Preparation normalizes React Native 0.86.0's Hermes compiler path to `${PODS_ROOT}/../../node_modules/hermes-compiler/hermesc/osx-bin/hermesc`. The upstream podspec uses an absolute checkout path in `HERMES_CLI_PATH`, which otherwise changes its CocoaPods checksum across checkout locations. `normalize-hermes.cjs` checks the expected upstream expression before changing it. Review that normalization when upgrading React Native. Native dependency versions remain locked.
 

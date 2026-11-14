@@ -14,18 +14,15 @@ evidence="$PWD/.work/evidence"
 mkdir -p "$evidence"
 installed="$(xcrun simctl get_app_container "$simulator" "$bundle_id" app)"
 cmp "$product/main.jsbundle" "$installed/main.jsbundle"
-shasum -a 256 "$installed/main.jsbundle" > "$evidence/bundle.sha256"
+(cd "$installed" && shasum -a 256 main.jsbundle) > "$evidence/bundle.sha256"
 xcrun simctl terminate "$simulator" "$bundle_id" 2>/dev/null || true
 xcrun simctl launch "$simulator" "$bundle_id" > "$evidence/relaunch.txt"
-for attempt in {1..15}; do
-  xcrun simctl spawn "$simulator" launchctl list > "$evidence/processes.txt"
-  if awk -v app="$bundle_id" '$1 ~ /^[0-9]+$/ && index($3, "UIKitApplication:" app "[") { found=1 } END { exit !found }' "$evidence/processes.txt"; then
-    break
-  fi
-  [[ "$attempt" -lt 15 ]] || { echo 'App did not remain running.' >&2; exit 1; }
-  sleep 1
-done
+launched_pid=$(awk -F': ' '{print $2}' "$evidence/relaunch.txt")
 sleep 3
+xcrun simctl spawn "$simulator" launchctl list > "$evidence/processes.txt"
+awk -v pid="$launched_pid" -v app="$bundle_id" \
+  '$1 == pid && index($3, "UIKitApplication:" app "[") { found=1 } END { exit !found }' \
+  "$evidence/processes.txt" || { echo 'App exited after launch.' >&2; exit 1; }
 xcrun simctl io "$simulator" screenshot "$evidence/relaunch.png"
 { git rev-parse HEAD; git status --porcelain; xcrun simctl list devices | grep -F "$simulator"; xcrun simctl list runtimes; sw_vers; xcodebuild -version; node --version; npm --version; pod --version; } > "$evidence/toolchain.txt"
 echo "Inspect $evidence/relaunch.png for the disconnected AgentUI screen."

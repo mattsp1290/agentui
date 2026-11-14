@@ -2,6 +2,10 @@
 set -eu
 [ "$(uname -s)" = Darwin ] || { echo 'The iOS build requires macOS.' >&2; exit 1; }
 [ "$#" -eq 1 ] || { echo 'Usage: agentui-ios simulator-UDID' >&2; exit 1; }
+case "$1" in
+  *[!0-9A-Fa-f-]*|'') echo 'Supply a simulator UDID.' >&2; exit 1 ;;
+esac
+[ "${#1}" -eq 36 ] || { echo 'Supply a simulator UDID.' >&2; exit 1; }
 repo_root=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
 cd "$repo_root"
 export AGENTUI_IOS_SIMULATOR="$1"
