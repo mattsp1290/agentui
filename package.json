@@ -25,12 +25,16 @@
     "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs",
     "protocol:matrix": "node tests/protocol/report.mjs",
     "protocol:check": "node tests/protocol/report.mjs --check",
     "verify": "npm run build && npm run check && npm run lint && npm test",
     "preview:theme": "node tests/theme/preview.mjs",
-    "setup:browser": "playwright install --with-deps chromium"
+    "setup:browser": "playwright install --with-deps chromium",
+    "desktop:prepare": "npm run build --workspace=@agentui/contracts --workspace=@agentui/sdk --workspace=@agentui/theme --workspace=@agentui/ui-primitives",
+    "desktop:build": "npm run desktop:prepare && npm run build --workspace=@agentui/desktop",
+    "desktop:dev": "npm run tauri:dev --workspace=@agentui/desktop",
+    "desktop:bundle": "npm run tauri:bundle --workspace=@agentui/desktop"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
