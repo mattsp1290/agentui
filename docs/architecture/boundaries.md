@@ -28,6 +28,7 @@ Tauri Rust setup and native application lifecycle belong to later tasks.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. TypeScript package imports resolve built exports.
 Repository Node tests also consume explicit test-only exports from the adapter-test workspace.
+The test-only compile export assumes this repository's workspace layout.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
 
 The host is the only application workspace with a Switchboard dependency.

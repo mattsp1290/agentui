@@ -10,13 +10,15 @@ test('AG-UI SDK, validator and installed license match the retained pins', () =>
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const { pin, provenance } = retained;
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
-  const forkDirectory = 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/';
+  const lock = json('package-lock.json');
+  const locked = lock.packages['node_modules/@ag-ui/core'];
+  assert.match(locked.resolved, /^file:vendor\/ag-ui\/[a-f0-9]{40}\/[^/]+\.tgz$/u, 'SDK must resolve to a local fork archive');
+  const forkDirectory = locked.resolved.slice(5, locked.resolved.lastIndexOf('/') + 1);
   const fork = json(`${forkDirectory}provenance.json`);
   const installedSdk = fork.artifacts.find((artifact) => artifact.package === sdk.package);
   const archive = `${forkDirectory}${installedSdk.artifact}`;
   assert.equal(digest(readFileSync(new URL(archive, root))), installedSdk.sha256);
   assert.equal(installedSdk.version, sdk.version);
-  const lock = json('package-lock.json');
   const project = json('package.json');
   assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256);
   for (const workspace of ['packages/protocol', 'packages/host']) {

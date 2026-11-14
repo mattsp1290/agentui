@@ -856,6 +856,24 @@
       "compressedSha256": "932535bd4b9ca81a9aafc4b03fd3f10d6be1b0798ad72db3814245630ff5f0bd",
       "encoding": "gzip; raw retained without edits",
       "role": "fresh retained-input qualification replay; paths inside record actual measured locations"
+    },
+    {
+      "path": "evidence/upstream-license-policy.log.gz",
+      "rawBytes": 30082,
+      "retainedBytes": 30082,
+      "compressedBytes": 7117,
+      "rawSha256": "595e436622a99b2d591650bbca1391e3d171b77888796f8acf8e313c2bfd0387",
+      "retainedSha256": "595e436622a99b2d591650bbca1391e3d171b77888796f8acf8e313c2bfd0387",
+      "compressedSha256": "dfc872d4056cb3bbd20873cd303fbc409b6555020935e567e4428ca4ee72aff4"
+    },
+    {
+      "path": "evidence/standard10-replay.log.gz",
+      "rawBytes": 55175,
+      "retainedBytes": 55175,
+      "compressedBytes": 6241,
+      "rawSha256": "05bced04bca37eb356284abf56481a7e6d004a8e318ece5fea3657067391408e",
+      "retainedSha256": "05bced04bca37eb356284abf56481a7e6d004a8e318ece5fea3657067391408e",
+      "compressedSha256": "c88e0a244201d985e22eda6c81f3205e93efcc6ccda64d1ed516771797ac67c6"
     }
   ],
   "qualification": {
@@ -954,6 +972,26 @@
           "signal": null
         }
       ]
+    },
+    "standard10Replay": {
+      "command": "node scripts/verify-agui-fork.mjs",
+      "start": "2026-11-14T14:49:09.466172+00:00",
+      "end": "2026-11-14T14:49:19.959907+00:00",
+      "exitCode": 0,
+      "sourceScope": "AgentUI661216e plus current lock-derived metadata and fail-closed optimized Python fixes; measured working code later committed separately. Native/archive/consumerlock/fixtures unchanged.",
+      "log": "evidence/standard10-replay.log.gz",
+      "driverSha256": "0b31db1516e9560c2a15b2971ef90d11b7e4f7af1a9b610e863095032d45ac52",
+      "checkerSha256": "e41183b35522320d6ae0b44b1782b91cbbb94992ebaee085dc8605d91c6e6679",
+      "node": "v24.22.3",
+      "npm": "11.19.1"
     }
+  },
+  "upstreamLicensePolicy": {
+    "job": "https://github.com/mattsp1290/ag-ui/actions/runs/42942702235/job/130268067856",
+    "result": "failure",
+    "diagnostic": "Public package @ag-ui/codex-sdk needs a license policy entry",
+    "task": "ag-ui-whx0",
+    "evidence": "evidence/upstream-license-policy.log.gz",
+    "noticeScope": "All six retained MIT notices and Pi donor provenance checked separately; upstream policy gate remains failed."
   }
 }

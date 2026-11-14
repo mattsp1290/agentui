@@ -4,9 +4,9 @@
 
 The shared protocol and host workspaces install `@ag-ui/core@1.0.4` from the
 [PR49 fork artifact](ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/README.md).
-Its six-package closure includes the Codex and Pi integrations for Switchboard
-consumption. Those native packages are qualified in a separate controlled
-consumer; AgentUI does not start a second native runtime. Full native integration,
+Its six-package closure includes the Codex and Pi packages intended for later
+Switchboard composition. A separate controlled consumer verifies their installation,
+public imports and fixture behavior. AgentUI does not start a second native runtime. Full native integration,
 approvals, discovery, provider routes and Apple qualification remain open.
 
 ## Switchboard package provenance

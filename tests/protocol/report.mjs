@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { aguiProtocol } from '@agentui/host/agui';
 import { retained } from './inputs.mjs';
@@ -37,9 +38,20 @@ export function buildConformanceReport() {
   const { provenance, pin, schema, definitions, fixtures } = retained;
   const vendor = json(new URL('vendor/switchboard.json', root));
   const project = json(new URL('package.json', root));
-  const forkPath = 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/provenance.json';
-  const fork = json(new URL(forkPath, root));
+  const locked = json(new URL('package-lock.json', root)).packages['node_modules/@ag-ui/core'];
+  assert.match(locked.resolved, /^file:vendor\/ag-ui\/[a-f0-9]{40}\/[^/]+\.tgz$/u, 'SDK must resolve to a local fork archive');
+  const forkDirectory = locked.resolved.slice(5, locked.resolved.lastIndexOf('/') + 1);
+  const forkPath = `${forkDirectory}provenance.json`;
+  const forkBytes = readFileSync(new URL(forkPath, root));
+  const fork = JSON.parse(forkBytes);
   const installedSdk = fork.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
+  assert.equal(forkDirectory, `vendor/ag-ui/${fork.sourceRevision}/`);
+  assert.equal(locked.resolved, `file:${forkDirectory}${installedSdk.artifact}`);
+  assert.equal(locked.integrity, installedSdk.npmIntegrity);
+  assert.equal(locked.version, installedSdk.version);
+  for (const workspace of ['packages/protocol', 'packages/host']) {
+    assert.equal(json(new URL(`${workspace}/package.json`, root)).dependencies['@ag-ui/core'], `file:../../${forkDirectory}${installedSdk.artifact}`, workspace);
+  }
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   assert.equal(provenance.sources.switchboard.revision, vendor.sourceRevision);
@@ -63,9 +75,12 @@ export function buildConformanceReport() {
     coverageContractVersion,
     installedSdk: {
       repository: fork.sourceRepository, branch: fork.sourceBranch, sourceRevision: fork.sourceRevision,
-      provenance: forkPath, package: installedSdk.package, version: installedSdk.version,
+      provenance: forkPath, provenanceSha256: createHash('sha256').update(forkBytes).digest('hex'),
+      package: installedSdk.package, version: installedSdk.version,
       artifact: installedSdk.artifact, sha256: installedSdk.sha256, integrity: installedSdk.npmIntegrity,
-      scope: 'Shared SDK types and enum; Codex and Pi native host integration remains unqualified.',
+      matchesHistoricalRuntimeArtifactSha256: installedSdk.sha256 === sdk.sha256,
+      matchesHistoricalRuntimeArtifactIntegrity: installedSdk.npmIntegrity === sdk.integrity,
+      scope: reportText.installedSdkScope,
     },
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,

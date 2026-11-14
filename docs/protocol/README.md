@@ -6,6 +6,9 @@ branch `matt.spurlin/typescript-sdks`, frozen at
 `ed2c1d5b63299d3f08676a1418cc2640bbe55fd1`.
 The matrix records its artifact separately in `installedSdk`. The retained canonical
 schema and historical runtime-validator evidence keep their original attribution.
+The current fork core archive has the same SHA-256 and SRI as the historical registry
+`@ag-ui/core@1.0.4` artifact. The matrix records both comparisons; a future `false`
+leaves the historical runtime results attributed to their original artifact.
 The six fork packages and their controlled consumer checks are retained under
 [`vendor/ag-ui`](../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/README.md).
 Native Codex and Pi integration remains with Switchboard and is not qualified by this SDK pin.
@@ -145,8 +148,9 @@ fresh process to check changed retained files.
 Report generation imports body definitions without invoking fixture callbacks or
 starting compiler processes. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
-matrix checks retained inputs and writes the expected report. Neither command
-asserts installed SDK and validator pins.
+matrix checks retained inputs and writes the expected report. Both check locked SDK
+metadata against fork provenance and workspace declarations. Actual archive bytes,
+installed SDK and validator pins remain the named installation-pin test's checks.
 A separate identity fixture checks cross-run, source and reference scoping.
 Qualification scope and pending ownership remain separate from behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale

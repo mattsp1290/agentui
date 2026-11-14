@@ -8,6 +8,7 @@ export const projectionFacts = {
 };
 
 export const reportText = {
+  installedSdkScope: 'Shared SDK types and enum; Codex and Pi native host integration remains unqualified.',
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and SDK runtime validator comparison using zod/pydantic. It does not evaluate published TypeScript types, native behavior or installed AgentUI output.',
   sdkRuntimeEvidenceKind: 'historical-upstream-runtime-validators',

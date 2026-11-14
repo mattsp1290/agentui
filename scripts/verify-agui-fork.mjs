@@ -7,7 +7,9 @@ import { fileURLToPath } from 'node:url';
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const checks = join(root, 'tests/dependencies/ag-ui');
-const vendor = join(root, 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1');
+const locked = JSON.parse(await readFile(join(root, 'package-lock.json'), 'utf8')).packages['node_modules/@ag-ui/core'];
+assert.match(locked.resolved, /^file:vendor\/ag-ui\/[a-f0-9]{40}\/[^/]+\.tgz$/u, 'SDK must resolve to a local fork archive');
+const vendor = dirname(join(root, locked.resolved.slice(5)));
 const [major, minor] = process.versions.node.split('.').map(Number);
 assert(major > 22 || (major === 22 && minor >= 19), 'Node >=22.19 is required');
 assert(process.platform !== 'win32', 'Controlled Codex supervision requires POSIX');
