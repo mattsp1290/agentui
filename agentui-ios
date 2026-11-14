@@ -1,0 +1,13 @@
+#!/bin/bash
+set -euo pipefail
+repo_root=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
+# shellcheck source=apps/ios/native/common.sh
+source "$repo_root/apps/ios/native/common.sh"
+AGENTUI_IOS_SIMULATOR="$(require_simulator "$@")"
+export AGENTUI_IOS_SIMULATOR
+[[ "$(uname -s)" == Darwin ]] || { echo 'The iOS build requires macOS.' >&2; exit 1; }
+cd "$repo_root"
+node_package="node@$(cat .node-version)"
+npm_package=$(node -p "require('./package.json').packageManager")
+exec npm exec --yes --package="$node_package" --package="$npm_package" --call \
+  "npm run ios:prepare && npm run ios:run -- \"\$AGENTUI_IOS_SIMULATOR\""

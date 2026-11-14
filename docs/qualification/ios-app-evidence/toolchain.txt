@@ -1,0 +1,14 @@
+0ec18a925f8f8628a4e72a253608705c0542598d
+    AgentUI packaging qualification (8C8C1971-6462-4016-BE9B-DBBBD9DCB0C6) (Booted)
+== Runtimes ==
+iOS 18.2 (18.2 - 22C150) - com.apple.CoreSimulator.SimRuntime.iOS-18-2
+iOS 26.3 (26.3.1 - 23D8133) - com.apple.CoreSimulator.SimRuntime.iOS-26-3
+watchOS 26.2 (26.2 - 23S303) - com.apple.CoreSimulator.SimRuntime.watchOS-26-2
+ProductName:		macOS
+ProductVersion:		26.6.2
+BuildVersion:		25G83
+Xcode 26.2
+Build version 17C52
+v24.22.3
+11.19.1
+1.16.2
