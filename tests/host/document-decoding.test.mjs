@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { DocumentScopeMismatchError } from '@agentui/contracts';
+import { FeedMismatchError, parseFeedItem } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { parseServicePull, parseServiceResponse } from '@agentui/contracts/service';
 import { createBrowserConnection } from '@agentui/client/service';
@@ -37,8 +37,19 @@ for (const [name, corrupt, classification = 'resync'] of malformed) {
   test(`document boundaries reject ${name} without publishing partial state`, { timeout: 5000 }, async t => {
     const document = valid();
     corrupt(document);
-    assert.throws(() => parseServicePull(page(document)), classification === 'mismatch' ? DocumentScopeMismatchError : Error);
-    assert.throws(() => parseServiceResponse({ op: 'pull' }, { ok: true, value: page(document) }));
+    const framed = parseServicePull(page(document));
+    const response = parseServiceResponse({ op: 'pull' }, { ok: true, value: page(document) });
+    assert.deepEqual(framed.item, item(document));
+    assert.deepEqual(response.value.item, framed.item);
+    assert.throws(() => parseFeedItem(framed.item, transcriptProjection, scope), classification === 'mismatch' ? FeedMismatchError : Error);
+    const browser = createBrowserConnection({ fetch: async (_url, init) => {
+      const request = JSON.parse(init.body);
+      return Response.json({ ok: true, value: request.op === 'watch' ? { feedId: 'feed' } : request.op === 'close' ? null : framed });
+    } });
+    const browserFeed = browser.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => assert.fail('Malformed document delivered'));
+    const end = await browserFeed.ended;
+    assert.equal(end.kind, classification === 'mismatch' ? 'refused' : 'resync');
+    assert.equal(end.cursor, null);
 
     const client = clientFixture({ selectedProjection: transcriptProjection });
     t.after(() => client.store.disconnect());
@@ -77,7 +88,7 @@ test('valid documents retain prototype-like identities at wire, delivery and reo
   const document = { domain: transcriptProjection.initial(),
     receipts: { ['__proto__']: { ...receipt, clientCommandId: '__proto__' } },
     decisions: { ['__proto__']: { ...decision, pendingId: '__proto__' } } };
-  assert.deepEqual(parseServicePull(page(document)).item.snapshot.document, document);
+  assert.deepEqual(parseFeedItem(parseServicePull(page(document)).item, transcriptProjection, scope).snapshot.document, document);
   const client = clientFixture({ selectedProjection: transcriptProjection });
   t.after(() => client.store.disconnect());
   await client.store.connect();

@@ -30,7 +30,8 @@ test('canonical service schema rejects unknown operations, fields, and out of ra
   assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: Array(101).fill(scope) }));
   assert.throws(() => parseServiceResponse({ op: 'close' }, { ok: true, value: {} }));
   assert.throws(() => parseServicePull({ ...page(1), extra: true }));
-  assert.throws(() => parseServicePull(page(1, { kind: 'events', events: [{ scope, sequence: 1, event: { kind: 'invalid' } }] })));
+  const unknownDomain = page(1, { kind: 'events', events: [{ scope, sequence: 1, event: { kind: 'invalid' } }] });
+  assert.deepEqual(parseServicePull(unknownDomain), unknownDomain);
   let nested = {};
   for (let depth = 0; depth < 70; depth++) nested = { nested };
   assert.throws(() => parseServiceResponse({ op: 'metadata' }, { ok: true, value: nested }), /structural limit/);

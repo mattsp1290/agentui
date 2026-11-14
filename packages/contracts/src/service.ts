@@ -2,9 +2,8 @@ import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility } from './compatibility.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
-import { transcriptProjection } from './conversation.js';
-import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseDocument, parseHostEvent, parseReceipt, parseScope } from './durable.js';
-import type { ClientCommand, ConversationPort, FeedEnd, FeedItem, Receipt, SubmitResult } from './durable.js';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope } from './durable.js';
+import type { ClientCommand, ConversationPort, FeedEnd, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -37,7 +36,7 @@ export interface ServiceMetadata {
   readonly compatibility: HostCompatibility;
 }
 export type ServicePull =
-  | { readonly kind: 'page'; readonly page: number; readonly item: FeedItem<TranscriptEvent, Transcript> }
+  | { readonly kind: 'page'; readonly page: number; readonly item: unknown }
   | { readonly kind: 'heartbeat' }
   | { readonly kind: 'ended'; readonly end: FeedEnd };
 export interface ServiceValueMap {
@@ -115,23 +114,18 @@ function compatibility(value: unknown): HostCompatibility {
     desiredGitRevision: identifier(input.desiredGitRevision),
     appliedArtifact: { artifactId: identifier(artifact.artifactId), gitRevision: identifier(artifact.gitRevision) } };
 }
-function feedItem(value: unknown): FeedItem<TranscriptEvent, Transcript> {
+function feedFrame(value: unknown): unknown {
+  canonicalJson(value);
   const input = record(value);
   if (input.kind === 'snapshot') {
     exact(input, ['kind', 'snapshot']);
-    const snapshot = record(input.snapshot, ['scope', 'projectionVersion', 'cursor', 'document']);
-    const scope = parseScope(snapshot.scope), cursor = count(snapshot.cursor);
-    const document = parseDocument(snapshot.document, value => transcriptProjection.decodeState(value), scope, cursor);
-    return { kind: 'snapshot', snapshot: { scope, projectionVersion: count(snapshot.projectionVersion), cursor, document } };
+    if (utf8Bytes(canonicalJson(input.snapshot)) > SERVICE_SNAPSHOT_BYTES) throw new Error('Service snapshot exceeds byte limit');
+    return value;
   }
   exact(input, ['kind', 'events']);
   if (input.kind !== 'events' || !Array.isArray(input.events) || input.events.length > SERVICE_EVENT_PAGE.events) throw new Error('Invalid service feed item');
   if (input.events.reduce((bytes, event) => bytes + utf8Bytes(canonicalJson(event)), 0) > SERVICE_EVENT_PAGE.bytes) throw new Error('Service event page exceeds byte limit');
-  return { kind: 'events', events: input.events.map(value => {
-    const envelope = record(value, ['scope', 'sequence', 'event']);
-    const scope = parseScope(envelope.scope), sequence = count(envelope.sequence);
-    return { scope, sequence, event: parseHostEvent(envelope.event, scope, sequence, transcriptProjection) };
-  }) };
+  return value;
 }
 export function parseServicePull(value: unknown): ServicePull {
   const input = record(value);
@@ -140,7 +134,7 @@ export function parseServicePull(value: unknown): ServicePull {
       exact(input, ['kind', 'page', 'item']);
       const page = count(input.page);
       if (!page) throw new Error('Invalid service page number');
-      return { kind: 'page', page, item: feedItem(input.item) };
+      return { kind: 'page', page, item: feedFrame(input.item) };
     }
     case 'heartbeat': exact(input, ['kind']); return { kind: 'heartbeat' };
     case 'ended': {

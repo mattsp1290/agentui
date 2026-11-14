@@ -29,21 +29,21 @@ for (const [name, previous, incoming, quarantined, expected] of [
   ['quarantined acceptance reapplies', accepted, accepted, true, 'apply'],
 ]) {
   test(`settlement ${name}`, () => {
-    assert.equal(settlement(previous, incoming, { quarantined, live: false }).kind, expected);
+    assert.equal(settlement(previous, incoming, { quarantined }).kind, expected);
   });
 }
 
 test('settlement preserves known native identity and rejects a competing native operation', () => {
   const known = { ...accepted, evidence: evidence(native) };
-  assert.deepEqual(settlement(known, conclusive, { quarantined: false, live: false }).observed.evidence.nativeOperation, native);
-  assert.equal(settlement(known, { ...conclusive, evidence: evidence({ ...native, id: 'other' }) }, { quarantined: false, live: false }).kind, 'conflict');
-  const enriched = settlement(conclusive, { ...conclusive, evidence: evidence(native) }, { quarantined: false, live: false });
+  assert.deepEqual(settlement(known, conclusive, { quarantined: false }).observed.evidence.nativeOperation, native);
+  assert.equal(settlement(known, { ...conclusive, evidence: evidence({ ...native, id: 'other' }) }, { quarantined: false }).kind, 'conflict');
+  const enriched = settlement(conclusive, { ...conclusive, evidence: evidence(native) }, { quarantined: false });
   assert.equal(enriched.kind, 'record-evidence');
   assert.deepEqual(enriched.observed.evidence.nativeOperation, native);
 });
 
 test('quarantine retry keeps the captured terminal fact and requires a quarantine reason', () => {
-  const result = settlement(conclusive, accepted, { quarantined: true, live: false });
+  const result = settlement(conclusive, accepted, { quarantined: true });
   assert.deepEqual(result, { kind: 'apply', observed: conclusive });
   for (const reason of ['output-rejected', 'capacity-exhausted']) {
     assert.equal(isQuarantined({ receipt: { state: { kind: 'uncertain', reason } } }), true);
@@ -53,21 +53,12 @@ test('quarantine retry keeps the captured terminal fact and requires a quarantin
 
 test('quarantined terminal application retains the terminal result while learning a compatible native id', () => {
   for (const incoming of [accepted, conclusive]) {
-    const result = settlement(conclusive, { ...incoming, evidence: evidence(native) }, { quarantined: true, live: false });
+    const result = settlement(conclusive, { ...incoming, evidence: evidence(native) }, { quarantined: true });
     assert.equal(result.kind, 'apply');
     assert.equal(result.observed.kind, 'conclusive');
     assert.deepEqual(result.observed.result, conclusive.result);
     assert.deepEqual(result.observed.evidence.nativeOperation, native);
   }
   const changed = { ...conclusive, evidence: evidence(native), result: { kind: 'rejected', reason: 'changed' } };
-  assert.equal(settlement(conclusive, changed, { quarantined: true, live: false }).kind, 'conflict');
-});
-
-
-test('live dispatch keeps inconclusive recovery without preventing conclusive settlement', () => {
-  for (const previous of [null, unknown, accepted, conclusive]) {
-    assert.deepEqual(settlement(previous, unknown, { quarantined: false, live: true }), { kind: 'keep' });
-  }
-  assert.equal(settlement(null, conclusive, { quarantined: false, live: true }).kind, 'apply');
-  assert.equal(settlement(null, unknown, { quarantined: false, live: false }).kind, 'apply');
+  assert.equal(settlement(conclusive, changed, { quarantined: true }).kind, 'conflict');
 });

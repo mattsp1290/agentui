@@ -12,7 +12,12 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active }: { readonly actions: ConversationActions; readonly active: OpenConversation }) {
+export function ConversationView({ actions, active, enabled, storageFailure }: {
+  readonly actions: ConversationActions;
+  readonly active: OpenConversation;
+  readonly enabled: boolean;
+  readonly storageFailure: string;
+}) {
   const view = useConversation(active.store);
   const [editor, setEditor] = useState<DraftEditor>({ kind: 'saved', text: view.draft });
   const editVersion = useRef(0);
@@ -30,7 +35,7 @@ export function ConversationView({ actions, active }: { readonly actions: Conver
         message: error instanceof Error ? error.message : 'Your draft could not be saved.' });
     }
   }
-  const connected = actions.enabled && view.connection.kind === 'connected';
+  const connected = enabled && view.connection.kind === 'connected';
   const canSend = connected && editor.kind === 'saved' && Boolean(editor.text.trim());
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">RECORDED CONVERSATION</p><h1>Your conversation</h1><p className="scope-label">{active.scope.conversationId}</p></header>
@@ -48,10 +53,10 @@ export function ConversationView({ actions, active }: { readonly actions: Conver
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); if (canSend) void actions.submit(() => active.store.send()); }}>
       <label htmlFor="message">Message</label>
-      <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(actions.storageFailure)} placeholder="Write to the recorded assistant…" rows={3} />
-      {editor.kind === 'failed' && <p role={actions.storageFailure ? 'note' : 'alert'}>Draft not saved. {actions.storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
+      <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder="Write to the recorded assistant…" rows={3} />
+      {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
       <div className="composer-footer"><span>Recorded playback · No live model</span><button disabled={!canSend}>Send</button></div>
     </form>
-    <CommandRecovery view={view} actions={actions} retry={id => active.store.retry(id)} />
+    <CommandRecovery view={view} actions={actions} enabled={enabled} retry={id => active.store.retry(id)} />
   </section>;
 }
