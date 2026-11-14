@@ -9,7 +9,6 @@ export const evidenceKinds = {
   canonicalControls: { label: 'canonical control', bodies: canonicalControls },
   publishedTypeContracts: { label: 'published type contract', bodies: publishedTypeContracts },
 };
-export const evidenceFile = 'tests/protocol/conformance.test.mjs';
 export const evidenceTest = (kind, id) => `protocol ${evidenceKinds[kind].label}: ${id}`;
 
 export function validateCoverage() {
@@ -18,7 +17,7 @@ export function validateCoverage() {
     assert.ok(ids.length > 0, kind);
     return ids.map((id) => {
       assert.equal(typeof bodies[id], 'function', `Evidence body is not callable: ${id}`);
-      return [id, { id, kind, file: evidenceFile, test: evidenceTest(kind, id) }];
+      return [id, kind];
     });
   });
   assert.equal(new Set(entries.map(([id]) => id)).size, entries.length, 'Evidence IDs must be globally unique');

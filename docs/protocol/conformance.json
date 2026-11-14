@@ -1,5 +1,5 @@
 {
-  "coverageContractVersion": 1,
+  "coverageContractVersion": 2,
   "canonical": {
     "version": "1.0",
     "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
@@ -96,74 +96,38 @@
     "contractDefinitions": [
       "RunAgentInput",
       "AgentCapabilities"
-    ],
-    "controls": [
-      {
-        "id": "event-closed-shapes",
-        "file": "tests/protocol/conformance.test.mjs",
-        "test": "protocol canonical control: event-closed-shapes"
-      },
-      {
-        "id": "request-capability-shapes",
-        "file": "tests/protocol/conformance.test.mjs",
-        "test": "protocol canonical control: request-capability-shapes"
-      }
     ]
   },
-  "installedFixtures": [
-    {
-      "id": "acknowledged-absence-and-fault",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: acknowledged-absence-and-fault"
+  "evidence": {
+    "registrar": "tests/protocol/conformance.test.mjs",
+    "installedFixtures": {
+      "testName": "protocol installed fixture: <id>",
+      "ids": [
+        "acknowledged-absence-and-fault",
+        "availability-description",
+        "identity-run-source-scope",
+        "lifecycle-text-tools",
+        "messages-and-opaque-content",
+        "state-activity-public-extensions",
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
+      ]
     },
-    {
-      "id": "availability-description",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: availability-description"
+    "canonicalControls": {
+      "testName": "protocol canonical control: <id>",
+      "ids": [
+        "event-closed-shapes",
+        "request-capability-shapes"
+      ]
     },
-    {
-      "id": "identity-run-source-scope",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: identity-run-source-scope"
-    },
-    {
-      "id": "lifecycle-text-tools",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: lifecycle-text-tools"
-    },
-    {
-      "id": "messages-and-opaque-content",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: messages-and-opaque-content"
-    },
-    {
-      "id": "state-activity-public-extensions",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: state-activity-public-extensions"
-    },
-    {
-      "id": "terminal-interrupts-usage",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: terminal-interrupts-usage"
-    },
-    {
-      "id": "terminal-ordering-limit",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol installed fixture: terminal-ordering-limit"
+    "publishedTypeContracts": {
+      "testName": "protocol published type contract: <id>",
+      "ids": [
+        "availability-family-alignment",
+        "published-sdk-availability"
+      ]
     }
-  ],
-  "publishedTypeContracts": [
-    {
-      "id": "availability-family-alignment",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol published type contract: availability-family-alignment"
-    },
-    {
-      "id": "published-sdk-availability",
-      "file": "tests/protocol/conformance.test.mjs",
-      "test": "protocol published type contract: published-sdk-availability"
-    }
-  ],
+  },
   "behaviorLimits": {
     "unknownOrUnimplementedFact": {
       "claim": "Explicit error and faulted actor; no successful empty batch.",

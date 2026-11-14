@@ -1,4 +1,4 @@
-export const coverageContractVersion = 1;
+export const coverageContractVersion = 2;
 
 export const projectionFacts = {
   families: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'],

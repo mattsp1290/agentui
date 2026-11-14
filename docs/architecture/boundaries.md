@@ -38,6 +38,10 @@ The [versioned conformance matrix](../protocol/README.md) names installed fixtur
 and pending consumers. Transport, replay and product UI consumption remain separate work.
 No adapter implementation or agent loop is copied here.
 
+`@agentui/protocol` exports SDK types only. Producers constructing SDK events
+import the `EventType` enum directly from the pinned `@ag-ui/core` dependency.
+Runtime wire validation remains separate from TypeScript assignment checks.
+
 ## Run ownership
 
 A conversation scope names its authoritative host and conversation.

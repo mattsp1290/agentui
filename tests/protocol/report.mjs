@@ -2,10 +2,9 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { aguiProtocol } from '@agentui/host/agui';
-import { behaviorLimits, canonicalDefinitions, coverage, coverageContractVersion, projectionFacts, reportText } from '../tests/protocol/coverage.mjs';
-import { evidenceKinds, validateCoverage } from '../tests/protocol/evidence.mjs';
+import { behaviorLimits, canonicalDefinitions, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
 
-const root = new URL('../', import.meta.url);
+const root = new URL('../../', import.meta.url);
 const retainedDir = 'tests/protocol/fixtures/upstream/';
 const upstream = new URL(retainedDir, root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
@@ -73,13 +72,17 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
     const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.definition));
+    const installedFixtures = owned.evidence.filter((id) => registry[id] === 'installedFixtures');
+    const canonicalControls = owned.evidence.filter((id) => registry[id] === 'canonicalControls');
+    const publishedTypeContracts = owned.evidence.filter((id) => registry[id] === 'publishedTypeContracts');
+    assert.equal(installedFixtures.length + canonicalControls.length + publishedTypeContracts.length, owned.evidence.length, category);
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
       sdkRuntimeDivergences: canonicalFixtures.filter((fixture) => fixture.typescriptAccepts !== fixture.valid || fixture.pythonAccepts !== fixture.valid)
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
       mapping: owned.mapping, scope: owned.scope,
-      ...Object.fromEntries(Object.keys(evidenceKinds).map((kind) => [kind, owned.evidence.filter((id) => registry[id].kind === kind)])),
+      installedFixtures, canonicalControls, publishedTypeContracts,
       pendingProductOwners: owned.pending,
     };
   });
@@ -88,13 +91,13 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
   return categories;
 }
 
-export function buildConformanceReport() {
+export async function buildConformanceReport() {
   const inputs = verifiedInputs();
+  const { evidenceKinds, evidenceTest, validateCoverage } = await import('./evidence.mjs');
   const { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project } = inputs;
   const registry = validateCoverage();
   const categories = projectCategories(inputs, registry);
-  const entries = (kind) => Object.keys(evidenceKinds[kind].bodies).sort()
-    .map((id) => ({ id, file: registry[id].file, test: registry[id].test }));
+  const kindEvidence = (kind) => ({ testName: evidenceTest(kind, '<id>'), ids: Object.keys(evidenceKinds[kind].bodies).sort() });
   const count = (predicate) => fixtures.filter(predicate).length;
   return {
     coverageContractVersion,
@@ -129,10 +132,13 @@ export function buildConformanceReport() {
       qualificationsByRoute: pin.classification.nativeAdapters,
     },
     agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'),
-      emittedEventDefinition: canonicalDefinitions.event, contractDefinitions: Object.values(canonicalDefinitions.contracts),
-      controls: entries('canonicalControls') },
-    installedFixtures: entries('installedFixtures'),
-    publishedTypeContracts: entries('publishedTypeContracts'),
+      emittedEventDefinition: canonicalDefinitions.event, contractDefinitions: Object.values(canonicalDefinitions.contracts) },
+    evidence: {
+      registrar: 'tests/protocol/conformance.test.mjs',
+      installedFixtures: kindEvidence('installedFixtures'),
+      canonicalControls: kindEvidence('canonicalControls'),
+      publishedTypeContracts: kindEvidence('publishedTypeContracts'),
+    },
     behaviorLimits,
     retainedInputs: {
       [retainedPath('provenance.json')]: digest(readFileSync(new URL('provenance.json', upstream))),
@@ -144,13 +150,13 @@ export function buildConformanceReport() {
 
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
-export function assertReportFresh() {
-  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()), 'Conformance report is stale; regenerate it');
+export async function assertReportFresh() {
+  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(await buildConformanceReport()), 'Conformance report is stale; regenerate it');
 }
 
 if (import.meta.main) {
-  assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node scripts/protocol-conformance.mjs [--check]');
-  if (process.argv[2] === '--check') assertReportFresh();
-  else writeFileSync(reportFile, serializeConformanceReport(buildConformanceReport()));
+  assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node tests/protocol/report.mjs [--check]');
+  if (process.argv[2] === '--check') await assertReportFresh();
+  else writeFileSync(reportFile, serializeConformanceReport(await buildConformanceReport()));
   console.log(process.argv[2] === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');
 }

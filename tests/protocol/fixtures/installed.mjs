@@ -82,7 +82,7 @@ export const installedFixtures = {
     assert.deepEqual(JSON.parse(text.subagentRunId), [1, 'agentui.fixture', 'subagent', ['fixture'], 'same']);
     assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
     assert.deepEqual(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome, { type: 'success' });
-    const other = actor({ sourceKey: 'another.source' });
+    projection.close();
     const same = actor();
     assert.equal(mapped(same, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
     same.close();
@@ -91,6 +91,7 @@ export const installedFixtures = {
     assert.equal(anotherText.messageId, text.messageId);
     assert.equal(anotherText.subagentRunId, text.subagentRunId);
     anotherRun.close();
+    const other = actor({ sourceKey: 'another.source' });
     const batch = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3);
     const [plain] = batch;
     assert.deepEqual(batch.map(event => event.type), ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']);
@@ -98,11 +99,10 @@ export const installedFixtures = {
     assert.ok(batch.every(event => event.messageId === plain.messageId));
     assert.notEqual(plain.messageId, text.messageId);
     assert.equal('subagentRunId' in plain, false);
+    other.close();
     const scoped = actor();
     assert.notEqual(mapped(scoped, { kind: 'text-complete', message: ref('same', ['other']), role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
-    other.close();
     scoped.close();
-    projection.close();
   },
 
   'state-activity-public-extensions'() {

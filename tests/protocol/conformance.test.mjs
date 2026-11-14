@@ -1,12 +1,8 @@
-import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { assertReportFresh } from '../../scripts/protocol-conformance.mjs';
-import { evidenceFile, evidenceKinds, evidenceTest, validateCoverage } from './evidence.mjs';
+import { assertReportFresh } from './report.mjs';
+import { evidenceKinds, evidenceTest, validateCoverage } from './evidence.mjs';
 
-test('protocol evidence citations resolve and the registrar matches report files', () => {
-  validateCoverage();
-  assert.equal(new URL(evidenceFile, new URL('../../', import.meta.url)).href, import.meta.url);
-});
+test('protocol evidence citations resolve', validateCoverage);
 for (const [kind, { bodies }] of Object.entries(evidenceKinds)) {
   for (const [id, body] of Object.entries(bodies)) test(evidenceTest(kind, id), () => body());
 }

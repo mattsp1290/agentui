@@ -1,20 +1,24 @@
 # AG-UI consumer conformance
 
 AgentUI imports published TypeScript SDK 1.0.4 types from `@agentui/protocol`.
-The published `RunAgentInput` type differs from canonical wire shapes in both directions.
-The SDK types `state` and `forwardedProps` as `any`, admitting values such as null
-that the wire forbids.
-It requires `tools` and `context` arrays that the wire may omit. Schema validation
-establishes canonical validity. AgentUI consumes the installed
-Switchboard projection through `@agentui/host/agui`. The host core
-entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
-SDK `Event` discriminators use enum members. Values typed with literal
-discriminators are not directly assignable. `JSON.parse`
-returns `any`, which bypasses TypeScript checking. Canonical validation establishes
-wire validity. SDK `rawEvent` accepts null even though the canonical wire forbids it.
-Compiler controls separately check the plain discriminator value set. Constructing
-an SDK `Event` uses enum values imported directly from `@ag-ui/core`; the
-`@agentui/protocol` entry intentionally exports types only.
+TypeScript assignability and canonical wire validity differ.
+
+| Value | Published SDK type | Canonical wire |
+| --- | --- | --- |
+| `RunAgentInput.state`, `forwardedProps` | `any`, admitting null | Non-null JSON |
+| `RunAgentInput.tools`, `context` | Required | Optional |
+| `Event.type` | `EventType` enum member | String literal |
+| `Event.rawEvent` | Admits null | Non-null JSON |
+
+`JSON.parse` returns `any` and bypasses TypeScript checking. Canonical schema
+validation establishes wire validity. Compiler controls separately check the
+plain discriminator value set and constructing an SDK event with enum members.
+Producers import the enum directly from the pinned `@ag-ui/core` dependency;
+`@agentui/protocol` deliberately exports types only.
+
+AgentUI consumes the installed Switchboard projection through
+`@agentui/host/agui`. The host core entry remains independent of AG-UI imports.
+No mapper or SDK fields are copied.
 
 The [versioned matrix](conformance.json) joins immutable upstream inventories to
 AgentUI's owned fixture coverage. Its version identifies canonical protocol 1.0,
@@ -64,26 +68,12 @@ describe the wire inventory,
 not emitted-event evidence. The pinned producer uses text and tool boundaries,
 not chunk shorthands. Full consumer handling remains `agentui-ckpw`.
 
-Unknown or unimplemented facts produce an explicit error and fault the mapper.
-They cannot become a successful empty batch. An explicit `not-observable` fact
-acknowledges absent observation, returns an empty batch and leaves the actor
-usable. After a fault, the next accept reports `closed`, just as after an explicit
-close. Callers must retain the original failure result. Closing the actor creates
-no terminal outcome.
-
-Entity IDs can repeat across runs with the same source key and native reference.
-Owner references can reuse subagent attribution IDs across runs without lifecycle
-events. The fixtures decode message, part and subagent-attribution ID samples
-containing source keys and native references. Other identifier kinds are not
-decoded here. These observations are not a decoding API for clients.
-Consumers must retain run scope and handle partial streams. Client exposure,
-redaction and run coordination remain work for `agentui-7s6y`/`agentui-ckpw`.
-
-Validation covers individual events, not stream ordering. The pinned projection
-can map a failure before start or after a finished terminal, while rejecting
-a finish with open streams. A separate fixture records these observations.
-Single-terminal and start-first enforcement belong to AgentUI run coordination in
-`agentui-7s6y` and complete qualification in `agentui-ckpw`.
+The report's [`behaviorLimits`](conformance.json) records the pinned observations
+and their supporting evidence IDs. It covers explicit absence and faults,
+terminal ordering, decoded ID samples, repeated IDs, owner attribution and null
+terminal results. These limits remain separate from product qualification and
+pending ownership. Consumers must consult them before implementing admission,
+redaction, run coordination or replay in `agentui-7s6y` and `agentui-ckpw`.
 
 ## Capability declarations
 
@@ -117,22 +107,28 @@ npm run protocol:check
 npm run verify
 ```
 
-The generator derives definitions, event discriminators and raw fixture paths
-from the retained inventories. It lists SDK divergences and references hashed
-inputs instead of copying their complete rows. Evidence identity comes directly
-from the named body maps in `tests/protocol/fixtures/` and
-`tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates each map
-with its evidence kind and validates citations, callability and global ID
-uniqueness. Every ID must have category credit. Categories and behavior limits
-cite those IDs; separate report fields distinguish evidence kinds.
-`tests/protocol/conformance.test.mjs` registers each body under the same derived
-name published in the report. A report entry's `file` names this registrar,
-not the module defining its body. Compiler bodies use the shared adapter-test
-helper, which requires a compiling positive control first.
-Report generation imports the body definitions without invoking fixture callbacks
-or starting compiler processes. Loading the canonical module initializes Ajv
-against the retained schema, an existing pinned verification dependency. A module
-initialization failure can therefore precede the input-digest diagnostic.
+`tests/protocol/report.mjs` derives definitions, event discriminators and raw
+fixture paths from the retained inventories. It lists SDK divergences and
+references hashed inputs instead of copying their complete rows. Evidence
+identity comes directly from the named body maps in `tests/protocol/fixtures/`
+and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates each
+map with its evidence kind and validates citations, callability and global ID
+uniqueness. Every ID must have category credit.
+
+The version 2 report has one `evidence.registrar` path and three literal evidence
+fields. Each kind has sorted `ids` and a `testName` template. Replacing `<id>` in
+that template with an ID gives the name registered in
+`tests/protocol/conformance.test.mjs`. Category fields cite those same IDs by
+kind. The registrar path is descriptive metadata; no self-referential location
+assertion is retained. Compiler bodies use the shared adapter-test helper, which
+requires a compiling positive control first.
+
+Direct report generation checks retained input digests before importing evidence
+modules. It imports body definitions without invoking fixture callbacks or
+starting compiler processes. Loading the canonical module initializes Ajv against
+the retained schema. The host import still precedes input verification, and the
+suite statically imports evidence to register its named tests. Digest-first
+ordering applies to direct report generation before evidence initialization.
 A separate identity fixture checks cross-run, source and reference scoping.
 Qualification scope and pending ownership remain separate from behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale

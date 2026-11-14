@@ -26,8 +26,8 @@
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests",
     "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs",
-    "protocol:matrix": "node scripts/protocol-conformance.mjs",
-    "protocol:check": "node scripts/protocol-conformance.mjs --check",
+    "protocol:matrix": "node tests/protocol/report.mjs",
+    "protocol:check": "node tests/protocol/report.mjs --check",
     "verify": "npm run build && npm run check && npm run lint && npm test",
     "preview:theme": "node tests/theme/preview.mjs",
     "setup:browser": "playwright install --with-deps chromium"
