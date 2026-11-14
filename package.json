@@ -12,6 +12,8 @@
   "workspaces": [
     "packages/contracts",
     "packages/sdk",
+    "packages/theme",
+    "packages/ui-primitives",
     "packages/host",
     "packages/adapter-tests",
     "apps/desktop",
@@ -19,15 +21,21 @@
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && npm run build -w @agentui/contracts && npm run build -w @agentui/sdk && npm run build -w @agentui/host && npm run build -w @agentui/desktop && npm run build -w @agentui/ios && npm run build -w @agentui/adapter-tests",
+    "build": "npm run clean && npm run build -w @agentui/contracts && npm run build -w @agentui/sdk && npm run build -w @agentui/theme && npm run build -w @agentui/ui-primitives && npm run build -w @agentui/host && npm run build -w @agentui/desktop && npm run build -w @agentui/ios && npm run build -w @agentui/adapter-tests",
     "check": "npm run check --workspaces",
-    "lint": "oxlint --deny-warnings packages apps scripts",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs",
-    "verify": "npm run build && npm run check && npm run lint && npm test"
+    "lint": "oxlint --deny-warnings packages apps scripts tests",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs",
+    "verify": "npm run build && npm run check && npm run lint && npm test",
+    "preview:theme": "node tests/theme/preview.mjs"
   },
   "devDependencies": {
     "@types/node": "24.19.2",
+    "axe-core": "4.14.0",
+    "esbuild": "0.28.2",
     "oxlint": "1.93.0",
+    "playwright": "1.65.1",
+    "react": "19.3.1",
+    "react-dom": "19.3.1",
     "typescript": "7.0.2"
   }
 }

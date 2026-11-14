@@ -9,6 +9,10 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | `@agentui/contracts` | Conversation scope, provider identity, run authority | ES2023 only |
 | `@agentui/sdk` | Full-trust extension entry manifests | ES2023 only |
 | `@agentui/sdk/react` | Conversation-scoped React module contracts | React, without DOM |
+| `@agentui/theme` | Semantic tokens and inherited theme resolution | ES2023 only |
+| `@agentui/theme/react` | Shared theme context | React, without DOM |
+| `@agentui/ui-primitives/desktop` | DOM controls and system theme scope | React and DOM |
+| `@agentui/ui-primitives/native` | React Native controls | React Native, without DOM |
 | `@agentui/host` | Public Switchboard consumption boundary | Node |
 | `@agentui/adapter-tests` | Downstream package and boundary checks | Node |
 | `@agentui/desktop` | Tauri client entry contracts | React and DOM |
@@ -104,6 +108,7 @@ It tests platform ambient isolation and real Switchboard observation through the
 It does not qualify native execution, proxies, full AG-UI support, authorization, durable dispatch, or reconnect.
 
 All future GitHub Actions jobs use Linux runners.
-This task adds no CI workflow because `agentui-gf27` owns it.
+The Linux workflow installs the pinned toolchain and browser, then runs `npm run verify`.
+Browser fixtures qualify the desktop primitives, not a mounted Tauri client.
 Local macOS package checks are macOS evidence.
 Apple applications need [separate qualification](apple-qualification.md).

@@ -37,4 +37,6 @@ jobs:
             assert.equal(execFileSync("npm", ["--version"], { encoding: "utf8" }).trim(), pkg.packageManager.slice(4));
           '
       - run: npm ci
+      - name: Install theme test browser
+        run: npx --no-install playwright install --with-deps chromium
       - run: npm run verify
