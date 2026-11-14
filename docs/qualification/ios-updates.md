@@ -76,6 +76,10 @@ tools. Its provenance records an absent app directory before generation, clean
 source before and after, and matching script/dependency blobs. The retained output
 contains template generation, deployment verification, and Pod installation success.
 An independent comparison confirms the generated native lock equals the committed lock.
+The cache and DerivedData boolean fields are scope declarations; cache-hit output
+and the recorded inodes are the measurements. The `output_capture` block and home-prefix
+redaction were added after capture. The retained-output digest can be checked here;
+the raw-output digest requires the ignored original log on the Mac.
 Warm native caches and retained DerivedData make this a fresh generated-tree check,
 not a cold-cache build. It does not repeat or extend the A/B runtime qualification.
 
