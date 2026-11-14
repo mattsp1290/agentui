@@ -1,0 +1,46 @@
+{
+  "recordingVersion": 1,
+  "provider": "agentui-recorded",
+  "projectionVersion": 1,
+  "send": {
+    "kind": "completed",
+    "output": {
+      "events": [{ "kind": "note-added", "text": "Recorded response awaiting approval" }],
+      "runs": [{
+        "identity": {
+          "conversation": { "hostId": "host-a", "conversationId": "conversation-a" },
+          "runId": "run-a",
+          "authority": {
+            "kind": "agentui-host",
+            "hostId": "host-a",
+            "binding": {
+              "namespace": "recorded",
+              "installationId": "recorded-installation",
+              "opaqueSessionId": "private-session-secret"
+            }
+          }
+        },
+        "reference": {
+          "kind": "session",
+          "formatVersion": 1,
+          "binding": {
+            "engine": "recorded-not-a-native-provider",
+            "nativeVersion": "1",
+            "account": "fixture",
+            "authorizedScope": "fixture-only",
+            "nativeFormat": "recorded-v1"
+          },
+          "opaque": "private-session-secret"
+        }
+      }],
+      "decisions": [{
+        "visible": { "pendingId": "question-a", "runId": "run-a", "choices": ["yes", "no"], "prompt": "Continue?" },
+        "continuation": { "secret": "private-continuation" }
+      }]
+    }
+  },
+  "approve": {
+    "kind": "completed",
+    "output": { "events": [{ "kind": "note-added", "text": "Recorded approval completed" }], "runs": [], "decisions": [] }
+  }
+}
