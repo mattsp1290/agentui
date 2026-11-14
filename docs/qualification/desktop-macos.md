@@ -63,11 +63,11 @@ The checks build the production web assets, preserve package exports, and exerci
 
 ## Security boundary
 
-The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Inline styles are allowed because the shared theme supplies CSS custom properties through React style attributes. The app stores no credentials. Host authorization and OS-protected credential storage must be designed with pairing before connection controls are added.
+The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Production styles use `style-src 'self'`. The shared theme sets CSS custom properties through the CSSOM without an inline-style allowance. Both browser tests fail on CSP violations. The app stores no credentials. Host authorization and OS-protected credential storage must be designed with pairing before connection controls are added.
 
 ## Local qualification record
 
-The local checks below passed on November 14, 2026, against source commit `4bddd92620964d0e800ddc72fdd0a2cd7f21d0ea`. This record is a subsequent documentation change.
+The local checks below passed on November 14, 2026, against source commit `bdb275229a7624ddd5f45d9d77c585b234dad296`. The final build started from this committed source with a clean working tree. This record is a subsequent documentation change.
 
 | Input | Observed value |
 | --- | --- |
@@ -81,10 +81,12 @@ The local checks below passed on November 14, 2026, against source commit `4bddd
 | Bundle identifier | `homes.birb.agentui` |
 | Native target | arm64 only |
 | Signing | Ad-hoc with hardened runtime, no team identity, no notarization |
-| Executable SHA-256 | `2fc1371dfd16e259609482cb83263bbfe2b977513e16830434b347662ae2c8d8` |
+| Executable SHA-256 | `c4f296ce6d317508d9920b3967034a30d76937d6214d5bc87650ec25e59fe88c` |
 
 `npm run verify` passed all 33 tests, strict TypeScript checks, and lint. The production browser check exercised light and dark appearance, keyboard restore, reload, and enlarged text on a narrow viewport. The failing-content fixture passed recovery containment and repeat restoration.
 
 `npm run desktop:bundle` passed with the system-tool PATH adjustment above. `codesign --verify --deep --strict` and `cargo fmt --check` passed. No process listened on development port 1420 before production launch. The observed native document URL was `tauri://localhost`. Restore and Reload each returned the disconnected landing page. Quitting removed the application process. Reopening the same bundle returned the same page, and the app was left open.
 
 The native window was inspected visually and through its accessibility tree. Failure injection was exercised in the browser fixture only. macOS 11 compatibility, distribution installation, real host connection loss, permission failures, and backend run continuity were not tested.
+
+The [retained verification log](desktop-macos/bdb2752/verification.log.gz) records the exact source, clean-tree check, system-tool PATH prefix, toolchain versions, full verification, native build, formatting, signature check, and executable hash. Decompress it with `gzip -dc` to inspect the commands and exit codes. Native UI observations come from the local computer-use session. No automated native failure injection was performed. Development mode was not exercised.
