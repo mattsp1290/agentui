@@ -899,7 +899,7 @@
       "compressedBytes": 718,
       "compressedSha256": "2d01c0f5048ecbba3927a31c1754ace9a6c0c118d48fdbc65e160f232f6ab721",
       "encoding": "gzip; raw retained without edits",
-      "role": "Observed failure of the pinned Codex launcher with TMPDIR beneath an ESM project"
+      "role": "Controlled consumer failure with a missing Codex assistant reply under an ESM-project TMPDIR; attributed to the launcher by the separate direct reproduction"
     },
     {
       "path": "evidence/codex-launcher-esm-reproduction.log.gz",
@@ -937,7 +937,7 @@
   ],
   "qualification": {
     "command": "node scripts/verify-agui-fork.mjs",
-    "offlineCommand": "python3 tests/dependencies/ag-ui/verify-consumer.py",
+    "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
     "consumerPackage": "../../../tests/dependencies/ag-ui/consumer/package.json",
     "consumerPackageSha256": "474c1de9b4cc8921e55cd9e5b2fef98eef736d4928550e1626b275b96105ed3f",
     "consumerLock": "../../../tests/dependencies/ag-ui/consumer/package-lock.json",
@@ -1049,7 +1049,7 @@
         "package": "@ag-ui/codex-sdk",
         "version": "0.0.1",
         "condition": "TMPDIR beneath a Node package with type:module",
-        "observation": "The factory writes extensionless codex-launch with CommonJS require; Node interprets it as ESM and fails before the selected executable runs.",
+        "observation": "The factory writes extensionless codex-launch with CommonJS require; Node interprets it as ESM and fails before the selected executable runs. In the controlled consumer, runAgent() resolved without throwing; the failure surfaced as a missing assistant reply.",
         "source": "integrations/community/codex-sdk/typescript/src/sdk.ts:47-53",
         "task": "ag-ui-4ipx",
         "failureEvidence": "evidence/node-esm-tmp-failure.log.gz",
@@ -1062,7 +1062,7 @@
         "command": "node scripts/verify-agui-fork.mjs",
         "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
         "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-        "sourceScope": "The measured working Node qualification modules are identified by their hashes. The source commit is recorded separately after integration. This replay changes no fork archive, native pin, consumer lock or fixture. This measurement preceded the final private byte-line-counter rename and comment deletion.",
+        "sourceScope": "Measured on working code over base 153eac89d67de4d7651cee5d079b1162e43c78f0. The listed module SHA-256 values identify the measured code; Git history identifies the commit that integrated those bytes. This replay changes no fork archive, native pin, consumer lock or fixture. This measurement preceded the final private byte-line-counter rename and comment deletion.",
         "sourceSha256": {
           "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
           "tests/dependencies/ag-ui/verify-consumer.mjs": "87f6642e50f59e2974d2e13a14b9cf65f99ba5ab2362484be391510a426ede9a",
@@ -1096,7 +1096,11 @@
         "temporaryDirectory": "/tmp",
         "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification."
       }
-    ]
+    ],
+    "historicalOfflineCommand": {
+      "command": "python3 tests/dependencies/ag-ui/verify-consumer.py",
+      "scope": "Used by qualification.replay and qualification.standard10Replay before the Node verifier replaced it. Not a current reproduction command."
+    }
   },
   "upstreamLicensePolicy": {
     "job": "https://github.com/mattsp1290/ag-ui/actions/runs/42942702235/job/130268067856",
