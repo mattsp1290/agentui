@@ -1,0 +1,22 @@
+{
+  "sourceRepository": "https://github.com/mattsp1290/switchboard",
+  "sourceRevision": "71d204015f573e1399d8ba19a33a2d4b4067fa1a",
+  "sourceTree": "a398efdf464b31141802751ecef081b9fb6f72c3",
+  "artifact": "switchboard-71d204015f573e1399d8ba19a33a2d4b4067fa1a.tgz",
+  "sha256": "9a3a5a1cde6ad2c432c8949c7815b7f8d916d76aa9fb597562650a42dbf49ae1",
+  "license": "MIT",
+  "consumerPackage": "@agentui/adapter-tests",
+  "dependencyAlias": "@agentui/switchboard-qualification",
+  "scope": "Development-only controlled qualification contracts and official fake. No native agent, provider, credential, durable service or Apple execution is established by these tests.",
+  "reproduction": {
+    "source": "git archive of sourceRevision",
+    "node": "v24.22.3",
+    "npm": "11.19.1",
+    "commands": [
+      "npm ci",
+      "npm run build",
+      "npm pack"
+    ],
+    "archiveBytesIdentical": true
+  }
+}

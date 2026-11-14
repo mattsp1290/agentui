@@ -16,16 +16,18 @@
     "packages/theme",
     "packages/ui-primitives",
     "packages/host",
+    "packages/client",
     "apps/desktop",
     "apps/ios",
-    "packages/adapter-tests"
+    "packages/adapter-tests",
+    "examples/crew"
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
     "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
-    "lint": "oxlint --deny-warnings packages apps scripts tests",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs",
+    "lint": "oxlint --deny-warnings packages apps scripts tests examples",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/client/*.test.mjs examples/crew/tests/*.test.mjs",
     "protocol:matrix": "node tests/protocol/report.mjs",
     "protocol:check": "node tests/protocol/report.mjs --check",
     "verify": "npm run build && npm run check && npm run lint && npm test",
