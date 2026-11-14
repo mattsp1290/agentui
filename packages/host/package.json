@@ -4,6 +4,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./agui": {
+      "types": "./dist/agui.d.ts",
+      "import": "./dist/agui.js"
+    },
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
@@ -20,6 +24,7 @@
     "node": ">=24.22.3 <25"
   },
   "dependencies": {
+    "@ag-ui/core": "1.0.4",
     "@agentui/contracts": "0.0.0",
     "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz"
   }

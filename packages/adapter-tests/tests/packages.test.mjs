@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { contractVersion } from '@agentui/contracts';
 import { contractVersion as sdkVersion } from '@agentui/sdk';
 import { createEventStream, hostRuntime } from '@agentui/host';
@@ -9,6 +11,11 @@ import { clientPlatform as desktop } from '@agentui/desktop';
 import { clientPlatform as ios } from '@agentui/ios';
 
 const root = new URL('../../../', import.meta.url);
+
+test('host core import excludes the AG-UI projection and SDK', () => {
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL('./support/host-core-imports.mjs', import.meta.url))], { cwd: root, encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+});
 
 test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(contractVersion, 1);
@@ -18,6 +25,7 @@ test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(ios, 'ios');
   await import('@agentui/sdk/react');
   await import('@agentui/theme');
+  await import('@agentui/protocol');
   await import('@agentui/theme/react');
   await import('@agentui/ui-primitives/desktop');
   await import('@agentui/adapter-tests');
@@ -48,13 +56,13 @@ test('host consumes real Switchboard bounded FIFO observation', async () => {
 });
 
 test('package exports reject private implementation imports', async () => {
-  for (const name of ['@agentui/contracts', '@agentui/sdk', '@agentui/host', '@agentui/theme', '@agentui/ui-primitives', '@mattsp1290/switchboard']) {
+  for (const name of ['@agentui/contracts', '@agentui/protocol', '@agentui/sdk', '@agentui/host', '@agentui/theme', '@agentui/ui-primitives', '@mattsp1290/switchboard']) {
     await assert.rejects(import(`${name}/src/index.js`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   }
 });
 
 test('clients and customization declare no host runtime dependency', async () => {
-  for (const path of ['packages/contracts', 'packages/sdk', 'packages/theme', 'packages/ui-primitives', 'apps/desktop', 'apps/ios']) {
+  for (const path of ['packages/contracts', 'packages/protocol', 'packages/sdk', 'packages/theme', 'packages/ui-primitives', 'apps/desktop', 'apps/ios']) {
     const pkg = JSON.parse(await readFile(new URL(`${path}/package.json`, root), 'utf8'));
     const dependencies = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies };
     assert.equal(dependencies['@agentui/host'], undefined, path);

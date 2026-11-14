@@ -1,0 +1,1001 @@
+{
+  "coverageContractVersion": 2,
+  "canonical": {
+    "version": "1.0",
+    "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+    "typescriptSdk": "1.0.4",
+    "pythonSdk": "1.0.0",
+    "fixturePathsExecutedByAgentUI": false,
+    "authority": "Retained closed canonical schema. SDK acceptance never changes canonical validity.",
+    "definitionCoverageOwner": {
+      "repository": "https://github.com/mattsp1290/switchboard",
+      "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "matrix": "docs/protocol/ag-ui-matrix.tsv",
+      "retained": "tests/protocol/fixtures/upstream/ag-ui-matrix.tsv",
+      "verifier": "scripts/verify-agui-matrix.mjs"
+    },
+    "fixtureCoverageOwner": {
+      "repository": "https://github.com/mattsp1290/switchboard",
+      "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "index": "tests/agui/fixtures/upstream.tsv",
+      "retained": "tests/protocol/fixtures/upstream/upstream.tsv",
+      "python": "tests/agui/compare-python.py"
+    },
+    "counts": {
+      "categories": 16,
+      "definitions": 98,
+      "eventDiscriminators": 31,
+      "fixtures": 219,
+      "valid": 135,
+      "invalid": 84,
+      "typescriptSdkRuntimePermissiveInvalid": 8,
+      "pythonSdkRuntimePermissiveInvalid": 22,
+      "typescriptSdkRuntimeRestrictiveValid": 0,
+      "pythonSdkRuntimeRestrictiveValid": 0
+    },
+    "sdkRuntimeEvidence": {
+      "kind": "historical-upstream-runtime-validators",
+      "canonicalLabels": {
+        "validator": "ajv",
+        "validatorVersion": "8.17.1",
+        "verifier": "scripts/verify-agui-matrix.mjs",
+        "rerunByAgentUI": false
+      },
+      "typescript": {
+        "package": "@ag-ui/core",
+        "version": "1.0.4",
+        "validator": "zod",
+        "validatorVersion": "4.0.17"
+      },
+      "python": {
+        "package": "ag-ui-protocol",
+        "version": "1.0.0",
+        "validator": "pydantic",
+        "validatorVersion": "2.11.7"
+      },
+      "publishedTypes": "Acceptance flags do not evaluate published TypeScript types; see compiler contracts."
+    }
+  },
+  "switchboard": {
+    "repository": "https://github.com/mattsp1290/switchboard",
+    "sourceRevision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+    "artifact": "switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+    "sha256": "15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421",
+    "descriptor": {
+      "version": "1.0",
+      "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
+      "typescriptSdk": "1.0.4",
+      "pythonSdk": "1.0.0",
+      "mapping": "basic-values-messages-and-terminals",
+      "planned": "reasoning-subagents"
+    },
+    "retainedCanonicalComparison": {
+      "log": "vendor/qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-agui.log.gz",
+      "scope": "Historical canonical schema and SDK runtime validator comparison using zod/pydantic. It does not evaluate published TypeScript types, native behavior or installed AgentUI output."
+    }
+  },
+  "nativeEvidence": {
+    "availability": {
+      "kind": "undeclared"
+    },
+    "declarationScope": "No backend availability declaration input exists. Contracts belong to agentui-k4zj, admission to agentui-7s6y and qualification to agentui-ckpw.",
+    "qualificationsByRoute": {
+      "claude-direct": "unqualified",
+      "claude-litellm": "unqualified",
+      "codex-direct": "unqualified",
+      "codex-litellm": "unqualified",
+      "pi-direct": "unqualified",
+      "pi-litellm": "unqualified"
+    }
+  },
+  "agentuiCanonicalValidator": {
+    "package": "ajv",
+    "version": "8.20.0",
+    "schema": "tests/protocol/fixtures/upstream/schema.json",
+    "emittedEventDefinition": "Event",
+    "contractDefinitions": [
+      "RunAgentInput",
+      "AgentCapabilities"
+    ]
+  },
+  "evidence": {
+    "registrar": "tests/protocol/conformance.test.mjs",
+    "installedFixtures": {
+      "testName": "protocol installed fixture: <id>",
+      "ids": [
+        "acknowledged-absence-and-fault",
+        "availability-description",
+        "identity-run-source-scope",
+        "lifecycle-text-tools",
+        "messages-and-opaque-content",
+        "state-activity-public-extensions",
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
+      ]
+    },
+    "canonicalControls": {
+      "testName": "protocol canonical control: <id>",
+      "ids": [
+        "event-closed-shapes",
+        "request-capability-shapes"
+      ]
+    },
+    "publishedTypeContracts": {
+      "testName": "protocol published type contract: <id>",
+      "ids": [
+        "availability-family-alignment",
+        "published-sdk-availability"
+      ]
+    }
+  },
+  "behaviorLimits": {
+    "unknownOrUnimplementedFact": {
+      "claim": "Explicit error and faulted actor; no successful empty batch.",
+      "evidence": [
+        "acknowledged-absence-and-fault"
+      ]
+    },
+    "notObservable": {
+      "claim": "Acknowledged absence for a family declared by describeProjection; empty batch and usable actor.",
+      "evidence": [
+        "acknowledged-absence-and-fault"
+      ]
+    },
+    "terminalOrdering": {
+      "claim": "Per-event canonical validation only. The pinned projection maps RUN_ERROR after RUN_FINISHED and before any RUN_STARTED; it faults on finish with open streams. Single-terminal and start-first enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
+      "evidence": [
+        "terminal-ordering-limit"
+      ]
+    },
+    "derivedIdentifiers": {
+      "claim": "Decoded message, part and subagent-attribution ID samples expose [1, sourceKey, entity kind, native scope, native id] as JSON. Other identifier kinds are not decoded by these fixtures. This is a pinned observation, not a consumer decoding contract. Run scope, invocation identity and client exposure/redaction belong to agentui-7s6y/agentui-ckpw.",
+      "evidence": [
+        "identity-run-source-scope",
+        "messages-and-opaque-content"
+      ]
+    },
+    "repeatedEntityIds": {
+      "claim": "Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.",
+      "evidence": [
+        "identity-run-source-scope"
+      ]
+    },
+    "ownerAttribution": {
+      "claim": "Owner attribution can reuse subagentRunId across runs without emitted lifecycle events; invocation reconciliation belongs to agentui-ckpw.",
+      "evidence": [
+        "lifecycle-text-tools",
+        "identity-run-source-scope",
+        "acknowledged-absence-and-fault"
+      ]
+    },
+    "nullTerminalResult": {
+      "claim": "The pinned projection omits a null terminal result; non-null falsy values remain intact.",
+      "evidence": [
+        "terminal-interrupts-usage"
+      ]
+    }
+  },
+  "retainedInputs": {
+    "tests/protocol/fixtures/upstream/provenance.json": "647b6adc0d5d76c76b11f32f2969dbd357f175314620629380f1973d8174334c",
+    "tests/protocol/fixtures/upstream/ag-ui-pin.json": "5f366a1f8b8a6b4ea03c2b403d98e0effca9ee73f42c69d561610400c7cd488d",
+    "tests/protocol/fixtures/upstream/ag-ui-matrix.tsv": "9ffc250d9af9081c126b2d455bb7fcab540ec0ce67ec7c6ef7e3242ae18a9b20",
+    "tests/protocol/fixtures/upstream/upstream.tsv": "a9677f83912c8edd950c7765cb884b12e32ca985d1b3be61ab6a90b161276e84",
+    "tests/protocol/fixtures/upstream/schema.json": "4b5c93226838a0e72d88e6c5df20633c686c49fcb75d9be2815c6cbf9e48e71a",
+    "tests/protocol/fixtures/upstream/SWITCHBOARD-LICENSE": "a66e7d5fc718bb34c855454b134510e369cf3079296326434d31937337864309",
+    "tests/protocol/fixtures/upstream/UPSTREAM-LICENSE": "06dcddbb6908a0c6dd4a9e8ec822eea41d5a460a53089fecccc8a68049e99241"
+  },
+  "categories": [
+    {
+      "category": "envelope",
+      "purpose": "wire-envelope",
+      "definitions": [
+        "Event",
+        "EventType",
+        "BaseEvent",
+        "Attributable",
+        "SubagentRunId",
+        "Metadata"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Common event envelope on actual projection output.",
+      "installedFixtures": [
+        "lifecycle-text-tools"
+      ],
+      "canonicalControls": [
+        "event-closed-shapes"
+      ],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI transport and UI event consumption; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "text",
+      "purpose": "native-observation",
+      "definitions": [
+        "TextMessageRole",
+        "TextMessageStartEvent",
+        "TextMessageContentEvent",
+        "TextMessageEndEvent",
+        "TextMessageChunkEvent"
+      ],
+      "canonicalEventDiscriminators": [
+        "TEXT_MESSAGE_START",
+        "TEXT_MESSAGE_CONTENT",
+        "TEXT_MESSAGE_END",
+        "TEXT_MESSAGE_CHUNK"
+      ],
+      "canonicalFixtures": [
+        "TextMessageChunkEvent/valid/minimal.json",
+        "TextMessageContentEvent/invalid/delta-missing.json",
+        "TextMessageContentEvent/invalid/delta-not-a-string.json",
+        "TextMessageContentEvent/invalid/metadata-null.json",
+        "TextMessageContentEvent/invalid/subagent-run-id-null.json",
+        "TextMessageContentEvent/valid/attributed-to-a-subagent.json",
+        "TextMessageContentEvent/valid/empty-delta.json",
+        "TextMessageContentEvent/valid/metadata-absent.json",
+        "TextMessageContentEvent/valid/metadata-empty.json",
+        "TextMessageContentEvent/valid/metadata-reserved-key.json",
+        "TextMessageContentEvent/valid/metadata-value-null.json",
+        "TextMessageContentEvent/valid/minimal.json",
+        "TextMessageEndEvent/invalid/raw-event-null.json",
+        "TextMessageEndEvent/invalid/timestamp-above-safe-integer.json",
+        "TextMessageEndEvent/invalid/timestamp-below-safe-integer.json",
+        "TextMessageEndEvent/invalid/timestamp-float.json",
+        "TextMessageEndEvent/invalid/unknown-property.json",
+        "TextMessageEndEvent/valid/metadata-prototype-named-key.json",
+        "TextMessageEndEvent/valid/minimal.json",
+        "TextMessageEndEvent/valid/raw-event-array.json",
+        "TextMessageEndEvent/valid/raw-event-number.json",
+        "TextMessageEndEvent/valid/raw-event-object.json",
+        "TextMessageEndEvent/valid/raw-event-string.json",
+        "TextMessageEndEvent/valid/timestamp-at-safe-integer-maximum.json",
+        "TextMessageEndEvent/valid/timestamp-at-safe-integer-minimum.json",
+        "TextMessageStartEvent/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "TextMessageContentEvent/invalid/metadata-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageContentEvent/invalid/subagent-run-id-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/raw-event-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "TextMessageEndEvent/invalid/unknown-property.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed text boundaries and fragments, including empty deltas.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "identity-run-source-scope"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI streaming transport and text renderer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "tools",
+      "purpose": "native-interaction",
+      "definitions": [
+        "ToolCallStartEvent",
+        "ToolCallArgsEvent",
+        "ToolCallEndEvent",
+        "ToolCallChunkEvent",
+        "ToolCallResultEvent",
+        "ToolCall",
+        "FunctionCall",
+        "Tool"
+      ],
+      "canonicalEventDiscriminators": [
+        "TOOL_CALL_START",
+        "TOOL_CALL_ARGS",
+        "TOOL_CALL_END",
+        "TOOL_CALL_CHUNK",
+        "TOOL_CALL_RESULT"
+      ],
+      "canonicalFixtures": [
+        "Tool/invalid/name-missing.json",
+        "Tool/valid/parameters-absent.json",
+        "Tool/valid/parameters-array.json",
+        "Tool/valid/parameters-number.json",
+        "Tool/valid/parameters-object.json",
+        "Tool/valid/parameters-string.json",
+        "ToolCallArgsEvent/valid/empty-delta.json",
+        "ToolCallArgsEvent/valid/minimal.json",
+        "ToolCallChunkEvent/invalid/parent-message-id-null.json",
+        "ToolCallChunkEvent/valid/minimal.json",
+        "ToolCallEndEvent/valid/minimal.json",
+        "ToolCallResultEvent/invalid/content-object.json",
+        "ToolCallResultEvent/invalid/content-part-unknown-type.json",
+        "ToolCallResultEvent/invalid/role-not-tool.json",
+        "ToolCallResultEvent/valid/file-source-part.json",
+        "ToolCallResultEvent/valid/minimal.json",
+        "ToolCallResultEvent/valid/parts-content.json",
+        "ToolCallStartEvent/invalid/parent-message-id-null.json",
+        "ToolCallStartEvent/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "ToolCallChunkEvent/invalid/parent-message-id-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "ToolCallStartEvent/invalid/parent-message-id-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed tool calls, argument fragments and results with scoped references.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "messages-and-opaque-content"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI tool renderer and provider operations; agentui-k4zj and agentui-ckpw"
+      ]
+    },
+    {
+      "category": "state",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "State",
+        "StateSnapshotEvent",
+        "StateDeltaEvent",
+        "JsonPatch",
+        "JsonPatchOperation",
+        "AddOperation",
+        "RemoveOperation",
+        "ReplaceOperation",
+        "MoveOperation",
+        "CopyOperation",
+        "TestOperation",
+        "JsonPointer"
+      ],
+      "canonicalEventDiscriminators": [
+        "STATE_SNAPSHOT",
+        "STATE_DELTA"
+      ],
+      "canonicalFixtures": [
+        "StateDeltaEvent/invalid/delta-not-an-array.json",
+        "StateDeltaEvent/invalid/patch-add-without-value.json",
+        "StateDeltaEvent/invalid/patch-copy-without-from.json",
+        "StateDeltaEvent/invalid/patch-move-without-from.json",
+        "StateDeltaEvent/invalid/patch-path-missing.json",
+        "StateDeltaEvent/invalid/patch-pointer-bad-tilde-escape.json",
+        "StateDeltaEvent/invalid/patch-pointer-without-leading-slash.json",
+        "StateDeltaEvent/invalid/patch-replace-without-value.json",
+        "StateDeltaEvent/invalid/patch-test-without-value.json",
+        "StateDeltaEvent/invalid/patch-unknown-op.json",
+        "StateDeltaEvent/valid/minimal.json",
+        "StateDeltaEvent/valid/patch-add-null-value.json",
+        "StateDeltaEvent/valid/patch-add.json",
+        "StateDeltaEvent/valid/patch-copy.json",
+        "StateDeltaEvent/valid/patch-empty.json",
+        "StateDeltaEvent/valid/patch-escaped-pointer.json",
+        "StateDeltaEvent/valid/patch-move.json",
+        "StateDeltaEvent/valid/patch-remove-with-ignored-value.json",
+        "StateDeltaEvent/valid/patch-remove.json",
+        "StateDeltaEvent/valid/patch-replace.json",
+        "StateDeltaEvent/valid/patch-test.json",
+        "StateDeltaEvent/valid/patch-whole-document-pointer.json",
+        "StateSnapshotEvent/invalid/snapshot-missing.json",
+        "StateSnapshotEvent/valid/minimal.json",
+        "StateSnapshotEvent/valid/snapshot-array.json",
+        "StateSnapshotEvent/valid/snapshot-number.json",
+        "StateSnapshotEvent/valid/snapshot-object.json",
+        "StateSnapshotEvent/valid/snapshot-string.json"
+      ],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Snapshot and patch payload preservation; no patch reducer.",
+      "installedFixtures": [
+        "state-activity-public-extensions"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI durable state, replay and reducer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "messages",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "Role",
+        "MessagesSnapshotEvent",
+        "Message",
+        "BaseMessage",
+        "DeveloperMessage",
+        "SystemMessage",
+        "AssistantMessage",
+        "UserMessage",
+        "ToolMessage"
+      ],
+      "canonicalEventDiscriminators": [
+        "MESSAGES_SNAPSHOT"
+      ],
+      "canonicalFixtures": [
+        "MessagesSnapshotEvent/invalid/assistant-tool-call-not-a-tool-call.json",
+        "MessagesSnapshotEvent/invalid/message-metadata-null.json",
+        "MessagesSnapshotEvent/invalid/messages-item-not-a-message.json",
+        "MessagesSnapshotEvent/invalid/role-shaped-like-a-tool-message.json",
+        "MessagesSnapshotEvent/invalid/role-shaped-like-an-activity-message.json",
+        "MessagesSnapshotEvent/invalid/role-shaped-like-an-assistant-message.json",
+        "MessagesSnapshotEvent/invalid/unknown-role.json",
+        "MessagesSnapshotEvent/valid/attributed-messages.json",
+        "MessagesSnapshotEvent/valid/every-role.json",
+        "MessagesSnapshotEvent/valid/minimal.json",
+        "MessagesSnapshotEvent/valid/user-content-empty-array.json",
+        "ToolMessage/invalid/content-object.json",
+        "ToolMessage/invalid/content-part-unknown-type.json",
+        "ToolMessage/invalid/tool-call-id-missing.json",
+        "ToolMessage/valid/empty-parts-content.json",
+        "ToolMessage/valid/file-source-part.json",
+        "ToolMessage/valid/minimal.json",
+        "ToolMessage/valid/parts-content.json",
+        "UserMessage/invalid/content-missing.json",
+        "UserMessage/invalid/content-number.json",
+        "UserMessage/invalid/content-part-not-an-object.json",
+        "UserMessage/invalid/file-source-value-missing.json",
+        "UserMessage/invalid/legacy-binary-part.json",
+        "UserMessage/invalid/part-shaped-like-media-with-unknown-type.json",
+        "UserMessage/invalid/part-shaped-like-text-with-unknown-type.json",
+        "UserMessage/valid/file-source-content.json",
+        "UserMessage/valid/multimodal-content.json",
+        "UserMessage/valid/text-content.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "MessagesSnapshotEvent/invalid/message-metadata-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Ordered message snapshots and content parts.",
+      "installedFixtures": [
+        "messages-and-opaque-content"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI materialized message store and UI; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "activity",
+      "purpose": "native-observation-and-host-projection",
+      "definitions": [
+        "ActivitySnapshotEvent",
+        "ActivityDeltaEvent",
+        "ActivityMessage"
+      ],
+      "canonicalEventDiscriminators": [
+        "ACTIVITY_SNAPSHOT",
+        "ACTIVITY_DELTA"
+      ],
+      "canonicalFixtures": [
+        "ActivityDeltaEvent/valid/minimal.json",
+        "ActivityDeltaEvent/valid/patch-every-operation.json",
+        "ActivitySnapshotEvent/invalid/content-not-an-object.json",
+        "ActivitySnapshotEvent/valid/minimal.json",
+        "ActivitySnapshotEvent/valid/replace-absent.json",
+        "ActivitySnapshotEvent/valid/replace-false.json"
+      ],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Activity snapshot and delta payload preservation.",
+      "installedFixtures": [
+        "state-activity-public-extensions",
+        "messages-and-opaque-content"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI activity reducer and renderer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "extensions",
+      "purpose": "explicit-extension",
+      "definitions": [
+        "RawEvent",
+        "CustomEvent"
+      ],
+      "canonicalEventDiscriminators": [
+        "RAW",
+        "CUSTOM"
+      ],
+      "canonicalFixtures": [
+        "CustomEvent/invalid/name-missing.json",
+        "CustomEvent/invalid/value-missing.json",
+        "CustomEvent/valid/minimal.json",
+        "CustomEvent/valid/value-array.json",
+        "CustomEvent/valid/value-null.json",
+        "CustomEvent/valid/value-number.json",
+        "CustomEvent/valid/value-object.json",
+        "CustomEvent/valid/value-string.json",
+        "RawEvent/invalid/event-missing.json",
+        "RawEvent/valid/event-array.json",
+        "RawEvent/valid/event-number.json",
+        "RawEvent/valid/event-object.json",
+        "RawEvent/valid/event-string.json",
+        "RawEvent/valid/minimal.json",
+        "RawEvent/valid/with-source.json"
+      ],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Explicit versioned public raw and custom envelopes.",
+      "installedFixtures": [
+        "state-activity-public-extensions"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI host admission, redaction and extension consumers; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "lifecycle",
+      "purpose": "native-observation",
+      "definitions": [
+        "RunStartedEvent",
+        "RunFinishedEvent",
+        "RunErrorEvent",
+        "StepStartedEvent",
+        "StepFinishedEvent"
+      ],
+      "canonicalEventDiscriminators": [
+        "RUN_STARTED",
+        "RUN_FINISHED",
+        "RUN_ERROR",
+        "STEP_STARTED",
+        "STEP_FINISHED"
+      ],
+      "canonicalFixtures": [
+        "RunErrorEvent/invalid/usage-item-not-a-token-usage.json",
+        "RunErrorEvent/valid/minimal.json",
+        "RunErrorEvent/valid/usage-cache-breakdown.json",
+        "RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json",
+        "RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.json",
+        "RunFinishedEvent/invalid/outcome-interrupt-item-not-an-interrupt.json",
+        "RunFinishedEvent/invalid/outcome-interrupt-with-no-interrupts.json",
+        "RunFinishedEvent/invalid/outcome-null.json",
+        "RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json",
+        "RunFinishedEvent/invalid/outcome-success-pending-tool-call-id-not-a-string.json",
+        "RunFinishedEvent/invalid/usage-item-not-a-token-usage.json",
+        "RunFinishedEvent/invalid/usage-negative-cache-write-count.json",
+        "RunFinishedEvent/invalid/usage-negative-token-count.json",
+        "RunFinishedEvent/valid/minimal.json",
+        "RunFinishedEvent/valid/outcome-absent.json",
+        "RunFinishedEvent/valid/outcome-cancelled.json",
+        "RunFinishedEvent/valid/outcome-interrupt-full.json",
+        "RunFinishedEvent/valid/outcome-interrupt.json",
+        "RunFinishedEvent/valid/outcome-success-pending-tool-call-ids.json",
+        "RunFinishedEvent/valid/outcome-success.json",
+        "RunFinishedEvent/valid/result-array.json",
+        "RunFinishedEvent/valid/result-number.json",
+        "RunFinishedEvent/valid/result-object.json",
+        "RunFinishedEvent/valid/result-string.json",
+        "RunFinishedEvent/valid/usage-cache-breakdown.json",
+        "RunFinishedEvent/valid/usage.json",
+        "RunStartedEvent/valid/minimal.json",
+        "RunStartedEvent/valid/with-input.json",
+        "StepFinishedEvent/valid/minimal.json",
+        "StepStartedEvent/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-interrupt-carrying-pending-tool-call-ids.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "RunFinishedEvent/invalid/outcome-success-carrying-interrupts.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Observed run and step boundaries and safe failures. The terminal-ordering-limit fixture records a stream-ordering gap.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw"
+      ]
+    },
+    {
+      "category": "reasoning",
+      "purpose": "native-observation-only",
+      "definitions": [
+        "ReasoningStartEvent",
+        "ReasoningMessageStartEvent",
+        "ReasoningMessageContentEvent",
+        "ReasoningMessageEndEvent",
+        "ReasoningMessageChunkEvent",
+        "ReasoningEndEvent",
+        "ReasoningEncryptedValueEvent",
+        "ReasoningEncryptedValueSubtype",
+        "ReasoningMessage"
+      ],
+      "canonicalEventDiscriminators": [
+        "REASONING_START",
+        "REASONING_MESSAGE_START",
+        "REASONING_MESSAGE_CONTENT",
+        "REASONING_MESSAGE_END",
+        "REASONING_MESSAGE_CHUNK",
+        "REASONING_END",
+        "REASONING_ENCRYPTED_VALUE"
+      ],
+      "canonicalFixtures": [
+        "ReasoningEncryptedValueEvent/invalid/unknown-subtype.json",
+        "ReasoningEncryptedValueEvent/valid/minimal.json",
+        "ReasoningEncryptedValueEvent/valid/subtype-tool-call.json",
+        "ReasoningEndEvent/valid/minimal.json",
+        "ReasoningMessageChunkEvent/valid/minimal.json",
+        "ReasoningMessageContentEvent/valid/empty-delta.json",
+        "ReasoningMessageContentEvent/valid/minimal.json",
+        "ReasoningMessageEndEvent/valid/minimal.json",
+        "ReasoningMessageStartEvent/invalid/role-missing.json",
+        "ReasoningMessageStartEvent/valid/minimal.json",
+        "ReasoningStartEvent/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "ReasoningMessageStartEvent/invalid/role-missing.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "partial",
+      "scope": "Opaque reasoning-role message content only; reasoning lifecycle mapping planned.",
+      "installedFixtures": [
+        "messages-and-opaque-content",
+        "acknowledged-absence-and-fault"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "Switchboard reasoning lifecycle mapping; AgentUI reasoning consumer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "subagents",
+      "purpose": "native-observation",
+      "definitions": [
+        "SubagentStartedEvent",
+        "SubagentFinishedEvent",
+        "SubagentErrorEvent",
+        "SubagentFinishedOutcome",
+        "SubagentFinishedSuccessOutcome",
+        "SubagentFinishedSuspendedOutcome",
+        "SubagentInfo"
+      ],
+      "canonicalEventDiscriminators": [
+        "SUBAGENT_STARTED",
+        "SUBAGENT_FINISHED",
+        "SUBAGENT_ERROR"
+      ],
+      "canonicalFixtures": [
+        "SubagentErrorEvent/invalid/code-null.json",
+        "SubagentErrorEvent/valid/minimal.json",
+        "SubagentFinishedEvent/invalid/outcome-null.json",
+        "SubagentFinishedEvent/invalid/outcome-success-carrying-interrupt-ids.json",
+        "SubagentFinishedEvent/invalid/outcome-suspended-interrupt-id-not-a-string.json",
+        "SubagentFinishedEvent/valid/minimal.json",
+        "SubagentFinishedEvent/valid/outcome-success.json",
+        "SubagentFinishedEvent/valid/outcome-suspended-with-interrupt-ids.json",
+        "SubagentFinishedEvent/valid/outcome-suspended.json",
+        "SubagentInfo/invalid/name-missing.json",
+        "SubagentInfo/valid/described.json",
+        "SubagentInfo/valid/minimal.json",
+        "SubagentStartedEvent/invalid/description-null.json",
+        "SubagentStartedEvent/invalid/name-missing.json",
+        "SubagentStartedEvent/valid/full.json",
+        "SubagentStartedEvent/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "SubagentErrorEvent/invalid/code-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/invalid/outcome-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentFinishedEvent/invalid/outcome-success-carrying-interrupt-ids.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "SubagentStartedEvent/invalid/description-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "partial",
+      "scope": "Scoped owner attribution only; subagent lifecycle mapping planned.",
+      "installedFixtures": [
+        "lifecycle-text-tools",
+        "identity-run-source-scope",
+        "acknowledged-absence-and-fault"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "outcomes",
+      "purpose": "native-confirmed-outcome",
+      "definitions": [
+        "RunFinishedOutcome",
+        "RunFinishedSuccessOutcome",
+        "RunFinishedInterruptOutcome",
+        "RunFinishedCancelledOutcome"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.",
+      "installedFixtures": [
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
+      ],
+      "canonicalControls": [
+        "event-closed-shapes"
+      ],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
+      ]
+    },
+    {
+      "category": "interrupts",
+      "purpose": "native-interaction",
+      "definitions": [
+        "Interrupt",
+        "ResumeEntry"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [
+        "Interrupt/invalid/reason-missing.json",
+        "Interrupt/valid/attributed.json",
+        "Interrupt/valid/minimal.json",
+        "ResumeEntry/invalid/unknown-status.json",
+        "ResumeEntry/valid/cancelled.json",
+        "ResumeEntry/valid/resolved.json"
+      ],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Observed terminal interrupts and references; no native suspend or resume proof.",
+      "installedFixtures": [
+        "terminal-interrupts-usage"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "Native interaction qualification and AgentUI continuation delivery; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "usage",
+      "purpose": "native-reported-accounting",
+      "definitions": [
+        "TokenUsage"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [],
+      "sdkRuntimeDivergences": [],
+      "mapping": "represented",
+      "scope": "Observed terminal accounting; omitted usage arrays remain absent and explicit zero counts are preserved.",
+      "installedFixtures": [
+        "terminal-interrupts-usage"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI usage persistence and display; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "multimodal",
+      "purpose": "native-content",
+      "definitions": [
+        "ContentPart",
+        "TextPart",
+        "ImagePart",
+        "AudioPart",
+        "VideoPart",
+        "DocumentPart",
+        "PartSource",
+        "DataSource",
+        "UrlSource",
+        "FileSource"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [
+        "FileSource/invalid/reference-record.json",
+        "FileSource/invalid/value-missing.json",
+        "FileSource/valid/full.json",
+        "FileSource/valid/minimal.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "FileSource/invalid/reference-record.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "represented",
+      "scope": "Opaque ordered message and tool content; no provider media fetch.",
+      "installedFixtures": [
+        "messages-and-opaque-content"
+      ],
+      "canonicalControls": [],
+      "publishedTypeContracts": [],
+      "pendingProductOwners": [
+        "AgentUI content admission, media policy and UI; agentui-ckpw"
+      ]
+    },
+    {
+      "category": "request",
+      "purpose": "host-input-with-native-validation",
+      "definitions": [
+        "Context",
+        "RunAgentInput"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [
+        "RunAgentInput/invalid/context-item-not-a-context.json",
+        "RunAgentInput/invalid/messages-item-not-a-message.json",
+        "RunAgentInput/invalid/messages-missing.json",
+        "RunAgentInput/invalid/resume-item-not-a-resume-entry.json",
+        "RunAgentInput/invalid/tools-item-not-a-tool.json",
+        "RunAgentInput/valid/forwarded-props-array.json",
+        "RunAgentInput/valid/forwarded-props-number.json",
+        "RunAgentInput/valid/forwarded-props-object.json",
+        "RunAgentInput/valid/forwarded-props-string.json",
+        "RunAgentInput/valid/full.json",
+        "RunAgentInput/valid/minimal.json",
+        "RunAgentInput/valid/state-array.json",
+        "RunAgentInput/valid/state-number.json",
+        "RunAgentInput/valid/state-object.json",
+        "RunAgentInput/valid/state-string.json",
+        "RunAgentInput/valid/without-tools-or-context.json"
+      ],
+      "sdkRuntimeDivergences": [],
+      "mapping": "wire-only",
+      "scope": "Published SDK RunAgentInput type and canonical schema controls, with different accepted shapes; no host admission implementation.",
+      "installedFixtures": [],
+      "canonicalControls": [
+        "request-capability-shapes"
+      ],
+      "publishedTypeContracts": [
+        "published-sdk-availability"
+      ],
+      "pendingProductOwners": [
+        "AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y"
+      ]
+    },
+    {
+      "category": "capabilities",
+      "purpose": "declared-configured-availability",
+      "definitions": [
+        "IdentityCapabilities",
+        "TransportCapabilities",
+        "ToolsCapabilities",
+        "OutputCapabilities",
+        "StateCapabilities",
+        "MultiAgentCapabilities",
+        "ReasoningCapabilities",
+        "MultimodalInputCapabilities",
+        "MultimodalOutputCapabilities",
+        "MultimodalCapabilities",
+        "ExecutionCapabilities",
+        "HumanInTheLoopCapabilities",
+        "AgentCapabilities"
+      ],
+      "canonicalEventDiscriminators": [],
+      "canonicalFixtures": [
+        "AgentCapabilities/invalid/custom-null.json",
+        "AgentCapabilities/invalid/fractional-max-iterations.json",
+        "AgentCapabilities/invalid/metadata-null.json",
+        "AgentCapabilities/invalid/old-subagents-key.json",
+        "AgentCapabilities/invalid/streaming-not-boolean.json",
+        "AgentCapabilities/valid/full.json",
+        "AgentCapabilities/valid/minimal.json",
+        "AgentCapabilities/valid/open-values-null.json",
+        "AgentCapabilities/valid/partial.json",
+        "ExecutionCapabilities/invalid/max-iterations-over-maximum.json",
+        "ExecutionCapabilities/invalid/negative-max-execution-time.json",
+        "ExecutionCapabilities/valid/limits-at-maximum.json",
+        "MultiAgentCapabilities/invalid/old-subagents-key.json",
+        "MultiAgentCapabilities/valid/subagents.json"
+      ],
+      "sdkRuntimeDivergences": [
+        {
+          "path": "AgentCapabilities/invalid/custom-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/metadata-null.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/old-subagents-key.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        },
+        {
+          "path": "AgentCapabilities/invalid/streaming-not-boolean.json",
+          "typescriptAccepts": false,
+          "pythonAccepts": true
+        },
+        {
+          "path": "MultiAgentCapabilities/invalid/old-subagents-key.json",
+          "typescriptAccepts": true,
+          "pythonAccepts": true
+        }
+      ],
+      "mapping": "wire-only",
+      "scope": "Published SDK AgentCapabilities assignability under TypeScript; canonical capability-schema controls; independent backend availability alignment and projection description.",
+      "installedFixtures": [
+        "availability-description"
+      ],
+      "canonicalControls": [
+        "request-capability-shapes"
+      ],
+      "publishedTypeContracts": [
+        "published-sdk-availability",
+        "availability-family-alignment"
+      ],
+      "pendingProductOwners": [
+        "AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y"
+      ]
+    }
+  ]
+}

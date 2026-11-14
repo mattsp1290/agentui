@@ -80,9 +80,11 @@ The Node host does not turn a remote Crew operation into a local native adapter.
 
 The selected package exports core and `./agui`. Its projection descriptor is
 `basic-values-messages-and-terminals`; reasoning and subagent lifecycle mappings
-remain planned. The AG-UI entry needs the exact optional SDK peer. AgentUI's
-protocol matrix, transport, replay and UI consumers remain separate work in
-`agentui-usw9` and subsequent tasks. A schema or projection does not prove that
+remain planned. The AG-UI entry needs the exact optional SDK peer.
+`@agentui/host` declares it as a package dependency for its `./agui` entry;
+core-only consumers install it, but the core entry imports no AG-UI code.
+The [protocol matrix](../protocol/README.md) names controlled installed fixtures and pending transport, replay and UI consumers.
+A schema or projection does not prove that
 a native provider emits the corresponding event.
 
 There is no packaged Claude, Codex or Pi adapter in this artifact.
