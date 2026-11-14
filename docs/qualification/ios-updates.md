@@ -1,0 +1,76 @@
+# iOS update strategy qualification
+
+## Decision
+
+Use rebuild-only updates for v1. Treat every customization change, including a
+JavaScript-only change, as rebuild-required in the installed iOS client. Build a
+new Release app with its embedded bundle and reinstall it through the developer's
+Apple tooling. Native dependency changes also require dependency installation
+and a new native build. Desktop customization remains independent.
+
+The standalone React Native probe proves the simulator rebuild path. It does
+not mount AgentUI, implement a product update notification, or qualify integrated
+Apple task `agentui-onxu`. Physical-device signing and installation remain untested.
+
+## Why rebuild-only
+
+React Native's [Fast Refresh](https://reactnative.dev/docs/0.86/fast-refresh)
+supports iteration through a development server. It does not supply this task's
+required installed-update protocol. A live-update option would need a compatible
+bundle/native version contract, interrupted-download handling, atomic activation,
+and last-good restart recovery. No such updater exists in this repository, and
+this spike does not add one or depend on Expo or a hosted service. Live delivery
+is unqualified, not demonstrated impossible. Rebuild-only is the task's accepted
+v1 alternative.
+
+The generated template's Release `bundleURL()` reads `main.jsbundle` from the
+app bundle. Its Debug path reads from Metro. The experiment deliberately uses
+Release. See React Native's [device guide](https://reactnative.dev/docs/0.86/running-on-device)
+for the distinction between development iteration, embedded bundles, and signing.
+
+## Environment and source
+
+Measured on November 13, 2026, America/New_York.
+
+| Item | Measured value |
+| --- | --- |
+| Branch | `codex/ios-update-qualification` |
+| Base | `bf16a1f`, merged foundation |
+| Probe implementation source | `b4258d6e0fb97a844e8f57e9fe1743061e85a3a2` |
+| macOS | 26.6.2, build 25G83, arm64 |
+| Xcode | 26.2, build 17C52 |
+| Simulator SDK | 26.2 |
+| Simulator runtime | iOS 26.3 |
+| Simulator | iPhone 17 Pro, `A284C2DE-8B9E-4905-B568-A49A425318BA` |
+| Node / npm | 24.22.3 / 11.19.1, isolated tools on PATH |
+| CocoaPods / Ruby | 1.16.2 / 3.4.6 |
+| React / React Native | 19.3.1 / 0.86.0, matching repository packages |
+| CLI / template | 20.2.0 / 0.86.0 |
+| Hermes | hermes-engine 250829098.0.14, from Podfile.lock |
+| Signing | Simulator only, `CODE_SIGNING_ALLOWED=NO` |
+
+Pinned native and JavaScript dependencies are in
+[`Podfile.lock`](../../spikes/ios-updates/Podfile.lock) and
+[`package-lock.json`](../../spikes/ios-updates/package-lock.json).
+The probe has its own dependency tree and does not change the main workspace lock.
+
+## Results
+
+| Check | Result | Evidence |
+| --- | --- | --- |
+| Pinned dependency installation | PASS | npm ci and pod install logs |
+| Release A build/install/render | PASS | build-A log and A screenshot |
+| Source edit to B without rebuild, then restart | PASS: still A | no-rebuild screenshot |
+| Fresh template preparation with committed locks | PASS | clean prepare log |
+| Release B rebuild/install/render | PASS | build-B log and B screenshot |
+| B restart without Metro | PASS | B-restart screenshot, no listener on 8081 |
+| Repository npm run verify | PASS | 11 tests, build, check, lint |
+| Compatible live-update recovery | UNQUALIFIED | No updater tested |
+| Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
+| Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
+
+Follow the [probe procedure](../../spikes/ios-updates/README.md) to reproduce the
+commands. Screenshots require visual inspection. The scripts report build and
+installation completion, not automatic visual acceptance. Full local build output,
+generated app, and installed bundle are under ignored `spikes/ios-updates/.work/`.
+Retained evidence is in [the evidence directory](../../spikes/ios-updates/evidence/).
