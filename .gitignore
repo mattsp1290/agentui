@@ -2,3 +2,6 @@ node_modules/
 dist/
 .audit/
 .DS_Store
+apps/desktop/web-dist/
+apps/desktop/src-tauri/target/
+apps/desktop/src-tauri/gen/

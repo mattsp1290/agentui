@@ -1,0 +1,38 @@
+@import '@agentui/ui-primitives/styles.css';
+
+html, body, #root { margin: 0; min-width: 320px; min-height: 100%; }
+body { margin: 0; }
+.desktop-shell { min-height: 100vh; display: flex; flex-direction: column; }
+.shell-header { display: flex; align-items: center; justify-content: space-between; gap: 1.5rem; padding: 1.25rem 2rem; border-bottom: 1px solid var(--aui-color-border); }
+.brand { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; font-size: 1.1rem; }
+.brand-mark { display: grid; place-items: center; width: 2rem; height: 2rem; border-radius: .6rem; background: var(--aui-color-accent); color: var(--aui-color-on-accent); font-weight: 750; font-size: 1.4rem; }
+.platform-label { color: var(--aui-color-muted); font-size: .8rem; padding-left: .75rem; border-left: 1px solid var(--aui-color-border); }
+.shell-header nav { display: flex; flex-wrap: wrap; gap: .5rem; }
+.shell-header button { font-size: .8rem; }
+main { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
+.landing-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 5rem; max-width: 65rem; width: 100%; margin: 0 auto; }
+.introduction > [data-variant="label"] { letter-spacing: .12em; font-size: .7rem; color: var(--aui-color-accent); }
+.introduction h1 { overflow-wrap: anywhere; max-width: 12ch; font-size: clamp(2.5rem, 5vw, 4rem); line-height: 1.12; margin: 1.5rem 0; }
+.introduction > p[data-variant="muted"] { max-width: 36ch; font-size: 1.1rem; }
+.connection-card { margin-top: 2.5rem; padding: 1.5rem; border-radius: 1rem; }
+.connection-card p { margin-bottom: 0; }
+.connection-heading { display: flex; align-items: center; gap: .75rem; }
+.connection-heading h2 { margin: 0; }
+.status-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--aui-color-muted); flex: none; }
+.workspace-notes { border-left: 1px solid var(--aui-color-border); padding-left: 2.5rem; align-self: center; }
+.workspace-notes h2 { margin: .75rem 0; }
+.workspace-notes p { font-size: .9rem; }
+.note-number, .build-label { color: var(--aui-color-muted); font-size: .7rem; letter-spacing: .1em; }
+.note-divider { height: 1px; background: var(--aui-color-border); margin: 2rem 0; }
+.build-label { margin-top: 2rem; }
+.shell-footer { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; padding: 1rem 2rem; border-top: 1px solid var(--aui-color-border); font-size: .75rem; color: var(--aui-color-muted); }
+.footer-status { display: flex; align-items: center; gap: .5rem; }
+.footer-status::before { content: ''; width: .4rem; height: .4rem; border-radius: 50%; background: currentColor; }
+.landing { max-width: 40rem; padding: 2rem; margin: auto; }
+@media (max-width: 760px) {
+  .shell-header { align-items: flex-start; flex-direction: column; padding: 1.25rem; }
+  main { padding: 3rem 1.25rem; }
+  .landing-grid { grid-template-columns: minmax(0, 1fr); gap: 3rem; }
+  .workspace-notes { padding-left: 0; border-left: 0; border-top: 1px solid var(--aui-color-border); padding-top: 2rem; }
+  .shell-footer { padding: 1rem 1.25rem; }
+}
