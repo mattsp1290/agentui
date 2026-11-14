@@ -1,0 +1,232 @@
+{
+  "request": "agentui-h-c9p6",
+  "started_utc": "2026-11-14T06:21:07.318249+00:00",
+  "tested_source": {
+    "command": [
+      "git",
+      "rev-parse",
+      "HEAD"
+    ],
+    "exit_status": 0,
+    "output": "54065e29b732519d575e7d8e8cbcc196a7c0e162\n"
+  },
+  "branch": {
+    "command": [
+      "git",
+      "branch",
+      "--show-current"
+    ],
+    "exit_status": 0,
+    "output": "codex/switchboard-macos-54065e2\n"
+  },
+  "clean_before": {
+    "command": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "inputs": {
+    "vendor/switchboard.json": {
+      "sha256": "6b4a736547383a3e8bf4d6aa690765c5d16196f1bf884b9680ceda42fc4c6ddc",
+      "git_blob": "639d1b9f88579a27087bc1378ea31000d630b011",
+      "matches_request": true
+    },
+    "packages/host/src/index.ts": {
+      "sha256": "4494cfe3605bbfdeee9e5413baae4c91ecc61b9b3b488ed09109e61e6ac8597d",
+      "git_blob": "c96d0d2bfe61ce5be5f894acf1693682c197c6d7",
+      "matches_request": true
+    },
+    "packages/host/package.json": {
+      "sha256": "af73968b9e806d566175cf09f2a1a99fdddffdcfe06547314f7df2523644663c",
+      "git_blob": "0cac20950a38273ef7e4180fa5543ea029044a8c",
+      "matches_request": true
+    },
+    "packages/host/tsconfig.json": {
+      "sha256": "8023a66ebe0e889aa1408dcd91999a825c858947e37d70b046f84f4f41517445",
+      "git_blob": "258fce13d955fab9f310e3203423d02ad0774db0",
+      "matches_request": true
+    },
+    "package-lock.json": {
+      "sha256": "01a62396278b007318c230d2469095ed1e1ea0cda40ec93ce7e2b8bca29edb42",
+      "git_blob": "6a568f4ba3e14f27553cd9ed5147af2ec1967b43",
+      "matches_request": true
+    },
+    "package.json": {
+      "sha256": "3b74e44206557e2d43726f4d5d368faefc60b589a08c946c3636b7c9fc1dc0ac",
+      "git_blob": "829841b3090d2a12438cc52ca3b97c4da2eb5530",
+      "matches_request": true
+    },
+    "tsconfig.base.json": {
+      "sha256": "2acd02fa3efc84f19679a6decca544fd46e42f9ae6b4bbfac3d256f625c3b0dd",
+      "git_blob": "e7d72b04e5ef10e43a78dbbb0bd2fb1e2c3784a1",
+      "matches_request": true
+    },
+    ".node-version": {
+      "sha256": "584f19ccde29925286e32f566a2aa06c89efb4e2eb2bb2fc9ea5d56e2d190ac4",
+      "git_blob": "229b3ce85a631ccd5991b25f75f414171ccc7942",
+      "matches_request": true
+    },
+    "packages/adapter-tests/tests/switchboard.test.mjs": {
+      "sha256": "04d432b7c3dc40150d0cce14232bddbabc0ec8c8c49c92eace3682927029a9f2",
+      "git_blob": "f798836f2f4890486c2e536a1bb57b319f5d6714",
+      "matches_request": true
+    },
+    "packages/adapter-tests/tests/switchboard-types.test.mjs": {
+      "sha256": "8613125e5179a6a0c321ace4c0bf4bd96cbe085f1fbe2373a9c58134b324f975",
+      "git_blob": "420425888c7fc58c242cc5c5106f3564ea93e07c",
+      "matches_request": true
+    },
+    "packages/adapter-tests/tests/support/compile.mjs": {
+      "sha256": "2d03a4ecf6e0886a36ff5d00c3fbba2e9b5d36976028467e2e7d716bf95ada90",
+      "git_blob": "973a1a9a28b7e54e00f008693ffccf51f26a36aa",
+      "matches_request": true
+    }
+  },
+  "commands": [
+    {
+      "command": [
+        "node",
+        "scripts/check-toolchain.mjs"
+      ],
+      "started_utc": "2026-11-14T06:21:07.680864+00:00",
+      "raw_log": "01-toolchain.log",
+      "exit_status": 0,
+      "finished_utc": "2026-11-14T06:21:07.767534+00:00",
+      "raw_output_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retained_log": "01-toolchain.log.gz",
+      "retained_uncompressed_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "retained_gzip_sha256": "ee50583d8da85550f7d1860e17836bd743fd25c884ff10b4a28582acd196e8b8"
+    },
+    {
+      "command": [
+        "npm",
+        "ci"
+      ],
+      "started_utc": "2026-11-14T06:21:07.767899+00:00",
+      "raw_log": "02-npm-ci.log",
+      "exit_status": 0,
+      "finished_utc": "2026-11-14T06:21:10.639480+00:00",
+      "raw_output_sha256": "858f739baa45ab473db3216ac62a2331a4305c0286c7e9ad28ab75d3432ddb52",
+      "retained_log": "02-npm-ci.log.gz",
+      "retained_uncompressed_sha256": "858f739baa45ab473db3216ac62a2331a4305c0286c7e9ad28ab75d3432ddb52",
+      "retained_gzip_sha256": "b6f30de4072393a81ab724a651543164cf0807ad7ff8fa77f58d7bf66e076c14"
+    },
+    {
+      "command": [
+        "npm",
+        "run",
+        "build"
+      ],
+      "started_utc": "2026-11-14T06:21:10.639968+00:00",
+      "raw_log": "03-build.log",
+      "exit_status": 0,
+      "finished_utc": "2026-11-14T06:21:12.427223+00:00",
+      "raw_output_sha256": "564e7dab5b67dbba2e8e7f04e72facdda352a93db8c976f64bfbad36d5d53442",
+      "retained_log": "03-build.log.gz",
+      "retained_uncompressed_sha256": "564e7dab5b67dbba2e8e7f04e72facdda352a93db8c976f64bfbad36d5d53442",
+      "retained_gzip_sha256": "293044a3d5e51e49b9577b0b58b21a7b9d2f667b689c090724109ed442d2aaf1"
+    },
+    {
+      "command": [
+        "node",
+        "--test",
+        "packages/adapter-tests/tests/switchboard.test.mjs",
+        "packages/adapter-tests/tests/switchboard-types.test.mjs"
+      ],
+      "started_utc": "2026-11-14T06:21:12.427708+00:00",
+      "raw_log": "04-focused-tests.log",
+      "exit_status": 0,
+      "finished_utc": "2026-11-14T06:21:12.986520+00:00",
+      "raw_output_sha256": "633807b6e8621dc385c8da8b5f5dff7b143a3067193d4e1d4b6330c5618d194c",
+      "retained_log": "04-focused-tests.log.gz",
+      "retained_uncompressed_sha256": "633807b6e8621dc385c8da8b5f5dff7b143a3067193d4e1d4b6330c5618d194c",
+      "retained_gzip_sha256": "236a0a7f5d248084923be05cab27dd46984bacb87966cbaf520888214e60a401"
+    }
+  ],
+  "environment": [
+    {
+      "command": [
+        "sw_vers"
+      ],
+      "exit_status": 0,
+      "output": "ProductName:\t\tmacOS\nProductVersion:\t\t26.6.2\nBuildVersion:\t\t25G83\n"
+    },
+    {
+      "command": [
+        "uname",
+        "-m"
+      ],
+      "exit_status": 0,
+      "output": "arm64\n"
+    },
+    {
+      "command": [
+        "node",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "v24.22.3\n"
+    },
+    {
+      "command": [
+        "npm",
+        "--version"
+      ],
+      "exit_status": 0,
+      "output": "11.19.1\n"
+    }
+  ],
+  "scope": "Installed package and controlled fixtures only; no Apple tooling, native adapter, provider call or integrated application qualification",
+  "artifact": {
+    "path": "vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+    "bytes": 40232,
+    "sha256": "15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421",
+    "npm_integrity": "sha512-BYqLGxoq3QOZ3cpJOleAcMj+WcEc/BQIO+GnB3tR9cHiX3L1e2MGeTxl16P7zAmAfnV1koK8BX80IAGIzqtvxw==",
+    "switchboard_source": "58c7922d8fade3617cc86fedcf41677f897025ef"
+  },
+  "invocation_cwd": "~/git/agentui",
+  "toolchain_path_prefix": "/tmp/agentui-ios-tools/node_modules/.bin",
+  "clean_after": {
+    "command": [
+      "git",
+      "status",
+      "--porcelain"
+    ],
+    "exit_status": 0,
+    "output": ""
+  },
+  "inputs_unchanged_after": {
+    "vendor/switchboard.json": true,
+    "packages/host/src/index.ts": true,
+    "packages/host/package.json": true,
+    "packages/host/tsconfig.json": true,
+    "package-lock.json": true,
+    "package.json": true,
+    "tsconfig.base.json": true,
+    ".node-version": true,
+    "packages/adapter-tests/tests/switchboard.test.mjs": true,
+    "packages/adapter-tests/tests/switchboard-types.test.mjs": true,
+    "packages/adapter-tests/tests/support/compile.mjs": true
+  },
+  "artifact_unchanged_after": true,
+  "finished_utc": "2026-11-14T06:21:12.995771+00:00",
+  "focused_test_counts": {
+    "tests": 5,
+    "pass": 5,
+    "fail": 0,
+    "cancelled": 0,
+    "skipped": 0,
+    "todo": 0
+  },
+  "output_retention": {
+    "full_combined_stdout_stderr": true,
+    "redactions": [
+      "Local home-directory prefix replaced with ~; no lines omitted"
+    ],
+    "raw_output_directory": ".audit/switchboard-macos-54065e2",
+    "tested_source_is_not_delivery_commit": true
+  }
+}

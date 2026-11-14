@@ -21,6 +21,6 @@
   },
   "dependencies": {
     "@agentui/contracts": "0.0.0",
-    "@mattsp1290/switchboard": "file:../../vendor/switchboard-2eadb11cbfc01787956a3b18ee500a922e2a7904.tgz"
+    "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz"
   }
 }

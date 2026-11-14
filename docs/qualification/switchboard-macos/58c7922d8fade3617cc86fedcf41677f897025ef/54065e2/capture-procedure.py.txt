@@ -1,0 +1,46 @@
+from pathlib import Path
+import datetime,hashlib,base64,json,os,re,subprocess,sys
+root=Path('~/git/agentui');capture=root/'.audit/switchboard-macos-54065e2'
+capture.mkdir(exist_ok=False)
+request=json.loads(Path('/tmp/agentui-c9p6.json').read_text())['body']
+expected=re.findall(r'^- ([^:]+): SHA-256 ([0-9a-f]{64}); Git blob ([0-9a-f]{40})\.',request,re.M)
+assert len(expected)==11
+source='54065e29b732519d575e7d8e8cbcc196a7c0e162'
+artifact='vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz'
+expected_artifact='15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421'
+def stamp():return datetime.datetime.now(datetime.timezone.utc).isoformat()
+def query(args,env=None):
+ p=subprocess.run(args,cwd=root,env=env,stdout=subprocess.PIPE,stderr=subprocess.STDOUT,text=True)
+ return {'command':args,'exit_status':p.returncode,'output':p.stdout}
+def digest(path):return hashlib.sha256((root/path).read_bytes()).hexdigest()
+env=os.environ.copy();env['PATH']='/tmp/agentui-ios-tools/node_modules/.bin:'+env['PATH']
+meta={'request':'agentui-h-c9p6','started_utc':stamp(),'tested_source':query(['git','rev-parse','HEAD']), 'branch':query(['git','branch','--show-current']),'clean_before':query(['git','status','--porcelain']),'inputs':{},'commands':[],'environment':[],'scope':'Installed package and controlled fixtures only; no Apple tooling, native adapter, provider call or integrated application qualification'}
+assert meta['tested_source']['output'].strip()==source and meta['clean_before']['output']==''
+for name,sha,blob in expected:
+ actual_blob=query(['git','hash-object',name])['output'].strip();actual_sha=digest(name)
+ meta['inputs'][name]={'sha256':actual_sha,'git_blob':actual_blob,'matches_request':actual_sha==sha and actual_blob==blob}
+ assert meta['inputs'][name]['matches_request'],name
+raw=(root/artifact).read_bytes();integrity='sha512-'+base64.b64encode(hashlib.sha512(raw).digest()).decode()
+meta['artifact']={'path':artifact,'bytes':len(raw),'sha256':digest(artifact),'npm_integrity':integrity,'switchboard_source':'58c7922d8fade3617cc86fedcf41677f897025ef'}
+assert len(raw)==40232 and digest(artifact)==expected_artifact
+assert integrity=='sha512-BYqLGxoq3QOZ3cpJOleAcMj+WcEc/BQIO+GnB3tR9cHiX3L1e2MGeTxl16P7zAmAfnV1koK8BX80IAGIzqtvxw=='
+for cmd in [['sw_vers'],['uname','-m'],['node','--version'],['npm','--version']]:
+ result=query(cmd,env);assert result['exit_status']==0;meta['environment'].append(result)
+assert meta['environment'][2]['output'].strip()=='v24.22.3'
+assert meta['environment'][3]['output'].strip()=='11.19.1'
+meta['invocation_cwd']=str(root);meta['toolchain_path_prefix']='/tmp/agentui-ios-tools/node_modules/.bin'
+def save(): (capture/'provenance-raw.json').write_text(json.dumps(meta,indent=2)+'\n')
+save();print('All 11 frozen inputs and exact artifact matched; clean source verified.',flush=True)
+commands=[('01-toolchain',['node','scripts/check-toolchain.mjs']),('02-npm-ci',['npm','ci']),('03-build',['npm','run','build']),('04-focused-tests',['node','--test','packages/adapter-tests/tests/switchboard.test.mjs','packages/adapter-tests/tests/switchboard-types.test.mjs'])]
+for label,cmd in commands:
+ result={'command':cmd,'started_utc':stamp(),'raw_log':label+'.log'}
+ with (capture/result['raw_log']).open('wb') as log:
+  p=subprocess.run(cmd,cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
+ result['exit_status']=p.returncode;result['finished_utc']=stamp();result['raw_output_sha256']=hashlib.sha256((capture/result['raw_log']).read_bytes()).hexdigest()
+ meta['commands'].append(result);save();print(label+' exit '+str(p.returncode),flush=True)
+ if p.returncode:break
+meta['clean_after']=query(['git','status','--porcelain']);meta['inputs_unchanged_after']={name:digest(name)==sha for name,sha,blob in expected};meta['artifact_unchanged_after']=digest(artifact)==expected_artifact;meta['finished_utc']=stamp()
+save()
+assert len(meta['commands'])==4 and all(r['exit_status']==0 for r in meta['commands'])
+assert meta['clean_after']['output']=='' and all(meta['inputs_unchanged_after'].values()) and meta['artifact_unchanged_after']
+print('Post-run clean source and all frozen input digests verified.',flush=True)
