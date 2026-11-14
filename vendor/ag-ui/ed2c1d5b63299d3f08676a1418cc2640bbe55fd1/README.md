@@ -34,7 +34,7 @@ Qualification imports every public package, runs Codex first turn and continuati
 
 ## Node execution and launcher scope
 
-`scripts/lib/agui-fork.mjs` owns fork verification and returns the checked package and fixture records. The driver copies from that record without reparsing the fixture index. Fixture paths must be unique and include the controlled Codex executable. Consumer inputs and Pi fixtures must match their verified filename sets before copying. Retained file paths must stay within the fork directory.
+`scripts/lib/agui-fork.mjs` owns fork verification and returns the checked package and fixture records. The driver copies from that record without reparsing the fixture index. Fixture paths must be unique and include the controlled Codex executable. Consumer inputs and Pi fixtures must match their verified filename sets before copying. Retained file paths are lexically confined to the fork directory; content hashes guarantee the bytes.
 
 The archive reader uses bounded system `tar` calls with `LC_ALL=C` and removes `TAR_OPTIONS`, `TAR_READER_OPTIONS`, `TAR_WRITER_OPTIONS`, `GZIP` and `TAPE`. Node children use the driver's executable. npm resolves with that executable's directory first on PATH, and the driver records the actual npm version. The emitted record also identifies tar, the five qualification source files and inherited runtime configuration names. A `NODE_OPTIONS` digest identifies the inherited value without printing it. The digest does not conceal short or guessable values. Ambient Node and npm settings remain inherited. Each `qualification.json` replay records the source bytes and execution scope it measured. Earlier records keep their original paths and runtime scope.
 

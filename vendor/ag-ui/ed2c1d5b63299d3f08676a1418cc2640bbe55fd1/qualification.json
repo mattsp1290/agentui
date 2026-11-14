@@ -255,13 +255,22 @@
       "platform": "linux",
       "architecture": "arm64",
       "tar": "tar (GNU tar) 1.35",
-      "gzip": "gzip 1.12",
       "temporaryDirectory": "/tmp",
       "inheritedRuntimeConfig": [
         "NODE_OPTIONS"
       ],
       "nodeOptionsSha256": "7905de2be2802b9027f6e79643583f59739afa09f6960521f5f9b2a81168fabc",
-      "scope": "Six frozen public package imports, controlled Codex ESM/CommonJS first turn and continuation, 15 Pi tests and dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
+      "scope": "Six frozen public package imports, controlled Codex ESM/CommonJS first turn and continuation, 15 Pi tests and dependency graph. Linux GNU tar only; no real native provider or Apple qualification.",
+      "coordinatorObservations": {
+        "gzip": "gzip 1.12",
+        "scope": "Observed by the coordinator on the measuring host while preparing this record; not emitted by the driver and not present in evidence/verified-model-node-qualification.log.gz."
+      },
+      "sourceScope": "Measured on working source over 843d217a876aef4d2d51a0258f4a2af3a8970383. The five listed source hashes match the later committed 0e8d4c4274247b646b3a5cd86446931227cad073 files. No archive, native pin, consumer lock or fixture changed.",
+      "matchingCommittedSource": {
+        "commit": "0e8d4c4274247b646b3a5cd86446931227cad073",
+        "scope": "Library, driver and three consumer-assertion Git blobs match the measured sourceSha256 map. This identifies executable source, not later qualification-ledger annotations."
+      },
+      "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in that environment. Tar is a host tool. Ambient Node/npm settings remain inherited, with runtime variable names and NODE_OPTIONS digest recorded. No hermetic runtime claim."
     }
   ],
   "evidence": [
