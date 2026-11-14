@@ -30,7 +30,8 @@ SDK core and React contracts compile separately to keep platform ambient types o
 The host is the only application workspace with a Switchboard dependency.
 Clients and customization declare no dependency on Node host APIs.
 The adapter-test workspace consumes the host public API.
-Missing native adapters and AG-UI mappings remain upstream work.
+Packaged native adapters remain upstream work. The pinned library provides a
+limited AG-UI projection; AgentUI protocol and transport consumption remain separate work.
 No adapter implementation or agent loop is copied here.
 
 ## Run ownership
@@ -87,8 +88,9 @@ Ambient-global compiler tests use unsuppressed invalid fixtures and first prove 
 Switchboard is private version `0.0.0`, with no claimed registry release.
 The host consumes a [verified tarball from an immutable commit](../../vendor/README.md).
 Neither sibling checkout changes nor upstream main changes affect installation.
-This pin qualifies packaging only. Native adapters and AG-UI mappings are absent at this revision.
-Later integration tasks must adopt separately qualified upstream artifacts.
+The [host integration](switchboard-integration.md) qualifies package and controlled
+continuation consumption. Native adapters and live providers remain unqualified.
+Available library mappings do not qualify AgentUI transport, replay or UI behavior.
 
 SQLite through Node's builtin module is the first storage candidate.
 It offers local transactions for host coordination.
