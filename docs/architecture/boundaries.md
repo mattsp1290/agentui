@@ -8,7 +8,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | --- | --- | --- |
 | `@agentui/contracts` | Conversation scope, provider identity, run authority | ES2023 only |
 | `@agentui/protocol` | Published AG-UI SDK types, construction enum and availability declarations | ES2023 only |
-| `@agentui/sdk` | Full-trust extension entry manifests | ES2023 only |
+| `@agentui/sdk` | Full-trust extension manifests and public backend provider contracts | ES2023 only |
 | `@agentui/sdk/react` | Conversation-scoped React module contracts | React, without DOM |
 | `@agentui/theme` | Semantic tokens and inherited theme resolution | ES2023 only |
 | `@agentui/theme/react` | Shared theme context | React, without DOM |
@@ -75,7 +75,7 @@ The shell retains recovery and compatibility controls.
 Pets, MCP control, and Crew are the three planned example extensions.
 Crew transport, authentication, and cursors belong in `examples/crew` when implemented.
 Core host code uses generic provider identities.
-Provider lifecycle and frontend-tool APIs remain downstream tasks.
+The SDK exports [backend provider contracts](provider-contracts.md). Provider lifecycle runtime and frontend-tool APIs remain downstream tasks.
 Switchboard and Crew frontend-tool requests are prerequisites, not evidence of delivery.
 
 Committed customization references will include an immutable Git revision and optional contained subdirectory.
