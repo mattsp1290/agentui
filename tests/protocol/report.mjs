@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
-import { assertRetainedInputsCoherent, readConformanceInputs } from './coherence.mjs';
+import { loadConformanceInputs } from './coherence.mjs';
 import { canonicalDefinitions } from './canonical.mjs';
 import { evidenceKinds, evidenceTest, buildEvidenceRegistry } from './evidence.mjs';
 import { behaviorLimits, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
@@ -33,12 +33,10 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
   return categories;
 }
 
-export function buildConformanceReport({ inputs: { retained, vendor, project, descriptor }, registry, fork }) {
+function buildConformanceReport({ inputs: { retained, vendor, project, descriptor, sdk, pythonSdk }, registry, fork }) {
   const { provenance, pin, definitions, fixtures } = retained;
   const { metadata, core: installedSdk } = fork;
   const retainedPath = (file) => `${retained.retainedDir}${file}`;
-  const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
-  const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   const categories = projectCategories(retained, registry);
   const kindEvidence = (kind) => ({ testName: evidenceTest(kind, '<id>'), ids: Object.keys(registry).filter((id) => registry[id] === kind).sort() });
   const count = (predicate) => fixtures.filter(predicate).length;
@@ -98,9 +96,7 @@ export function buildConformanceReport({ inputs: { retained, vendor, project, de
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
 function currentConformanceReport() {
-  const inputs = readConformanceInputs();
-  assertRetainedInputsCoherent(inputs);
-  return buildConformanceReport({ inputs, registry: buildEvidenceRegistry(), fork: resolveLockedFork(rootPath) });
+  return buildConformanceReport({ inputs: loadConformanceInputs(), registry: buildEvidenceRegistry(), fork: resolveLockedFork(rootPath) });
 }
 
 export function assertReportFresh() {

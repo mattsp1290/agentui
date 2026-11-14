@@ -38,7 +38,7 @@ Upstream's combined-branch Codex Dojo browser job was skipped. The retained succ
 
 The live offline command uses the same Node resolver and archive checks as the full command. The reader uses bounded system `tar` calls; record `tar --version` when qualifying a host. The retained GNU/Linux replay does not establish BSD tar or macOS compatibility. Earlier Python commands and source hashes remain historical observations in the retained records.
 
-`evidence/node-qualification.log.gz` records the Node-only replay. The original archives, native pins, consumer lock and donor fixtures are unchanged. Code hashes and temporary directories for both Node replays are recorded in `qualification.nodeReplays`. The final replay follows the private byte-line-counter naming cleanup; `evidence/node-qualification-final.log.gz` retains its complete output.
+`qualification.nodeReplays` records source hashes, runtime and temporary directory for each retained Node replay. The original archives, native pins, consumer lock and donor fixtures are unchanged. Each record identifies the implementation it measured; earlier records retain their historical source paths.
 
 The pinned Codex package has an observed launcher limitation. Its [factory](https://github.com/mattsp1290/ag-ui/blob/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/integrations/community/codex-sdk/typescript/src/sdk.ts#L47) writes an extensionless CommonJS executable. With `TMPDIR` beneath a Node package whose type is module, Node rejects `require` before the controlled executable runs. The failed full replay and direct launcher reproduction are retained separately from the successful external-temporary-directory run. Upstream task `ag-ui-4ipx` owns the source fix. No workaround or repack is included in these archives.
 
@@ -47,3 +47,8 @@ replays after fork verification moved into `scripts/lib/agui-fork.mjs`. The driv
 binds child Node processes to its own executable, records the actual npm version,
 and emits hashes for itself, the fork module and all three consumer assertion scripts.
 Older replay records retain their original paths and state their runtime-binding scope.
+
+`evidence/archive-identity-node-qualification.log.gz` retains the separate offline
+and full replay of the current package verifier. Its emitted source hashes bind
+the fork module, driver and all three consumer assertion scripts. Runtime binaries
+are pinned to the driver executable; ambient runtime configuration names are recorded.

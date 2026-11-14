@@ -5,7 +5,7 @@
     "branch": "matt.spurlin/typescript-sdks",
     "sourceRevision": "ed2c1d5b63299d3f08676a1418cc2640bbe55fd1",
     "provenance": "vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/provenance.json",
-    "provenanceSha256": "97b92304448e1242cb2d0882c591db87e2ccc27bca618a50bf884676c8978067",
+    "provenanceSha256": "469c3ab75344f0e4306a23e1cb76b09bd3653df71fa4b05e837f101587c35da4",
     "package": "@ag-ui/core",
     "version": "1.0.4",
     "artifact": "ag-ui-core-1.0.4.tgz",

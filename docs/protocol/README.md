@@ -144,10 +144,12 @@ its named tests register. This ordering covers canonical validator construction,
 not unrelated dependency loading. The snapshot lasts for its process; start a
 fresh process to check changed retained files.
 
-A named coherence test checks retained revisions, schema inventories and the
-installed projection descriptor. Report generation takes explicit inputs, registry
-and fork metadata. Its command and freshness entry points validate coherence before
-projecting those inputs. Importing body definitions invokes no fixture callback or
+A named coherence test calls `loadConformanceInputs`, which checks retained
+revisions, schema inventories and the installed projection descriptor before
+returning the checked record and its historical SDK entries. Report generation
+uses a private pure projection over that record, the evidence registry and fork
+metadata. Coverage, behavior limits and report text remain module-owned definitions.
+Its command and freshness entry points use the same loader. Importing body definitions invokes no fixture callback or
 compiler process. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
 matrix checks retained inputs and writes the expected report. Both check locked SDK

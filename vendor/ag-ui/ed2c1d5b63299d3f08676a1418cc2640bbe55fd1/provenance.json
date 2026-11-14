@@ -944,6 +944,17 @@
       "compressedSha256": "c1f96ef622337a6a10f1b8762041b2b4a8e373a315c3b69d7c10da524c4625f8",
       "encoding": "gzip; raw retained without edits",
       "role": "Fresh single-owner Node offline and full consumer qualification with enforced child runtime and self-reported source hashes"
+    },
+    {
+      "path": "evidence/archive-identity-node-qualification.log.gz",
+      "rawBytes": 56583,
+      "rawSha256": "8aa30b1219508beabe19bf3887c6d8b3c9baf21ecc076a317e8a7dcbe14fc096",
+      "retainedBytes": 56583,
+      "retainedSha256": "8aa30b1219508beabe19bf3887c6d8b3c9baf21ecc076a317e8a7dcbe14fc096",
+      "compressedBytes": 7090,
+      "compressedSha256": "64d38afe6288b87197c67c40817462e058ff2e1c39edbfa26373c97adf594d74",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Fresh separate offline and full replay of package identity checks and canonical consumer execution; five actual source hashes emitted"
     }
   ],
   "qualification": {
@@ -1073,7 +1084,7 @@
         "command": "node scripts/verify-agui-fork.mjs",
         "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
         "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
-        "sourceScope": "Measured on working code over base 153eac89d67de4d7651cee5d079b1162e43c78f0. The listed module SHA-256 values identify the measured code; Git history identifies the commit that integrated those bytes. This replay changes no fork archive, native pin, consumer lock or fixture. This measurement preceded the final private byte-line-counter rename and comment deletion.",
+        "sourceScope": "Measured on working code over base 153eac89d67de4d7651cee5d079b1162e43c78f0. The listed module SHA-256 values identify the observed working bytes. This measurement preceded the final private byte-line-counter rename and comment deletion; later committed implementations have separate replay records. No fork archive, native pin, consumer lock or fixture changed.",
         "sourceSha256": {
           "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
           "tests/dependencies/ag-ui/verify-consumer.mjs": "87f6642e50f59e2974d2e13a14b9cf65f99ba5ab2362484be391510a426ede9a",
@@ -1156,8 +1167,57 @@
         "inheritedRuntimeConfig": [
           "NODE_OPTIONS"
         ],
-        "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same child environment.",
+        "runtimeBinding": "Node child steps use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same child environment. Ambient runtime settings, including NODE_OPTIONS when listed, were inherited; their names but not their values were retained.",
         "offlineCoverage": "Both separate --offline and full invocations are retained in this log, with exact commands, times and zero exits.",
+        "scope": "All six public imports, controlled Codex ESM/CommonJS first turn and continuation, all15 Pi tests and installed dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
+      },
+      {
+        "command": "node scripts/verify-agui-fork.mjs",
+        "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+        "measuredBase": "e2817a927389a6d85b5ac69de0b75d007c2041a3",
+        "sourceScope": "Measured on working archive-identity and canonical consumer-execution code over the recorded base. The emitted five source hashes identify the executed Node qualifier and all consumer assertion scripts. Protocol coherence is separately checked by the AgentUI test suite. No fork archive, native pin, consumer lock or fixture changed.",
+        "sourceSha256": {
+          "scripts/lib/agui-fork.mjs": "3f23f04df2a5d016d4db7bebef36ce3dc6ccccb8eb9a3de642b443501dd7a601",
+          "scripts/verify-agui-fork.mjs": "4026b09d5d70df3c764e594a30fa77f7ac248da60481b40a3b61b0b856a095c7",
+          "tests/dependencies/ag-ui/all-imports.mjs": "18c54ecb4cfbceb981cd7ab1f61a9e35719b09347c6e5413a398ebf000985967",
+          "tests/dependencies/ag-ui/codex-esm.mjs": "30b4c04a4e330161528fa728ac60f5dfd85e1a0b90d1193dacd0527e416ef8b5",
+          "tests/dependencies/ag-ui/codex-commonjs.cjs": "049b5f7ecc771e4f626360d41f3db57e90871e9141d06776403658acdf9ff858"
+        },
+        "log": "evidence/archive-identity-node-qualification.log.gz",
+        "exitCode": 0,
+        "commands": [
+          {
+            "command": [
+              "node",
+              "scripts/verify-agui-fork.mjs",
+              "--offline"
+            ],
+            "started": "2026-11-14T17:04:16.126531+00:00",
+            "finished": "2026-11-14T17:04:16.634741+00:00",
+            "exitCode": 0
+          },
+          {
+            "command": [
+              "node",
+              "scripts/verify-agui-fork.mjs"
+            ],
+            "started": "2026-11-14T17:04:16.634788+00:00",
+            "finished": "2026-11-14T17:04:26.031121+00:00",
+            "exitCode": 0
+          }
+        ],
+        "node": "v24.22.3",
+        "execPath": "/home/punk1290/.nvm/versions/node/v24.22.3/bin/node",
+        "npm": "11.19.1",
+        "platform": "linux",
+        "architecture": "arm64",
+        "tar": "tar (GNU tar) 1.35",
+        "temporaryDirectory": "/tmp",
+        "inheritedRuntimeConfig": [
+          "NODE_OPTIONS"
+        ],
+        "runtimeBinding": "Node child binaries use process.execPath; child PATH starts with its directory for npm and shebangs. Actual npm version is queried in the same environment. Ambient runtime settings are inherited; their names but not values are retained.",
+        "offlineCoverage": "Both separate --offline and full invocations are retained with exact commands, UTC times and zero exits.",
         "scope": "All six public imports, controlled Codex ESM/CommonJS first turn and continuation, all15 Pi tests and installed dependency graph. Linux GNU tar only; no real native provider or Apple qualification."
       }
     ],

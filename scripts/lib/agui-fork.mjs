@@ -45,6 +45,7 @@ const nativeVersions = {
   '@earendil-works/pi-agent-core': '1.5.0', '@earendil-works/pi-ai': '1.5.0',
   '@earendil-works/pi-coding-agent': '1.5.0', zod: '3.25.76',
 };
+const codexVersion = nativeVersions['@openai/codex'];
 function tar(args, label) {
   const env = { ...process.env, LC_ALL: 'C' };
   delete env.TAR_OPTIONS;
@@ -86,6 +87,7 @@ export function verifyArchives(fork) {
       return tar(['-xzOf', archive, member], archive);
     }
     const manifest = parseJson(extract('package/package.json'));
+    assert.equal(manifest.name, artifact.package, `${archive}: package identity`);
     assert.deepEqual(manifest, artifact.packedManifest, `${archive}: packed manifest`);
     assert.equal(manifest.version, artifact.version, `${archive}: artifact version`);
     assert.ok(!JSON.stringify(manifest).includes('workspace:'), `${archive}: workspace reference`);
@@ -95,7 +97,7 @@ export function verifyArchives(fork) {
     const notice = extract('package/LICENSE');
     assert.deepEqual(notice, readFileSync(join(folder, 'notices', `${prefix}.LICENSE`)), `${archive}: retained license`);
     assert.ok(notice.includes(Buffer.from('MIT License')), `${archive}: MIT notice`);
-    if (manifest.name === '@ag-ui/pi') {
+    if (artifact.package === '@ag-ui/pi') {
       assert.ok(notice.includes(Buffer.from('Copyright (c) 2026 YS-BW')), `${archive}: donor copyright`);
       const donor = extract('package/PROVENANCE.md');
       assert.deepEqual(donor, readFileSync(join(folder, 'notices/ag-ui-pi.PROVENANCE.md')), `${archive}: donor notice`);
@@ -157,7 +159,7 @@ export function verifyConsumerLock(consumer, fork, expected) {
   for (const os of ['darwin', 'linux', 'win32']) for (const arch of ['arm64', 'x64']) {
     const entry = lock.packages[`node_modules/@openai/codex-${os}-${arch}`];
     assert.ok(entry?.optional, `${os}-${arch}: optional Codex payload declaration`);
-    assert.equal(entry.version, `0.167.1-${os}-${arch}`, `${os}-${arch}: optional Codex payload version`);
+    assert.equal(entry.version, `${codexVersion}-${os}-${arch}`, `${os}-${arch}: optional Codex payload version`);
   }
 }
 function* packageRoots(modules) {
@@ -192,6 +194,6 @@ export function verifyInstalled(consumer, expected) {
     assert.equal(readJson(join(consumer, 'node_modules', name, 'package.json')).version, version, `${name}: installed native version`);
   }
   const native = join(consumer, 'node_modules/@openai', `codex-${process.platform}-${process.arch}`);
-  assert.equal(readJson(join(native, 'package.json')).version, `0.167.1-${process.platform}-${process.arch}`, 'installed optional Codex package');
+  assert.equal(readJson(join(native, 'package.json')).version, `${codexVersion}-${process.platform}-${process.arch}`, 'installed optional Codex package');
   assert.ok(readdirSync(join(native, 'vendor'), { recursive: true }).some((path) => basename(path) === 'codex'), 'optional native Codex CLI payload absent');
 }
