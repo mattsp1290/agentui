@@ -9,18 +9,19 @@ const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root))
 const targets = [
   ['packages/contracts', 'RunIdentity', '@agentui/contracts', ['document', 'process']],
   ['packages/sdk', 'ExtensionManifest', '@agentui/sdk', ['document', 'process']],
+  ['packages/sdk', 'ConversationModule', '@agentui/sdk/react', ['document', 'process'], 'tsconfig.react.json'],
   ['packages/host', 'EventObserver', '@agentui/host', ['document']],
   ['apps/desktop', 'DesktopMount', '@agentui/desktop', ['process']],
   ['apps/ios', 'IosConversationView', '@agentui/ios', ['document', 'process']],
 ];
 
-for (const [workspace, type, name, forbidden] of targets) {
+for (const [workspace, type, name, forbidden, configFile = 'tsconfig.json'] of targets) {
   test(`${name} rejects foreign ambient globals`, async () => {
     await mkdir(new URL(`${workspace}/.audit/`, root), { recursive: true });
     const temporary = await mkdtemp(fileURLToPath(new URL(`${workspace}/.audit/types-`, root)));
     try {
       const config = {
-        extends: fileURLToPath(new URL(`${workspace}/tsconfig.json`, root)),
+        extends: fileURLToPath(new URL(`${workspace}/${configFile}`, root)),
         compilerOptions: { noEmit: true, rootDir: temporary },
         files: [`${temporary}/probe.ts`],
         include: [],
