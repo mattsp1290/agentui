@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. A separate browser development entry connects the same desktop shell to a persistent recorded host. Native host connections remain separate work.
+The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. A separate browser development entry connects the desktop shell to a persistent recorded host. Native host connections remain separate work.
 
 Use Node 24.22.3 and npm 11.19.1.
 
@@ -43,3 +43,21 @@ npm run desktop:dev
 ```
 
 The bundle loads embedded assets without a development server. This is a local build, without distribution signing or notarization. Read the [desktop packaging guide](docs/qualification/desktop-macos.md) for checks and limitations.
+
+## Launch the iOS app
+
+On macOS, install Xcode with an iOS Simulator runtime and CocoaPods 1.16.2. Make Node.js and npm available. List available simulators:
+
+```sh
+xcrun simctl list devices available
+```
+
+From the repository root, pass a simulator UDID to the launcher:
+
+```sh
+./agentui-ios SIMULATOR_UDID
+```
+
+The launcher selects Node 24.22.3 and npm 11.19.1, installs locked JavaScript and native dependencies, and builds a Release app. It boots the selected simulator, installs AgentUI, and launches the disconnected screen. The app uses an embedded bundle without a Metro development server.
+
+Read the [iOS packaging guide](docs/qualification/ios-app.md) for preparation commands, relaunch checks, and qualification limits. Physical-device signing and distribution remain separate work.
