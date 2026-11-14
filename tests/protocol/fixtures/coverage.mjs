@@ -1,23 +1,29 @@
 import { protocolContract } from './contracts.mjs';
 
 const contracts = [{ file: protocolContract.file, test: protocolContract.test }];
+export const installedFixtureFile = 'tests/protocol/conformance.test.mjs';
 
 export const coverageContract = {
   version: 1,
-  plannedMapping: 'reasoning-subagents',
+  projectionFamilies: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'],
+  plannedFamilies: ['reasoning', 'subagents'],
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.',
   validatorControlTest: 'canonical Event validator enforces closed shapes',
+  requestControlTest: 'canonical request and capability shapes differ from SDK types',
   nativeAvailability: { kind: 'undeclared' },
   nativeDeclarationScope: 'No backend availability declaration input exists. Contracts belong to agentui-k4zj, admission to agentui-7s6y and qualification to agentui-ckpw.',
   behaviorLimits: {
     unknownOrUnimplementedFact: 'Explicit error and faulted actor; no successful empty batch.',
     notObservable: 'Acknowledged absence for an allowed family; empty batch and usable actor.',
     terminalOrdering: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).',
+    nullTerminalResult: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.',
     qualification: 'Fixture registration and retained evidence inventory are not current execution results or native qualification.',
     downstream: 'Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw.',
   },
 };
+
+const canonicalContracts = [...contracts, { file: installedFixtureFile, test: coverageContract.requestControlTest }];
 
 export const coverage = {
   envelope: {
@@ -49,7 +55,7 @@ export const coverage = {
     fixtures: ['state-activity-public-extensions'], contracts: [], pending: ['AgentUI host admission, redaction and extension consumers; agentui-ckpw'],
   },
   lifecycle: {
-    mapping: 'represented', scope: 'Observed run and step boundaries and safe failures.',
+    mapping: 'represented', scope: 'Observed run and step boundaries and safe failures. The terminal-ordering-limit fixture records a stream-ordering gap.',
     fixtures: ['lifecycle-text-tools', 'terminal-interrupts-usage', 'terminal-ordering-limit'], contracts: [], pending: ['AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw'],
   },
   reasoning: {
@@ -61,7 +67,7 @@ export const coverage = {
     fixtures: ['lifecycle-text-tools', 'acknowledged-absence-and-fault'], contracts: [], pending: ['Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw'],
   },
   outcomes: {
-    mapping: 'represented', scope: 'Observed nested terminal outcomes; no native termination proof.',
+    mapping: 'represented', scope: 'Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.',
     fixtures: ['terminal-interrupts-usage', 'terminal-ordering-limit'], contracts: [], pending: ['AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw'],
   },
   interrupts: {
@@ -77,15 +83,14 @@ export const coverage = {
     fixtures: ['messages-and-opaque-content'], contracts: [], pending: ['AgentUI content admission, media policy and UI; agentui-ckpw'],
   },
   request: {
-    mapping: 'wire-only', scope: 'Canonical request type and schema inventory; no host admission implementation.',
-    fixtures: [], contracts, pending: ['AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y'],
+    mapping: 'wire-only', scope: 'Published SDK RunAgentInput type and canonical schema controls, with different accepted shapes; no host admission implementation.',
+    fixtures: [], contracts: canonicalContracts, pending: ['AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y'],
   },
   capabilities: {
-    mapping: 'wire-only', scope: 'Canonical declarations, four-state availability contract and seven-family projection description.',
-    fixtures: ['availability-description'], contracts, pending: ['AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y'],
+    mapping: 'wire-only', scope: 'Published SDK AgentCapabilities type, canonical schema controls, four-state availability contract and projection description.',
+    fixtures: ['availability-description'], contracts: canonicalContracts, pending: ['AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y'],
   },
 };
 
-export const installedFixtureFile = 'tests/protocol/conformance.test.mjs';
 export const installedFixtureTest = (id) => `protocol installed fixture: ${id}`;
 export const installedFixtureIds = [...new Set(Object.values(coverage).flatMap((row) => row.fixtures))].sort();

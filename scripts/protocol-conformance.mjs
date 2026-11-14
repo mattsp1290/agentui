@@ -44,6 +44,7 @@ export function buildConformanceReport() {
   assert.equal(provenance.sources.canonical.revision, pin.sourceCommit);
   assert.equal(provenance.files['schema.json'].sha256, pin.upstreamFiles['spec/1.0/schema.json']);
   assert.equal(provenance.files['UPSTREAM-LICENSE'].sha256, pin.upstreamFiles.LICENSE);
+  assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256);
   for (const workspace of ['packages/protocol', 'packages/host']) {
     assert.equal(json(new URL(`${workspace}/package.json`, root)).dependencies[sdk.package], sdk.version, workspace);
   }
@@ -52,10 +53,11 @@ export function buildConformanceReport() {
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedMapping,
+    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedFamilies.join('-'),
   });
   assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
   assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
+  assert.deepEqual(definitions.flatMap((row) => row.event ? [row.event] : []).sort(), [...schema.$defs.EventType.enum].sort());
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
   assert.ok(existsSync(new URL(installedFixtureFile, root)), installedFixtureFile);
@@ -69,7 +71,7 @@ export function buildConformanceReport() {
     assert.ok(owned.fixtures.length > 0 || owned.contracts.length > 0, category);
     for (const fixture of owned.contracts) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
     return {
-      category, purpose, definitions: names, eventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
+      category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
       sdkDivergences: canonicalFixtures.filter((fixture) => fixture.canonical === 'invalid' && (fixture.typescriptAccepts || fixture.pythonAccepts))
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
@@ -88,7 +90,7 @@ export function buildConformanceReport() {
         matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: retainedPath('ag-ui-matrix.tsv'), verifier: pin.ownership.schemaTest },
       fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
         index: provenance.files['upstream.tsv'].path, retained: retainedPath('upstream.tsv'), python: pin.ownership.pythonTest },
-      counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.eventDiscriminators).length,
+      counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.canonicalEventDiscriminators).length,
         fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.canonical === 'valid').length,
         invalid: fixtures.filter((fixture) => fixture.canonical === 'invalid').length,
         typescriptPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.typescriptAccepts).length,
@@ -103,8 +105,9 @@ export function buildConformanceReport() {
       availability: coverageContract.nativeAvailability, declarationScope: coverageContract.nativeDeclarationScope,
       qualificationsByRoute: pin.classification.nativeAdapters,
     },
-    agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'), definition: 'Event',
-      file: installedFixtureFile, test: coverageContract.validatorControlTest },
+    agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'),
+      emittedEventDefinition: 'Event', contractDefinitions: ['RunAgentInput', 'AgentCapabilities'], file: installedFixtureFile,
+      tests: [coverageContract.validatorControlTest, coverageContract.requestControlTest] },
     installedFixtures: installedFixtureIds.map((id) => ({ id, file: installedFixtureFile, test: installedFixtureTest(id) })),
     behaviorLimits: coverageContract.behaviorLimits,
     retainedInputs: {

@@ -2,20 +2,25 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import Ajv from 'ajv/dist/2020.js';
 import { createAguiProjection, describeProjection, aguiProtocol } from '@agentui/host/agui';
+import { coverageContract } from './coverage.mjs';
 
 const ref = (id, scope = ['fixture']) => ({ id, scope });
 const bounds = { maxEntities: 64, maxPayloadBytes: 16384, maxJsonDepth: 24, maxJsonNodes: 2048 };
-const projectionFamilies = ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'];
-const plannedFamilies = ['reasoning', 'subagents'];
+const { projectionFamilies, plannedFamilies } = coverageContract;
 const schema = JSON.parse(readFileSync(new URL('./upstream/schema.json', import.meta.url), 'utf8'));
 const ajv = new Ajv({ strict: false });
 ajv.addSchema(schema);
-export const validateEvent = ajv.getSchema(`${schema.$id}#/$defs/Event`);
-assert.equal(typeof validateEvent, 'function');
+export function validateDefinition(name) {
+  const validate = ajv.getSchema(`${schema.$id}#/$defs/${name}`);
+  assert.equal(typeof validate, 'function', name);
+  return validate;
+}
+export const validateEvent = validateDefinition('Event');
 
-function mapped(projection, fact) {
+function mapped(projection, fact, count = 1) {
   const result = projection.accept(fact);
   assert.equal(result.kind, 'mapped', JSON.stringify(result));
+  assert.equal(result.events.length, count, JSON.stringify(result.events));
   for (const event of result.events) {
     assert.equal(validateEvent(event), true, JSON.stringify(validateEvent.errors));
   }
@@ -72,11 +77,15 @@ export const installedFixtures = {
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
     assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome.type, 'success');
     const other = actor({ sourceKey: 'another.source' });
-    const [plain] = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' });
+    const batch = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3);
+    const [plain] = batch;
+    assert.deepEqual(batch.map(event => event.type), ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']);
+    assert.equal(batch[1].delta, '');
+    assert.ok(batch.every(event => event.messageId === plain.messageId));
     assert.notEqual(plain.messageId, text.messageId);
     assert.equal('subagentRunId' in plain, false);
     const scoped = actor();
-    assert.notEqual(mapped(scoped, { kind: 'text-complete', message: ref('same', ['other']), role: 'assistant', text: '' })[0].messageId, text.messageId);
+    assert.notEqual(mapped(scoped, { kind: 'text-complete', message: ref('same', ['other']), role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
     projection.close();
     other.close();
     scoped.close();
@@ -190,11 +199,14 @@ export const installedFixtures = {
       type: 'RUN_ERROR', code: 'transport-failure', message: 'The native run transport failed.',
     }]);
     failing.close();
-    const projection = actor();
-    const [finished] = mapped(projection, { kind: 'run-finished', outcome: 'success', result: false });
-    assert.equal(finished.result, false);
-    assert.equal('usage' in finished, false);
-    projection.close();
+    for (const result of [false, null]) {
+      const projection = actor();
+      const [finished] = mapped(projection, { kind: 'run-finished', outcome: 'success', result });
+      if (result === null) assert.equal('result' in finished, false);
+      else assert.equal(finished.result, result);
+      assert.equal('usage' in finished, false);
+      projection.close();
+    }
   },
 
   'availability-description'() {
@@ -223,7 +235,7 @@ export const installedFixtures = {
   'acknowledged-absence-and-fault'() {
     const projection = actor();
     for (const family of projectionFamilies) {
-      assert.deepEqual(mapped(projection, { kind: 'not-observable', family }), []);
+      assert.deepEqual(mapped(projection, { kind: 'not-observable', family }, 0), []);
     }
     assert.equal(mapped(projection, { kind: 'state-snapshot', snapshot: false })[0].snapshot, false);
     assert.equal(projection.close(), undefined);

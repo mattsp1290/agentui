@@ -1,10 +1,12 @@
 export const protocolContract = {
   file: 'packages/adapter-tests/tests/protocol-types.test.mjs',
-  test: 'protocol wire and availability contracts preserve declared limits',
+  test: 'published SDK types and availability contracts preserve declared limits',
   compiler: {
     config: 'packages/protocol/tsconfig.json',
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
-export type Wire = [Event, RunAgentInput, AgentCapabilities];
+export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
+export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
+export const sdkCapabilities: AgentCapabilities = { multiAgent: { supported: true } };
 export const operations = {
   inspect: { kind: 'undeclared' },
   submit: { kind: 'supported' },
@@ -23,6 +25,7 @@ export function describe(value: BackendAvailability): string {
 `,
     cases: [
       ['', null],
+      ["export const canonicalMinimal: RunAgentInput = { threadId: 't', runId: 'r', messages: [] };", /missing.*tools, context/u],
       ["export const invalid: BackendAvailability = { kind: 'unsupported' };", /Property 'reason' is missing/u],
       ["export const invalid: BackendAvailability = { kind: 'unavailable' };", /Property 'reason' is missing/u],
       ['export const reason = (value: BackendAvailability) => value.reason;', /Property 'reason' does not exist/u],

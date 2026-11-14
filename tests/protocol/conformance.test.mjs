@@ -3,7 +3,7 @@ import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildConformanceReport, reportFile, serializeConformanceReport } from '../../scripts/protocol-conformance.mjs';
 import { coverageContract, installedFixtureIds, installedFixtureTest } from './fixtures/coverage.mjs';
-import { installedFixtures, validateEvent } from './fixtures/installed.mjs';
+import { installedFixtures, validateDefinition, validateEvent } from './fixtures/installed.mjs';
 
 test(coverageContract.validatorControlTest, () => {
   assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
@@ -11,6 +11,16 @@ test(coverageContract.validatorControlTest, () => {
   assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', unexpected: true }), false);
   assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled' } }), true);
   assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled', interrupts: [] } }), false);
+});
+
+test(coverageContract.requestControlTest, () => {
+  const request = validateDefinition('RunAgentInput');
+  const minimal = { threadId: 't', runId: 'r', messages: [] };
+  assert.equal(request(minimal), true);
+  for (const extra of [{ state: null }, { forwardedProps: null }, { unexpected: 1 }]) assert.equal(request({ ...minimal, ...extra }), false);
+  const capabilities = validateDefinition('AgentCapabilities');
+  assert.equal(capabilities({ multiAgent: { supported: true } }), true);
+  assert.equal(capabilities({ multiAgent: { supported: true, unexpected: true } }), false);
 });
 
 test('installed fixture registrations match coverage-owned IDs', () => {

@@ -1,8 +1,10 @@
 # AG-UI consumer conformance
 
 AgentUI imports published TypeScript SDK 1.0.4 wire types from `@agentui/protocol`.
-These structural types permit more values than the canonical schema. Schema
-validation establishes canonical validity. AgentUI consumes the installed
+These structural types differ from canonical wire shapes in both directions.
+The SDK accepts null `state` and `forwardedProps` that the wire forbids.
+It requires `tools` and `context` arrays that the wire may omit. Schema validation
+establishes canonical validity. AgentUI consumes the installed
 Switchboard projection through `@agentui/host/agui`. The host core
 entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
 
@@ -26,8 +28,10 @@ The matrix keeps these facts separate:
 | Native qualification | The pinned record's route assessments, currently unqualified for all six routes |
 | Pending consumers | Product owners for provider admission, transport, reducers, replay and UI |
 
-SDK acceptance does not establish canonical validity. The pinned TypeScript SDK
-accepts eight canonically invalid indexed fixtures; Python accepts twenty-two.
+SDK acceptance does not establish canonical validity. The upstream runtime
+validators accept eight canonically invalid indexed fixtures in TypeScript and
+twenty-two in Python. Those results use zod 4.0.17 and pydantic 2.11.7, not the
+published TypeScript types AgentUI imports. AgentUI runs no SDK validator.
 The upstream verifier owns all 98 definitions, while the concrete index names
 219 payloads. Those are upstream evidence inputs, not 219 AgentUI tests.
 
@@ -36,7 +40,11 @@ The owned fixtures validate every emitted event against the retained canonical
 state, activity, public extensions, message content and terminal observations.
 Opaque reasoning-role messages and scoped owner references provide partial
 representation. Reasoning and subagent lifecycle mapping remain planned.
-Request and capability declarations are wire contracts, not emitted events.
+Request and capability rows distinguish published SDK types from canonical schema
+controls. These controls validate representative raw shapes without implementing
+host admission. Canonical discriminator lists describe the wire inventory,
+not emitted-event evidence. The pinned producer uses text and tool boundaries,
+not chunk shorthands. Full consumer handling remains `agentui-ckpw`.
 
 Unknown or unimplemented facts produce an explicit error and fault the mapper.
 They cannot become a successful empty batch. An explicit `not-observable` fact
@@ -60,7 +68,7 @@ Switchboard's projection descriptor carries availability states without reasons.
 A bridge into `BackendAvailability` needs a reason from the backend declaration,
 owned by `agentui-k4zj`. No such bridge is implemented here.
 
-Canonical `AgentCapabilities`, backend availability and native qualification
+Capability wire data, backend availability and native qualification
 remain independent. A representable event is not evidence of an available or
 qualified operation. An unsupported declaration cannot waive required native
 qualification.
@@ -80,10 +88,13 @@ npm run verify
 The generator derives definitions, event discriminators and raw fixture paths
 from the retained inventories. It lists SDK divergences and references hashed
 inputs instead of copying their complete rows. Coverage owns the expected fixture
-IDs. The test runner checks them against the actual function map before registering
-every fixture. Report generation loads data without executing fixture code.
+IDs. A test checks them against the actual function map, and every function is
+registered under its coverage-owned name. Report generation loads data without
+executing fixture code.
 Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. Normal verification needs no upstream download or Python.
+AgentUI uses Ajv 8.20.0 after a dependency advisory check. The historical upstream
+verifier used 8.17.1. Both use the unchanged retained canonical schema.
 The earlier exact-source TS/Python comparison is retained with the
 [Switchboard qualification](../../vendor/README.md); new installed-output
 validation is a separate check.

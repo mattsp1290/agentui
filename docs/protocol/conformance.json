@@ -67,9 +67,16 @@
     "package": "ajv",
     "version": "8.20.0",
     "schema": "tests/protocol/fixtures/upstream/schema.json",
-    "definition": "Event",
+    "emittedEventDefinition": "Event",
+    "contractDefinitions": [
+      "RunAgentInput",
+      "AgentCapabilities"
+    ],
     "file": "tests/protocol/conformance.test.mjs",
-    "test": "canonical Event validator enforces closed shapes"
+    "tests": [
+      "canonical Event validator enforces closed shapes",
+      "canonical request and capability shapes differ from SDK types"
+    ]
   },
   "installedFixtures": [
     {
@@ -112,6 +119,7 @@
     "unknownOrUnimplementedFact": "Explicit error and faulted actor; no successful empty batch.",
     "notObservable": "Acknowledged absence for an allowed family; empty batch and usable actor.",
     "terminalOrdering": "Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
+    "nullTerminalResult": "The pinned projection omits a null terminal result; non-null falsy values remain intact.",
     "qualification": "Fixture registration and retained evidence inventory are not current execution results or native qualification.",
     "downstream": "Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw."
   },
@@ -136,7 +144,7 @@
         "SubagentRunId",
         "Metadata"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
       "sdkDivergences": [],
       "mapping": "represented",
@@ -159,7 +167,7 @@
         "TextMessageEndEvent",
         "TextMessageChunkEvent"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "TEXT_MESSAGE_START",
         "TEXT_MESSAGE_CONTENT",
         "TEXT_MESSAGE_END",
@@ -238,7 +246,7 @@
         "FunctionCall",
         "Tool"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "TOOL_CALL_START",
         "TOOL_CALL_ARGS",
         "TOOL_CALL_END",
@@ -305,7 +313,7 @@
         "TestOperation",
         "JsonPointer"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "STATE_SNAPSHOT",
         "STATE_DELTA"
       ],
@@ -364,7 +372,7 @@
         "UserMessage",
         "ToolMessage"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "MESSAGES_SNAPSHOT"
       ],
       "canonicalFixtures": [
@@ -422,7 +430,7 @@
         "ActivityDeltaEvent",
         "ActivityMessage"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "ACTIVITY_SNAPSHOT",
         "ACTIVITY_DELTA"
       ],
@@ -452,7 +460,7 @@
         "RawEvent",
         "CustomEvent"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "RAW",
         "CUSTOM"
       ],
@@ -494,7 +502,7 @@
         "StepStartedEvent",
         "StepFinishedEvent"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "RUN_STARTED",
         "RUN_FINISHED",
         "RUN_ERROR",
@@ -556,7 +564,7 @@
         }
       ],
       "mapping": "represented",
-      "scope": "Observed run and step boundaries and safe failures.",
+      "scope": "Observed run and step boundaries and safe failures. The terminal-ordering-limit fixture records a stream-ordering gap.",
       "installedFixtures": [
         "lifecycle-text-tools",
         "terminal-interrupts-usage",
@@ -581,7 +589,7 @@
         "ReasoningEncryptedValueSubtype",
         "ReasoningMessage"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "REASONING_START",
         "REASONING_MESSAGE_START",
         "REASONING_MESSAGE_CONTENT",
@@ -633,7 +641,7 @@
         "SubagentFinishedSuspendedOutcome",
         "SubagentInfo"
       ],
-      "eventDiscriminators": [
+      "canonicalEventDiscriminators": [
         "SUBAGENT_STARTED",
         "SUBAGENT_FINISHED",
         "SUBAGENT_ERROR"
@@ -698,11 +706,11 @@
         "RunFinishedInterruptOutcome",
         "RunFinishedCancelledOutcome"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
       "sdkDivergences": [],
       "mapping": "represented",
-      "scope": "Observed nested terminal outcomes; no native termination proof.",
+      "scope": "Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.",
       "installedFixtures": [
         "terminal-interrupts-usage",
         "terminal-ordering-limit"
@@ -719,7 +727,7 @@
         "Interrupt",
         "ResumeEntry"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [
         "Interrupt/invalid/reason-missing.json",
         "Interrupt/valid/attributed.json",
@@ -745,7 +753,7 @@
       "definitions": [
         "TokenUsage"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
       "sdkDivergences": [],
       "mapping": "represented",
@@ -773,7 +781,7 @@
         "UrlSource",
         "FileSource"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [
         "FileSource/invalid/reference-record.json",
         "FileSource/invalid/value-missing.json",
@@ -804,7 +812,7 @@
         "Context",
         "RunAgentInput"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [
         "RunAgentInput/invalid/context-item-not-a-context.json",
         "RunAgentInput/invalid/messages-item-not-a-message.json",
@@ -825,12 +833,16 @@
       ],
       "sdkDivergences": [],
       "mapping": "wire-only",
-      "scope": "Canonical request type and schema inventory; no host admission implementation.",
+      "scope": "Published SDK RunAgentInput type and canonical schema controls, with different accepted shapes; no host admission implementation.",
       "installedFixtures": [],
       "contractFixtures": [
         {
           "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
-          "test": "protocol wire and availability contracts preserve declared limits"
+          "test": "published SDK types and availability contracts preserve declared limits"
+        },
+        {
+          "file": "tests/protocol/conformance.test.mjs",
+          "test": "canonical request and capability shapes differ from SDK types"
         }
       ],
       "pendingProductOwners": [
@@ -855,7 +867,7 @@
         "HumanInTheLoopCapabilities",
         "AgentCapabilities"
       ],
-      "eventDiscriminators": [],
+      "canonicalEventDiscriminators": [],
       "canonicalFixtures": [
         "AgentCapabilities/invalid/custom-null.json",
         "AgentCapabilities/invalid/fractional-max-iterations.json",
@@ -900,14 +912,18 @@
         }
       ],
       "mapping": "wire-only",
-      "scope": "Canonical declarations, four-state availability contract and seven-family projection description.",
+      "scope": "Published SDK AgentCapabilities type, canonical schema controls, four-state availability contract and projection description.",
       "installedFixtures": [
         "availability-description"
       ],
       "contractFixtures": [
         {
           "file": "packages/adapter-tests/tests/protocol-types.test.mjs",
-          "test": "protocol wire and availability contracts preserve declared limits"
+          "test": "published SDK types and availability contracts preserve declared limits"
+        },
+        {
+          "file": "tests/protocol/conformance.test.mjs",
+          "test": "canonical request and capability shapes differ from SDK types"
         }
       ],
       "pendingProductOwners": [
