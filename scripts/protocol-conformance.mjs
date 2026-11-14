@@ -23,7 +23,7 @@ function table(file) {
   });
 }
 
-export function buildConformanceReport() {
+function verifiedInputs() {
   const provenance = json(new URL('provenance.json', upstream));
   for (const [file, input] of Object.entries(provenance.files)) {
     assert.equal(digest(readFileSync(new URL(file, upstream))), input.sha256, `Retained upstream input changed: ${file}`);
@@ -32,10 +32,10 @@ export function buildConformanceReport() {
   const vendor = json(new URL('vendor/switchboard.json', root));
   const schema = json(new URL('schema.json', upstream));
   const definitions = table('ag-ui-matrix.tsv');
-  const fixtures = table('upstream.tsv').map(({ path, sha256, typescriptAccepts, pythonAccepts }) => ({
-    path, sha256, canonical: path.split('/')[1], typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true',
+  const fixtures = table('upstream.tsv').map(({ path, typescriptAccepts, pythonAccepts }) => ({
+    path, validity: path.split('/')[1], typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true',
   }));
-  for (const fixture of fixtures) assert.ok(['valid', 'invalid'].includes(fixture.canonical), fixture.path);
+  for (const fixture of fixtures) assert.ok(['valid', 'invalid'].includes(fixture.validity), fixture.path);
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   const lock = json(new URL('package-lock.json', root));
@@ -53,7 +53,7 @@ export function buildConformanceReport() {
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedFamilies.join('-'),
+    mapping: pin.classification.switchboardMapping, planned: coverageContract.plannedDescriptor,
   });
   assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
   assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
@@ -61,6 +61,10 @@ export function buildConformanceReport() {
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
   assert.ok(existsSync(new URL(installedFixtureFile, root)), installedFixtureFile);
+  return { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project };
+}
+
+function projectCategories({ pin, definitions, fixtures }) {
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
     const rows = definitions.filter((row) => row.category === category);
     const names = rows.map((row) => row.definition);
@@ -73,7 +77,7 @@ export function buildConformanceReport() {
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
-      sdkDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.canonical === 'valid')))
+      sdkDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.validity === 'valid')))
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
       mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts,
       pendingProductOwners: owned.pending,
@@ -81,6 +85,13 @@ export function buildConformanceReport() {
   });
   assert.equal(categories.flatMap((row) => row.definitions).length, definitions.length);
   assert.equal(categories.flatMap((row) => row.canonicalFixtures).length, fixtures.length);
+  return categories;
+}
+
+export function buildConformanceReport() {
+  const inputs = verifiedInputs();
+  const { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project } = inputs;
+  const categories = projectCategories(inputs);
   return {
     coverageContractVersion: coverageContract.version,
     canonical: {
@@ -91,12 +102,12 @@ export function buildConformanceReport() {
       fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
         index: provenance.files['upstream.tsv'].path, retained: retainedPath('upstream.tsv'), python: pin.ownership.pythonTest },
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.canonicalEventDiscriminators).length,
-        fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.canonical === 'valid').length,
-        invalid: fixtures.filter((fixture) => fixture.canonical === 'invalid').length,
-        typescriptPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.typescriptAccepts).length,
-        pythonPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.pythonAccepts).length,
-        typescriptRestrictiveValid: fixtures.filter((fixture) => fixture.canonical === 'valid' && !fixture.typescriptAccepts).length,
-        pythonRestrictiveValid: fixtures.filter((fixture) => fixture.canonical === 'valid' && !fixture.pythonAccepts).length },
+        fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.validity === 'valid').length,
+        invalid: fixtures.filter((fixture) => fixture.validity === 'invalid').length,
+        typescriptPermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.typescriptAccepts).length,
+        pythonPermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.pythonAccepts).length,
+        typescriptRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.typescriptAccepts).length,
+        pythonRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.pythonAccepts).length },
       sdkRuntimeEvidence: { kind: coverageContract.sdkRuntimeEvidenceKind,
         typescript: { package: sdk.package, version: sdk.version, validator: 'zod', validatorVersion: pin.verifierTools.zod },
         python: { package: pythonSdk.package, version: pythonSdk.version, validator: 'pydantic', validatorVersion: pin.verifierTools.pydantic },

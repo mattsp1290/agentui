@@ -7,6 +7,7 @@ export const coverageContract = {
   version: 1,
   projectionFamilies: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'],
   plannedFamilies: ['reasoning', 'subagents'],
+  plannedDescriptor: 'reasoning-subagents',
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.',
   sdkRuntimeEvidenceKind: 'historical-upstream-runtime-validators',

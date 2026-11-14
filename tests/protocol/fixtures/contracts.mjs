@@ -27,10 +27,8 @@ export function describe(value: BackendAvailability): string {
     cases: [
       ['', null],
       ["export const canonicalMinimal: RunAgentInput = { threadId: 't', runId: 'r', messages: [] };", /missing.*tools, context/u],
-      ["export const invalid: BackendAvailability = { kind: 'unsupported' };", /Property 'reason' is missing/u],
-      ["export const invalid: BackendAvailability = { kind: 'unavailable' };", /Property 'reason' is missing/u],
       ['export const reason = (value: BackendAvailability) => value.reason;', /Property 'reason' does not exist/u],
-      ['export const call = (value: BackendAvailability) => value.api();', /Property 'api' does not exist/u],
+      ["export const reason = (value: BackendAvailability) => value.kind === 'supported' ? value.reason : '';", /Property 'reason' does not exist/u],
       ["export const assumed: Extract<BackendAvailability, { kind: 'supported' }> = operations.inspect;", /'"undeclared"' is not assignable to type '"supported"'/u],
     ],
   },

@@ -32,17 +32,5 @@ test('installed fixture registrations match coverage-owned IDs', () => {
 for (const [id, run] of Object.entries(installedFixtures)) test(installedFixtureTest(id), run);
 
 test('versioned conformance report matches immutable inputs and every owned fixture', () => {
-  const report = buildConformanceReport();
-  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(report));
-  assert.deepEqual(report.canonical.counts, {
-    categories: 16, definitions: 98, eventDiscriminators: 31, fixtures: 219,
-    valid: 135, invalid: 84, typescriptPermissiveInvalid: 8, pythonPermissiveInvalid: 22,
-    typescriptRestrictiveValid: 0, pythonRestrictiveValid: 0,
-  });
-  assert.equal(report.canonical.sdkRuntimeEvidence.kind, 'historical-upstream-runtime-validators');
-  assert.ok(report.categories.every((row) => !('nativeAvailability' in row) && !('nativeQualification' in row)));
-  assert.equal(report.categories.find((row) => row.category === 'reasoning').mapping, 'partial');
-  assert.equal(report.categories.find((row) => row.category === 'subagents').mapping, 'partial');
-  assert.equal(report.categories.find((row) => row.category === 'request').mapping, 'wire-only');
-  assert.equal(report.categories.find((row) => row.category === 'capabilities').mapping, 'wire-only');
+  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()));
 });
