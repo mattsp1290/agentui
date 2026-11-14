@@ -62,7 +62,7 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Release A build/install/render | PASS | build-A log and A screenshot |
 | Source edit to B without rebuild, then restart | PASS: still A | restart-no-rebuild log and no-rebuild screenshot |
 | Historical fresh-template run before `230f062`, plain `pod install`, warm cache and retained DerivedData | PASS | clean prepare log; first retained in `e4f3a96` |
-| Current deployment-mode `prepare.sh` on a freshly generated template | NOT RUN | The deployment log covers an already generated tree |
+| Current deployment-mode `prepare.sh` on a freshly generated template | PASS | [Fresh preparation at `f4f8fcf`](../../spikes/ios-updates/evidence/fresh-preparation-f4f8fcf/README.md); script and independent lock comparison exit 0 |
 | Release B rebuild/install/render | PASS | build-B log and B screenshot |
 | B restart without Metro | PASS | restart-B log, B-restart screenshot |
 | Repository regression at native measurement, base `bf16a1f`, excluding spikes | PASS | 11 tests, build, check, lint |
@@ -70,6 +70,14 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Compatible live-update recovery | UNQUALIFIED | No updater tested |
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
 | Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
+
+The new fresh-tree preparation ran at source `f4f8fcf` on the same Mac with pinned
+tools. Its provenance records an absent app directory before generation, clean
+source before and after, and matching script/dependency blobs. The retained output
+contains template generation, deployment verification, and Pod installation success.
+An independent comparison confirms the generated native lock equals the committed lock.
+Warm native caches and retained DerivedData make this a fresh generated-tree check,
+not a cold-cache build. It does not repeat or extend the A/B runtime qualification.
 
 Deployment-mode lock verification was exercised at one checkout path on one Mac.
 Codegen podspec checksum stability across checkout paths is untested.
