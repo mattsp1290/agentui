@@ -12,6 +12,17 @@ const root = new URL('../../../', import.meta.url);
 const desktop = new URL('apps/desktop/', root);
 const config = JSON.parse(await readFile(new URL('src-tauri/tauri.conf.json', desktop), 'utf8'));
 
+async function observeCspViolations(page) {
+  const violations = [];
+  await page.exposeFunction('reportCspViolation', (violation) => { violations.push(violation); });
+  await page.addInitScript(() => {
+    document.addEventListener('securitypolicyviolation', (event) => {
+      void window.reportCspViolation(`${event.effectiveDirective}: ${event.blockedURI}`);
+    });
+  });
+  return violations;
+}
+
 test('production desktop renders disconnected, follows appearance, and reloads', async (t) => {
   const server = await preview({
     root: fileURLToPath(desktop),
@@ -22,6 +33,7 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage({ viewport: { width: 1120, height: 780 }, colorScheme: 'light', offline: false });
+  const violations = await observeCspViolations(page);
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   const address = server.httpServer.address();
@@ -34,8 +46,13 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
   const appearance = (value) => page.waitForFunction((expected) => document.querySelector('.desktop-shell')?.getAttribute('data-appearance') === expected, value);
   await appearance('light');
+  const background = () => page.locator('.desktop-shell').evaluate((shell) => getComputedStyle(shell).backgroundColor);
+  const lightBackground = await background();
+  assert.notEqual(lightBackground, 'rgba(0, 0, 0, 0)');
   await page.emulateMedia({ colorScheme: 'dark' });
   await appearance('dark');
+  assert.notEqual(await background(), 'rgba(0, 0, 0, 0)');
+  assert.notEqual(await background(), lightBackground);
   await page.getByRole('button', { name: 'Restore default view' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
@@ -45,6 +62,7 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   await page.evaluate(() => { document.documentElement.style.fontSize = '200%'; });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), true);
   assert.deepEqual(errors, []);
+  assert.deepEqual(violations, []);
 });
 
 test('content failure leaves shell controls usable and restores the built-in view', async (t) => {
@@ -55,6 +73,7 @@ test('content failure leaves shell controls usable and restores the built-in vie
   });
   const assets = new Map(fixture.outputFiles.map((file) => [file.path.endsWith('.css') ? '/fixture.css' : '/fixture.js', file.contents]));
   const server = createServer((request, response) => {
+    response.setHeader('Content-Security-Policy', config.app.security.csp);
     if (request.url === '/') {
       response.setHeader('Content-Type', 'text/html');
       response.end('<!doctype html><html lang="en"><head><title>Shell recovery test</title><link rel="stylesheet" href="/fixture.css"></head><body><div id="root"></div><script src="/fixture.js"></script></body></html>');
@@ -69,6 +88,7 @@ test('content failure leaves shell controls usable and restores the built-in vie
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
+  const violations = await observeCspViolations(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('alert').waitFor();
   await page.getByRole('navigation', { name: 'Recovery controls' }).waitFor();
@@ -77,4 +97,5 @@ test('content failure leaves shell controls usable and restores the built-in vie
   assert.equal(await page.getByRole('alert').count(), 0);
   await page.getByRole('button', { name: 'Restore default view' }).click();
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
+  assert.deepEqual(violations, []);
 });
