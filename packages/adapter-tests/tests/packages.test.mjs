@@ -25,7 +25,8 @@ test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(ios, 'ios');
   await import('@agentui/sdk/react');
   await import('@agentui/theme');
-  await import('@agentui/protocol');
+  const { EventType } = await import('@agentui/protocol');
+  assert.equal(EventType.TEXT_MESSAGE_END, 'TEXT_MESSAGE_END');
   await import('@agentui/theme/react');
   await import('@agentui/ui-primitives/desktop');
   await import('@agentui/adapter-tests');

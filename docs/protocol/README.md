@@ -1,6 +1,14 @@
 # AG-UI consumer conformance
 
-AgentUI imports published TypeScript SDK 1.0.4 types from `@agentui/protocol`.
+AgentUI imports TypeScript SDK 1.0.4 types and `EventType` from `@agentui/protocol`.
+The installed SDK is built from [the required AG-UI fork](https://github.com/mattsp1290/ag-ui/pull/49),
+branch `matt.spurlin/typescript-sdks`, frozen at
+`ed2c1d5b63299d3f08676a1418cc2640bbe55fd1`.
+The matrix records its artifact separately in `installedSdk`. The retained canonical
+schema and historical runtime-validator evidence keep their original attribution.
+The six fork packages and their controlled consumer checks are retained under
+[`vendor/ag-ui`](../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/README.md).
+Native Codex and Pi integration remains with Switchboard and is not qualified by this SDK pin.
 TypeScript assignability and canonical wire validity differ.
 
 | Value | Published SDK type | Canonical wire |
@@ -13,8 +21,7 @@ TypeScript assignability and canonical wire validity differ.
 `JSON.parse` returns `any` and bypasses TypeScript checking. Canonical schema
 validation establishes wire validity. Compiler controls separately check the
 plain discriminator value set and constructing an SDK event with enum members.
-Workspaces constructing SDK events declare the pinned `@ag-ui/core` dependency
-and import the enum from it. `@agentui/protocol` deliberately exports types only.
+Workspaces constructing SDK events import their types and enum from `@agentui/protocol`.
 
 AgentUI consumes the installed Switchboard projection through
 `@agentui/host/agui`. The host core entry remains independent of AG-UI imports.
@@ -120,8 +127,9 @@ and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates eac
 map with its evidence kind and validates citations, callability and global ID
 uniqueness. Every ID must have category credit.
 
-The version 2 report has one `evidence.registrar` path and three literal evidence
-fields. Each kind has sorted `ids` and a `testName` template. Replacing `<id>` in
+The version 2 report has one `evidence.registrar` path and evidence fields derived
+from the registry's kind keys in insertion order. Each kind has sorted `ids` and a
+`testName` template. Replacing `<id>` in
 that template with an ID gives the name registered in
 `tests/protocol/conformance.test.mjs`. Category fields cite those same IDs by
 kind. Compiler bodies use the shared adapter-test helper, which requires a

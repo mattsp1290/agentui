@@ -1,0 +1,959 @@
+{
+  "sourceRepository": "https://github.com/mattsp1290/ag-ui",
+  "sourceRevision": "ed2c1d5b63299d3f08676a1418cc2640bbe55fd1",
+  "sourceTree": "4dd1b37d5fd8486b022827c102f2b53ea2bfdfc8",
+  "scope": "Frozen six-package fork closure. Host adoption and controlled consumer qualification are recorded separately. No native or Apple qualification; no cross-machine rebuild identity claim.",
+  "node": "v24.22.3",
+  "npm": "11.19.1",
+  "pnpm": "10.33.4",
+  "artifacts": [
+    {
+      "package": "@ag-ui/core",
+      "version": "1.0.4",
+      "sourcePath": "sdks/typescript/packages/core",
+      "artifact": "ag-ui-core-1.0.4.tgz",
+      "bytes": 193883,
+      "sha256": "2cd54a879083e0c351e8c38861b1d2e2b7355a5712b7128da690257c687dad19",
+      "sha512": "67f1b7517611c99ff52dc3ad0827fa4498853d38d1a9a36e6e55bf910ef0b1f88fe10c39a08566bcee8d914418a2a0a8317b97820c83dcc307d9377939528409",
+      "members": [
+        "package/.gitattributes",
+        "package/LICENSE",
+        "package/dist/index.js",
+        "package/dist/schemas.js",
+        "package/dist/version-BIes0ykB.js",
+        "package/package.json",
+        "package/dist/index.d.mts.map",
+        "package/dist/index.d.ts.map",
+        "package/dist/index.js.map",
+        "package/dist/index.mjs.map",
+        "package/dist/schemas.d.mts.map",
+        "package/dist/schemas.d.ts.map",
+        "package/dist/schemas.js.map",
+        "package/dist/schemas.mjs.map",
+        "package/dist/version-BIes0ykB.js.map",
+        "package/dist/version-CTNE2I0_.mjs.map",
+        "package/dist/version-DEKfpZNa.d.ts.map",
+        "package/dist/version-Dr0GiU8W.d.mts.map",
+        "package/CHANGELOG.md",
+        "package/README.md",
+        "package/dist/index.mjs",
+        "package/dist/schemas.mjs",
+        "package/dist/version-CTNE2I0_.mjs",
+        "package/dist/index.d.mts",
+        "package/dist/schemas.d.mts",
+        "package/dist/version-Dr0GiU8W.d.mts",
+        "package/dist/index.d.ts",
+        "package/dist/schemas.d.ts",
+        "package/dist/version-DEKfpZNa.d.ts"
+      ],
+      "npmIntegrity": "sha512-Z/G3UXYRyZ/1LcOtCCf6RJiFPTjRqaNublW/kQ7wsfiP4Qw5oIVmvO6NkUQYoqCoMXuXggyD3MMH2Td5OVKECQ==",
+      "packedManifest": {
+        "name": "@ag-ui/core",
+        "author": "Markus Ecker <markus.ecker@gmail.com>",
+        "version": "1.0.4",
+        "agui": {
+          "protocolVersion": "1.0"
+        },
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+        },
+        "private": false,
+        "publishConfig": {
+          "access": "public"
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.mjs",
+        "types": "./dist/index.d.ts",
+        "peerDependencies": {
+          "zod": "^3.25.18 || ^4.0.0"
+        },
+        "peerDependenciesMeta": {
+          "zod": {
+            "optional": true
+          }
+        },
+        "devDependencies": {
+          "zod": "^3.25.76",
+          "esbuild": "^0.25.0",
+          "@vitest/coverage-istanbul": "^4.0.18",
+          "eslint": "^9.37.0",
+          "publint": "^0.3.12",
+          "@arethetypeswrong/cli": "^0.17.4",
+          "vitest": "^4.0.18",
+          "tsdown": "^0.20.1",
+          "typescript": "^5.8.2"
+        },
+        "typesVersions": {
+          "*": {
+            "schemas": [
+              "./dist/schemas.d.ts"
+            ]
+          }
+        },
+        "exports": {
+          ".": {
+            "require": "./dist/index.js",
+            "import": "./dist/index.mjs"
+          },
+          "./schemas": {
+            "require": "./dist/schemas.js",
+            "import": "./dist/schemas.mjs"
+          },
+          "./package.json": "./package.json"
+        },
+        "nx": {
+          "targets": {
+            "test": {
+              "cache": false
+            },
+            "test:coverage": {
+              "cache": false
+            }
+          }
+        },
+        "scripts": {
+          "build": "tsdown",
+          "dev": "tsdown --watch",
+          "lint": "eslint \"src/**/*.ts*\"",
+          "typecheck": "tsc --noEmit",
+          "clean": "git clean -fdX --exclude=\"!.env\"",
+          "test": "vitest run",
+          "test:coverage": "vitest run --coverage",
+          "test:watch": "vitest",
+          "test:exports": "publint --strict && attw --pack",
+          "link:global": "pnpm link --global",
+          "unlink:global": "pnpm unlink --global"
+        }
+      }
+    },
+    {
+      "package": "@ag-ui/proto",
+      "version": "1.0.4",
+      "sourcePath": "sdks/typescript/packages/proto",
+      "artifact": "ag-ui-proto-1.0.4.tgz",
+      "bytes": 154826,
+      "sha256": "f351b5f7ac651330d9e75c395f397540174f85a63fcfad33488dd949f3460501",
+      "sha512": "f8e01adb0d442e28d2c0d80d1af303088c79ac53bed4d403a70ce8ab5a17c04e0bd2a59c8999e1222b28715cc02a3b47ec073f38d4b2611d6de2a1b790ccd193",
+      "members": [
+        "package/LICENSE",
+        "package/dist/index.js",
+        "package/package.json",
+        "package/tsconfig.typecheck.json",
+        "package/dist/index.d.mts.map",
+        "package/dist/index.d.ts.map",
+        "package/dist/index.js.map",
+        "package/dist/index.mjs.map",
+        "package/CHANGELOG.md",
+        "package/README.md",
+        "package/scripts/generate.mjs",
+        "package/dist/index.mjs",
+        "package/dist/index.d.mts",
+        "package/dist/index.d.ts"
+      ],
+      "npmIntegrity": "sha512-+OAa2w1ELijSwNgNGvMDCIx5rFO+1NQDpwzoq1oXwE4L0qWciZnhIisocVzAKjtH7Ac/ONSyYR1t4qG3kMzRkw==",
+      "packedManifest": {
+        "name": "@ag-ui/proto",
+        "author": "Markus Ecker <markus.ecker@gmail.com>",
+        "version": "1.0.4",
+        "agui": {
+          "protocolVersion": "1.0"
+        },
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+        },
+        "private": false,
+        "publishConfig": {
+          "access": "public"
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.mjs",
+        "types": "./dist/index.d.ts",
+        "config": {
+          "protocVersion": "35.1"
+        },
+        "dependencies": {
+          "@bufbuild/protobuf": "^2.2.5",
+          "@protobuf-ts/protoc": "^2.11.1",
+          "@ag-ui/core": "1.0.4"
+        },
+        "peerDependencies": {
+          "zod": "^3.25.18 || ^4.0.0"
+        },
+        "devDependencies": {
+          "@vitest/coverage-istanbul": "^4.0.18",
+          "eslint": "^9.37.0",
+          "publint": "^0.3.12",
+          "@arethetypeswrong/cli": "^0.17.4",
+          "vitest": "^4.0.18",
+          "ts-proto": "^2.7.0",
+          "tsdown": "^0.20.1",
+          "typescript": "^5.8.2",
+          "@types/node": "^20.19.21",
+          "zod": "^3.25.76"
+        },
+        "exports": {
+          ".": {
+            "require": "./dist/index.js",
+            "import": "./dist/index.mjs"
+          },
+          "./package.json": "./package.json"
+        },
+        "nx": {
+          "targets": {
+            "test": {
+              "cache": false
+            },
+            "test:coverage": {
+              "cache": false
+            }
+          }
+        },
+        "scripts": {
+          "build": "tsdown",
+          "dev": "tsdown --watch",
+          "lint": "eslint \"src/**/*.ts*\"",
+          "typecheck": "tsc --noEmit -p tsconfig.typecheck.json",
+          "clean": "git clean -fdX --exclude=\"!.env\"",
+          "test": "vitest run",
+          "test:coverage": "vitest run --coverage",
+          "test:watch": "vitest",
+          "test:exports": "publint --strict && attw --pack",
+          "generate": "node ./scripts/generate.mjs",
+          "link:global": "pnpm link --global",
+          "unlink:global": "pnpm unlink --global"
+        }
+      }
+    },
+    {
+      "package": "@ag-ui/encoder",
+      "version": "1.0.4",
+      "sourcePath": "sdks/typescript/packages/encoder",
+      "artifact": "ag-ui-encoder-1.0.4.tgz",
+      "bytes": 9903,
+      "sha256": "e0ce4386279aea136154a3a44d3d9d9570bf546696651cc19a915ae1783f0ff6",
+      "sha512": "7eae64aa3fa4085b692e10617cb8efe790d14ca75b76e160e9672cc3854bdee0800524211fe3cb0b7eaf3236e365d0e9f6afa6815ac6851bda5be25d91d7d5a2",
+      "members": [
+        "package/LICENSE",
+        "package/dist/index.js",
+        "package/package.json",
+        "package/dist/index.d.mts.map",
+        "package/dist/index.d.ts.map",
+        "package/dist/index.js.map",
+        "package/dist/index.mjs.map",
+        "package/CHANGELOG.md",
+        "package/README.md",
+        "package/dist/index.mjs",
+        "package/dist/index.d.mts",
+        "package/dist/index.d.ts"
+      ],
+      "npmIntegrity": "sha512-fq5kqj+kCFtpLhBhfLjv55DRTKdbduFg6Wcsw4VL3uCABSQhH+PLC36vMjbjZdDp9q+mgVrGhRvaW+JdkdfVog==",
+      "packedManifest": {
+        "name": "@ag-ui/encoder",
+        "author": "Markus Ecker <markus.ecker@gmail.com>",
+        "version": "1.0.4",
+        "agui": {
+          "protocolVersion": "1.0"
+        },
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+        },
+        "private": false,
+        "publishConfig": {
+          "access": "public"
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.mjs",
+        "types": "./dist/index.d.ts",
+        "dependencies": {
+          "@ag-ui/core": "1.0.4",
+          "@ag-ui/proto": "1.0.4"
+        },
+        "peerDependencies": {
+          "zod": "^3.25.18 || ^4.0.0"
+        },
+        "devDependencies": {
+          "@vitest/coverage-istanbul": "^4.0.18",
+          "eslint": "^9.37.0",
+          "publint": "^0.3.12",
+          "@arethetypeswrong/cli": "^0.17.4",
+          "vitest": "^4.0.18",
+          "tsdown": "^0.20.1",
+          "typescript": "^5.8.2",
+          "zod": "^3.25.76"
+        },
+        "exports": {
+          ".": {
+            "require": "./dist/index.js",
+            "import": "./dist/index.mjs"
+          },
+          "./package.json": "./package.json"
+        },
+        "nx": {
+          "targets": {
+            "test": {
+              "cache": false
+            },
+            "test:coverage": {
+              "cache": false
+            }
+          }
+        },
+        "scripts": {
+          "build": "tsdown",
+          "dev": "tsdown --watch",
+          "lint": "eslint \"src/**/*.ts*\"",
+          "typecheck": "tsc --noEmit",
+          "clean": "git clean -fdX --exclude=\"!.env\"",
+          "test": "vitest run",
+          "test:coverage": "vitest run --coverage",
+          "test:watch": "vitest",
+          "test:exports": "publint --strict && attw --pack",
+          "link:global": "pnpm link --global",
+          "unlink:global": "pnpm unlink --global"
+        }
+      }
+    },
+    {
+      "package": "@ag-ui/client",
+      "version": "1.0.4",
+      "sourcePath": "sdks/typescript/packages/client",
+      "artifact": "ag-ui-client-1.0.4.tgz",
+      "bytes": 304591,
+      "sha256": "242dd3f0a45139992da3de96efb6f5c71eb6b9d56f76133756fc4f85175880cc",
+      "sha512": "ce67fa0a72ec5373157ee7c1d205d21934483cecb0e681da2823913094546513295f8e6f6244d0a18dbaa05d200244263f6c411ed39b60ac924ea8e6adab12eb",
+      "members": [
+        "package/LICENSE",
+        "package/dist/index.js",
+        "package/package.json",
+        "package/dist/index.d.mts.map",
+        "package/dist/index.d.ts.map",
+        "package/dist/index.js.map",
+        "package/dist/index.mjs.map",
+        "package/README.md",
+        "package/dist/index.mjs",
+        "package/dist/index.d.mts",
+        "package/dist/index.d.ts"
+      ],
+      "npmIntegrity": "sha512-zmf6CnLsU3MVfufB0gXSGTRIPOyw5oHaKCORMJRUZRMpX45vYkTQoY26oF0gAkQmP2xBHtObYKySTqjmrasS6w==",
+      "packedManifest": {
+        "name": "@ag-ui/client",
+        "author": "Markus Ecker <markus.ecker@gmail.com>",
+        "version": "1.0.4",
+        "agui": {
+          "protocolVersion": "1.0"
+        },
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/ag-ui-protocol/ag-ui.git"
+        },
+        "private": false,
+        "publishConfig": {
+          "access": "public"
+        },
+        "main": "./dist/index.js",
+        "module": "./dist/index.mjs",
+        "types": "./dist/index.d.ts",
+        "sideEffects": false,
+        "files": [
+          "dist/**",
+          "README.md"
+        ],
+        "dependencies": {
+          "@types/uuid": "^10.0.0",
+          "compare-versions": "^6.1.1",
+          "fast-json-patch": "^3.1.1",
+          "rxjs": "7.8.1",
+          "untruncate-json": "^0.0.1",
+          "uuid": "^11.1.0",
+          "@ag-ui/encoder": "1.0.4",
+          "@ag-ui/core": "1.0.4",
+          "@ag-ui/proto": "1.0.4"
+        },
+        "peerDependencies": {
+          "zod": "^3.25.18 || ^4.0.0"
+        },
+        "devDependencies": {
+          "@arethetypeswrong/cli": "^0.17.4",
+          "@copilotkit/aimock": "1.37.4",
+          "@types/node": "^20.11.19",
+          "@vitest/coverage-istanbul": "^4.0.18",
+          "eslint": "^9.37.0",
+          "publint": "^0.3.12",
+          "tsdown": "^0.20.1",
+          "typescript": "^5.3.3",
+          "vitest": "^4.0.18",
+          "zod": "^3.25.76"
+        },
+        "exports": {
+          ".": {
+            "require": "./dist/index.js",
+            "import": "./dist/index.mjs"
+          },
+          "./package.json": "./package.json"
+        },
+        "nx": {
+          "targets": {
+            "test": {
+              "cache": false
+            },
+            "test:coverage": {
+              "cache": false
+            }
+          }
+        },
+        "scripts": {
+          "build": "tsdown",
+          "lint": "eslint \"src/**/*.ts*\"",
+          "dev": "tsdown --watch",
+          "clean": "git clean -fdX --exclude=\"!.env\"",
+          "typecheck": "tsc --noEmit",
+          "test": "vitest run",
+          "test:coverage": "vitest run --coverage",
+          "test:watch": "vitest",
+          "test:exports": "publint --strict && attw --pack",
+          "link:global": "pnpm link --global",
+          "unlink:global": "pnpm unlink --global"
+        }
+      }
+    },
+    {
+      "package": "@ag-ui/codex-sdk",
+      "version": "0.0.1",
+      "sourcePath": "integrations/community/codex-sdk/typescript",
+      "artifact": "ag-ui-codex-sdk-0.0.1.tgz",
+      "bytes": 59318,
+      "sha256": "4e9529559941198532842b040a5c5b16f861b300c8bd8c5e67b23f4535f11b1a",
+      "sha512": "add881e559e287f97257397054c7b2bb479e4d1cbe315c6ff5f3e8e5ddff8e8354ec36ba03d20411f595fad1fbea2912dcd28dce4c36232b61e081d4c2d36e2d",
+      "members": [
+        "package/LICENSE",
+        "package/dist/index.js",
+        "package/dist/process-launcher.js",
+        "package/dist/examples/server.js",
+        "package/package.json",
+        "package/dist/index.js.map",
+        "package/dist/index.mjs.map",
+        "package/examples/README.md",
+        "package/README.md",
+        "package/dist/index.mjs",
+        "package/dist/index.d.mts",
+        "package/dist/index.d.ts"
+      ],
+      "npmIntegrity": "sha512-rdiB5Vnih/lyVzlwVMeyu0eeTRy+MVxv9fPo5d3/joNU7Da6A9IEEfWV+tH76ikS3NKNzkw2Iyth4IHUwtNuLQ==",
+      "packedManifest": {
+        "name": "@ag-ui/codex-sdk",
+        "version": "0.0.1",
+        "description": "AG-UI adapter and standalone text-chat server for the official Codex SDK",
+        "main": "./dist/index.js",
+        "module": "./dist/index.mjs",
+        "types": "./dist/index.d.ts",
+        "sideEffects": false,
+        "files": [
+          "dist/**",
+          "README.md",
+          "LICENSE",
+          "examples/README.md"
+        ],
+        "keywords": [
+          "ag-ui",
+          "codex",
+          "agents"
+        ],
+        "peerDependencies": {
+          "@ag-ui/core": ">=1.0.4",
+          "@ag-ui/client": ">=1.0.4"
+        },
+        "devDependencies": {
+          "@types/node": "^20.11.19",
+          "@vitest/coverage-istanbul": "^4.0.18",
+          "publint": "^0.3.12",
+          "@arethetypeswrong/cli": "^0.17.4",
+          "vitest": "^4.0.18",
+          "tsdown": "^0.20.1",
+          "typescript": "^5.8.2",
+          "tsx": "^4.20.6",
+          "eslint": "^9.37.0",
+          "@ag-ui/core": "1.0.4",
+          "@ag-ui/client": "1.0.4"
+        },
+        "repository": {
+          "type": "git",
+          "url": "git+https://github.com/ag-ui-protocol/ag-ui.git",
+          "directory": "integrations/community/codex-sdk/typescript"
+        },
+        "author": "AG-UI community",
+        "license": "MIT",
+        "private": false,
+        "publishConfig": {
+          "access": "public"
+        },
+        "exports": {
+          ".": {
+            "require": "./dist/index.js",
+            "import": "./dist/index.mjs"
+          },
+          "./package.json": "./package.json"
+        },
+        "engines": {
+          "node": ">=22"
+        },
+        "dependencies": {
+          "@openai/codex-sdk": "0.167.1",
+          "rxjs": "7.8.1",
+          "@openai/codex": "0.167.1",
+          "@ag-ui/encoder": "1.0.4"
+        },
+        "nx": {
+          "targets": {
+            "test:exports": {
+              "dependsOn": [
+                "build"
+              ]
+            },
+            "test:packed": {
+              "dependsOn": [
+                "build"
+              ],
+              "cache": false
+            },
+            "smoke": {
+              "cache": false
+            }
+          }
+        },
+        "scripts": {
+          "build": "tsdown",
+          "typecheck": "tsc --noEmit",
+          "test": "vitest run",
+          "test:exports": "publint --strict && attw --pack",
+          "test:packed": "node scripts/test-packed.mjs",
+          "start": "node dist/examples/server.js",
+          "smoke": "tsx examples/smoke.ts",
+          "lint": "eslint \"src/**/*.ts\" \"examples/**/*.ts\""
+        }
+      }
+    },
+    {
+      "package": "@ag-ui/pi",
+      "version": "0.0.1",
+      "sourcePath": "integrations/community/pi/typescript",
+      "artifact": "ag-ui-pi-0.0.1.tgz",
+      "bytes": 15014,
+      "sha256": "9cc320d8549901d181abe04e5027dbb5a87bd88b7eed0131b110dbe2aac3447c",
+      "sha512": "14e3facd143c546bea1c5312af21ce567aae43d5d77d2b6b555cba5b1cc88e19fef0d7c9f1cc7d3ea06f1b886445778a31f02bfcf4f44f93bcecacf1e95b1c2b",
+      "members": [
+        "package/LICENSE",
+        "package/dist/examples/client-tools.js",
+        "package/dist/examples/conversation.js",
+        "package/dist/src/index.js",
+        "package/dist/src/messages.js",
+        "package/dist/examples/server.js",
+        "package/dist/src/translate.js",
+        "package/package.json",
+        "package/PROVENANCE.md",
+        "package/README.md",
+        "package/dist/examples/client-tools.d.ts",
+        "package/examples/client-tools.ts",
+        "package/dist/examples/conversation.d.ts",
+        "package/examples/conversation.ts",
+        "package/dist/src/index.d.ts",
+        "package/dist/src/messages.d.ts",
+        "package/dist/examples/server.d.ts",
+        "package/examples/server.ts",
+        "package/dist/src/translate.d.ts"
+      ],
+      "npmIntegrity": "sha512-FOP6zRQ8VGvqHFMSryHOVnquQ9XXfStrVVy6WxzIjhn+8NfJ8cx9PqBvG4hkRXeKMfAr/PT0T5O87Kzx6VscKw==",
+      "packedManifest": {
+        "name": "@ag-ui/pi",
+        "version": "0.0.1",
+        "description": "Translate Pi agent events and conversation history to AG-UI",
+        "type": "module",
+        "license": "MIT",
+        "repository": {
+          "type": "git",
+          "url": "https://github.com/ag-ui-protocol/ag-ui.git",
+          "directory": "integrations/community/pi/typescript"
+        },
+        "exports": {
+          ".": {
+            "types": "./dist/src/index.d.ts",
+            "import": "./dist/src/index.js"
+          },
+          "./examples/server": {
+            "types": "./dist/examples/server.d.ts",
+            "import": "./dist/examples/server.js"
+          }
+        },
+        "types": "./dist/src/index.d.ts",
+        "files": [
+          "dist",
+          "examples",
+          "LICENSE",
+          "PROVENANCE.md"
+        ],
+        "engines": {
+          "node": ">=22.19.0"
+        },
+        "publishConfig": {
+          "access": "public"
+        },
+        "nx": {
+          "targets": {
+            "typecheck": {
+              "dependsOn": [
+                "build"
+              ]
+            }
+          }
+        },
+        "peerDependencies": {
+          "@ag-ui/client": "^1.0.4",
+          "@ag-ui/core": "^1.0.4",
+          "@earendil-works/pi-agent-core": ">=1.5.0 <=1.5.2",
+          "@earendil-works/pi-ai": ">=1.5.0 <=1.5.2",
+          "@earendil-works/pi-coding-agent": ">=1.5.0 <=1.5.2"
+        },
+        "dependencies": {
+          "@ag-ui/encoder": "1.0.4",
+          "zod": "3.25.76"
+        },
+        "devDependencies": {
+          "@ag-ui/client": "1.0.4",
+          "@ag-ui/core": "1.0.4",
+          "@earendil-works/pi-agent-core": "1.5.0",
+          "@earendil-works/pi-ai": "1.5.0",
+          "@earendil-works/pi-coding-agent": "1.5.0",
+          "@types/node": "^22.15.30",
+          "tsx": "^4.20.6",
+          "typescript": "5.8.2"
+        },
+        "scripts": {
+          "build": "tsc -p tsconfig.build.json",
+          "typecheck": "tsc --noEmit",
+          "test": "tsx --test test/*.test.ts",
+          "test:pack": "bash test/packed.sh",
+          "start": "node dist/examples/server.js"
+        }
+      }
+    }
+  ],
+  "sourceLockSha256": "b704db03f7b5db13d9627babadcf620be6a871e60fe07bab3df5194fac3c6a9d",
+  "platform": "Linux 6.17.0-1008-nvidia aarch64",
+  "sourceBranch": "matt.spurlin/typescript-sdks",
+  "sourcePullRequest": "https://github.com/mattsp1290/ag-ui/pull/49",
+  "evidence": [
+    {
+      "path": "evidence/agui49-local-install.log.gz",
+      "rawBytes": 2055,
+      "rawSha256": "ede0fd8dfa6e93c9dfdb0bbb9182d2544870067e07264b4291de5e9ba48bce5d",
+      "retainedBytes": 2055,
+      "retainedSha256": "ede0fd8dfa6e93c9dfdb0bbb9182d2544870067e07264b4291de5e9ba48bce5d",
+      "compressedBytes": 486,
+      "compressedSha256": "d6e07d6c7ec099a5bd82a83ac2796533e5be7af3ff698623b01ed3f0dd7e59e0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-local-checks.log.gz",
+      "rawBytes": 21426,
+      "rawSha256": "d15795d0230777ce1344d2d17c704e7207b23c189590e39c43667a81bbb307ac",
+      "retainedBytes": 21426,
+      "retainedSha256": "d15795d0230777ce1344d2d17c704e7207b23c189590e39c43667a81bbb307ac",
+      "compressedBytes": 3664,
+      "compressedSha256": "c03f199c591248fb31dbbe231ae2f28a6ec8f50191d072422610c09cc33d3b70",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-local-codex-pack.log.gz",
+      "rawBytes": 17562,
+      "rawSha256": "c6690005565cb8f607d5f033f47aa62241968822dbf5e2458066909ad2401d65",
+      "retainedBytes": 17562,
+      "retainedSha256": "c6690005565cb8f607d5f033f47aa62241968822dbf5e2458066909ad2401d65",
+      "compressedBytes": 2636,
+      "compressedSha256": "47deeccff9f061839feca164d508eef4bea1fa63e5595a5998356edb4c0cb1e6",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-local-pi-pack.log.gz",
+      "rawBytes": 10259,
+      "rawSha256": "23f60c6174d12020aff2eebd0d2f8f7f8fb33bcffdc9d3e2e8c2592e807af241",
+      "retainedBytes": 10259,
+      "retainedSha256": "23f60c6174d12020aff2eebd0d2f8f7f8fb33bcffdc9d3e2e8c2592e807af241",
+      "compressedBytes": 2042,
+      "compressedSha256": "8035a58fa488486b3396717261958886463cfc9385d3115717b1f2ed4b9b96b9",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-local-artifacts.log.gz",
+      "rawBytes": 2555,
+      "rawSha256": "112882734322d7a0b9dbd54ae2f895a69e554674240138df98a50368ff7abb63",
+      "retainedBytes": 2555,
+      "retainedSha256": "112882734322d7a0b9dbd54ae2f895a69e554674240138df98a50368ff7abb63",
+      "compressedBytes": 542,
+      "compressedSha256": "27d699c385605fd1af093ad4bb0743e5134b68f5d983f9625f32dc3a72db12a6",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-consumer-install.log.gz",
+      "rawBytes": 119,
+      "rawSha256": "157a31833f14d68792971a9b65c3c90ae4351a222f0d574d2b2ce893039f32d0",
+      "retainedBytes": 119,
+      "retainedSha256": "157a31833f14d68792971a9b65c3c90ae4351a222f0d574d2b2ce893039f32d0",
+      "compressedBytes": 125,
+      "compressedSha256": "cee3621cde7910abf663c03477eede6094a6d868ab4a5eaebe7f4c967fbfb17e",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-source-integrity.json.gz",
+      "rawBytes": 262,
+      "rawSha256": "14c88e95db804801f3946c9d2ae7857ad0639bb79386f5a0a6de1853b4b6b152",
+      "retainedBytes": 262,
+      "retainedSha256": "14c88e95db804801f3946c9d2ae7857ad0639bb79386f5a0a6de1853b4b6b152",
+      "compressedBytes": 209,
+      "compressedSha256": "ec28f4731c13cad9c9a1e194b873fd46cb87459704850ab4fec871edc22ac2b7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-consumer-proof.json.gz",
+      "rawBytes": 3228,
+      "rawSha256": "736db7f223a9b71b70b0810d37e29c8dd5dfb91aceead51b711867f539747ae1",
+      "retainedBytes": 3228,
+      "retainedSha256": "736db7f223a9b71b70b0810d37e29c8dd5dfb91aceead51b711867f539747ae1",
+      "compressedBytes": 1175,
+      "compressedSha256": "55e8cd1a15005c373fd49ae7d282a9f9a4f0322bc7ca1aec9f1708ea9c10fe2b",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-pr-snapshot.json.gz",
+      "rawBytes": 16971,
+      "rawSha256": "79f7ebe7b84c90c0632e5352f3b670dce0c87c3b305a39d821ca0fceb53f6d8a",
+      "retainedBytes": 16971,
+      "retainedSha256": "79f7ebe7b84c90c0632e5352f3b670dce0c87c3b305a39d821ca0fceb53f6d8a",
+      "compressedBytes": 2589,
+      "compressedSha256": "dd1e9588e0e9344016f1a39764e9e11ae6a4a2d94743c659f8263255fc80df2a",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-checks-snapshot.json.gz",
+      "rawBytes": 128831,
+      "rawSha256": "5dc3216bc320e0de3a04e49fe0bfc0072d4d870f44578f17524844739197cb5b",
+      "retainedBytes": 128831,
+      "retainedSha256": "5dc3216bc320e0de3a04e49fe0bfc0072d4d870f44578f17524844739197cb5b",
+      "compressedBytes": 5190,
+      "compressedSha256": "e140ea138f4db064e7bde70961be40a2d6cd6dbcafc36402e05ef3eabe4ec4ea",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-artifact-consumer-verification.json.gz",
+      "rawBytes": 421,
+      "rawSha256": "e378c00430d90335b62fbac1cdcca1b11a9b53af655ee8c36d493b5120187036",
+      "retainedBytes": 421,
+      "retainedSha256": "e378c00430d90335b62fbac1cdcca1b11a9b53af655ee8c36d493b5120187036",
+      "compressedBytes": 259,
+      "compressedSha256": "f25298c882a6c0c718dcd9d5acb49e9eb0d038bb64b73e9890a22476648ace1a",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-consumer-dependency-tree.json.gz",
+      "rawBytes": 50797,
+      "rawSha256": "9480f782605f2439aed55015cca30047e951836f4e40362b1213ff3b5b48aba2",
+      "retainedBytes": 50797,
+      "retainedSha256": "9480f782605f2439aed55015cca30047e951836f4e40362b1213ff3b5b48aba2",
+      "compressedBytes": 4518,
+      "compressedSha256": "ca815a45384210dcb1a5479c771ca7d9ced4d443f82fa3c00024a56c781044a9",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-exact-consumer-0.log.gz",
+      "rawBytes": 213,
+      "rawSha256": "8d778738dfd56a4279797cc450eb6bef8a6078eabfa4570ead9b1a011d61881b",
+      "retainedBytes": 213,
+      "retainedSha256": "8d778738dfd56a4279797cc450eb6bef8a6078eabfa4570ead9b1a011d61881b",
+      "compressedBytes": 93,
+      "compressedSha256": "9513986d3307541df2c887a95945709e8c2d80d873dd992ff443db783a5b41d4",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-exact-consumer-1.log.gz",
+      "rawBytes": 69,
+      "rawSha256": "23bd20779820c82234a1f75a8bc8946d7e3b96d7c117da36f5f532b1d80af082",
+      "retainedBytes": 69,
+      "retainedSha256": "23bd20779820c82234a1f75a8bc8946d7e3b96d7c117da36f5f532b1d80af082",
+      "compressedBytes": 86,
+      "compressedSha256": "13922ba5ea7647d8a1218fdec136617f7637f5327973490f55d1d13665d3f463",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-exact-consumer-2.log.gz",
+      "rawBytes": 69,
+      "rawSha256": "23bd20779820c82234a1f75a8bc8946d7e3b96d7c117da36f5f532b1d80af082",
+      "retainedBytes": 69,
+      "retainedSha256": "23bd20779820c82234a1f75a8bc8946d7e3b96d7c117da36f5f532b1d80af082",
+      "compressedBytes": 86,
+      "compressedSha256": "13922ba5ea7647d8a1218fdec136617f7637f5327973490f55d1d13665d3f463",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-exact-consumer-3.log.gz",
+      "rawBytes": 1508,
+      "rawSha256": "592dcdd7b681a493717144c12e798861cbf2103e413a2700cead4560821e57b7",
+      "retainedBytes": 1508,
+      "retainedSha256": "592dcdd7b681a493717144c12e798861cbf2103e413a2700cead4560821e57b7",
+      "compressedBytes": 817,
+      "compressedSha256": "b02f38d72d1494674bfca69979b1b3aad78406a66666a267634019f6d04e2276",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/agui49-exact-consumer-4.log.gz",
+      "rawBytes": 50797,
+      "rawSha256": "9480f782605f2439aed55015cca30047e951836f4e40362b1213ff3b5b48aba2",
+      "retainedBytes": 50797,
+      "retainedSha256": "9480f782605f2439aed55015cca30047e951836f4e40362b1213ff3b5b48aba2",
+      "compressedBytes": 4518,
+      "compressedSha256": "ca815a45384210dcb1a5479c771ca7d9ced4d443f82fa3c00024a56c781044a9",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical acquisition/build/consumer record; paths inside are historical measured locations"
+    },
+    {
+      "path": "evidence/source-pnpm-lock.yaml.gz",
+      "rawBytes": 1100222,
+      "rawSha256": "b704db03f7b5db13d9627babadcf620be6a871e60fe07bab3df5194fac3c6a9d",
+      "retainedBytes": 1100222,
+      "retainedSha256": "b704db03f7b5db13d9627babadcf620be6a871e60fe07bab3df5194fac3c6a9d",
+      "compressedBytes": 291477,
+      "compressedSha256": "79ff40efb2ad305cda5d0d1871033f6f592ee21e2f9870a711eae996b44eed56",
+      "encoding": "gzip; raw retained without edits",
+      "role": "exact source build lock; not the consumer lock"
+    },
+    {
+      "path": "evidence/retention-replay.log.gz",
+      "rawBytes": 55174,
+      "rawSha256": "2d8c693126c350c904c89fa2ea99703faafd9bb0a0c1c2a669ac98a7fa641fa9",
+      "retainedBytes": 55174,
+      "retainedSha256": "2d8c693126c350c904c89fa2ea99703faafd9bb0a0c1c2a669ac98a7fa641fa9",
+      "compressedBytes": 6242,
+      "compressedSha256": "932535bd4b9ca81a9aafc4b03fd3f10d6be1b0798ad72db3814245630ff5f0bd",
+      "encoding": "gzip; raw retained without edits",
+      "role": "fresh retained-input qualification replay; paths inside record actual measured locations"
+    }
+  ],
+  "qualification": {
+    "command": "node scripts/verify-agui-fork.mjs",
+    "offlineCommand": "python3 tests/dependencies/ag-ui/verify-consumer.py",
+    "consumerPackage": "../../../tests/dependencies/ag-ui/consumer/package.json",
+    "consumerPackageSha256": "474c1de9b4cc8921e55cd9e5b2fef98eef736d4928550e1626b275b96105ed3f",
+    "consumerLock": "../../../tests/dependencies/ag-ui/consumer/package-lock.json",
+    "consumerLockSha256": "239a43a9ac72e7c18b7e84a9b32f410546a3ebc507d73d4539686852705c81cd",
+    "fixtureProvenance": "qualification-fixtures/provenance.json",
+    "fixtureProvenanceSha256": "b96d0178508a5c77e4b876133b7a76579eb5dbed2cb3e94f6b92c97d74906fa6",
+    "replay": {
+      "startedAt": "2026-11-14T14:29:26.534281+00:00",
+      "endedAt": "2026-11-14T14:29:36.848251+00:00",
+      "command": [
+        "node",
+        "scripts/verify-agui-fork.mjs"
+      ],
+      "exitCode": 0,
+      "node": "v24.22.3",
+      "npm": "11.19.1",
+      "platform": "Linux aarch64",
+      "log": "evidence/retention-replay.log.gz",
+      "results": [
+        {
+          "command": [
+            "python3",
+            "/home/punk1290/git/agentui/tests/dependencies/ag-ui/verify-consumer.py"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "npm",
+            "ci",
+            "--ignore-scripts",
+            "--include=optional",
+            "--no-audit",
+            "--no-fund"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "python3",
+            "/home/punk1290/git/agentui/tests/dependencies/ag-ui/verify-consumer.py",
+            "/tmp/agentui-agui-fork-A0Y6zM/consumer"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "node",
+            "all-imports.mjs"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "node",
+            "codex-esm.mjs"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "node",
+            "codex-commonjs.cjs"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "node",
+            "--test",
+            "test/adapter.test.ts",
+            "test/example.test.ts"
+          ],
+          "exitCode": 0,
+          "signal": null
+        },
+        {
+          "command": [
+            "npm",
+            "ls",
+            "--all",
+            "--json"
+          ],
+          "exitCode": 0,
+          "signal": null
+        }
+      ]
+    }
+  }
+}

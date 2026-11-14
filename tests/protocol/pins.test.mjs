@@ -10,14 +10,21 @@ test('AG-UI SDK, validator and installed license match the retained pins', () =>
   const digest = (bytes) => createHash('sha256').update(bytes).digest('hex');
   const { pin, provenance } = retained;
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
+  const forkDirectory = 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/';
+  const fork = json(`${forkDirectory}provenance.json`);
+  const installedSdk = fork.artifacts.find((artifact) => artifact.package === sdk.package);
+  const archive = `${forkDirectory}${installedSdk.artifact}`;
+  assert.equal(digest(readFileSync(new URL(archive, root))), installedSdk.sha256);
+  assert.equal(installedSdk.version, sdk.version);
   const lock = json('package-lock.json');
   const project = json('package.json');
   assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256);
   for (const workspace of ['packages/protocol', 'packages/host']) {
-    assert.equal(json(`${workspace}/package.json`).dependencies[sdk.package], sdk.version, workspace);
+    assert.equal(json(`${workspace}/package.json`).dependencies[sdk.package], `file:../../${archive}`, workspace);
   }
   assert.equal(lock.packages['node_modules/@ag-ui/core'].version, sdk.version);
-  assert.equal(lock.packages['node_modules/@ag-ui/core'].integrity, sdk.integrity);
+  assert.equal(lock.packages['node_modules/@ag-ui/core'].resolved, `file:${archive}`);
+  assert.equal(lock.packages['node_modules/@ag-ui/core'].integrity, installedSdk.npmIntegrity);
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
   assert.equal(json('node_modules/@ag-ui/core/package.json').version, sdk.version);
   assert.equal(json('node_modules/ajv/package.json').version, project.devDependencies.ajv);

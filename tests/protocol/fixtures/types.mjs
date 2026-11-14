@@ -1,11 +1,11 @@
-import { assertCompileCases } from '../../../packages/adapter-tests/tests/support/compile.mjs';
+import { assertCompileCases } from '@agentui/adapter-tests/testing/compile';
 import { projectionFacts } from '../coverage.mjs';
 
 export const publishedTypeContracts = {
   'published-sdk-availability': () => assertCompileCases({
     config: 'packages/protocol/tsconfig.json',
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
-import { EventType } from '@ag-ui/core';
+import { EventType } from '@agentui/protocol';
 export const knownEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm' };
 export const sdkOnlyRawEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm', rawEvent: null };
 export const knownDiscriminator: \`\${Event['type']}\` = 'TEXT_MESSAGE_END';

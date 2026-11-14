@@ -1,4 +1,5 @@
 export type { AgentCapabilities, Event, RunAgentInput } from '@ag-ui/core';
+export { EventType } from '@ag-ui/core';
 
 export type BackendAvailability =
   | { readonly kind: 'undeclared' }

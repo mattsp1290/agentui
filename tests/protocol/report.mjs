@@ -10,6 +10,7 @@ const root = new URL('../../', import.meta.url);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
 const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
 const retainedPath = (file) => `${retained.retainedDir}${file}`;
+const byKind = (project) => Object.fromEntries(Object.keys(evidenceKinds).map((kind) => [kind, project(kind)]));
 
 function projectCategories({ pin, definitions, fixtures }, registry) {
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
@@ -17,17 +18,13 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
     const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.definition));
-    const installedFixtures = owned.evidence.filter((id) => registry[id] === 'installedFixtures');
-    const canonicalControls = owned.evidence.filter((id) => registry[id] === 'canonicalControls');
-    const publishedTypeContracts = owned.evidence.filter((id) => registry[id] === 'publishedTypeContracts');
-    assert.equal(installedFixtures.length + canonicalControls.length + publishedTypeContracts.length, owned.evidence.length, category);
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
       sdkRuntimeDivergences: canonicalFixtures.filter((fixture) => fixture.typescriptAccepts !== fixture.valid || fixture.pythonAccepts !== fixture.valid)
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
       mapping: owned.mapping, scope: owned.scope,
-      installedFixtures, canonicalControls, publishedTypeContracts,
+      ...byKind((kind) => owned.evidence.filter((id) => registry[id] === kind)),
       pendingProductOwners: owned.pending,
     };
   });
@@ -40,6 +37,9 @@ export function buildConformanceReport() {
   const { provenance, pin, schema, definitions, fixtures } = retained;
   const vendor = json(new URL('vendor/switchboard.json', root));
   const project = json(new URL('package.json', root));
+  const forkPath = 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/provenance.json';
+  const fork = json(new URL(forkPath, root));
+  const installedSdk = fork.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
   assert.equal(provenance.sources.switchboard.revision, vendor.sourceRevision);
@@ -61,6 +61,12 @@ export function buildConformanceReport() {
   const count = (predicate) => fixtures.filter(predicate).length;
   return {
     coverageContractVersion,
+    installedSdk: {
+      repository: fork.sourceRepository, branch: fork.sourceBranch, sourceRevision: fork.sourceRevision,
+      provenance: forkPath, package: installedSdk.package, version: installedSdk.version,
+      artifact: installedSdk.artifact, sha256: installedSdk.sha256, integrity: installedSdk.npmIntegrity,
+      scope: 'Shared SDK types and enum; Codex and Pi native host integration remains unqualified.',
+    },
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
       fixturePathsExecutedByAgentUI: false,
@@ -93,12 +99,7 @@ export function buildConformanceReport() {
     },
     agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: retainedPath('schema.json'),
       emittedEventDefinition: canonicalDefinitions.event, contractDefinitions: Object.values(canonicalDefinitions.contracts) },
-    evidence: {
-      registrar: 'tests/protocol/conformance.test.mjs',
-      installedFixtures: kindEvidence('installedFixtures'),
-      canonicalControls: kindEvidence('canonicalControls'),
-      publishedTypeContracts: kindEvidence('publishedTypeContracts'),
-    },
+    evidence: { registrar: 'tests/protocol/conformance.test.mjs', ...byKind(kindEvidence) },
     behaviorLimits,
     retainedInputs: {
       [retainedPath('provenance.json')]: retained.provenanceDigest,

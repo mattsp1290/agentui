@@ -7,10 +7,12 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
-    }
+    },
+    "./testing/compile": "./tests/support/compile.mjs"
   },
   "files": [
-    "dist"
+    "dist",
+    "tests/support/compile.mjs"
   ],
   "scripts": {
     "build": "tsc -p tsconfig.json",

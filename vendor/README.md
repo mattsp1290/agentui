@@ -1,4 +1,15 @@
-# Switchboard package provenance
+# Dependency provenance
+
+## AG-UI fork
+
+The shared protocol and host workspaces install `@ag-ui/core@1.0.4` from the
+[PR49 fork artifact](ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/README.md).
+Its six-package closure includes the Codex and Pi integrations for Switchboard
+consumption. Those native packages are qualified in a separate controlled
+consumer; AgentUI does not start a second native runtime. Full native integration,
+approvals, discovery, provider routes and Apple qualification remain open.
+
+## Switchboard package provenance
 
 The host installs private ESM `@mattsp1290/switchboard@0.0.0` from a commit-named
 tarball. No registry publication is claimed. The authoritative
@@ -11,8 +22,8 @@ The artifact contains built JavaScript, declarations, the upstream architecture
 record and upstream MIT license. Only core and `./agui` are public exports.
 Core has no required runtime dependency. The AG-UI entry requires the exact
 optional peer `@ag-ui/core@1.0.4`. The `@agentui/host` package, for its `./agui`
-entry, and the pure `@agentui/protocol` package each declare that exact SDK
-dependency. Core-only host consumers still install the SDK, but the core entry
+entry, and the pure `@agentui/protocol` package each declare the pinned fork SDK
+artifact dependency. Core-only host consumers still install the SDK, but the core entry
 imports no AG-UI code. See the [consumer conformance matrix](../docs/protocol/README.md).
 
 Linux arm64 qualification used Node 24.22.3, npm 11.19.1, uv 0.11.3 and Python

@@ -7,7 +7,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | Package | Responsibility | Type environment |
 | --- | --- | --- |
 | `@agentui/contracts` | Conversation scope, provider identity, run authority | ES2023 only |
-| `@agentui/protocol` | Published AG-UI SDK types and availability declarations | ES2023 only |
+| `@agentui/protocol` | Published AG-UI SDK types, construction enum and availability declarations | ES2023 only |
 | `@agentui/sdk` | Full-trust extension entry manifests | ES2023 only |
 | `@agentui/sdk/react` | Conversation-scoped React module contracts | React, without DOM |
 | `@agentui/theme` | Semantic tokens and inherited theme resolution | ES2023 only |
@@ -26,7 +26,8 @@ The root owns the browser workbench and its tooling because it checks integratio
 The adapter-test workspace separately owns package and ambient-boundary checks.
 Tauri Rust setup and native application lifecycle belong to later tasks.
 Each package compiles independently with strict TypeScript.
-There are no source aliases. Imports resolve built package exports.
+There are no source aliases. TypeScript package imports resolve built exports.
+Repository Node tests also consume explicit test-only exports from the adapter-test workspace.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
 
 The host is the only application workspace with a Switchboard dependency.
@@ -38,8 +39,7 @@ The [versioned conformance matrix](../protocol/README.md) names installed fixtur
 and pending consumers. Transport, replay and product UI consumption remain separate work.
 No adapter implementation or agent loop is copied here.
 
-`@agentui/protocol` exports SDK types only. Workspaces constructing SDK events
-declare the pinned `@ag-ui/core` dependency and import its `EventType` enum.
+`@agentui/protocol` exports published SDK types and the SDK's `EventType` construction enum.
 Runtime wire validation remains separate from TypeScript assignment checks.
 
 ## Run ownership
