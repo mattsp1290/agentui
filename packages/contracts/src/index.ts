@@ -21,7 +21,7 @@ export interface RunIdentity {
   readonly authority: RunAuthority;
 }
 
-export { canonicalJson, JsonLimitError, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_NODES, JSON_MAX_DEPTH, parseCommand, parseScope, parseReceipt, parseDecision, parseDocument, DocumentScopeMismatchError, parseHostEvent, sameScope, foldDocument } from './durable.js';
+export { canonicalJson, JsonLimitError, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_NODES, JSON_MAX_DEPTH, parseCommand, parseScope, parseReceipt, parseDecision, parseDocument, FeedMismatchError, parseFeedItem, parseHostEvent, sameScope, foldDocument } from './durable.js';
 export {
   CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES,
   CORE_SNAPSHOT_ENVELOPE_RESERVE, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET,

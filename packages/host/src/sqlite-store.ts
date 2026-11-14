@@ -194,11 +194,11 @@ export class SqliteStore<E, P> {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
-  settle(scope: ConversationScope, id: string, value: DispatchObservation<ObservedResult>, context = { live: false }): Receipt {
+  settle(scope: ConversationScope, id: string, value: DispatchObservation<ObservedResult>): Receipt {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      const transition = settlement(stored.observation, observation(value, stored.target), { quarantined: isQuarantined(stored), live: context.live });
+      const transition = settlement(stored.observation, observation(value, stored.target), { quarantined: isQuarantined(stored) });
       switch (transition.kind) {
         case 'keep': return stored.receipt;
         case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

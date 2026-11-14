@@ -1,6 +1,7 @@
-import { canonicalJson, DocumentScopeMismatchError, parseScope } from '@agentui/contracts';
+import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem } from '@agentui/contracts';
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
@@ -44,8 +45,14 @@ async function readResponse<K extends keyof ServiceValueMap>(response: Response,
   } finally { reader.releaseLock(); }
   try { return parseServiceResponse<K>(request, JSON.parse(body)); }
   catch (error) {
-    if (error instanceof DocumentScopeMismatchError) throw error;
     throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response');
+  }
+}
+function parseBrowserFeed(value: unknown, scope: ConversationScope): FeedItem<TranscriptEvent, Transcript> {
+  try { return parseFeedItem(value, transcriptProjection, scope); }
+  catch (error) {
+    if (error instanceof FeedMismatchError) throw error;
+    throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service feed item');
   }
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
@@ -129,15 +136,16 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
             continue;
           }
           if (result.page !== (lastPage === null ? 1 : lastPage + 1)) throw new ServiceProtocolError('Service page sequence gap');
-          await receive(result.item);
+          const item = parseBrowserFeed(result.item, scope);
+          await receive(item);
           if (phase !== 'active') return;
           lastPage = result.page;
           identity = nextIdentity;
-          if (result.item.kind === 'snapshot') cursor = result.item.snapshot.cursor;
-          else cursor = result.item.events.at(-1)?.sequence ?? cursor;
+          if (item.kind === 'snapshot') cursor = item.snapshot.cursor;
+          else cursor = item.events.at(-1)?.sequence ?? cursor;
         }
       } catch (error) {
-        finish({ kind: error instanceof DocumentScopeMismatchError ? 'refused' : error instanceof ServiceProtocolError ? 'resync' : 'failed', cursor,
+        finish({ kind: error instanceof FeedMismatchError ? 'refused' : error instanceof ServiceProtocolError ? 'resync' : 'failed', cursor,
           reason: error instanceof Error ? error.message : 'Service connection failed' });
       }
     };

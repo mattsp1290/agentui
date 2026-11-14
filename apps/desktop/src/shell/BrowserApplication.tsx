@@ -16,7 +16,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const conversation = app.active
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        actions={controller.conversationActions(app.active)} active={app.active} agent={agent}
+        actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
       />
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>

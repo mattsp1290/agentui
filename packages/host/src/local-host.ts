@@ -127,8 +127,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       });
       return inFlight(async () => {
         const result = await operation.reconcile(new AbortController().signal);
-        return store.settle(scope, id, result.kind === 'ok' ? result.value.observation : { kind: 'outcome-unknown' },
-          { live: dispatching.has(commandKey(scope, id)) });
+        const observed = result.kind === 'ok' ? result.value.observation : { kind: 'outcome-unknown' } as const;
+        if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
+          const current = store.command(scope, id);
+          if (!current) throw new Error('Unknown command');
+          return current.receipt;
+        }
+        return store.settle(scope, id, observed);
       });
     },
     close(): void {

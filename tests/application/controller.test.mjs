@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { ServiceError } from '@agentui/contracts/service';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
@@ -8,7 +9,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -27,7 +28,7 @@ function fixture() {
     return owner;
   }
   const connection = {
-    async pair() {},
+    pair: code => behavior.pair(code),
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
       nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
@@ -327,4 +328,77 @@ test('confirmed creation preserves expanded catalog pages and later paging does 
   assert.equal(f.app.getSnapshot().catalog.items.length, 211);
   assert.equal(f.app.getSnapshot().catalog.items.filter(scope => scope.conversationId === f.created[0].conversationId).length, 1);
   assert.equal(f.app.getSnapshot().catalog.after, null);
+});
+
+
+for (const operation of ['metadata', 'catalog', 'create']) {
+  test(`a revoked ${operation} request keeps the feed-expiry explanation`, async t => {
+    const f = fixture(); t.after(() => f.app.dispose());
+    f.views.set('original-view/host', { ...empty(), route: scope });
+    await f.app.start();
+    const active = f.app.getSnapshot().active;
+    f.unauthorized[0]();
+    const explanation = f.app.getSnapshot().error;
+    assert.match(explanation, /previous access may have been revoked/);
+    await f.app.reconnect();
+    assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+    f.behavior[operation] = async () => {
+      f.unauthorized[0]();
+      throw new ServiceError('unauthorized', 'Pair this device with the host');
+    };
+    await (operation === 'create' ? f.app.create() : f.app.reconnect());
+    const snapshot = f.app.getSnapshot();
+    assert.equal(snapshot.host.kind, 'unpaired');
+    assert.equal(snapshot.error, explanation);
+    assert.equal(snapshot.busy, false);
+    assert.equal(applicationEnabled(snapshot), false);
+    assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
+  });
+}
+
+for (const reason of ['Invalid pairing code', 'Pairing code expired']) {
+  test(`a rejected pairing shows ${reason} and can be retried`, async t => {
+    const f = fixture(); t.after(() => f.app.dispose());
+    f.behavior.metadata = async () => {
+      f.unauthorized[0]();
+      throw new ServiceError('unauthorized', 'Pair this device with the host');
+    };
+    await f.app.start();
+    assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+    const calls = f.metadataCalls();
+    f.behavior.pair = async () => { throw new ServiceError('unauthorized', reason); };
+    await f.app.pair('expired-or-invalid');
+    assert.equal(f.app.getSnapshot().error, reason);
+    assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+    assert.equal(f.app.getSnapshot().busy, false);
+    assert.equal(f.metadataCalls(), calls);
+    f.behavior.pair = async () => {};
+    f.behavior.metadata = async () => {};
+    await f.app.pair('valid');
+    assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+    assert.equal(f.app.getSnapshot().error, '');
+  });
+}
+
+test('a successful pairing followed by revoked metadata uses the revocation explanation', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  f.behavior.metadata = async () => {
+    f.unauthorized[0]();
+    throw new ServiceError('unauthorized', 'Pair this device with the host');
+  };
+  await f.app.pair('valid');
+  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+  assert.match(f.app.getSnapshot().error, /previous access may have been revoked/);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+});
+
+test('an initial metadata failure ends loading without enabling commands', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.metadata = async () => { throw new Error('Host cannot be reached'); };
+  await f.app.start();
+  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
+  assert.equal(f.app.getSnapshot().error, 'Host cannot be reached');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+  assert.equal(f.app.getSnapshot().busy, false);
 });

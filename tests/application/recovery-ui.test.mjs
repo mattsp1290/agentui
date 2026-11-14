@@ -23,11 +23,11 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
         resolve() { view = { ...view, draft: value }; for (const listener of listeners) listener(); resolve(); } })) };
     const active = { scope, store };
     globalThis.checked = [];
-    const actions = { enabled: false, storageFailure: '',
-      reconcile: async id => globalThis.checked.push(id) };
+    let storageFailure = '';
+    const actions = { reconcile: async id => globalThis.checked.push(id) };
     const root = createRoot(document.getElementById('root'));
-    globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; actions.enabled = !busy && !actions.storageFailure; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
-    globalThis.storageUnavailable = () => { actions.storageFailure = 'Storage unavailable'; globalThis.renderRecovery(false); };
+    globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={!busy && !storageFailure} storageFailure={storageFailure} />)); };
+    globalThis.storageUnavailable = () => { storageFailure = 'Storage unavailable'; globalThis.renderRecovery(false); };
     globalThis.savedCommand = own;
     globalThis.renderRecovery(true, [own.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',

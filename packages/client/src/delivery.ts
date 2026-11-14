@@ -1,7 +1,5 @@
-import { canonicalJson, foldDocument, parseDocument, DocumentScopeMismatchError, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
-import { record, exact } from '@agentui/contracts/decode';
+import { canonicalJson, foldDocument, parseFeedItem, FeedMismatchError, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationDocument, ConversationScope, FeedItem, Projection, Receipt } from '@agentui/contracts';
-import { copyJson, integer, object } from './local-state.js';
 
 const RETAINED_SEQUENCE_IDENTITIES = 256;
 
@@ -22,40 +20,30 @@ export interface DeliveryState<P> {
   readonly identities: ReadonlyMap<number, string>;
 }
 export function applyDelivery<E, P>(state: DeliveryState<P>, item: FeedItem<E, P>, scope: ConversationScope, projection: Projection<E, P>): DeliveryState<P> {
-  const input = object(copyJson(item));
-  if (input.kind === 'snapshot') {
-    exact(input, ['kind', 'snapshot']);
-    const snapshot = record(input.snapshot, ['scope', 'projectionVersion', 'cursor', 'document']);
-    checkScope(snapshot.scope, scope);
-    if (snapshot.projectionVersion !== projection.version) throw new DeliveryError('mismatch', 'Projection version mismatch; update the client or select a compatible host');
-    const cursor = integer(snapshot.cursor);
-    if (state.cursor !== null && cursor < state.cursor) throw new DeliveryError('resync', 'Host snapshot cursor regressed; reconnect for a fresh snapshot');
-    try {
-      const document = parseDocument(snapshot.document, value => projection.decodeState(value), scope, cursor);
-      return { document, cursor, identities: new Map() };
-    } catch (error) {
-      if (error instanceof DocumentScopeMismatchError) throw new DeliveryError('mismatch', error.message);
-      throw error;
-    }
+  let input: FeedItem<E, P>;
+  try { input = parseFeedItem(item, projection, scope); }
+  catch (error) {
+    if (error instanceof FeedMismatchError) throw new DeliveryError('mismatch', error.message);
+    throw error;
   }
-  if (input.kind !== 'events' || !Array.isArray(input.events)) throw new Error('Invalid feed item');
+  if (input.kind === 'snapshot') {
+    const { cursor, document } = input.snapshot;
+    if (state.cursor !== null && cursor < state.cursor) throw new DeliveryError('resync', 'Host snapshot cursor regressed; reconnect for a fresh snapshot');
+    return { document, cursor, identities: new Map() };
+  }
   if (state.cursor === null) throw new DeliveryError('resync', 'Events arrived before a snapshot; reconnect for a snapshot');
   let cursor = state.cursor;
   let document = state.document;
   const identities = new Map(state.identities);
-  for (const value of input.events) {
-    const envelope = object(value);
-    checkScope(envelope.scope, scope);
-    const sequence = integer(envelope.sequence);
-    const identity = canonicalJson(envelope);
+  const rawEvents = item.kind === 'events' ? item.events : [];
+  for (const [index, envelope] of input.events.entries()) {
+    const { sequence, event } = envelope;
+    const identity = canonicalJson(rawEvents[index]);
     if (sequence <= cursor) {
       if (identities.get(sequence) !== identity) throw new DeliveryError('resync', 'Unknown or changed duplicate sequence; reconnect for a snapshot');
       continue;
     }
     if (sequence !== cursor + 1) throw new DeliveryError('resync', 'Event sequence gap; reconnect for a snapshot');
-    const inputEvent = object(envelope.event);
-    if (inputEvent.kind === 'receipt') checkScope(object(inputEvent.receipt).scope, scope);
-    const event = parseHostEvent(inputEvent, scope, sequence, projection);
     document = foldDocument(document, event, projection);
     cursor = sequence;
     identities.set(sequence, identity);

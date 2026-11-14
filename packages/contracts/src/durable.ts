@@ -179,13 +179,16 @@ export function parseReceipt(value: unknown): Receipt {
     default: throw new Error('Invalid receipt');
   }
 }
-export class DocumentScopeMismatchError extends Error {}
+export class FeedMismatchError extends Error {}
+function checkFeedScope(actual: ConversationScope, expected: ConversationScope): void {
+  if (!sameScope(actual, expected)) throw new FeedMismatchError('Host scope mismatch; connect to the requested host and conversation');
+}
 export function parseDocument<P>(value: unknown, decodeState: (value: unknown) => P,
   scope: ConversationScope, cursor: number): ConversationDocument<P> {
   const input = record(value, ['domain', 'receipts', 'decisions']);
   const receipts = Object.fromEntries(Object.entries(record(input.receipts)).map(([id, value]) => {
     const receipt = parseReceipt(value);
-    if (!sameScope(receipt.scope, scope)) throw new DocumentScopeMismatchError('Host scope mismatch; connect to the requested host and conversation');
+    checkFeedScope(receipt.scope, scope);
     if (id !== receipt.clientCommandId || receipt.sequence > cursor) throw new Error('Snapshot receipt identity or cursor mismatch');
     return [id, receipt];
   }));
@@ -204,12 +207,43 @@ export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequ
     case 'receipt': {
       exact(event, ['kind', 'receipt']);
       const parsed = parseReceipt(event.receipt);
-      if (!sameScope(parsed.scope, scope) || parsed.sequence !== sequence) throw new Error('Corrupt receipt event');
+      checkFeedScope(parsed.scope, scope);
+      if (parsed.sequence !== sequence) throw new Error('Corrupt receipt event');
       return { kind: 'receipt', receipt: parsed };
     }
     case 'decision-opened': exact(event, ['kind', 'decision']); return { kind: 'decision-opened', decision: parseDecision(event.decision) };
     case 'decision-closed': exact(event, ['kind', 'pendingId']); return { kind: 'decision-closed', pendingId: nonempty(event.pendingId) };
     default: throw new Error('Corrupt event');
+  }
+}
+export function parseFeedItem<E, P>(value: unknown, projection: Pick<Projection<E, P>, 'version' | 'decodeState' | 'decodeEvent'>,
+  expectedScope: ConversationScope): FeedItem<E, P> {
+  const input = record(JSON.parse(canonicalJson(value)));
+  switch (input.kind) {
+    case 'snapshot': {
+      exact(input, ['kind', 'snapshot']);
+      const snapshot = record(input.snapshot, ['scope', 'projectionVersion', 'cursor', 'document']);
+      const scope = parseScope(snapshot.scope);
+      checkFeedScope(scope, expectedScope);
+      const projectionVersion = count(snapshot.projectionVersion);
+      if (projectionVersion !== projection.version) throw new FeedMismatchError('Projection version mismatch; update the client or select a compatible host');
+      const cursor = count(snapshot.cursor);
+      const document = parseDocument(snapshot.document, value => projection.decodeState(value), scope, cursor);
+      return { kind: 'snapshot', snapshot: { scope, projectionVersion, cursor, document } };
+    }
+    case 'events': {
+      exact(input, ['kind', 'events']);
+      if (!Array.isArray(input.events)) throw new Error('Invalid feed events');
+      const events = input.events.map(value => {
+        const envelope = record(value, ['scope', 'sequence', 'event']);
+        const scope = parseScope(envelope.scope);
+        checkFeedScope(scope, expectedScope);
+        const sequence = count(envelope.sequence);
+        return { scope, sequence, event: parseHostEvent(envelope.event, scope, sequence, projection) };
+      });
+      return { kind: 'events', events };
+    }
+    default: throw new Error('Invalid feed item');
   }
 }
 export class JsonLimitError extends Error {}
