@@ -7,7 +7,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | Package | Responsibility | Type environment |
 | --- | --- | --- |
 | `@agentui/contracts` | Conversation scope, provider identity, run authority | ES2023 only |
-| `@agentui/protocol` | Canonical AG-UI wire types and availability declarations | ES2023 only |
+| `@agentui/protocol` | Published AG-UI SDK wire types and availability declarations | ES2023 only |
 | `@agentui/sdk` | Full-trust extension entry manifests | ES2023 only |
 | `@agentui/sdk/react` | Conversation-scoped React module contracts | React, without DOM |
 | `@agentui/theme` | Semantic tokens and inherited theme resolution | ES2023 only |

@@ -17,6 +17,10 @@ function mapped(projection, fact) {
     validateEvent = ajv.getSchema(`${schema.$id}#/$defs/Event`);
     assert.equal(typeof validateEvent, 'function');
     assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
+    assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm' }), true);
+    assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', unexpected: true }), false);
+    assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled' } }), true);
+    assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled', interrupts: [] } }), false);
   }
   for (const event of result.events) {
     assert.equal(validateEvent(event), true, JSON.stringify(validateEvent.errors));
@@ -31,6 +35,11 @@ function actor({ start = true, sourceKey = 'agentui.fixture' } = {}) {
   return made.value;
 }
 
+export const installedFixture = {
+  file: 'tests/protocol/conformance.test.mjs',
+  test: (id) => `protocol installed fixture: ${id}`,
+};
+
 export const installedFixtures = {
   'lifecycle-text-tools'() {
     const projection = actor({ start: false });
@@ -43,6 +52,8 @@ export const installedFixtures = {
     assert.equal(step.type, 'STEP_STARTED');
     assert.deepEqual(step.metadata, { switchboard: { name: '' } });
     const [text] = mapped(projection, { kind: 'text-started', message, owner, role: 'assistant', name: '' });
+    assert.equal(typeof text.subagentRunId, 'string');
+    assert.notEqual(text.subagentRunId, '');
     assert.equal(text.role, 'assistant');
     assert.equal(text.name, '');
     const [empty] = mapped(projection, { kind: 'text-content', message, owner, delta: '' });
@@ -72,7 +83,9 @@ export const installedFixtures = {
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
     assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome.type, 'success');
     const other = actor({ sourceKey: 'another.source' });
-    assert.notEqual(mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' })[0].messageId, text.messageId);
+    const [plain] = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' });
+    assert.notEqual(plain.messageId, text.messageId);
+    assert.equal('subagentRunId' in plain, false);
     const scoped = actor();
     assert.notEqual(mapped(scoped, { kind: 'text-complete', message: ref('same', ['other']), role: 'assistant', text: '' })[0].messageId, text.messageId);
     projection.close();
@@ -169,6 +182,10 @@ export const installedFixtures = {
       assert.equal(finished.timestamp, 0);
       if (outcome === 'interrupt') {
         const [interrupt] = finished.outcome.interrupts;
+        for (const id of [call.subagentRunId, interrupt.subagentRunId, interrupt.toolCallId]) {
+          assert.equal(typeof id, 'string');
+          assert.notEqual(id, '');
+        }
         assert.equal(interrupt.toolCallId, call.toolCallId);
         assert.equal(interrupt.subagentRunId, call.subagentRunId);
         assert.equal(new Set([interrupt.id, interrupt.toolCallId, interrupt.subagentRunId]).size, 3);
@@ -177,11 +194,13 @@ export const installedFixtures = {
         assert.deepEqual(interrupt.metadata, { zero: 0 });
         assert.deepEqual(interrupt.responseSchema, { type: 'string' });
       }
-      assert.deepEqual(mapped(projection, { kind: 'run-failed', failure: 'transport-failure' }), [{
-        type: 'RUN_ERROR', code: 'transport-failure', message: 'The native run transport failed.',
-      }]);
       projection.close();
     }
+    const failing = actor();
+    assert.deepEqual(mapped(failing, { kind: 'run-failed', failure: 'transport-failure' }), [{
+      type: 'RUN_ERROR', code: 'transport-failure', message: 'The native run transport failed.',
+    }]);
+    failing.close();
     const projection = actor();
     const [finished] = mapped(projection, { kind: 'run-finished', outcome: 'success', result: false });
     assert.equal(finished.result, false);
@@ -200,7 +219,16 @@ export const installedFixtures = {
         family: 'state', representability: 'represented', availability, qualification: 'unqualified',
       } });
     }
-    assert.deepEqual(describeProjection('reasoning'), { kind: 'error', error: { code: 'invalid-input' } });
+    for (const family of ['reasoning', 'subagents']) {
+      assert.deepEqual(describeProjection(family), { kind: 'error', error: { code: 'invalid-input' } });
+    }
+  },
+
+  'terminal-ordering-limit'() {
+    const projection = actor();
+    assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].type, 'RUN_FINISHED');
+    assert.equal(mapped(projection, { kind: 'run-failed', failure: 'transport-failure' })[0].type, 'RUN_ERROR');
+    projection.close();
   },
 
   'acknowledged-absence-and-fault'() {
@@ -212,9 +240,12 @@ export const installedFixtures = {
     assert.equal(projection.close(), undefined);
     assert.equal(projection.close(), undefined);
     assert.deepEqual(projection.accept({ kind: 'run-finished', outcome: 'success' }), { kind: 'error', error: { code: 'closed' } });
-    for (const kind of ['unknown-fact', 'reasoning-started', 'subagent-started']) {
+    for (const fact of [
+      ...['unknown-fact', 'reasoning-started', 'subagent-started'].map((kind) => ({ kind })),
+      ...['reasoning', 'subagents', 'unknown-family'].map((family) => ({ kind: 'not-observable', family })),
+    ]) {
       const rejected = actor();
-      assert.deepEqual(rejected.accept({ kind }), { kind: 'error', error: { code: 'invalid-input' } });
+      assert.deepEqual(rejected.accept(fact), { kind: 'error', error: { code: 'invalid-input' } });
       assert.deepEqual(rejected.accept({ kind: 'state-snapshot', snapshot: null }), { kind: 'error', error: { code: 'closed' } });
       rejected.close();
     }

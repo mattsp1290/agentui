@@ -7,13 +7,17 @@
     "pythonSdk": "1.0.0",
     "authority": "Retained closed canonical schema. SDK acceptance never changes canonical validity.",
     "definitionCoverageOwner": {
+      "repository": "https://github.com/mattsp1290/switchboard",
       "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
       "matrix": "docs/protocol/ag-ui-matrix.tsv",
+      "retained": "tests/protocol/fixtures/upstream/ag-ui-matrix.tsv",
       "verifier": "scripts/verify-agui-matrix.mjs"
     },
     "fixtureCoverageOwner": {
+      "repository": "https://github.com/mattsp1290/switchboard",
       "source": "58c7922d8fade3617cc86fedcf41677f897025ef",
       "index": "tests/agui/fixtures/upstream.tsv",
+      "retained": "tests/protocol/fixtures/upstream/upstream.tsv",
       "python": "tests/agui/compare-python.py"
     },
     "counts": {
@@ -107,11 +111,17 @@
       "id": "terminal-interrupts-usage",
       "file": "tests/protocol/conformance.test.mjs",
       "test": "protocol installed fixture: terminal-interrupts-usage"
+    },
+    {
+      "id": "terminal-ordering-limit",
+      "file": "tests/protocol/conformance.test.mjs",
+      "test": "protocol installed fixture: terminal-ordering-limit"
     }
   ],
   "behaviorLimits": {
     "unknownOrUnimplementedFact": "Explicit error and faulted actor; no successful empty batch.",
     "notObservable": "Acknowledged absence for an allowed family; empty batch and usable actor.",
+    "terminalOrdering": "Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).",
     "qualification": "Fixture registration and retained evidence inventory are not current execution results or native qualification.",
     "downstream": "Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw."
   },
@@ -1455,13 +1465,14 @@
       "scope": "Observed run and step boundaries and safe failures.",
       "installedFixtures": [
         "lifecycle-text-tools",
-        "terminal-interrupts-usage"
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
       ],
       "contractFixtures": [],
       "nativeAvailability": "undeclared",
       "nativeQualification": "unqualified",
       "pendingProductOwners": [
-        "AgentUI run coordinator and lifecycle UI; agentui-ckpw"
+        "AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw"
       ]
     },
     {
@@ -1737,13 +1748,14 @@
       "mapping": "represented",
       "scope": "Observed nested terminal outcomes; no native termination proof.",
       "installedFixtures": [
-        "terminal-interrupts-usage"
+        "terminal-interrupts-usage",
+        "terminal-ordering-limit"
       ],
       "contractFixtures": [],
       "nativeAvailability": "undeclared",
       "nativeQualification": "unqualified",
       "pendingProductOwners": [
-        "AgentUI durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
+        "AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
       ]
     },
     {

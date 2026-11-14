@@ -1,7 +1,9 @@
 # AG-UI consumer conformance
 
-AgentUI imports canonical wire types from `@agentui/protocol` and consumes the
-installed Switchboard projection through `@agentui/host/agui`. The host core
+AgentUI imports published TypeScript SDK 1.0.4 wire types from `@agentui/protocol`.
+These structural types permit more values than the canonical schema. Schema
+validation establishes canonical validity. AgentUI consumes the installed
+Switchboard projection through `@agentui/host/agui`. The host core
 entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
 
 The [versioned matrix](conformance.json) joins immutable upstream inventories to
@@ -41,6 +43,11 @@ They cannot become a successful empty batch. An explicit `not-observable` fact
 acknowledges absent observation, returns an empty batch and leaves the actor
 usable. Closing the actor creates no terminal outcome.
 
+Validation covers individual events, not stream ordering. The pinned projection
+can map a failure after a finished terminal. A separate fixture records this
+limitation. Single-terminal enforcement belongs to AgentUI run coordination in
+`agentui-7s6y` and complete qualification in `agentui-ckpw`.
+
 ## Capability declarations
 
 `BackendAvailability` distinguishes undeclared, supported, unsupported and
@@ -48,6 +55,10 @@ unavailable. The negative declarations require a reason. Compiler fixtures use
 a local operation example, exhaust all four states and reject missing reasons,
 unnarrowed access and treating undeclared as supported. This type neither
 validates arbitrary JSON nor supplies a callable backend API.
+
+Switchboard's projection descriptor carries availability states without reasons.
+A bridge into `BackendAvailability` needs a reason from the backend declaration,
+owned by `agentui-k4zj`. No such bridge is implemented here.
 
 Canonical `AgentCapabilities`, backend availability and native qualification
 remain independent. A representable event is not evidence of an available or

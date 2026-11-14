@@ -4,7 +4,7 @@ import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { aguiProtocol } from '@agentui/host/agui';
 import { coverage } from '../tests/protocol/fixtures/coverage.mjs';
-import { installedFixtures } from '../tests/protocol/fixtures/installed.mjs';
+import { installedFixture, installedFixtures } from '../tests/protocol/fixtures/installed.mjs';
 
 const root = new URL('../', import.meta.url);
 const upstream = new URL('tests/protocol/fixtures/upstream/', root);
@@ -44,6 +44,7 @@ export function buildConformanceReport() {
   }
   assert.equal(lock.packages['node_modules/@ag-ui/core'].version, sdk.version);
   assert.equal(lock.packages['node_modules/@ag-ui/core'].integrity, sdk.integrity);
+  assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv);
   assert.deepEqual(aguiProtocol, {
     version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
     mapping: pin.classification.switchboardMapping, planned: 'reasoning-subagents',
@@ -53,12 +54,14 @@ export function buildConformanceReport() {
   assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
   assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
   const ownedIds = Object.keys(installedFixtures).sort();
+  assert.ok(existsSync(new URL(installedFixture.file, root)), installedFixture.file);
   const referencedIds = [...new Set(Object.values(coverage).flatMap((row) => row.fixtures))].sort();
   assert.deepEqual(referencedIds, ownedIds, 'Every registered installed fixture must have a coverage owner');
   const categories = Object.entries(pin.categories).map(([category, purpose]) => {
     const rows = definitions.filter((row) => row.category === category);
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
+    assert.ok(['represented', 'partial', 'planned', 'wire-only'].includes(owned.mapping), category);
     assert.ok(owned.pending.length > 0 && owned.pending.every((owner) => owner.length > 0), category);
     assert.ok(owned.fixtures.length > 0 || owned.contracts?.length > 0, category);
     for (const fixture of owned.contracts ?? []) assert.ok(existsSync(new URL(fixture.file, root)), fixture.file);
@@ -76,8 +79,10 @@ export function buildConformanceReport() {
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
       authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
-      definitionCoverageOwner: { source: vendor.sourceRevision, matrix: 'docs/protocol/ag-ui-matrix.tsv', verifier: pin.ownership.schemaTest },
-      fixtureCoverageOwner: { source: vendor.sourceRevision, index: pin.ownership.schemaFixtures, python: pin.ownership.pythonTest },
+      definitionCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
+        matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: 'tests/protocol/fixtures/upstream/ag-ui-matrix.tsv', verifier: pin.ownership.schemaTest },
+      fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
+        index: provenance.files['upstream.tsv'].path, retained: 'tests/protocol/fixtures/upstream/upstream.tsv', python: pin.ownership.pythonTest },
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.eventDiscriminators).length,
         fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.canonical === 'valid').length,
         invalid: fixtures.filter((fixture) => fixture.canonical === 'invalid').length,
@@ -91,10 +96,11 @@ export function buildConformanceReport() {
       retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.' },
     },
     agentuiCanonicalValidator: { package: 'ajv', version: project.devDependencies.ajv, schema: 'tests/protocol/fixtures/upstream/schema.json', definition: 'Event' },
-    installedFixtures: ownedIds.map((id) => ({ id, file: 'tests/protocol/conformance.test.mjs', test: `protocol installed fixture: ${id}` })),
+    installedFixtures: ownedIds.map((id) => ({ id, file: installedFixture.file, test: installedFixture.test(id) })),
     behaviorLimits: {
       unknownOrUnimplementedFact: 'Explicit error and faulted actor; no successful empty batch.',
       notObservable: 'Acknowledged absence for an allowed family; empty batch and usable actor.',
+      terminalOrdering: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).',
       qualification: 'Fixture registration and retained evidence inventory are not current execution results or native qualification.',
       downstream: 'Provider operation contracts/admission: agentui-k4zj/agentui-7s6y. Full native, transport/replay and UI qualification: agentui-ckpw.',
     },

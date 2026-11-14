@@ -2,9 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildConformanceReport, reportFile, serializeConformanceReport } from '../../scripts/protocol-conformance.mjs';
-import { installedFixtures } from './fixtures/installed.mjs';
+import { installedFixture, installedFixtures } from './fixtures/installed.mjs';
 
-for (const [id, run] of Object.entries(installedFixtures)) test(`protocol installed fixture: ${id}`, run);
+for (const [id, run] of Object.entries(installedFixtures)) test(installedFixture.test(id), run);
 
 test('versioned conformance report matches immutable inputs and every owned fixture', () => {
   const report = buildConformanceReport();

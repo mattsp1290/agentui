@@ -33,7 +33,7 @@ export const coverage = {
   },
   lifecycle: {
     mapping: 'represented', scope: 'Observed run and step boundaries and safe failures.',
-    fixtures: ['lifecycle-text-tools', 'terminal-interrupts-usage'], pending: ['AgentUI run coordinator and lifecycle UI; agentui-ckpw'],
+    fixtures: ['lifecycle-text-tools', 'terminal-interrupts-usage', 'terminal-ordering-limit'], pending: ['AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw'],
   },
   reasoning: {
     mapping: 'partial', scope: 'Opaque reasoning-role message content only; reasoning lifecycle mapping planned.',
@@ -45,7 +45,7 @@ export const coverage = {
   },
   outcomes: {
     mapping: 'represented', scope: 'Observed nested terminal outcomes; no native termination proof.',
-    fixtures: ['terminal-interrupts-usage'], pending: ['AgentUI durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw'],
+    fixtures: ['terminal-interrupts-usage', 'terminal-ordering-limit'], pending: ['AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw'],
   },
   interrupts: {
     mapping: 'represented', scope: 'Observed terminal interrupts and references; no native suspend or resume proof.',
