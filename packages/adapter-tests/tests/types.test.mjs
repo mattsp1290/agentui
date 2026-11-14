@@ -10,6 +10,7 @@ const targets = [
   { workspace: 'packages/ui-primitives', type: 'ButtonProps', module: '@agentui/ui-primitives/desktop', forbidden: ['process'] },
   { workspace: 'packages/ui-primitives', type: 'ButtonProps', module: '@agentui/ui-primitives/native', forbidden: ['document', 'process'], config: 'tsconfig.native.json' },
   { workspace: 'packages/host', type: 'EventObserver', probe: 'EventObserver<string>', module: '@agentui/host', forbidden: ['document'] },
+  { workspace: 'packages/host', type: 'describeProjection', probe: 'typeof describeProjection', module: '@agentui/host/agui', forbidden: ['document'] },
   { workspace: 'apps/desktop', type: 'DesktopMount', module: '@agentui/desktop', forbidden: ['process'] },
   { workspace: 'apps/ios', type: 'IosConversationView', module: '@agentui/ios', forbidden: ['document', 'process'] },
 ];

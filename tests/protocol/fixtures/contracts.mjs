@@ -6,7 +6,8 @@ export const protocolContract = {
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
 export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
 export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
-export const sdkCapabilities: AgentCapabilities = { multiAgent: { supported: true } };
+const sdkOnlyCapabilities = { multiAgent: { supported: true, unexpected: true } };
+export const sdkCapabilities: AgentCapabilities = sdkOnlyCapabilities;
 export const operations = {
   inspect: { kind: 'undeclared' },
   submit: { kind: 'supported' },

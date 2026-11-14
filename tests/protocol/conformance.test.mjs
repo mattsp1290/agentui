@@ -2,9 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 import { buildConformanceReport, reportFile, serializeConformanceReport } from '../../scripts/protocol-conformance.mjs';
-import { coverageContract, installedFixtureIds, installedFixtureTest } from './fixtures/coverage.mjs';
+import { coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from './fixtures/coverage.mjs';
 import { installedFixtures, validateDefinition, validateEvent } from './fixtures/installed.mjs';
 
+assert.equal(new URL(installedFixtureFile, new URL('../../', import.meta.url)).href, import.meta.url);
 test(coverageContract.validatorControlTest, () => {
   assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
   assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm' }), true);
@@ -36,7 +37,9 @@ test('versioned conformance report matches immutable inputs and every owned fixt
   assert.deepEqual(report.canonical.counts, {
     categories: 16, definitions: 98, eventDiscriminators: 31, fixtures: 219,
     valid: 135, invalid: 84, typescriptPermissiveInvalid: 8, pythonPermissiveInvalid: 22,
+    typescriptRestrictiveValid: 0, pythonRestrictiveValid: 0,
   });
+  assert.equal(report.canonical.sdkRuntimeEvidence.kind, 'historical-upstream-runtime-validators');
   assert.ok(report.categories.every((row) => !('nativeAvailability' in row) && !('nativeQualification' in row)));
   assert.equal(report.categories.find((row) => row.category === 'reasoning').mapping, 'partial');
   assert.equal(report.categories.find((row) => row.category === 'subagents').mapping, 'partial');

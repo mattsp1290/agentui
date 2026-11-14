@@ -28,7 +28,25 @@
       "valid": 135,
       "invalid": 84,
       "typescriptPermissiveInvalid": 8,
-      "pythonPermissiveInvalid": 22
+      "pythonPermissiveInvalid": 22,
+      "typescriptRestrictiveValid": 0,
+      "pythonRestrictiveValid": 0
+    },
+    "sdkRuntimeEvidence": {
+      "kind": "historical-upstream-runtime-validators",
+      "typescript": {
+        "package": "@ag-ui/core",
+        "version": "1.0.4",
+        "validator": "zod",
+        "validatorVersion": "4.0.17"
+      },
+      "python": {
+        "package": "ag-ui-protocol",
+        "version": "1.0.0",
+        "validator": "pydantic",
+        "validatorVersion": "2.11.7"
+      },
+      "publishedTypes": "Acceptance flags do not evaluate published TypeScript types; see compiler contracts."
     }
   },
   "switchboard": {
@@ -289,7 +307,8 @@
       "mapping": "represented",
       "scope": "Observed tool calls, argument fragments and results with scoped references.",
       "installedFixtures": [
-        "lifecycle-text-tools"
+        "lifecycle-text-tools",
+        "messages-and-opaque-content"
       ],
       "contractFixtures": [],
       "pendingProductOwners": [
@@ -446,7 +465,8 @@
       "mapping": "represented",
       "scope": "Activity snapshot and delta payload preservation.",
       "installedFixtures": [
-        "state-activity-public-extensions"
+        "state-activity-public-extensions",
+        "messages-and-opaque-content"
       ],
       "contractFixtures": [],
       "pendingProductOwners": [

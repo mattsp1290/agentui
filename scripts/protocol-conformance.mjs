@@ -73,7 +73,7 @@ export function buildConformanceReport() {
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
-      sdkDivergences: canonicalFixtures.filter((fixture) => fixture.canonical === 'invalid' && (fixture.typescriptAccepts || fixture.pythonAccepts))
+      sdkDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.canonical === 'valid')))
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
       mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts,
       pendingProductOwners: owned.pending,
@@ -94,7 +94,13 @@ export function buildConformanceReport() {
         fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.canonical === 'valid').length,
         invalid: fixtures.filter((fixture) => fixture.canonical === 'invalid').length,
         typescriptPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.typescriptAccepts).length,
-        pythonPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.pythonAccepts).length },
+        pythonPermissiveInvalid: fixtures.filter((fixture) => fixture.canonical === 'invalid' && fixture.pythonAccepts).length,
+        typescriptRestrictiveValid: fixtures.filter((fixture) => fixture.canonical === 'valid' && !fixture.typescriptAccepts).length,
+        pythonRestrictiveValid: fixtures.filter((fixture) => fixture.canonical === 'valid' && !fixture.pythonAccepts).length },
+      sdkRuntimeEvidence: { kind: coverageContract.sdkRuntimeEvidenceKind,
+        typescript: { package: sdk.package, version: sdk.version, validator: 'zod', validatorVersion: pin.verifierTools.zod },
+        python: { package: pythonSdk.package, version: pythonSdk.version, validator: 'pydantic', validatorVersion: pin.verifierTools.pydantic },
+        publishedTypes: coverageContract.publishedTypeEvidence },
     },
     switchboard: {
       repository: vendor.sourceRepository, sourceRevision: vendor.sourceRevision, artifact: vendor.artifact, sha256: vendor.sha256,

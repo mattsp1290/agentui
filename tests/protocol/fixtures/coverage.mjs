@@ -9,6 +9,8 @@ export const coverageContract = {
   plannedFamilies: ['reasoning', 'subagents'],
   authority: 'Retained closed canonical schema. SDK acceptance never changes canonical validity.',
   canonicalComparisonScope: 'Historical canonical schema and published SDK comparison; not native or installed AgentUI output.',
+  sdkRuntimeEvidenceKind: 'historical-upstream-runtime-validators',
+  publishedTypeEvidence: 'Acceptance flags do not evaluate published TypeScript types; see compiler contracts.',
   validatorControlTest: 'canonical Event validator enforces closed shapes',
   requestControlTest: 'canonical request and capability shapes differ from SDK types',
   nativeAvailability: { kind: 'undeclared' },
@@ -36,7 +38,7 @@ export const coverage = {
   },
   tools: {
     mapping: 'represented', scope: 'Observed tool calls, argument fragments and results with scoped references.',
-    fixtures: ['lifecycle-text-tools'], contracts: [], pending: ['AgentUI tool renderer and provider operations; agentui-k4zj and agentui-ckpw'],
+    fixtures: ['lifecycle-text-tools', 'messages-and-opaque-content'], contracts: [], pending: ['AgentUI tool renderer and provider operations; agentui-k4zj and agentui-ckpw'],
   },
   state: {
     mapping: 'represented', scope: 'Snapshot and patch payload preservation; no patch reducer.',
@@ -48,7 +50,7 @@ export const coverage = {
   },
   activity: {
     mapping: 'represented', scope: 'Activity snapshot and delta payload preservation.',
-    fixtures: ['state-activity-public-extensions'], contracts: [], pending: ['AgentUI activity reducer and renderer; agentui-ckpw'],
+    fixtures: ['state-activity-public-extensions', 'messages-and-opaque-content'], contracts: [], pending: ['AgentUI activity reducer and renderer; agentui-ckpw'],
   },
   extensions: {
     mapping: 'represented', scope: 'Explicit versioned public raw and custom envelopes.',

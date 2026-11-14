@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { setImmediate } from 'node:timers/promises';
 import { readFile } from 'node:fs/promises';
+import { spawnSync } from 'node:child_process';
 import { contractVersion } from '@agentui/contracts';
 import { contractVersion as sdkVersion } from '@agentui/sdk';
 import { createEventStream, hostRuntime } from '@agentui/host';
@@ -9,6 +10,24 @@ import { clientPlatform as desktop } from '@agentui/desktop';
 import { clientPlatform as ios } from '@agentui/ios';
 
 const root = new URL('../../../', import.meta.url);
+
+test('host core import excludes the AG-UI projection and SDK', () => {
+  const source = `
+import assert from 'node:assert/strict';
+import { registerHooks } from 'node:module';
+const urls = [];
+const hook = registerHooks({ resolve(specifier, context, next) {
+  const value = next(specifier, context); urls.push(value.url); return value;
+} });
+const core = await import('@agentui/host');
+hook.deregister();
+assert.equal(core.hostRuntime, 'node');
+assert.ok(urls.length > 0);
+assert.ok(urls.every(url => !url.includes('/@ag-ui/') && !url.includes('/switchboard/dist/agui/') && !url.endsWith('/packages/host/dist/agui.js')));
+`;
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', source], { cwd: root, encoding: 'utf8', timeout: 10000 });
+  assert.equal(result.status, 0, result.error?.message ?? result.stderr);
+});
 
 test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(contractVersion, 1);

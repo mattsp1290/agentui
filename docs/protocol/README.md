@@ -1,6 +1,6 @@
 # AG-UI consumer conformance
 
-AgentUI imports published TypeScript SDK 1.0.4 wire types from `@agentui/protocol`.
+AgentUI imports published TypeScript SDK 1.0.4 types from `@agentui/protocol`.
 These structural types differ from canonical wire shapes in both directions.
 The SDK accepts null `state` and `forwardedProps` that the wire forbids.
 It requires `tools` and `context` arrays that the wire may omit. Schema validation
@@ -21,7 +21,7 @@ The matrix keeps these facts separate:
 | Evidence | Meaning |
 | --- | --- |
 | Canonical schema | Closed wire shapes and their required fields, unions and enums |
-| Published SDK results | Expected TypeScript and Python acceptance of indexed payloads |
+| SDK runtime results | Historical upstream validator acceptance of indexed payloads |
 | Mapping coverage | Facts represented by the pinned Switchboard projection |
 | Installed fixtures | AgentUI tests of actual returned events through public exports |
 | Native availability | One explicit undeclared scope because no backend declaration input exists |
@@ -91,6 +91,7 @@ inputs instead of copying their complete rows. Coverage owns the expected fixtur
 IDs. A test checks them against the actual function map, and every function is
 registered under its coverage-owned name. Report generation loads data without
 executing fixture code.
+The adapter-test workspace and protocol suite share compiler fixture data from this checkout.
 Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. Normal verification needs no upstream download or Python.
 AgentUI uses Ajv 8.20.0 after a dependency advisory check. The historical upstream

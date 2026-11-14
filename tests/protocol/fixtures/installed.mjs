@@ -77,6 +77,9 @@ export const installedFixtures = {
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
     assert.equal(mapped(projection, { kind: 'run-finished', outcome: 'success' })[0].outcome.type, 'success');
     const other = actor({ sourceKey: 'another.source' });
+    const same = actor();
+    assert.equal(mapped(same, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
+    same.close();
     const batch = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3);
     const [plain] = batch;
     assert.deepEqual(batch.map(event => event.type), ['TEXT_MESSAGE_START', 'TEXT_MESSAGE_CONTENT', 'TEXT_MESSAGE_END']);
@@ -136,7 +139,7 @@ export const installedFixtures = {
         { id: ref('call'), type: 'function', function: { name: 'lookup', arguments: '{partial' }, encryptedValue: 'opaque-call' },
       ] },
       { id: ref('user'), role: 'user', content: parts },
-      { id: ref('tool'), role: 'tool', toolCallId: ref('call'), content: [], error: 'observed error' },
+      { id: ref('tool'), role: 'tool', toolCallId: ref('call'), content: [{ type: 'image', source: { type: 'data', value: 'opaque-tool-image', mimeType: 'image/png' } }], error: 'observed error' },
       { id: ref('activity'), role: 'activity', activityType: 'progress', content: { done: false } },
       { id: ref('reasoning'), role: 'reasoning', content: 'opaque visible value', encryptedValue: 'opaque-reasoning' },
     ];
@@ -149,7 +152,7 @@ export const installedFixtures = {
     assert.deepEqual(assistant.toolCalls[0].function, { name: 'lookup', arguments: '{partial' });
     assert.equal(tool.toolCallId, assistant.toolCalls[0].id);
     assert.equal(tool.error, 'observed error');
-    assert.deepEqual(tool.content, []);
+    assert.deepEqual(tool.content, messages[4].content);
     assert.deepEqual(user.content.slice(1), parts.slice(1));
     assert.notEqual(user.content[0].id, parts[0].id.id);
     assert.equal(user.content[0].text, '');
@@ -157,6 +160,8 @@ export const installedFixtures = {
     assert.deepEqual(activity.content, { done: false });
     assert.equal(reasoning.content, 'opaque visible value');
     assert.equal(reasoning.encryptedValue, 'opaque-reasoning');
+    const [emptyTool] = mapped(projection, { kind: 'messages-snapshot', messages: [{ id: ref('tool'), role: 'tool', toolCallId: ref('call'), content: [] }] });
+    assert.deepEqual(emptyTool.messages[0].content, []);
     assert.deepEqual(mapped(projection, { kind: 'messages-snapshot', messages: [] })[0].messages, []);
     projection.close();
   },
