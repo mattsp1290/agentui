@@ -42,7 +42,7 @@ export interface CreationIntent<I extends string> {
 export interface ProviderConversation<I extends string> {
   readonly kind: 'agentui-created';
   readonly creation: CreationIntent<I>;
-  readonly authority: RunAuthority;
+  readonly authority: RunAuthority & { readonly binding: { readonly installationId: I } };
 }
 
 export interface ConversationRef<I extends string, K extends 'run' | 'decision' | 'choice'> {
@@ -129,8 +129,8 @@ export interface ConnectedProvider<M extends ProviderModel, I extends string> ex
   }[] } | ProviderUnsupported | ProviderFailure>;
   create(operation: CreationIntent<I>): Promise<ProviderOutcome<ProviderConversation<I>>>;
   submit(operation: ProviderCommand<M, I>): Promise<ProviderOutcome<ProviderCommandEffect<I>>>;
-  reconcile(operation: CreationIntent<I>): Promise<ProviderOutcome<ProviderConversation<I>>>;
-  reconcile(operation: ProviderCommand<M, I>): Promise<ProviderOutcome<ProviderCommandEffect<I>>>;
+  reconcileCreation(operation: CreationIntent<I>): Promise<ProviderOutcome<ProviderConversation<I>>>;
+  reconcileCommand(operation: ProviderCommand<M, I>): Promise<ProviderOutcome<ProviderCommandEffect<I>>>;
   snapshot(binding: ProviderConversation<I>): Promise<
     { readonly kind: 'available'; readonly snapshot: ProviderSnapshot<M, I> } | ProviderUnsupported | ProviderFailure>;
   observe(request: { readonly binding: ProviderConversation<I>; readonly after: ProviderCursor<M, I> | null },

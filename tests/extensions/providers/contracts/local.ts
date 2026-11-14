@@ -49,7 +49,8 @@ export const localBackend: SDK.ConnectedProvider<LocalModel, 'native-work'> = {
     return { kind: 'confirmed', value: operation.kind === 'send'
       ? { kind: 'send', run: localRun, state: 'completed' } : { kind: operation.kind, state: 'completed' }, evidence: null };
   },
-  async reconcile() { return { kind: 'unsupported', reason: 'No lookup' }; },
+  async reconcileCreation() { return { kind: 'unsupported', reason: 'No lookup' }; },
+  async reconcileCommand() { return { kind: 'unsupported', reason: 'No lookup' }; },
   async snapshot(binding) {
     return { kind: 'available', snapshot: { binding, cursor: localCursor, projectionVersion: 1,
       state: { transcript: '' }, decisions: [{ ref: localDecision, run: localRun, prompt: 'Continue?',

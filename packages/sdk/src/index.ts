@@ -1,5 +1,5 @@
 export { contractVersion } from '@agentui/contracts';
-export type { ConversationScope, ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
+export type { ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
 
 export type ExtensionEntry =
   | { readonly kind: 'server'; readonly module: string }

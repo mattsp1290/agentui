@@ -51,7 +51,14 @@ export const crewBackend: SDK.ConnectedProvider<CrewModel, 'crew-personal'> = {
     return { kind: 'confirmed', value: operation.kind === 'send'
       ? { kind: 'send', run: crewRun, state: 'accepted' } : { kind: 'decide', state: 'completed' }, evidence: null };
   },
-  async reconcile() { return { kind: 'uncertain', reason: 'No authoritative lookup evidence', evidence: null }; },
+  async reconcileCreation(operation) {
+    return { kind: 'confirmed', value: { ...crewBinding, creation: operation }, evidence: null };
+  },
+  async reconcileCommand(operation) {
+    if (operation.kind === 'cancel') return crewUnsupported;
+    return { kind: 'confirmed', value: operation.kind === 'send'
+      ? { kind: 'send', run: crewRun, state: 'accepted' } : { kind: 'decide', state: 'completed' }, evidence: null };
+  },
   async snapshot(binding) {
     return { kind: 'available', snapshot: { binding, cursor: crewCursor, projectionVersion: 1,
       state: { messages: [] }, decisions: [{ ref: crewDecision, run: crewRun, prompt: 'Continue?',

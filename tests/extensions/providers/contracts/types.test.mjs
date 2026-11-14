@@ -6,6 +6,9 @@ export const fixtureSource = (await Promise.all(['crew.ts', 'local.ts'].map((nam
   .map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
 
 const control = `
+export type CrewConnectRequest = Parameters<typeof crew.connect>[0];
+export type CrewDiscovery = Awaited<ReturnType<typeof crewBackend.discover>>;
+export const evidence: SDK.Json = { authoritative: true };
 export const pendingCreation: SDK.ProviderOutcome<SDK.ProviderConversation<'crew-personal'>> = { kind: 'pending', evidence: null };
 export const failures: readonly SDK.ProviderFailure[] = [
   { kind: 'unavailable', reason: 'offline' }, { kind: 'authentication-failed', reason: 'expired' },
@@ -27,15 +30,38 @@ export async function useProviders() {
   await localBackend.submit(localSend);
   await crewBackend.submit({ kind: 'cancel', operationId: 'cancel', binding: crewBinding, run: crewRun });
   await localBackend.submit({ kind: 'decide', operationId: 'decide', binding: localBinding, decision: localDecision, choice: localChoice });
-  await crewBackend.reconcile(crewCreation);
-  await crewBackend.reconcile(crewSend);
-  await localBackend.reconcile(localCreation);
-  await localBackend.reconcile(localSend);
+  const creation = await crewBackend.reconcileCreation(crewCreation);
+  if (creation.kind === 'confirmed') {
+    const binding: SDK.ProviderConversation<'crew-personal'> = creation.value;
+    await crewBackend.snapshot(binding);
+  }
+  const command = await crewBackend.reconcileCommand(crewSend);
+  if (command.kind === 'confirmed') {
+    const effect: SDK.ProviderCommandEffect<'crew-personal'> = command.value;
+    if (effect.kind === 'send') {
+      const run: SDK.ConversationRef<'crew-personal', 'run'> = effect.run;
+      void run;
+    }
+  }
+  await localBackend.reconcileCreation(localCreation);
+  await localBackend.reconcileCommand(localSend);
   await crewBackend.snapshot(crewBinding);
   const feed = localBackend.observe({ binding: localBinding, after: localCursor }, async item => { void item; });
   feed.close();
   await feed.ended;
   await crewBackend.close();
+}
+export function reconcileSaved(saved: SDK.ProviderOperation<CrewModel, 'crew-personal'>) {
+  switch (saved.kind) {
+    case 'create': return crewBackend.reconcileCreation(saved);
+    case 'send':
+    case 'cancel':
+    case 'decide': return crewBackend.reconcileCommand(saved);
+    default: {
+      const exhaustive: never = saved;
+      return exhaustive;
+    }
+  }
 }
 `;
 
@@ -43,6 +69,12 @@ test('public providers construct and reject crossed scopes, incompatible payload
   prefix: fixtureSource + control,
   cases: [
     ['', null],
+    ['void crewBackend.reconcileCreation(crewSend);', /missing the following properties.*scope, agent/u],
+    ['void crewBackend.reconcileCommand(crewCreation);', /not assignable/u],
+    ["export const invalid: typeof crewBackend.reconcileCreation = async () => ({ kind: 'confirmed', value: { kind: 'cancel', state: 'completed' }, evidence: null });", /not assignable/u],
+    ["export const invalid: typeof crewBackend.reconcileCommand = async () => ({ kind: 'confirmed', value: crewBinding, evidence: null });", /not assignable/u],
+    ["export const invalid: SDK.ProviderConversation<'crew-personal'> = { ...crewBinding, authority: localBinding.authority };", /not assignable/u],
+    ["interface Request { text: string } export type Invalid = SDK.BackendProvider<{ request: Request; cursor: string; state: null; event: null }, 'x'>;", /does not satisfy the constraint 'ProviderModel'/u],
     ['void crewBackend.create({ ...crewCreation, agent: localAgent });', /not assignable/u],
     ['void crewBackend.snapshot(localBinding);', /not assignable/u],
     ["void crewBackend.submit({ kind: 'cancel', operationId: 'x', binding: crewBinding, run: localRun });", /not assignable/u],
