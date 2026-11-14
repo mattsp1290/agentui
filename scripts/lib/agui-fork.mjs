@@ -27,6 +27,9 @@ export function resolveLockedFork(root) {
   const provenancePath = `${directory}provenance.json`;
   const bytes = readFileSync(join(root, provenancePath));
   const metadata = parseJson(bytes);
+  assert.ok(metadata && Array.isArray(metadata.artifacts) && Array.isArray(metadata.evidence)
+    && metadata.qualification && typeof metadata.qualification === 'object' && !Array.isArray(metadata.qualification),
+    'fork metadata must declare artifacts and evidence arrays and a qualification object');
   assert.equal(metadata.sourceRevision, revision, 'fork source revision must match its directory');
   assert.equal(metadata.sourceRepository, 'https://github.com/mattsp1290/ag-ui', 'fork source repository');
   assert.equal(metadata.sourceBranch, 'matt.spurlin/typescript-sdks', 'fork source branch');
@@ -52,6 +55,12 @@ const nativeVersions = {
   '@earendil-works/pi-agent-core': '1.5.0', '@earendil-works/pi-ai': '1.5.0',
   '@earendil-works/pi-coding-agent': '1.5.0', zod: '3.25.76',
 };
+const donorNotices = {
+  '@ag-ui/pi': {
+    copyright: 'Copyright (c) 2026 YS-BW', member: 'package/PROVENANCE.md',
+    retained: 'notices/ag-ui-pi.PROVENANCE.md', revision: 'ee810dfb9ad3fe81d8854e9121b84ddee4c59148',
+  },
+};
 const codexVersion = nativeVersions['@openai/codex'];
 function tar(args, label) {
   const env = { ...process.env, LC_ALL: 'C' };
@@ -71,49 +80,49 @@ function countByteLines(body) {
   const lines = body.toString('latin1').split(/\r\n|\n|\r/u);
   return lines.at(-1) === '' ? lines.length - 1 : lines.length;
 }
-export function verifyArchives(fork) {
-  const { folder, metadata } = fork;
-  const expected = new Map();
-  for (const artifact of metadata.artifacts) {
-    assert.equal(basename(artifact.artifact), artifact.artifact, 'archive must be inside fork folder');
-    assert.ok(!expected.has(artifact.package), `duplicate artifact ${artifact.package}`);
-    const archive = forkFile(folder, artifact.artifact);
-    const body = readFileSync(archive);
-    assert.equal(body.length, artifact.bytes, `${archive}: bytes`);
-    assert.equal(digest(body), artifact.sha256, `${archive}: sha256`);
-    assert.equal(digest(body, 'sha512'), artifact.sha512, `${archive}: sha512`);
-    const integrity = `sha512-${digest(body, 'sha512', 'base64')}`;
-    assert.equal(integrity, artifact.npmIntegrity, `${archive}: integrity`);
-    assert.ok(artifact.members.every((member) => printableAsciiWithoutBackslash.test(member)), `${archive}: members must be printable ASCII without backslashes`);
-    const listing = tar(['-tzf', archive], archive).toString('utf8');
-    assert.ok(listing.endsWith('\n'), `${archive}: member listing must end with a newline`);
-    const members = listing.slice(0, -1).split('\n');
-    assert.deepEqual(members, artifact.members, `${archive}: ordered members`);
-    function extract(member) {
-      assert.equal(members.filter((name) => name === member).length, 1, `${archive}: ${member} must occur exactly once`);
-      return tar(['-xzOf', archive, member], archive);
-    }
-    const manifest = parseJson(extract('package/package.json'));
-    assert.equal(manifest.name, artifact.package, `${archive}: package identity`);
-    assert.deepEqual(manifest, artifact.packedManifest, `${archive}: packed manifest`);
-    assert.equal(manifest.version, artifact.version, `${archive}: artifact version`);
-    assert.ok(!JSON.stringify(manifest).includes('workspace:'), `${archive}: workspace reference`);
-    assert.equal(manifest.license, 'MIT', `${archive}: license`);
-    const prefix = artifact.package.replace('@', '').replace('/', '-');
-    assert.deepEqual(manifest, readJson(forkFile(folder, `manifests/${prefix}.json`)), `${archive}: retained manifest`);
-    const notice = extract('package/LICENSE');
-    assert.deepEqual(notice, readFileSync(forkFile(folder, `notices/${prefix}.LICENSE`)), `${archive}: retained license`);
-    assert.ok(notice.includes(Buffer.from('MIT License')), `${archive}: MIT notice`);
-    if (artifact.package === '@ag-ui/pi') {
-      assert.ok(notice.includes(Buffer.from('Copyright (c) 2026 YS-BW')), `${archive}: donor copyright`);
-      const donor = extract('package/PROVENANCE.md');
-      assert.deepEqual(donor, readFileSync(forkFile(folder, 'notices/ag-ui-pi.PROVENANCE.md')), `${archive}: donor notice`);
-      assert.ok(donor.includes(Buffer.from('ee810dfb9ad3fe81d8854e9121b84ddee4c59148')), `${archive}: donor revision`);
-    }
-    expected.set(artifact.package, { filename: artifact.artifact, integrity, manifest });
+function extractOnce(archive, members, member) {
+  assert.equal(members.filter((name) => name === member).length, 1, `${archive}: ${member} must occur exactly once`);
+  return tar(['-xzOf', archive, member], archive);
+}
+function verifyArchive(folder, artifact) {
+  assert.equal(basename(artifact.artifact), artifact.artifact, 'archive must be inside fork folder');
+  const archive = forkFile(folder, artifact.artifact);
+  const body = readFileSync(archive);
+  assert.equal(body.length, artifact.bytes, `${archive}: bytes`);
+  assert.equal(digest(body), artifact.sha256, `${archive}: sha256`);
+  assert.equal(digest(body, 'sha512'), artifact.sha512, `${archive}: sha512`);
+  const integrity = `sha512-${digest(body, 'sha512', 'base64')}`;
+  assert.equal(integrity, artifact.npmIntegrity, `${archive}: integrity`);
+  assert.ok(artifact.members.every((member) => printableAsciiWithoutBackslash.test(member)), `${archive}: members must be printable ASCII without backslashes`);
+  const listing = tar(['-tzf', archive], archive).toString('utf8');
+  assert.ok(listing.endsWith('\n'), `${archive}: member listing must end with a newline`);
+  const members = listing.slice(0, -1).split('\n');
+  assert.deepEqual(members, artifact.members, `${archive}: ordered members`);
+  const manifest = parseJson(extractOnce(archive, members, 'package/package.json'));
+  assert.equal(manifest.name, artifact.package, `${archive}: package identity`);
+  assert.deepEqual(manifest, artifact.packedManifest, `${archive}: packed manifest`);
+  assert.equal(manifest.version, artifact.version, `${archive}: artifact version`);
+  assert.ok(!JSON.stringify(manifest).includes('workspace:'), `${archive}: workspace reference`);
+  assert.equal(manifest.license, 'MIT', `${archive}: license`);
+  const prefix = artifact.package.replace('@', '').replace('/', '-');
+  assert.deepEqual(manifest, readJson(forkFile(folder, `manifests/${prefix}.json`)), `${archive}: retained manifest`);
+  const notice = extractOnce(archive, members, 'package/LICENSE');
+  assert.deepEqual(notice, readFileSync(forkFile(folder, `notices/${prefix}.LICENSE`)), `${archive}: retained license`);
+  assert.ok(notice.includes(Buffer.from('MIT License')), `${archive}: MIT notice`);
+  const donor = donorNotices[artifact.package];
+  if (donor) {
+    assert.ok(notice.includes(Buffer.from(donor.copyright)), `${archive}: donor copyright`);
+    const provenance = extractOnce(archive, members, donor.member);
+    assert.deepEqual(provenance, readFileSync(forkFile(folder, donor.retained)), `${archive}: donor notice`);
+    assert.ok(provenance.includes(Buffer.from(donor.revision)), `${archive}: donor revision`);
   }
-  assert.deepEqual([...expected.keys()].sort(), aguiPackages.toSorted(), 'exact six AG-UI archives');
-  for (const entry of metadata.evidence) {
+  return { filename: artifact.artifact, integrity, manifest };
+}
+function verifyEvidence({ folder, metadata }, qualification) {
+  const paths = new Set();
+  for (const entry of [...metadata.evidence, ...qualification.evidence]) {
+    assert.ok(!paths.has(entry.path), `${entry.path}: duplicate evidence path`);
+    paths.add(entry.path);
     const packed = readFileSync(forkFile(folder, entry.path));
     assert.equal(packed.length, entry.compressedBytes, `${entry.path}: compressed bytes`);
     assert.equal(digest(packed), entry.compressedSha256, `${entry.path}: compressed hash`);
@@ -124,24 +133,54 @@ export function verifyArchives(fork) {
     assert.equal(digest(raw), entry.retainedSha256, `${entry.path}: retained hash`);
   }
   assert.equal(digest(gunzipSync(readFileSync(forkFile(folder, 'evidence/source-pnpm-lock.yaml.gz')))), metadata.sourceLockSha256, 'source lock digest');
+  for (const replay of qualification.nodeReplays) {
+    assert.ok(paths.has(replay.log), `${replay.log}: replay log must be verified evidence`);
+    assert.ok(replay.sourceSha256 && typeof replay.sourceSha256 === 'object' && !Array.isArray(replay.sourceSha256)
+      && Object.keys(replay.sourceSha256).length > 0, `${replay.log}: replay source hashes must be a nonempty map`);
+    for (const [file, hash] of Object.entries(replay.sourceSha256)) {
+      assert.ok(typeof hash === 'string' && /^[a-f0-9]{64}$/iu.test(hash), `${replay.log}: ${file}: replay source digest`);
+    }
+  }
+}
+function verifyFixtures({ folder, metadata }) {
   const fixtureBody = readFileSync(forkFile(folder, metadata.qualification.fixtureProvenance));
   assert.equal(digest(fixtureBody), metadata.qualification.fixtureProvenanceSha256, 'fixture provenance digest');
   const fixtures = parseJson(fixtureBody);
   assert.equal(fixtures.sourceRevision, metadata.sourceRevision, 'fixture source revision');
   assert.ok(fixtures.unchangedSourceCopies, 'fixtures must be unchanged source copies');
+  const fixturePaths = fixtures.files.map((fixture) => fixture.path);
+  assert.equal(new Set(fixturePaths).size, fixturePaths.length, 'fixture paths must be unique');
+  const codexFixture = 'qualification-fixtures/codex/codex-exec.mjs';
+  assert.ok(fixturePaths.includes(codexFixture), 'controlled Codex executable must be a verified fixture');
   for (const fixture of fixtures.files) {
     const body = readFileSync(forkFile(folder, fixture.path));
     assert.equal(digest(body), fixture.sha256, `${fixture.path}: fixture hash`);
     assert.equal(body.length, fixture.bytes, `${fixture.path}: fixture bytes`);
     assert.equal(countByteLines(body), fixture.rawLines, `${fixture.path}: fixture lines`);
   }
-  return expected;
+  return { fixturePaths, codexFixture };
 }
-export function verifyConsumerLock(consumer, fork, expected) {
+export function verifyFork(root) {
+  const fork = resolveLockedFork(root);
+  const qualificationBody = readFileSync(forkFile(fork.folder, 'qualification.json'));
+  const qualification = parseJson(qualificationBody);
+  assert.equal(qualification.sourceRevision, fork.metadata.sourceRevision, 'qualification source revision');
+  assert.equal(qualification.identityProvenanceSha256, fork.provenanceSha256, 'qualification identity digest');
+  assert.deepEqual(fork.metadata.artifacts.map((artifact) => artifact.package).toSorted(), aguiPackages.toSorted(), 'exact six AG-UI archives');
+  const packages = new Map();
+  for (const artifact of fork.metadata.artifacts) {
+    assert.ok(!packages.has(artifact.package), `duplicate artifact ${artifact.package}`);
+    packages.set(artifact.package, verifyArchive(fork.folder, artifact));
+  }
+  verifyEvidence(fork, qualification);
+  return { ...fork, packages, ...verifyFixtures(fork), qualification, qualificationSha256: digest(qualificationBody) };
+}
+export function verifyConsumerLock(consumer, verified) {
+  const { metadata, packages: expected } = verified;
   const lockBody = readFileSync(join(consumer, 'package-lock.json'));
   const manifestBody = readFileSync(join(consumer, 'package.json'));
-  assert.equal(digest(lockBody), fork.metadata.qualification.consumerLockSha256, 'frozen consumer lock digest');
-  assert.equal(digest(manifestBody), fork.metadata.qualification.consumerPackageSha256, 'frozen consumer manifest digest');
+  assert.equal(digest(lockBody), metadata.qualification.consumerLockSha256, 'frozen consumer lock digest');
+  assert.equal(digest(manifestBody), metadata.qualification.consumerPackageSha256, 'frozen consumer manifest digest');
   const lock = parseJson(lockBody);
   const manifest = parseJson(manifestBody);
   assert.deepEqual(lock.packages[''].dependencies, manifest.dependencies, 'consumer root dependencies');
@@ -184,7 +223,8 @@ function* packageRoots(modules) {
     if (entry.isDirectory()) yield* packageRoots(join(path, 'node_modules'));
   }
 }
-export function verifyInstalled(consumer, expected) {
+export function verifyInstalled(consumer, verified) {
+  const { packages: expected } = verified;
   const installed = new Set();
   for (const { root, manifest, linked } of packageRoots(join(consumer, 'node_modules'))) {
     const body = readJson(manifest);

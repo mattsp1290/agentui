@@ -187,6 +187,8 @@ durable consumption, delivery, retries or integrated Apple behavior.
 The original [Mac package record](../qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
 continues to describe its measured source `54065e2` and five focused tests.
 
-The report binds the complete fork provenance with `installedSdk.provenanceSha256`.
-Any provenance amendment, including a new qualification record, intentionally
-requires matrix regeneration so the report identifies the exact evidence used.
+The report binds the frozen fork acquisition identity with
+`installedSdk.provenanceSha256`. Later verifier replay records and evidence live in
+the sibling `qualification.json`, which binds back to that identity. Adding a
+qualification record does not change the protocol report. Changes to the frozen
+identity still require matrix regeneration.
