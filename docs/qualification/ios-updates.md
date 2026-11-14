@@ -35,7 +35,7 @@ Measured on November 13, 2026, America/New_York.
 | Item | Measured value |
 | --- | --- |
 | Branch | `codex/ios-update-qualification` |
-| Base | `bf16a1f`, merged foundation |
+| Base at native measurement | `bf16a1f`, merged foundation |
 | Probe implementation source | `7d250ae54c3267997dc0f56b00281fd8076424d0` |
 | macOS | 26.6.2, build 25G83, arm64 |
 | Xcode | 26.2, build 17C52 |
@@ -61,10 +61,12 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Pinned dependency installation | PASS | npm ci, pod install --deployment, lock comparison; deployment log |
 | Release A build/install/render | PASS | build-A log and A screenshot |
 | Source edit to B without rebuild, then restart | PASS: still A | restart-no-rebuild log and no-rebuild screenshot |
-| Fresh template generation with committed locks, warm artifact cache, DerivedData retained | PASS | clean prepare log |
+| Historical fresh-template run before `230f062`, plain `pod install`, warm cache and retained DerivedData | PASS | clean prepare log; first retained in `e4f3a96` |
+| Current deployment-mode `prepare.sh` on a freshly generated template | NOT RUN | The deployment log covers an already generated tree |
 | Release B rebuild/install/render | PASS | build-B log and B screenshot |
 | B restart without Metro | PASS | restart-B log, B-restart screenshot |
-| Repository npm run verify (regression, excludes spikes) | PASS | 11 tests, build, check, lint |
+| Repository regression at native measurement, base `bf16a1f`, excluding spikes | PASS | 11 tests, build, check, lint |
+| Linux integration regression at `f4f8fcf`, excluding spikes | PASS | [26 tests, build, check, lint](https://github.com/mattsp1290/agentui/actions/runs/43540852662/job/132280830858) |
 | Compatible live-update recovery | UNQUALIFIED | No updater tested |
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
 | Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
@@ -77,9 +79,14 @@ Bundle hashes are read back from the installed app.
 Retained evidence is in [the evidence directory](../../spikes/ios-updates/evidence/).
 
 The initial A and B experiment used two generated trees, with DerivedData retained.
-The follow-up after review uses deployment-mode CocoaPods installation, then A,
-source edit without rebuild, and B in the same generated tree. Restart logs retain
+The retained clean-preparation log was created before the deployment-mode change
+in `230f062`; it does not qualify the current script on a newly generated tree.
+The follow-up uses deployment-mode CocoaPods installation, then A, source edit
+without rebuild, and B in the same existing generated tree. Restart logs retain
 the source label, installed bundle hash, Metro port check, and launch PID.
+The retained A/B builds reuse previously selected Release-flavored prebuilt
+Hermes, React Native core, and dependency artifacts. The initial configuration
+swap occurred in an unretained build.
 
 This bounded v1 decision is referenced from the shared architecture and Apple
 qualification documents. The probe does not implement product update delivery or
@@ -88,3 +95,8 @@ notifications. Native-incompatible changes remain rebuild-required in all cases.
 ShellCheck and Bash syntax checks passed for all three probe scripts. See
 `evidence/shellcheck.txt`. The retained restart logs report distinct A and B
 installed-bundle hashes and no Metro listener. Screenshots were visually checked.
+
+The archived [Mac review summary](../../spikes/ios-updates/evidence/review-summary.md) describes `f62723a`, before integration.
+Integration commits `39ae785` and `f4f8fcf` merged main `6dbc4b1` and added the
+architecture cross-links. They changed no probe scripts, dependency inputs, or
+native evidence. The historical review archive remains unchanged.
