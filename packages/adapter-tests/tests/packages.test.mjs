@@ -17,6 +17,9 @@ test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(desktop, 'desktop');
   assert.equal(ios, 'ios');
   await import('@agentui/sdk/react');
+  await import('@agentui/theme');
+  await import('@agentui/theme/react');
+  await import('@agentui/ui-primitives/desktop');
   await import('@agentui/adapter-tests');
 });
 
@@ -45,13 +48,13 @@ test('host consumes real Switchboard bounded FIFO observation', async () => {
 });
 
 test('package exports reject private implementation imports', async () => {
-  for (const name of ['@agentui/contracts', '@agentui/sdk', '@agentui/host', '@mattsp1290/switchboard']) {
+  for (const name of ['@agentui/contracts', '@agentui/sdk', '@agentui/host', '@agentui/theme', '@agentui/ui-primitives', '@mattsp1290/switchboard']) {
     await assert.rejects(import(`${name}/src/index.js`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   }
 });
 
 test('clients and customization declare no host runtime dependency', async () => {
-  for (const path of ['packages/contracts', 'packages/sdk', 'apps/desktop', 'apps/ios']) {
+  for (const path of ['packages/contracts', 'packages/sdk', 'packages/theme', 'packages/ui-primitives', 'apps/desktop', 'apps/ios']) {
     const pkg = JSON.parse(await readFile(new URL(`${path}/package.json`, root), 'utf8'));
     const dependencies = { ...pkg.dependencies, ...pkg.devDependencies, ...pkg.peerDependencies };
     assert.equal(dependencies['@agentui/host'], undefined, path);

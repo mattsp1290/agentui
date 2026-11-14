@@ -21,6 +21,8 @@
     "@agentui/sdk": "0.0.0",
     "@agentui/host": "0.0.0",
     "@agentui/desktop": "0.0.0",
-    "@agentui/ios": "0.0.0"
+    "@agentui/ios": "0.0.0",
+    "@agentui/theme": "0.0.0",
+    "@agentui/ui-primitives": "0.0.0"
   }
 }
