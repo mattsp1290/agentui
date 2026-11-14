@@ -11,3 +11,6 @@ export type { LocalHost, LocalHostOptions } from './local-host.js';
 export { createRecordedDriver } from './recorded-driver.js';
 export type { RecordedDriverOptions } from './recorded-driver.js';
 export type { Installation, NativeRun, NativeDecision, HostOutput, CommandResult, CapturedTarget, ProviderDriver, HostBudgets } from './durable-model.js';
+
+export { createCodexDriver } from './codex-driver.js';
+export type { CodexDriverOptions, CodexTranscriptEvent } from './codex-driver.js';

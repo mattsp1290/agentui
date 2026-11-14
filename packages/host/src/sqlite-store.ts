@@ -137,6 +137,11 @@ export class SqliteStore<E, P> {
         const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId);
         if (!row) return { kind: 'rejected', reason: 'unknown-run' };
         run = nativeRun(json(row.data), installed, scope);
+      } else if (command.body.kind === 'send') {
+        const outstanding = this.db.prepare("SELECT 1 FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted','uncertain') LIMIT 1").get(...key(scope));
+        if (outstanding) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
+        const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? ORDER BY rowid DESC LIMIT 1').get(...key(scope));
+        if (row) run = nativeRun(json(row.data), installed, scope);
       }
       const operation = randomUUID();
       const target: CapturedTarget = { installation: installed, run, decision: pending,
