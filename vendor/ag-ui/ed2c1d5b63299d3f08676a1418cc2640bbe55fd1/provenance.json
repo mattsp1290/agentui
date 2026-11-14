@@ -864,7 +864,9 @@
       "compressedBytes": 7117,
       "rawSha256": "595e436622a99b2d591650bbca1391e3d171b77888796f8acf8e313c2bfd0387",
       "retainedSha256": "595e436622a99b2d591650bbca1391e3d171b77888796f8acf8e313c2bfd0387",
-      "compressedSha256": "dfc872d4056cb3bbd20873cd303fbc409b6555020935e567e4428ca4ee72aff4"
+      "compressedSha256": "dfc872d4056cb3bbd20873cd303fbc409b6555020935e567e4428ca4ee72aff4",
+      "encoding": "gzip; raw retained without edits",
+      "role": "upstream license-policy failure"
     },
     {
       "path": "evidence/standard10-replay.log.gz",
@@ -873,7 +875,64 @@
       "compressedBytes": 6241,
       "rawSha256": "05bced04bca37eb356284abf56481a7e6d004a8e318ece5fea3657067391408e",
       "retainedSha256": "05bced04bca37eb356284abf56481a7e6d004a8e318ece5fea3657067391408e",
-      "compressedSha256": "c88e0a244201d985e22eda6c81f3205e93efcc6ccda64d1ed516771797ac67c6"
+      "compressedSha256": "c88e0a244201d985e22eda6c81f3205e93efcc6ccda64d1ed516771797ac67c6",
+      "encoding": "gzip; raw retained without edits",
+      "role": "historical frozen-consumer replay with lock-derived readers and optimized-Python rejection"
+    },
+    {
+      "path": "evidence/node-qualification.log.gz",
+      "rawBytes": 54148,
+      "rawSha256": "2c62642c9bf6023125608910131e52e4992fb092b8b51dae2f648c801092eeed",
+      "retainedBytes": 54148,
+      "retainedSha256": "2c62642c9bf6023125608910131e52e4992fb092b8b51dae2f648c801092eeed",
+      "compressedBytes": 5986,
+      "compressedSha256": "d2480c237692b5df37295566731b00dd611e58c08b2e9ed960158050bd3bada0",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Node-only controlled consumer replay on Linux arm64 with GNU tar and an external temporary directory"
+    },
+    {
+      "path": "evidence/node-esm-tmp-failure.log.gz",
+      "rawBytes": 1785,
+      "rawSha256": "6bb3b52a7d6bd42f2de5d805e5d1d97e5d64a621bd35ca14e820c650ad943935",
+      "retainedBytes": 1785,
+      "retainedSha256": "6bb3b52a7d6bd42f2de5d805e5d1d97e5d64a621bd35ca14e820c650ad943935",
+      "compressedBytes": 718,
+      "compressedSha256": "2d01c0f5048ecbba3927a31c1754ace9a6c0c118d48fdbc65e160f232f6ab721",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Observed failure of the pinned Codex launcher with TMPDIR beneath an ESM project"
+    },
+    {
+      "path": "evidence/codex-launcher-esm-reproduction.log.gz",
+      "rawBytes": 693,
+      "rawSha256": "293d9f353667fa0874a572424f7cc61c18c2d49764b2b43294efed7611d5bbef",
+      "retainedBytes": 693,
+      "retainedSha256": "293d9f353667fa0874a572424f7cc61c18c2d49764b2b43294efed7611d5bbef",
+      "compressedBytes": 362,
+      "compressedSha256": "abf61a52d791e861aed9667ba5501e99949693642e078df1aaef2083640064d7",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Direct reproduction using the pinned extensionless CommonJS launcher bytes"
+    },
+    {
+      "path": "evidence/codex-launcher-esm-reproduction.json.gz",
+      "rawBytes": 1133,
+      "rawSha256": "8da033947defa589f59d5f16ca48266913041717f57dcca160b230bd150522cc",
+      "retainedBytes": 1133,
+      "retainedSha256": "8da033947defa589f59d5f16ca48266913041717f57dcca160b230bd150522cc",
+      "compressedBytes": 526,
+      "compressedSha256": "cd141d56dfa86c4837be2dd404c64f62763c3f5559e5e5d702cc6297eabf973f",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Exact source path, temporary-directory condition and observed Node error"
+    },
+    {
+      "path": "evidence/node-qualification-final.log.gz",
+      "rawBytes": 53940,
+      "rawSha256": "1f595fa1a7cfac79dab0ecacfe2cd13b88ac46e128f0b83b20f3dc3155bf49bc",
+      "retainedBytes": 53940,
+      "retainedSha256": "1f595fa1a7cfac79dab0ecacfe2cd13b88ac46e128f0b83b20f3dc3155bf49bc",
+      "compressedBytes": 5980,
+      "compressedSha256": "6aee08066c4e6011f619f8c2d2731b5ed8e8b7d7be20867ed9d12f1c36cda2dd",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Final Node-only controlled consumer replay after byte-line-counter naming cleanup"
     }
   ],
   "qualification": {
@@ -978,13 +1037,66 @@
       "start": "2026-11-14T14:49:09.466172+00:00",
       "end": "2026-11-14T14:49:19.959907+00:00",
       "exitCode": 0,
-      "sourceScope": "AgentUI661216e plus current lock-derived metadata and fail-closed optimized Python fixes; measured working code later committed separately. Native/archive/consumerlock/fixtures unchanged.",
+      "sourceScope": "Measured from AgentUI 661216e with working lock-derived metadata readers and fail-closed optimized Python checks, later committed as 1ead448. Archive bytes, native pins, consumer lock and fixtures are unchanged.",
       "log": "evidence/standard10-replay.log.gz",
       "driverSha256": "0b31db1516e9560c2a15b2971ef90d11b7e4f7af1a9b610e863095032d45ac52",
       "checkerSha256": "e41183b35522320d6ae0b44b1782b91cbbb94992ebaee085dc8605d91c6e6679",
       "node": "v24.22.3",
       "npm": "11.19.1"
-    }
+    },
+    "knownLimitations": [
+      {
+        "package": "@ag-ui/codex-sdk",
+        "version": "0.0.1",
+        "condition": "TMPDIR beneath a Node package with type:module",
+        "observation": "The factory writes extensionless codex-launch with CommonJS require; Node interprets it as ESM and fails before the selected executable runs.",
+        "source": "integrations/community/codex-sdk/typescript/src/sdk.ts:47-53",
+        "task": "ag-ui-4ipx",
+        "failureEvidence": "evidence/node-esm-tmp-failure.log.gz",
+        "reproductionEvidence": "evidence/codex-launcher-esm-reproduction.json.gz",
+        "successfulCondition": "The controlled consumer passed with an external temporary directory outside an ESM package scope."
+      }
+    ],
+    "nodeReplays": [
+      {
+        "command": "node scripts/verify-agui-fork.mjs",
+        "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+        "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
+        "sourceScope": "The measured working Node qualification modules are identified by their hashes. The source commit is recorded separately after integration. This replay changes no fork archive, native pin, consumer lock or fixture. This measurement preceded the final private byte-line-counter rename and comment deletion.",
+        "sourceSha256": {
+          "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
+          "tests/dependencies/ag-ui/verify-consumer.mjs": "87f6642e50f59e2974d2e13a14b9cf65f99ba5ab2362484be391510a426ede9a",
+          "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
+        },
+        "log": "evidence/node-qualification.log.gz",
+        "exitCode": 0,
+        "node": "v24.22.3",
+        "platform": "linux",
+        "architecture": "arm64",
+        "tar": "tar (GNU tar) 1.35",
+        "temporaryDirectory": "/tmp/agentui-node-qualification-9ipkww2m",
+        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification."
+      },
+      {
+        "command": "node scripts/verify-agui-fork.mjs",
+        "offlineCommand": "node scripts/verify-agui-fork.mjs --offline",
+        "measuredBase": "153eac89d67de4d7651cee5d079b1162e43c78f0",
+        "sourceScope": "Measured from AgentUI 153eac8 with final working Node qualification code. Source hashes identify the code; no archive, native pin, consumer lock or fixture changed.",
+        "sourceSha256": {
+          "scripts/lib/agui-fork.mjs": "533207a56540d9115300bf2e1f55480ebe21b09e96f2a4d0bfea03fa8ba700b1",
+          "tests/dependencies/ag-ui/verify-consumer.mjs": "a70455adbf519b1892e72c30408605bd447d284762d6f8c71f95a518d020bc40",
+          "scripts/verify-agui-fork.mjs": "3c30c95f2646faa40592ebd7e76f7009fb284986a80f0ad03354586a272eb4db"
+        },
+        "log": "evidence/node-qualification-final.log.gz",
+        "exitCode": 0,
+        "node": "v24.22.3",
+        "platform": "linux",
+        "architecture": "arm64",
+        "tar": "tar (GNU tar) 1.35",
+        "temporaryDirectory": "/tmp",
+        "scope": "Installed package imports and controlled Codex ESM/CommonJS continuation plus 15 Pi tests; no real native provider or Apple qualification."
+      }
+    ]
   },
   "upstreamLicensePolicy": {
     "job": "https://github.com/mattsp1290/ag-ui/actions/runs/42942702235/job/130268067856",

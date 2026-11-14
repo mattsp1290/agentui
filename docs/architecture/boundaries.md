@@ -27,8 +27,7 @@ The adapter-test workspace separately owns package and ambient-boundary checks.
 The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Connection lifecycle and OS-protected credential storage remain gated on host pairing and shared client state.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. TypeScript package imports resolve built exports.
-Repository Node tests also consume explicit test-only exports from the adapter-test workspace.
-The test-only compile export assumes this repository's workspace layout.
+Repository tests share root-owned compiler support.
 SDK core and React contracts compile separately to keep platform ambient types out of core.
 
 The host is the only application workspace with a Switchboard dependency.

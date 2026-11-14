@@ -1,4 +1,4 @@
-import { assertCompileCases } from '@agentui/adapter-tests/testing/compile';
+import { assertCompileCases } from '../../support/compile.mjs';
 import { projectionFacts } from '../coverage.mjs';
 
 export const publishedTypeContracts = {

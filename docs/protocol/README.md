@@ -126,16 +126,15 @@ git diff -- docs/protocol/conformance.json
 fixture paths from the retained inventories. It lists SDK divergences and
 references hashed inputs instead of copying their complete rows. Evidence
 identity comes directly from the named body maps in `tests/protocol/fixtures/`
-and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates each
-map with its evidence kind and validates citations, callability and global ID
-uniqueness. Every ID must have category credit.
+and `tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` builds the body-derived registry and validates
+citations, callability and global ID uniqueness. Every ID must have category credit.
 
 The version 2 report has one `evidence.registrar` path and evidence fields derived
 from the registry's kind keys in insertion order. Each kind has sorted `ids` and a
 `testName` template. Replacing `<id>` in
 that template with an ID gives the name registered in
 `tests/protocol/conformance.test.mjs`. Category fields cite those same IDs by
-kind. Compiler bodies use the shared adapter-test helper, which requires a
+kind. Compiler bodies use root-owned compiler test support, which requires a
 compiling positive control first.
 
 Canonical validation and report generation consume one verified snapshot from
@@ -145,8 +144,11 @@ its named tests register. This ordering covers canonical validator construction,
 not unrelated dependency loading. The snapshot lasts for its process; start a
 fresh process to check changed retained files.
 
-Report generation imports body definitions without invoking fixture callbacks or
-starting compiler processes. `npm test` and `npm run verify` also run the named
+A named coherence test checks retained revisions, schema inventories and the
+installed projection descriptor. Report generation takes explicit inputs, registry
+and fork metadata. Its command and freshness entry points validate coherence before
+projecting those inputs. Importing body definitions invokes no fixture callback or
+compiler process. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
 matrix checks retained inputs and writes the expected report. Both check locked SDK
 metadata against fork provenance and workspace declarations. Actual archive bytes,

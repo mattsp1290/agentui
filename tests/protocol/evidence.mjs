@@ -11,7 +11,7 @@ export const evidenceKinds = {
 };
 export const evidenceTest = (kind, id) => `protocol ${evidenceKinds[kind].label}: ${id}`;
 
-export function validateCoverage() {
+export function buildEvidenceRegistry() {
   const entries = Object.entries(evidenceKinds).flatMap(([kind, { bodies }]) => {
     const ids = Object.keys(bodies);
     assert.ok(ids.length > 0, kind);

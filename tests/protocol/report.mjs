@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
-import { aguiProtocol } from '@agentui/host/agui';
-import { retained } from './inputs.mjs';
+import { fileURLToPath } from 'node:url';
+import { resolveLockedFork } from '../../scripts/lib/agui-fork.mjs';
+import { assertRetainedInputsCoherent, readConformanceInputs } from './coherence.mjs';
 import { canonicalDefinitions } from './canonical.mjs';
-import { evidenceKinds, evidenceTest, validateCoverage } from './evidence.mjs';
+import { evidenceKinds, evidenceTest, buildEvidenceRegistry } from './evidence.mjs';
 import { behaviorLimits, coverage, coverageContractVersion, projectionFacts, reportText } from './coverage.mjs';
 
 const root = new URL('../../', import.meta.url);
+const rootPath = fileURLToPath(root);
 export const reportFile = new URL('docs/protocol/conformance.json', root);
-const json = (file) => JSON.parse(readFileSync(file, 'utf8'));
-const retainedPath = (file) => `${retained.retainedDir}${file}`;
 const byKind = (project) => Object.fromEntries(Object.keys(evidenceKinds).map((kind) => [kind, project(kind)]));
 
 function projectCategories({ pin, definitions, fixtures }, registry) {
@@ -29,53 +28,25 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
       pendingProductOwners: owned.pending,
     };
   });
-  assert.equal(categories.flatMap((row) => row.definitions).length, definitions.length);
-  assert.equal(categories.flatMap((row) => row.canonicalFixtures).length, fixtures.length);
+  assert.equal(categories.flatMap((row) => row.definitions).length, definitions.length, 'Every retained definition must be projected into a category');
+  assert.equal(categories.flatMap((row) => row.canonicalFixtures).length, fixtures.length, 'Every retained fixture must be projected into a category');
   return categories;
 }
 
-export function buildConformanceReport() {
-  const { provenance, pin, schema, definitions, fixtures } = retained;
-  const vendor = json(new URL('vendor/switchboard.json', root));
-  const project = json(new URL('package.json', root));
-  const locked = json(new URL('package-lock.json', root)).packages['node_modules/@ag-ui/core'];
-  assert.match(locked.resolved, /^file:vendor\/ag-ui\/[a-f0-9]{40}\/[^/]+\.tgz$/u, 'SDK must resolve to a local fork archive');
-  const forkDirectory = locked.resolved.slice(5, locked.resolved.lastIndexOf('/') + 1);
-  const forkPath = `${forkDirectory}provenance.json`;
-  const forkBytes = readFileSync(new URL(forkPath, root));
-  const fork = JSON.parse(forkBytes);
-  const installedSdk = fork.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
-  assert.equal(forkDirectory, `vendor/ag-ui/${fork.sourceRevision}/`);
-  assert.equal(locked.resolved, `file:${forkDirectory}${installedSdk.artifact}`);
-  assert.equal(locked.integrity, installedSdk.npmIntegrity);
-  assert.equal(locked.version, installedSdk.version);
-  for (const workspace of ['packages/protocol', 'packages/host']) {
-    assert.equal(json(new URL(`${workspace}/package.json`, root)).dependencies['@ag-ui/core'], `file:../../${forkDirectory}${installedSdk.artifact}`, workspace);
-  }
+export function buildConformanceReport({ inputs: { retained, vendor, project, descriptor }, registry, fork }) {
+  const { provenance, pin, definitions, fixtures } = retained;
+  const { metadata, core: installedSdk } = fork;
+  const retainedPath = (file) => `${retained.retainedDir}${file}`;
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
   const pythonSdk = pin.artifacts.find((artifact) => artifact.package === 'ag-ui-protocol');
-  assert.equal(provenance.sources.switchboard.revision, vendor.sourceRevision);
-  assert.equal(provenance.sources.canonical.revision, pin.sourceCommit);
-  assert.equal(provenance.files['schema.json'].sha256, pin.upstreamFiles['spec/1.0/schema.json']);
-  assert.equal(provenance.files['UPSTREAM-LICENSE'].sha256, pin.upstreamFiles.LICENSE);
-  assert.deepEqual(aguiProtocol, {
-    version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
-    mapping: pin.classification.switchboardMapping, planned: projectionFacts.plannedDescriptor,
-  });
-  assert.deepEqual(Object.keys(coverage).sort(), Object.keys(pin.categories).sort());
-  assert.deepEqual(definitions.map((row) => row.definition).sort(), Object.keys(schema.$defs).sort());
-  assert.deepEqual(definitions.flatMap((row) => row.event ? [row.event] : []).sort(), [...schema.$defs.EventType.enum].sort());
-  assert.equal(new Set(definitions.map((row) => row.definition)).size, definitions.length);
-  assert.equal(new Set(fixtures.map((fixture) => fixture.path)).size, fixtures.length);
-  const registry = validateCoverage();
   const categories = projectCategories(retained, registry);
-  const kindEvidence = (kind) => ({ testName: evidenceTest(kind, '<id>'), ids: Object.keys(evidenceKinds[kind].bodies).sort() });
+  const kindEvidence = (kind) => ({ testName: evidenceTest(kind, '<id>'), ids: Object.keys(registry).filter((id) => registry[id] === kind).sort() });
   const count = (predicate) => fixtures.filter(predicate).length;
   return {
     coverageContractVersion,
     installedSdk: {
-      repository: fork.sourceRepository, branch: fork.sourceBranch, sourceRevision: fork.sourceRevision,
-      provenance: forkPath, provenanceSha256: createHash('sha256').update(forkBytes).digest('hex'),
+      repository: metadata.sourceRepository, branch: metadata.sourceBranch, sourceRevision: metadata.sourceRevision,
+      provenance: fork.provenancePath, provenanceSha256: fork.provenanceSha256,
       package: installedSdk.package, version: installedSdk.version,
       artifact: installedSdk.artifact, sha256: installedSdk.sha256, integrity: installedSdk.npmIntegrity,
       matchesHistoricalRuntimeArtifactSha256: installedSdk.sha256 === sdk.sha256,
@@ -105,7 +76,7 @@ export function buildConformanceReport() {
     },
     switchboard: {
       repository: vendor.sourceRepository, sourceRevision: vendor.sourceRevision, artifact: vendor.artifact, sha256: vendor.sha256,
-      descriptor: aguiProtocol,
+      descriptor,
       retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: reportText.canonicalComparisonScope },
     },
     nativeEvidence: {
@@ -126,14 +97,20 @@ export function buildConformanceReport() {
 
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
+function currentConformanceReport() {
+  const inputs = readConformanceInputs();
+  assertRetainedInputsCoherent(inputs);
+  return buildConformanceReport({ inputs, registry: buildEvidenceRegistry(), fork: resolveLockedFork(rootPath) });
+}
+
 export function assertReportFresh() {
-  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(buildConformanceReport()), 'Conformance report is stale; regenerate it');
+  assert.equal(readFileSync(reportFile, 'utf8'), serializeConformanceReport(currentConformanceReport()), 'Conformance report is stale; regenerate it');
 }
 
 if (import.meta.main) {
   const [mode, ...extra] = process.argv.slice(2);
   assert.ok(extra.length === 0 && (mode === undefined || mode === '--check'), 'Usage: node tests/protocol/report.mjs [--check]');
   if (mode === '--check') assertReportFresh();
-  else writeFileSync(reportFile, serializeConformanceReport(buildConformanceReport()));
+  else writeFileSync(reportFile, serializeConformanceReport(currentConformanceReport()));
   console.log(mode === '--check' ? 'Protocol conformance report matches its versioned inputs.' : 'Wrote docs/protocol/conformance.json.');
 }
