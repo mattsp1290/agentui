@@ -46,7 +46,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     </div>
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
-        {decision.choices.map(choice => <button key={choice} disabled={!connected} onClick={() => void actions.submit(() => active.store.approve(decision.pendingId, choice))}>{choice === 'accept' ? 'Allow' : choice === 'decline' ? 'Deny' : choice}</button>)}
+        {decision.choices.map(choice => <button key={choice} disabled={!connected} onClick={() => void actions.submit(() => active.store.approve(decision.pendingId, choice))}>{agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice}</button>)}
       </div>
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); if (canSend) void actions.submit(() => active.store.send()); }}>
