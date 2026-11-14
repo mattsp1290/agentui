@@ -59,6 +59,10 @@ createInterface({ input: process.stdin }).on('line', line => {
           return;
         }
         turn.timer = setInterval(() => {
+          if (!turn.messageFinished && existsSync(`${logPath}.item-${turn.id}`)) {
+            turn.messageFinished = true;
+            notify('item/completed', { threadId, turnId: turn.id, item: { id: turn.itemId, type: 'agentMessage', text: 'Hello from the fixture.' } });
+          }
           if (existsSync(`${logPath}.complete-${turn.id}`)) finish(turn);
         }, 5);
       }, 10);

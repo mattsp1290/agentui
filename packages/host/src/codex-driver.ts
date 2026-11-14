@@ -22,11 +22,12 @@ export interface CodexDriverOptions {
   readonly executable?: string;
   readonly args?: readonly string[];
 }
-interface Message { text: string; revision: number; complete: boolean }
 interface ActiveTurn {
   readonly scope: ConversationScope;
   readonly threadId: string;
-  readonly messages: Map<string, Message>;
+  readonly messages: Map<string, string>;
+  revision: number;
+  complete: boolean;
   run: NativeRun | null;
 }
 interface Approval {
@@ -79,19 +80,24 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     if (closing) return;
     options.append(turn.scope, { events, runs: turn.run ? [turn.run] : [], decisions });
   }
-  function message(turn: ActiveTurn, id: string, text: string, complete: boolean) {
-    const previous = turn.messages.get(id);
-    if (previous?.complete) return;
-    const next = { text, revision: (previous?.revision ?? 0) + 1, complete };
-    turn.messages.set(id, next);
-    publish(turn, [{ kind: 'message-updated', messageId: `${turn.threadId}:${id}`, role: 'assistant', ...next }]);
+  function renderMessage(turn: ActiveTurn) {
+    if (!turn.run) return;
+    publish(turn, [{ kind: 'message-updated', messageId: `${turn.threadId}:${turn.run.identity.runId}:assistant`,
+      role: 'assistant', text: [...turn.messages.values()].join('\n\n'), revision: ++turn.revision, complete: turn.complete }]);
+  }
+  function message(turn: ActiveTurn, id: string, text: string) {
+    if (turn.complete) return;
+    turn.messages.set(id, text);
+    renderMessage(turn);
   }
   function interrupted(turn: ActiveTurn, text: string) {
-    for (const [id, previous] of turn.messages) if (!previous.complete) message(turn, id, previous.text, true);
-    status(turn, text);
+    if (turn.complete) return;
+    turn.messages.set(`status:${randomUUID()}`, text);
+    turn.complete = true;
+    renderMessage(turn);
   }
   function status(turn: ActiveTurn, text: string) {
-    message(turn, `status:${randomUUID()}`, text, true);
+    message(turn, `status:${randomUUID()}`, text);
   }
   function run(turn: ActiveTurn, turnId: string): NativeRun {
     const value: NativeRun = { identity: { conversation: turn.scope, runId: turnId,
@@ -100,7 +106,10 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque: turn.threadId },
     };
     if (turn.run && turn.run.identity.runId !== turnId) throw new Error('Unexpected Codex turn');
-    turn.run = value;
+    if (!turn.run) {
+      turn.run = value;
+      renderMessage(turn);
+    }
     return value;
   }
   function notification(method: string, value: unknown): void {
@@ -120,20 +129,21 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       if (turn.run?.identity.runId !== params.turnId) return;
       const id = nonempty(params.itemId);
       if (typeof params.delta !== 'string') throw new Error('Invalid Codex text delta');
-      message(turn, id, (turn.messages.get(id)?.text ?? '') + params.delta, false);
+      message(turn, id, (turn.messages.get(id) ?? '') + params.delta);
     } else if (method === 'item/completed') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const item = object(params.item);
       if (item.type === 'agentMessage') {
         if (typeof item.text !== 'string') throw new Error('Invalid Codex message');
-        message(turn, nonempty(item.id), item.text, true);
+        message(turn, nonempty(item.id), item.text);
       }
     } else if (method === 'turn/completed') {
       const completed = object(params.turn);
       if (turn.run?.identity.runId !== completed.id) return;
-      for (const [id, previous] of turn.messages) if (!previous.complete) message(turn, id, previous.text, true);
       if (completed.status === 'failed') status(turn, 'Codex could not finish this response. You can send another message.');
       if (completed.status === 'interrupted') status(turn, 'Codex stopped this response.');
+      turn.complete = true;
+      renderMessage(turn);
       active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
     } else if (method === 'error' && params.willRetry !== true) {
       status(turn, 'Codex reported an error while responding.');
@@ -187,16 +197,19 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, messages: new Map(), run: null };
+      turn = { scope: command.scope, threadId, messages: new Map(), run: null, revision: 0, complete: false };
       active.set(threadId, turn);
+      publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
+        revision: 1, role: 'user', text: command.body.text, complete: true }]);
       const result = object(await rpc.request('turn/start', { threadId,
         input: [{ type: 'text', text: command.body.text, text_elements: [] }], clientUserMessageId: command.clientCommandId }));
       const nativeRun = run(turn, nonempty(object(result.turn).id));
-      return acknowledged(command, target, { events: [{ kind: 'message-updated',
-        messageId: `${target.identity.hostOperationId}:user`, revision: 1, role: 'user', text: command.body.text, complete: true }],
-        runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
+      return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
     } catch (error) {
-      if (turn) active.delete(turn.threadId);
+      if (turn) {
+        interrupted(turn, 'Codex could not start this response. Check command recovery before trying again.');
+        active.delete(turn.threadId);
+      }
       busy.delete(key);
       throw error;
     }
@@ -205,7 +218,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     source: 'codex', installation,
     capability(command) {
       if (closing || disconnected) return { kind: 'unsupported', reason: 'codex-disconnected' };
-      if (command.body.kind === 'send' && busy.has(scopeKey(command.scope))) return { kind: 'unsupported', reason: 'codex-is-responding' };
+      if (command.body.kind === 'send' && busy.has(scopeKey(command.scope))) return { kind: 'unsupported', reason: 'Codex is still responding. Wait for it to finish.' };
       return { kind: 'supported' };
     },
     async dispatch(command, target) {

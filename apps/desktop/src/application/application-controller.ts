@@ -2,7 +2,7 @@ import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { sameScope } from '@agentui/contracts';
-import { RECORDED_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
+import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
@@ -160,7 +160,7 @@ export function createApplicationController(deps: {
       owner.view = { storage, saved: null };
       publish(DETACHED_VIEW);
     }
-    const compatibility = checkCompatibility(RECORDED_CLIENT_COMPATIBILITY, metadata.compatibility);
+    const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
     if (compatibility.kind === 'incompatible') {
       return { kind: 'incompatible', host: { kind: 'incompatible', metadata, issues: compatibility.issues } };
     }

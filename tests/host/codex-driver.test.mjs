@@ -45,6 +45,7 @@ function fixture(t, mode = 'stream') {
   return { open,
     log: () => log().filter(message => message.direction === 'in'),
     turnIds: () => log().filter(message => message.direction === 'out' && message.method === 'turn/started').map(message => message.params.turn.id),
+    finishMessage: runId => writeFileSync(`${logPath}.item-${runId}`, ''),
     finish: runId => writeFileSync(`${logPath}.complete-${runId}`, ''),
   };
 }
@@ -79,9 +80,12 @@ test('streams before completion, reuses its thread, resumes from SQLite and canc
   const partial = await observe(first.port, document => assistant(document).some(message => message.text === 'Hello' && !message.complete));
   const [runId] = f.turnIds();
   assert.equal(messages(partial).find(message => message.role === 'user').text, 'First question');
-  assert.deepEqual(await first.port.submit(command('too-soon')), { kind: 'rejected', reason: 'codex-is-responding' });
+  assert.deepEqual(await first.port.submit(command('too-soon')), { kind: 'rejected', reason: 'Codex is still responding. Wait for it to finish.' });
   assert.deepEqual(await first.port.submit(send), accepted);
   assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
+  f.finishMessage(runId);
+  await observe(first.port, document => assistant(document).some(message => message.text === 'Hello from the fixture.' && !message.complete));
+  assert.equal(first.driver.capability(command('still-finishing')).kind, 'unsupported');
   f.finish(runId);
   await observe(first.port, document => assistant(document).some(message => message.text === 'Hello from the fixture.' && message.complete));
   await until(() => first.driver.capability(command('second')).kind === 'supported');

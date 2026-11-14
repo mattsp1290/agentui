@@ -10,18 +10,21 @@ import '../application/application.css';
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const { controller, snapshot: app } = useApplication();
   const enabled = applicationEnabled(app);
+  const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
+  const agent = runtime?.engine === 'codex' ? 'codex' : runtime?.engine === 'agentui-recorded' ? 'recorded' : 'local';
+  const hostLabel = runtime === null ? 'Local agent' : agent === 'codex' ? `Codex · ${runtime.version}` : 'Browser development · Recorded playback';
   const conversation = app.active
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        actions={controller.conversationActions(app.active)} active={app.active}
+        actions={controller.conversationActions(app.active)} active={app.active} agent={agent}
       />
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
-        <p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p>
+        <p>Pair this browser, then create or open a conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p>
       </section>;
   const controls = <div className="application-controls">
-    <div className="application-status"><strong>Browser development · Recorded playback</strong>
+    <div className="application-status"><strong>{hostLabel}</strong>
       <HostStatusLabel host={app.host} />
     </div>
     {artifact}
@@ -34,7 +37,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.host.kind === 'unpaired' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="action-row">
       <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void controller.reconnect()}>Reconnect</button>
-      <button disabled={!enabled || app.saved.pendingCreation !== null} onClick={() => void controller.create()}>New recorded conversation</button>
+      <button disabled={!enabled || app.saved.pendingCreation !== null} onClick={() => void controller.create()}>{agent === 'recorded' ? 'New recorded conversation' : 'New conversation'}</button>
     </div>
     {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.conversationId} needs confirmation. Recovery uses the saved conversation ID.</p>
       <button disabled={!enabled} onClick={() => void controller.recoverCreation()}>Recover creation</button>
@@ -52,5 +55,5 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   </div>;
   return <DesktopShell protectedContent={controls} defaultView={conversation}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
-    buildLabel="Browser development · Recorded host">{children}</DesktopShell>;
+    buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : 'Browser development · Recorded host'}>{children}</DesktopShell>;
 }
