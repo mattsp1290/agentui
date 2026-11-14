@@ -22,9 +22,10 @@ test('packed Crew example imports both exports with the retained SDK archive', t
     return join(directory, packed.filename);
   });
   const sdk = join(root, 'vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/birbcrew-client-0.1.0.tgz');
+  const [zod] = JSON.parse(execFileSync('npm', ['pack', join(root, 'node_modules/zod'), '--pack-destination', directory, '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8' }));
   writeFileSync(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module',
-    dependencies: { '@birbcrew/client': `file:${sdk}` },
-    overrides: { '@birbcrew/client': '$@birbcrew/client' } }));
+    dependencies: { '@birbcrew/client': `file:${sdk}`, zod: `file:${join(directory, zod.filename)}` },
+    overrides: { '@birbcrew/client': '$@birbcrew/client', zod: '$zod' } }));
   execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], { cwd: directory, stdio: 'pipe' });
   execFileSync(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';

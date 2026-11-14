@@ -108,10 +108,9 @@ export async function connectCrewConversation(options: CrewConversationOptions) 
     retry() {
       return exclusive(async () => {
         if (!record) throw new Error('No saved Crew request');
-        const admission = record.outcome.kind === 'rejected' ? 'known-absent' : 'unknown-or-observed';
-        const next = admission === 'known-absent' ? await invalidateRejection(record) : record;
-        if (admission !== 'known-absent') await requireWritableRetryStorage(next);
-        return dispatch(next, admission);
+        if (record.outcome.kind === 'rejected') return dispatch(await invalidateRejection(record), 'known-absent');
+        await requireWritableRetryStorage(record);
+        return dispatch(record, 'unknown-or-observed');
       });
     },
     reconcile() {

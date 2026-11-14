@@ -5,7 +5,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { CrewClient } from '@birbcrew/client';
-import { connectCrewConversation } from '../dist/index.js';
+import { connectCrewConversation } from '@agentui/example-crew';
 import { fileIntents } from '@agentui/example-crew/file-intents';
 
 export const conversationId = '22222222-2222-4222-8222-222222222222';
