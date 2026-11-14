@@ -5,13 +5,13 @@ import { record, identifier, count } from '@agentui/contracts/decode';
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
 
-export type ControlRequest = { readonly op: 'invite' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
-type ControlValue = { readonly code: string } | ReturnType<Access['devices']> | null;
+export type ControlRequest = { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
+type ControlValue = { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
 type ControlResponse = { readonly ok: true; readonly value: ControlValue } | { readonly ok: false; readonly error: string };
 export function parseControlRequest(value: unknown): ControlRequest {
   const input = record(value);
   switch (input.op) {
-    case 'invite': record(input, ['op']); return { op: 'invite' };
+    case 'invite': case 'invite-native': record(input, ['op']); return { op: input.op };
     case 'devices': {
       record(input, input.after === undefined ? ['op'] : ['op', 'after']);
       return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
@@ -27,6 +27,10 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
   if (input.ok !== true) throw new Error('Invalid control response');
   switch (request.op) {
     case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
+    case 'invite-native': {
+      const invitation = record(input.value, ['hostId', 'code']);
+      return { ok: true, value: { hostId: identifier(invitation.hostId), code: identifier(invitation.code, 32) } };
+    }
     case 'revoke': if (input.value !== null) throw new Error('Invalid revocation result'); return { ok: true, value: null };
     case 'devices': {
       if (!Array.isArray(input.value) || input.value.length > 100) throw new Error('Invalid device list');
@@ -72,6 +76,7 @@ export async function startControl(path: string, access: Access, feeds: FeedRegi
         let value: ControlValue;
         switch (request.op) {
           case 'invite': value = { code: access.invite('browser-development') }; break;
+          case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;
           case 'devices': value = access.devices(request.after); break;
           case 'revoke': access.revoke(request.id); feeds.closePrincipal(request.id); value = null; break;
         }
