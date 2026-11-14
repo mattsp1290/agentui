@@ -20,7 +20,7 @@ required installed-update protocol. A live-update option would need a compatible
 bundle/native version contract, interrupted-download handling, atomic activation,
 and last-good restart recovery. No such updater exists in this repository, and
 this spike does not add one or depend on Expo or a hosted service. Live delivery
-is unqualified, not demonstrated impossible. Rebuild-only is the task's accepted
+is unqualified, not demonstrated impossible. Rebuild-only is task `agentui-uoyy`'s accepted
 v1 alternative.
 
 The generated template's Release `bundleURL()` reads `main.jsbundle` from the
@@ -61,16 +61,27 @@ The probe has its own dependency tree and does not change the main workspace loc
 | Pinned dependency installation | PASS | npm ci and pod install logs |
 | Release A build/install/render | PASS | build-A log and A screenshot |
 | Source edit to B without rebuild, then restart | PASS: still A | no-rebuild screenshot |
-| Fresh template preparation with committed locks | PASS | clean prepare log |
+| Fresh template generation with committed locks, warm artifact cache, DerivedData retained | PASS | clean prepare log |
 | Release B rebuild/install/render | PASS | build-B log and B screenshot |
 | B restart without Metro | PASS | B-restart screenshot, no listener on 8081 |
-| Repository npm run verify | PASS | 11 tests, build, check, lint |
+| Repository npm run verify (regression, excludes spikes) | PASS | 11 tests, build, check, lint |
 | Compatible live-update recovery | UNQUALIFIED | No updater tested |
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
 | Integrated AgentUI behavior | UNQUALIFIED | Standalone probe only |
 
 Follow the [probe procedure](../../spikes/ios-updates/README.md) to reproduce the
 commands. Screenshots require visual inspection. The scripts report build and
-installation completion, not automatic visual acceptance. Full local build output,
-generated app, and installed bundle are under ignored `spikes/ios-updates/.work/`.
+installation completion, not automatic visual acceptance. Full local build output and the generated app are under ignored
+`spikes/ios-updates/.work/`. Installed apps live in the simulator container.
+Bundle hashes are read back from the installed app.
 Retained evidence is in [the evidence directory](../../spikes/ios-updates/evidence/).
+
+The initial A and B experiment used two generated trees, with DerivedData retained.
+The follow-up after review uses deployment-mode CocoaPods installation, then A,
+source edit without rebuild, and B in the same generated tree. Restart logs retain
+the source label, installed bundle hash, Metro port check, and launch PID.
+
+This is a bounded v1 update recommendation. Existing architecture documents still
+list broader future options. The Linux coordinator owns their cross-links and
+reconciliation when integrating this task; no product update policy is implemented
+by this probe. Native-incompatible changes remain rebuild-required in all cases.

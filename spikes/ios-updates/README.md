@@ -28,8 +28,7 @@ not prove the screen rendered. All generated files live in ignored `.work/`.
 Edit `.work/app/index.js` to display B. Terminate and relaunch the installed app:
 
 ```sh
-xcrun simctl terminate "$PROBE_SIMULATOR" org.reactjs.native.example.AgentUIUpdateProbe
-xcrun simctl launch "$PROBE_SIMULATOR" org.reactjs.native.example.AgentUIUpdateProbe
+bash spikes/ios-updates/restart.sh no-rebuild "$PROBE_SIMULATOR"
 ```
 
 Expect A. Local source edits do not replace the installed Release bundle.
@@ -39,13 +38,16 @@ Now run:
 bash spikes/ios-updates/rebuild.sh B "$PROBE_SIMULATOR"
 ```
 
-Expect B. Repeat terminate and launch and expect B again. There should be no
+Expect B. Run `bash spikes/ios-updates/restart.sh B "$PROBE_SIMULATOR"` and expect B again. There should be no
 listener on port 8081 (`lsof -nP -iTCP:8081 -sTCP:LISTEN`). That check plus the
 Release bundle URL in generated `ios/AgentUIUpdateProbe/AppDelegate.swift`
 confirms this workflow does not depend on a running Metro server.
 
 `prepare.sh` generates the MIT-licensed React Native Community template 0.86.0
-with CLI 20.2.0, then installs the committed npm and CocoaPods locks. It can run
+with CLI 20.2.0, then installs the committed npm and CocoaPods locks. `pod install --deployment` and a lock comparison fail on native dependency drift.
+The script uses global CocoaPods 1.16.2, not the generated template Gemfile.
+The CLI version is fixed, but its bootstrap dependency resolution is not locked.
+Generated native project checksums are retained with the evidence. It can run
 again after a completed preparation. For a fresh preparation, move `.work/app`
 to a backup directory and run it again. The npm lock and Podfile lock are generated
 dependency records, excluded from the implementation line budget. Application
@@ -57,3 +59,8 @@ to Release, then build and run from Xcode. Repeat for B and restart without Metr
 This route needs your signing setup and Developer Mode on the device. It was not
 executed in this qualification. Simulator `CODE_SIGNING_ALLOWED=NO` commands do
 not qualify signing or physical-device installation.
+
+The qualification used an isolated Node installation created with
+`npm install --prefix /tmp/agentui-ios-tools node@24.22.3 npm@11.19.1`, then prepended
+`/tmp/agentui-ios-tools/node_modules/.bin` to PATH. Any installation manager that
+provides the exact required versions works.
