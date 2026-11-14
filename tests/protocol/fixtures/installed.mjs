@@ -72,6 +72,7 @@ export const installedFixtures = {
     assert.equal(result.type, 'TOOL_CALL_RESULT');
     assert.equal(result.toolCallId, call.toolCallId);
     assert.equal(result.content, 'observed failure');
+    for (const event of [args, ended, result]) assert.equal(event.subagentRunId, text.subagentRunId);
     assert.notEqual(result.messageId, text.messageId);
     assert.equal(mapped(projection, { kind: 'text-ended', message, owner })[0].messageId, text.messageId);
     assert.equal(mapped(projection, { kind: 'step-finished', step: ref('step') })[0].stepName, step.stepName);
@@ -81,7 +82,9 @@ export const installedFixtures = {
     assert.equal(mapped(same, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
     same.close();
     const anotherRun = actor({ runId: 'another-run' });
-    assert.equal(mapped(anotherRun, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3)[0].messageId, text.messageId);
+    const [anotherText] = mapped(anotherRun, { kind: 'text-complete', message, owner, role: 'assistant', text: '' }, 3);
+    assert.equal(anotherText.messageId, text.messageId);
+    assert.equal(anotherText.subagentRunId, text.subagentRunId);
     anotherRun.close();
     const batch = mapped(other, { kind: 'text-complete', message, role: 'assistant', text: '' }, 3);
     const [plain] = batch;
@@ -157,6 +160,8 @@ export const installedFixtures = {
     assert.equal(tool.error, 'observed error');
     assert.deepEqual(tool.content, messages[4].content);
     assert.deepEqual(user.content.slice(1), parts.slice(1));
+    assert.equal(typeof user.content[0].id, 'string');
+    assert.notEqual(user.content[0].id, '');
     assert.notEqual(user.content[0].id, parts[0].id.id);
     assert.equal(user.content[0].text, '');
     assert.deepEqual(user.content[0].metadata, { count: 0 });
@@ -170,7 +175,7 @@ export const installedFixtures = {
   },
 
   'terminal-interrupts-usage'() {
-    const usage = [{ provider: '', model: '', inputTokens: 0, outputTokens: 0, totalTokens: 0 }];
+    const usage = [{ provider: '', model: '', inputTokens: 0, outputTokens: 0, totalTokens: 0, reasoningTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0 }];
     for (const outcome of ['success', 'cancelled', 'interrupt']) {
       const projection = actor();
       const tool = ref('same'), owner = ref('same');
@@ -253,7 +258,7 @@ export const installedFixtures = {
     assert.deepEqual(projection.accept({ kind: 'run-finished', outcome: 'success' }), { kind: 'error', error: { code: 'closed' } });
     for (const fact of [
       ...['unknown-fact', 'reasoning-started', 'subagent-started'].map((kind) => ({ kind })),
-      ...[...plannedFamilies, 'unknown-family'].map((family) => ({ kind: 'not-observable', family })),
+      ...[...plannedFamilies, 'text', 'tools', 'lifecycle', 'unknown-family'].map((family) => ({ kind: 'not-observable', family })),
     ]) {
       const rejected = actor();
       assert.deepEqual(rejected.accept(fact), { kind: 'error', error: { code: 'invalid-input' } });

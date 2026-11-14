@@ -8,6 +8,8 @@ for (const contract of [protocolContract, alignmentContract]) assert.equal(new U
 test(protocolContract.test, () => assertCompileCases({
   config: 'packages/protocol/tsconfig.json',
   prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
+import { EventType } from '@ag-ui/core';
+export const knownEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm' };
 export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
 export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
 const widenedCapabilities = { multiAgent: { supported: true, unexpected: true } };
@@ -30,6 +32,7 @@ export function describe(value: BackendAvailability): string {
 `,
   cases: [
     ['', null],
+    ["export const unknownEvent: Event = { type: 'UNKNOWN_EVENT' };", /TS2322.*UNKNOWN_EVENT/u],
     ["export const fresh: AgentCapabilities = { multiAgent: { supported: true, unexpected: true } };", /TS2353.*unexpected/u],
     ["export const silent: BackendAvailability = { kind: 'unsupported' };", /Property 'reason' is missing/u],
     ["export const silent: BackendAvailability = { kind: 'unavailable' };", /Property 'reason' is missing/u],
@@ -46,6 +49,7 @@ test(alignmentContract.test, () => assertCompileCases({
   prefix: `import type { BackendAvailability } from '@agentui/protocol';
 import type { Capability } from '@agentui/host';
 import type { describeProjection } from '@agentui/host/agui';
+export const publishedNative = ${JSON.stringify(coverageContract.nativeAvailability)} satisfies BackendAvailability;
 type Equal<A, B> = (<T>() => T extends A ? 1 : 2) extends (<T>() => T extends B ? 1 : 2) ? true : false;
 type Description = Extract<ReturnType<typeof describeProjection>, { kind: 'ok' }>['value'];
 export const descriptorStates: Equal<BackendAvailability['kind'], Description['availability']> = true;

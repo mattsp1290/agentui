@@ -18,10 +18,10 @@ export const coverageContract = {
   nativeDeclarationScope: 'No backend availability declaration input exists. Contracts belong to agentui-k4zj, admission to agentui-7s6y and qualification to agentui-ckpw.',
   behaviorLimits: {
     unknownOrUnimplementedFact: { claim: 'Explicit error and faulted actor; no successful empty batch.', fixtures: ['acknowledged-absence-and-fault'] },
-    notObservable: { claim: 'Acknowledged absence for an allowed family; empty batch and usable actor.', fixtures: ['acknowledged-absence-and-fault'] },
+    notObservable: { claim: 'Acknowledged absence for a family declared by describeProjection; empty batch and usable actor.', fixtures: ['acknowledged-absence-and-fault'] },
     terminalOrdering: { claim: 'Per-event canonical validation only. The pinned projection maps failure after a finished terminal; single-terminal enforcement belongs to AgentUI run coordination (agentui-7s6y/agentui-ckpw).', fixtures: ['terminal-ordering-limit'] },
     repeatedEntityIds: { claim: 'Entity IDs can repeat across runs with the same sourceKey and native reference; run-scoped consumption and replay belong to agentui-7s6y/agentui-ckpw.', fixtures: ['lifecycle-text-tools'] },
-    ownerAttribution: { claim: 'Owner references map to subagentRunId without emitted subagent lifecycle events; partial-stream reconciliation belongs to agentui-ckpw.', fixtures: ['lifecycle-text-tools'] },
+    ownerAttribution: { claim: 'Owner attribution can reuse subagentRunId across runs without emitted lifecycle events; invocation reconciliation belongs to agentui-ckpw.', fixtures: ['lifecycle-text-tools', 'acknowledged-absence-and-fault'] },
     nullTerminalResult: { claim: 'The pinned projection omits a null terminal result; non-null falsy values remain intact.', fixtures: ['terminal-interrupts-usage'] },
   },
 };
@@ -90,7 +90,7 @@ export const coverage = {
     fixtures: [], contracts: canonicalContracts, pending: ['AgentUI provider request contracts and admission; agentui-k4zj and agentui-7s6y'],
   },
   capabilities: {
-    mapping: 'wire-only', scope: 'Closed SDK capability literals and widened TypeScript structural values require canonical validation; four-state availability alignment and projection description.',
+    mapping: 'wire-only', scope: 'Published SDK AgentCapabilities assignability under TypeScript; canonical capability-schema controls; independent backend availability alignment and projection description.',
     fixtures: ['availability-description'], contracts: [...canonicalContracts, alignmentContract], pending: ['AgentUI provider capability validation and operation admission; agentui-k4zj and agentui-7s6y'],
   },
 };

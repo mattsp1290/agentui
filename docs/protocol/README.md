@@ -26,7 +26,7 @@ The matrix keeps these facts separate:
 | Canonical schema | Closed wire shapes and their required fields, unions and enums |
 | SDK runtime results | Historical upstream validator acceptance of indexed payloads |
 | Mapping coverage | Facts represented by the pinned Switchboard projection |
-| Installed fixtures | AgentUI tests of actual returned events through public exports |
+| Installed fixtures | Actual public projection events, descriptors, absence and fault results |
 | Native availability | One explicit undeclared scope because no backend declaration input exists |
 | Native qualification | The pinned record's route assessments, currently unqualified for all six routes |
 | Pending consumers | Product owners for provider admission, transport, reducers, replay and UI |
@@ -34,7 +34,8 @@ The matrix keeps these facts separate:
 SDK acceptance does not establish canonical validity. The upstream runtime
 validators accept eight canonically invalid indexed fixtures in TypeScript and
 twenty-two in Python. Those results use zod 4.0.17 and pydantic 2.11.7, not the
-published TypeScript types AgentUI imports. AgentUI runs no SDK validator.
+published TypeScript types AgentUI imports. The AgentUI conformance suite runs no
+SDK validator.
 The upstream verifier owns all 98 definitions, while the concrete index names
 219 payloads. Those are upstream evidence inputs, not 219 AgentUI tests.
 
@@ -43,11 +44,14 @@ The owned fixtures validate every emitted event against the retained canonical
 state, activity, public extensions, message content and terminal observations.
 Opaque reasoning-role messages and scoped owner references provide partial
 representation. Reasoning and subagent lifecycle mapping remain planned.
-Request and capability rows distinguish published SDK types from canonical schema
-controls. The `multiAgent` type rejects unknown fields on fresh literals. Widened values
-can retain extra keys through TypeScript structural assignment, a language property
-rather than SDK openness. These controls validate representative raw shapes
-without implementing host admission. Canonical discriminator lists describe the wire inventory,
+Compiler probes observe TypeScript assignment rules against published SDK types.
+Excess-property checking rejects unknown `multiAgent` keys on fresh literals;
+widened values can retain those keys. Both are language properties, and neither
+validates runtime JSON. The SDK's optional runtime capability schemas use
+`looseObject` and preserve unknown keys, consistent with the historical parser
+results. Canonical validation rejects them. These controls validate representative
+raw shapes without implementing host admission. Canonical discriminator lists
+describe the wire inventory,
 not emitted-event evidence. The pinned producer uses text and tool boundaries,
 not chunk shorthands. Full consumer handling remains `agentui-ckpw`.
 
@@ -59,7 +63,8 @@ close. Callers must retain the original failure result. Closing the actor create
 no terminal outcome.
 
 Entity IDs can repeat across runs with the same source key and native reference.
-Owner references produce subagent attribution without lifecycle events. Consumers
+Owner references can reuse subagent attribution IDs across runs without lifecycle
+events. Consumers
 must retain run scope and handle partial streams in `agentui-7s6y`/`agentui-ckpw`.
 
 Validation covers individual events, not stream ordering. The pinned projection
@@ -79,6 +84,8 @@ Switchboard's projection descriptor carries availability states without reasons.
 A bridge into `BackendAvailability` needs a reason from the backend declaration,
 owned by `agentui-k4zj`. The bridge must validate that reasons are nonempty;
 `string` alone cannot enforce that. No such bridge is implemented here.
+Projection types remain accessible through
+public function signatures; named type re-exports will follow a concrete caller.
 
 Capability wire data, backend availability and native qualification
 remain independent. A representable event is not evidence of an available or

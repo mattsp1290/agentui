@@ -27,10 +27,10 @@
       "fixtures": 219,
       "valid": 135,
       "invalid": 84,
-      "typescriptPermissiveInvalid": 8,
-      "pythonPermissiveInvalid": 22,
-      "typescriptRestrictiveValid": 0,
-      "pythonRestrictiveValid": 0
+      "typescriptSdkRuntimePermissiveInvalid": 8,
+      "pythonSdkRuntimePermissiveInvalid": 22,
+      "typescriptSdkRuntimeRestrictiveValid": 0,
+      "pythonSdkRuntimeRestrictiveValid": 0
     },
     "sdkRuntimeEvidence": {
       "kind": "historical-upstream-runtime-validators",
@@ -141,7 +141,7 @@
       ]
     },
     "notObservable": {
-      "claim": "Acknowledged absence for an allowed family; empty batch and usable actor.",
+      "claim": "Acknowledged absence for a family declared by describeProjection; empty batch and usable actor.",
       "fixtures": [
         "acknowledged-absence-and-fault"
       ]
@@ -159,9 +159,10 @@
       ]
     },
     "ownerAttribution": {
-      "claim": "Owner references map to subagentRunId without emitted subagent lifecycle events; partial-stream reconciliation belongs to agentui-ckpw.",
+      "claim": "Owner attribution can reuse subagentRunId across runs without emitted lifecycle events; invocation reconciliation belongs to agentui-ckpw.",
       "fixtures": [
-        "lifecycle-text-tools"
+        "lifecycle-text-tools",
+        "acknowledged-absence-and-fault"
       ]
     },
     "nullTerminalResult": {
@@ -194,7 +195,7 @@
       ],
       "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Common event envelope on actual projection output.",
       "installedFixtures": [
@@ -249,7 +250,7 @@
         "TextMessageEndEvent/valid/timestamp-at-safe-integer-minimum.json",
         "TextMessageStartEvent/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "TextMessageContentEvent/invalid/metadata-null.json",
           "typescriptAccepts": false,
@@ -322,7 +323,7 @@
         "ToolCallStartEvent/invalid/parent-message-id-null.json",
         "ToolCallStartEvent/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "ToolCallChunkEvent/invalid/parent-message-id-null.json",
           "typescriptAccepts": false,
@@ -396,7 +397,7 @@
         "StateSnapshotEvent/valid/snapshot-object.json",
         "StateSnapshotEvent/valid/snapshot-string.json"
       ],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Snapshot and patch payload preservation; no patch reducer.",
       "installedFixtures": [
@@ -454,7 +455,7 @@
         "UserMessage/valid/multimodal-content.json",
         "UserMessage/valid/text-content.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "MessagesSnapshotEvent/invalid/message-metadata-null.json",
           "typescriptAccepts": false,
@@ -491,7 +492,7 @@
         "ActivitySnapshotEvent/valid/replace-absent.json",
         "ActivitySnapshotEvent/valid/replace-false.json"
       ],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Activity snapshot and delta payload preservation.",
       "installedFixtures": [
@@ -531,7 +532,7 @@
         "RawEvent/valid/minimal.json",
         "RawEvent/valid/with-source.json"
       ],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Explicit versioned public raw and custom envelopes.",
       "installedFixtures": [
@@ -591,7 +592,7 @@
         "StepFinishedEvent/valid/minimal.json",
         "StepStartedEvent/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "RunFinishedEvent/invalid/outcome-cancelled-carrying-interrupts.json",
           "typescriptAccepts": true,
@@ -661,7 +662,7 @@
         "ReasoningMessageStartEvent/valid/minimal.json",
         "ReasoningStartEvent/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "ReasoningMessageStartEvent/invalid/role-missing.json",
           "typescriptAccepts": false,
@@ -714,7 +715,7 @@
         "SubagentStartedEvent/valid/full.json",
         "SubagentStartedEvent/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "SubagentErrorEvent/invalid/code-null.json",
           "typescriptAccepts": false,
@@ -758,7 +759,7 @@
       ],
       "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.",
       "installedFixtures": [
@@ -786,7 +787,7 @@
         "ResumeEntry/valid/cancelled.json",
         "ResumeEntry/valid/resolved.json"
       ],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Observed terminal interrupts and references; no native suspend or resume proof.",
       "installedFixtures": [
@@ -805,7 +806,7 @@
       ],
       "canonicalEventDiscriminators": [],
       "canonicalFixtures": [],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "represented",
       "scope": "Observed terminal accounting; omitted values remain distinct from explicit zero.",
       "installedFixtures": [
@@ -838,7 +839,7 @@
         "FileSource/valid/full.json",
         "FileSource/valid/minimal.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "FileSource/invalid/reference-record.json",
           "typescriptAccepts": true,
@@ -881,7 +882,7 @@
         "RunAgentInput/valid/state-string.json",
         "RunAgentInput/valid/without-tools-or-context.json"
       ],
-      "sdkDivergences": [],
+      "sdkRuntimeDivergences": [],
       "mapping": "wire-only",
       "scope": "Published SDK RunAgentInput type and canonical schema controls, with different accepted shapes; no host admission implementation.",
       "installedFixtures": [],
@@ -934,7 +935,7 @@
         "MultiAgentCapabilities/invalid/old-subagents-key.json",
         "MultiAgentCapabilities/valid/subagents.json"
       ],
-      "sdkDivergences": [
+      "sdkRuntimeDivergences": [
         {
           "path": "AgentCapabilities/invalid/custom-null.json",
           "typescriptAccepts": false,
@@ -962,7 +963,7 @@
         }
       ],
       "mapping": "wire-only",
-      "scope": "Closed SDK capability literals and widened TypeScript structural values require canonical validation; four-state availability alignment and projection description.",
+      "scope": "Published SDK AgentCapabilities assignability under TypeScript; canonical capability-schema controls; independent backend availability alignment and projection description.",
       "installedFixtures": [
         "availability-description"
       ],

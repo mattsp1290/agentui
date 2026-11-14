@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { fileURLToPath } from 'node:url';
 import { aguiProtocol } from '@agentui/host/agui';
 import { coverage, coverageContract, installedFixtureFile, installedFixtureIds, installedFixtureTest } from '../tests/protocol/fixtures/coverage.mjs';
 
@@ -83,7 +82,7 @@ function projectCategories({ pin, definitions, fixtures }) {
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),
-      sdkDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.validity === 'valid')))
+      sdkRuntimeDivergences: canonicalFixtures.filter((fixture) => [fixture.typescriptAccepts, fixture.pythonAccepts].some((accepted) => accepted !== (fixture.validity === 'valid')))
         .map(({ path, typescriptAccepts, pythonAccepts }) => ({ path, typescriptAccepts, pythonAccepts })),
       mapping: owned.mapping, scope: owned.scope, installedFixtures: owned.fixtures, contractFixtures: owned.contracts,
       pendingProductOwners: owned.pending,
@@ -110,10 +109,10 @@ export function buildConformanceReport() {
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.canonicalEventDiscriminators).length,
         fixtures: fixtures.length, valid: fixtures.filter((fixture) => fixture.validity === 'valid').length,
         invalid: fixtures.filter((fixture) => fixture.validity === 'invalid').length,
-        typescriptPermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.typescriptAccepts).length,
-        pythonPermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.pythonAccepts).length,
-        typescriptRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.typescriptAccepts).length,
-        pythonRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.pythonAccepts).length },
+        typescriptSdkRuntimePermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.typescriptAccepts).length,
+        pythonSdkRuntimePermissiveInvalid: fixtures.filter((fixture) => fixture.validity === 'invalid' && fixture.pythonAccepts).length,
+        typescriptSdkRuntimeRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.typescriptAccepts).length,
+        pythonSdkRuntimeRestrictiveValid: fixtures.filter((fixture) => fixture.validity === 'valid' && !fixture.pythonAccepts).length },
       sdkRuntimeEvidence: { kind: coverageContract.sdkRuntimeEvidenceKind,
         typescript: { package: sdk.package, version: sdk.version, validator: 'zod', validatorVersion: pin.verifierTools.zod },
         python: { package: pythonSdk.package, version: pythonSdk.version, validator: 'pydantic', validatorVersion: pin.verifierTools.pydantic },
@@ -143,7 +142,7 @@ export function buildConformanceReport() {
 
 export const serializeConformanceReport = (report) => `${JSON.stringify(report, null, 2)}\n`;
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (import.meta.main) {
   assert.ok(process.argv.length === 2 || (process.argv.length === 3 && process.argv[2] === '--check'), 'Usage: node scripts/protocol-conformance.mjs [--check]');
   const report = serializeConformanceReport(buildConformanceReport());
   if (process.argv[2] === '--check') assert.equal(readFileSync(reportFile, 'utf8'), report, 'Conformance report is stale; regenerate it');
