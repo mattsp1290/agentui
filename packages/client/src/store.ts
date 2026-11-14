@@ -34,14 +34,14 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let replay: ReplayState<P> = { kind: 'untrusted', cause: { kind: 'cold' },
     delivery: { document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null, identities: new Map() } };
   let connection: ConnectionState = { kind: 'disconnected' };
+  const inFlight = new Set<string>();
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
   let feed: Feed | null = null;
   let generation = 0;
-  const inFlight = new Set<string>();
   function makeView(): ClientView<P> {
     const applied = replay.delivery;
-    return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection) });
+    return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection), submitting: Object.freeze([...inFlight]) });
   }
   function publish(): void {
     view = makeView();
@@ -84,6 +84,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
+      publish();
       const result = await port.submit(entry.command);
       if (result.kind === 'rejected') {
         if (admission === 'known-absent') await enqueue(async () => {
@@ -100,7 +101,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         if (next !== local) { await persist(next); publish(); }
       });
       return { kind: 'receipt', receipt };
-    } finally { inFlight.delete(id); }
+    } finally { inFlight.delete(id); publish(); }
   }
   async function submit(body: CommandBody | null): Promise<SubmitResult> {
     await ready;

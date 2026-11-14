@@ -1,4 +1,5 @@
 import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
+import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPort, ConversationScope, Projection, Receipt } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
 import { budgets, commandKey } from './durable-model.js';
@@ -59,10 +60,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       store.create(authorized(scope), installation(target));
     },
     listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
-      const input = parseScope({ hostId, conversationId: after === null ? 'catalog' : after });
+      const hostIdValue = identifier(hostId), cursor = after === null ? null : identifier(after);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > 100) throw new Error('Invalid catalog limit');
       if (closed) throw new Error('Host is closed');
-      return store.listConversations(input.hostId, after === null ? null : input.conversationId, limit).map(authorized);
+      return store.listConversations(hostIdValue, cursor, limit).map(scope => {
+        if (!options.authorize(scope)) throw new Error('Unauthorized scope');
+        return scope;
+      });
     },
     append(scope: ConversationScope, output: HostOutput<E>): void {
       store.append(authorized(scope), output);

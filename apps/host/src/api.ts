@@ -15,12 +15,11 @@ export function createApi(options: {
   readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
 }) {
   const { access, host, feeds } = options;
-  function requestScope(principal: Principal, request: Request): ConversationScope | null {
+  function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
       case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
-      case 'pull': case 'close': return feeds.get(principal.id, request.feedId).scope;
-      case 'metadata': case 'catalog': return null;
+      case 'pull': case 'close': case 'metadata': case 'catalog': return null;
     }
   }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
@@ -33,13 +32,13 @@ export function createApi(options: {
       case 'reconcile': return host.reconcile(request.scope, request.id) satisfies Promise<ServiceValueMap['reconcile']>;
       case 'watch': return { feedId: feeds.open(principal.id, host.conversation(request.scope), request) } satisfies ServiceValueMap['watch'];
       case 'pull': return feeds.pull(principal.id, request.feedId, request.ack) satisfies Promise<ServiceValueMap['pull']>;
-      case 'close': feeds.close(request.feedId); return null satisfies ServiceValueMap['close'];
+      case 'close': feeds.close(principal.id, request.feedId); return null satisfies ServiceValueMap['close'];
     }
   }
   return async (principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> => {
     if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
     if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');
-    const scope = requestScope(principal, request);
+    const scope = requestScope(request);
     if (scope !== null && scope.hostId !== principal.hostId) throw new HostFailure('forbidden', 'Conversation belongs to another host');
     const value = await apply(principal, request);
     if (!access.authorized(principal, options.credentialClass)) throw new HostFailure('unauthorized', 'Device access was revoked');

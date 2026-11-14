@@ -18,13 +18,13 @@ export function browserHandler(options: { readonly access: Access; readonly api:
       if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
       if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
       const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
-      if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
       if (message.op === 'pair') {
+        if (options.isClosing()) throw new HostFailure('unavailable', 'Host is shutting down');
         try {
-          const paired = options.access.pair(message.code, 'browser-development', Date.now(), request.socket.remoteAddress);
+          const paired = options.access.pair(message.code, 'browser-development');
           response.setHeader('set-cookie', `${cookieName}=${paired.secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`);
           json(response, 200, { ok: true, value: null });
-        } catch { throw new HostFailure('unauthorized', 'Pairing invitation is invalid, expired or rate limited'); }
+        } catch { throw new HostFailure('unauthorized', 'Pairing invitation is invalid or expired'); }
         return;
       }
       const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith(`${cookieName}=`)) ?? [];

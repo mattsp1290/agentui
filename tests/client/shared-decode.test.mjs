@@ -3,7 +3,7 @@ import test from 'node:test';
 import { createHash, webcrypto } from 'node:crypto';
 import { canonicalJson, parseReceipt, parseDecision } from '@agentui/contracts';
 import { record, identifier, count, hex, utf8Bytes } from '@agentui/contracts/decode';
-import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest } from '@agentui/contracts/artifact';
+import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdentityText, assertArtifactId } from '@agentui/contracts/artifact';
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 const payload = () => manifestPayload({ schemaVersion: 1, platform: 'browser-development', sourceRevision: 'a'.repeat(64),
@@ -31,17 +31,21 @@ test('pure UTF-8 sizing agrees with encoded bytes including replacement of lone 
   }
 });
 
-test('manifest schema verifies the same canonical identity with synchronous and asynchronous digests', async () => {
-  const body = payload(), manifest = { ...body, artifactId: digest(canonicalJson(body)) };
-  assert.deepEqual(parseArtifactManifest(manifest, digest), manifest);
-  const actualBrowserDigest = async text => Buffer.from(await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(text))).toString('hex');
-  assert.deepEqual(await parseArtifactManifest(manifest, actualBrowserDigest), manifest);
-  assert.throws(() => parseArtifactManifest({ ...manifest, artifactId: '0'.repeat(64) }, digest), /identity mismatch/);
-  await assert.rejects(parseArtifactManifest({ ...manifest, artifactId: '0'.repeat(64) }, actualBrowserDigest), /identity mismatch/);
+test('manifest parsing and real Node/WebCrypto identity verification share canonical bytes', async () => {
+  const body = payload(), input = { ...body, artifactId: digest(canonicalJson(body)) };
+  const manifest = parseArtifactManifest(input);
+  assert.deepEqual(manifest, input);
+  assert.equal(artifactIdentityText(manifest), canonicalJson(body));
+  assertArtifactId(manifest, digest(artifactIdentityText(manifest)));
+  const browserDigest = Buffer.from(await webcrypto.subtle.digest('SHA-256', new TextEncoder().encode(artifactIdentityText(manifest)))).toString('hex');
+  assertArtifactId(manifest, browserDigest);
+  const tampered = parseArtifactManifest({ ...manifest, artifactId: '0'.repeat(64) });
+  assert.throws(() => assertArtifactId(tampered, digest(artifactIdentityText(tampered))), /identity mismatch/);
+  assert.throws(() => assertArtifactId(tampered, browserDigest), /identity mismatch/);
   for (const changed of [ { ...manifest, extra: true }, { ...manifest, assets: [{ path: 'artifact.json', sha256: 'd'.repeat(64) }] },
     { ...manifest, assets: [{ path: '../outside', sha256: 'd'.repeat(64) }] }, { ...manifest, sourceDirty: { ...manifest.sourceDirty, extra: true } },
     { ...manifest, assets: [{ path: 'z.js', sha256: 'd'.repeat(64) }, { path: 'a.js', sha256: 'd'.repeat(64) }] } ]) {
-    assert.throws(() => parseArtifactManifest(changed, digest));
+    assert.throws(() => parseArtifactManifest(changed));
   }
 });
 

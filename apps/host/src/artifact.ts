@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { lstatSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
-import { parseArtifactManifest as decodeManifest } from '@agentui/contracts/artifact';
+import { parseArtifactManifest, artifactIdentityText, assertArtifactId } from '@agentui/contracts/artifact';
 import type { ArtifactManifest } from '@agentui/contracts/artifact';
 import { nonempty } from '@agentui/contracts/decode';
 
@@ -10,14 +10,12 @@ export type { ArtifactManifest } from '@agentui/contracts/artifact';
 function digest(value: string | Buffer): string {
   return createHash('sha256').update(value).digest('hex');
 }
-export function parseArtifactManifest(value: unknown): ArtifactManifest {
-  return decodeManifest(value, digest);
-}
 function verifyArtifact(directory: string, expectedPlatform: ArtifactManifest['platform'], retain: boolean) {
   const root = realpathSync(directory);
   const manifestPath = join(root, 'artifact.json');
   if (!lstatSync(manifestPath).isFile()) throw new Error('Artifact manifest must be a regular file');
   const manifest = parseArtifactManifest(JSON.parse(readFileSync(manifestPath, 'utf8')));
+  assertArtifactId(manifest, digest(artifactIdentityText(manifest)));
   if (manifest.platform !== expectedPlatform) throw new Error(`Artifact requires a ${expectedPlatform} artifact`);
   const expected = new Map(manifest.assets.map(entry => [entry.path, entry.sha256]));
   const files = new Map<string, Buffer>();

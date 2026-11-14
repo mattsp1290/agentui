@@ -13,7 +13,7 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const scope = { hostId: 'host', conversationId: 'conversation' };
     const own = { version: 1, scope, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' } };
     const foreign = { scope, clientCommandId: 'foreign-pending', hostOperationId: 'operation', sequence: 1, state: { kind: 'pending' } };
-    let view = { draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }],
+    let view = { submitting: ['own-original'], draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }],
       connection: { kind: 'connected' }, cursor: 1,
       document: { domain: { messages: [] }, decisions: {}, receipts: { 'foreign-pending': foreign } } };
     const store = { getSnapshot: () => view, subscribe: () => () => {} };
@@ -22,9 +22,9 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const actions = { enabled: false, busy: true, storageFailure: '',
       reconcile: async id => globalThis.checked.push(id) };
     const root = createRoot(document.getElementById('root'));
-    globalThis.renderRecovery = busy => { actions.busy = busy; actions.enabled = !busy; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
+    globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; actions.busy = busy; actions.enabled = !busy; flushSync(() => root.render(<ConversationView actions={actions} active={active} />)); };
     globalThis.savedCommand = own;
-    globalThis.renderRecovery(true);`, resolveDir: root, loader: 'jsx' },
+    globalThis.renderRecovery(true, [own.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     alias: { '@agentui/contracts/service': fileURLToPath(new URL('../../packages/contracts/src/service.ts', import.meta.url)) },
     define: { 'process.env.NODE_ENV': '"production"' } });
@@ -36,6 +36,8 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await page.getByRole('region', { name: 'Command recovery', exact: true }).count(), 0);
   assert.equal(await page.getByRole('region', { name: 'Pending commands', exact: true }).count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Check pending command', exact: true }).isDisabled(), true);
+  await page.evaluate(() => globalThis.renderRecovery(true));
+  assert.equal(await page.getByRole('region', { name: 'Command recovery', exact: true }).count(), 1);
   await page.evaluate(() => globalThis.renderRecovery(false));
   await page.getByRole('button', { name: 'Check pending command', exact: true }).click();
   assert.deepEqual(await page.evaluate(() => globalThis.checked), ['foreign-pending']);

@@ -1,14 +1,18 @@
 import { parseScope } from '@agentui/contracts';
+import { record } from '@agentui/contracts/decode';
 import type { DraftStoragePort } from '@agentui/client';
 
 import type { SavedView } from './view-state.js';
 
 function decodeView(value: unknown, hostId: string): SavedView {
   if (value === undefined) return { version: 1, route: null, pendingCreation: null };
-  if (!value || typeof value !== 'object' || !('version' in value) || value.version !== 1 ||
-    !('route' in value) || !('pendingCreation' in value)) throw new Error('Unsupported saved view. Local records were preserved.');
-  const route = value.route === null ? null : parseScope(value.route);
-  const pendingCreation = value.pendingCreation === null ? null : parseScope(value.pendingCreation);
+  let input: Record<string, unknown>;
+  try {
+    input = record(value, ['version', 'route', 'pendingCreation']);
+    if (input.version !== 1) throw new Error('Unsupported version');
+  } catch { throw new Error('Unsupported saved view. Local records were preserved.'); }
+  const route = input.route === null ? null : parseScope(input.route);
+  const pendingCreation = input.pendingCreation === null ? null : parseScope(input.pendingCreation);
   if ([route, pendingCreation].some(scope => scope && scope.hostId !== hostId)) throw new Error('Saved view belongs to another host.');
   return { version: 1, route, pendingCreation };
 }

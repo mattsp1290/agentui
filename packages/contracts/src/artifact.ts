@@ -1,3 +1,4 @@
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from './compatibility.js';
 import type { HostCompatibility } from './compatibility.js';
 import { canonicalJson } from './durable.js';
 import { record, nonempty, hex } from './decode.js';
@@ -12,8 +13,8 @@ export interface ArtifactManifest {
   readonly platform: 'host' | 'browser-development';
   readonly sourceRevision: string;
   readonly sourceDirty: SourceDirty;
-  readonly wireVersion: 1;
-  readonly extensionSdkVersion: '0.0.0';
+  readonly wireVersion: typeof SERVICE_WIRE_VERSION;
+  readonly extensionSdkVersion: typeof EXTENSION_SDK_VERSION;
   readonly nativeRuntime: HostCompatibility['nativeRuntime'];
   readonly artifactRuntime: HostCompatibility['nativeRuntime'];
   readonly lockSha256: string;
@@ -43,7 +44,7 @@ function asset(value: unknown): Asset {
 export function manifestPayload(value: unknown): Omit<ArtifactManifest, 'artifactId'> {
   const input = record(value, PAYLOAD_FIELDS);
   if (input.schemaVersion !== 1 || (input.platform !== 'host' && input.platform !== 'browser-development') ||
-      input.wireVersion !== 1 || input.extensionSdkVersion !== '0.0.0' || !Array.isArray(input.assets)) {
+      input.wireVersion !== SERVICE_WIRE_VERSION || input.extensionSdkVersion !== EXTENSION_SDK_VERSION || !Array.isArray(input.assets)) {
     throw new Error('Unsupported artifact manifest');
   }
   const assets = input.assets.map(asset);
@@ -62,16 +63,16 @@ export function manifestPayload(value: unknown): Omit<ArtifactManifest, 'artifac
     nativeRuntime, artifactRuntime, lockSha256: hex(input.lockSha256, 64), assets,
   };
 }
-export function parseArtifactManifest(value: unknown, digest: (text: string) => string): ArtifactManifest;
-export function parseArtifactManifest(value: unknown, digest: (text: string) => Promise<string>): Promise<ArtifactManifest>;
-export function parseArtifactManifest(value: unknown, digest: (text: string) => string | Promise<string>): ArtifactManifest | Promise<ArtifactManifest> {
+export function parseArtifactManifest(value: unknown): ArtifactManifest {
   const input = record(value, [...PAYLOAD_FIELDS, 'artifactId']);
   const { artifactId: rawId, ...rawPayload } = input;
   const payload = manifestPayload(rawPayload), artifactId = hex(rawId, 64);
-  const verified = (computed: string): ArtifactManifest => {
-    if (computed !== artifactId) throw new Error('Artifact manifest identity mismatch');
-    return { ...payload, artifactId };
-  };
-  const computed = digest(canonicalJson(payload));
-  return typeof computed === 'string' ? verified(computed) : computed.then(verified);
+  return { ...payload, artifactId };
+}
+export function artifactIdentityText(manifest: ArtifactManifest): string {
+  const { artifactId: _, ...payload } = manifest;
+  return canonicalJson(payload);
+}
+export function assertArtifactId(manifest: ArtifactManifest, digest: string): void {
+  if (digest !== manifest.artifactId) throw new Error('Artifact manifest identity mismatch');
 }

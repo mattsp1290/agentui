@@ -2,6 +2,7 @@ import { record as object, nonempty, count as integer, identifier, exact } from 
 import type { ConversationScope } from './index.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
+export const DEFAULT_MAX_COMMAND_BYTES = 64_000;
 export type CommandBody =
   | { readonly kind: 'send'; readonly text: string }
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }

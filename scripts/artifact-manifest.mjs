@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { canonicalJson } from '@agentui/contracts';
-import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest } from '@agentui/contracts/artifact';
+import { RECORDED_RUNTIME, SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
+import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdentityText, assertArtifactId } from '@agentui/contracts/artifact';
 
 const targets = {
   host: { directory: 'apps/host/dist', nativeRuntime: { engine: 'node', version: process.versions.node, format: 'esm' } },
@@ -59,13 +60,14 @@ const payload = manifestPayload({
   platform,
   sourceRevision: git('-C', root, 'rev-parse', 'HEAD'),
   sourceDirty: dirtyFiles.length === 0 ? { kind: 'clean' } : { kind: 'dirty', fingerprint: digest(JSON.stringify(dirtyFiles)) },
-  wireVersion: 1,
-  extensionSdkVersion: '0.0.0',
-  nativeRuntime: platform === 'host' ? { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' } : target.nativeRuntime,
+  wireVersion: SERVICE_WIRE_VERSION,
+  extensionSdkVersion: EXTENSION_SDK_VERSION,
+  nativeRuntime: platform === 'host' ? RECORDED_RUNTIME : target.nativeRuntime,
   artifactRuntime: target.nativeRuntime,
   lockSha256: digest(readFileSync(join(root, 'package-lock.json'))),
   assets,
 });
-const manifest = parseArtifactManifest({ ...payload, artifactId: digest(canonicalJson(payload)) }, digest);
+const manifest = parseArtifactManifest({ ...payload, artifactId: digest(canonicalJson(payload)) });
+assertArtifactId(manifest, digest(artifactIdentityText(manifest)));
 writeFileSync(join(directory, 'artifact.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`${target.directory}/artifact.json ${manifest.artifactId}\n`);

@@ -1,7 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { AccessDatabase } from './access-database.js';
-import { AttemptWindow } from './attempt-window.js';
 
 export type CredentialClass = 'browser-development' | 'native';
 export interface Principal { readonly id: string; readonly hostId: string; readonly credentialClass: CredentialClass }
@@ -11,7 +10,6 @@ export class Access {
   readonly hostId: string;
   private readonly db: DatabaseSync;
   private readonly invitations = new Map<string, { readonly expires: number; readonly credentialClass: CredentialClass }>();
-  private readonly attempts = new AttemptWindow();
   constructor(state: AccessDatabase) { this.db = state.database; this.hostId = state.hostId; }
   invite(credentialClass: CredentialClass, now = Date.now()): string {
     for (const [key, invitation] of this.invitations) if (invitation.expires <= now) this.invitations.delete(key);
@@ -20,10 +18,9 @@ export class Access {
     this.invitations.set(digest(code), { expires: now + 300_000, credentialClass });
     return code;
   }
-  pair(code: string, credentialClass: CredentialClass, now = Date.now(), source = 'local'): { readonly principal: Principal; readonly secret: string } {
+  pair(code: string, credentialClass: CredentialClass, now = Date.now()): { readonly principal: Principal; readonly secret: string } {
     const key = digest(code), invitation = this.invitations.get(key);
     if (!invitation || invitation.expires <= now || invitation.credentialClass !== credentialClass) {
-      this.attempts.fail(source, now);
       throw new Error('Invalid or expired pairing invitation');
     }
     const secret = randomBytes(32).toString('base64url');

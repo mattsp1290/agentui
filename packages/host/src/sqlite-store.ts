@@ -199,7 +199,7 @@ export class SqliteStore<E, P> {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      const transition = settlement(stored.observation, observation(value, stored.target), isQuarantined(stored), context.live);
+      const transition = settlement(stored.observation, observation(value, stored.target), { quarantined: isQuarantined(stored), live: context.live });
       switch (transition.kind) {
         case 'keep': return stored.receipt;
         case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

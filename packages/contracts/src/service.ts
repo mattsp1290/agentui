@@ -3,13 +3,13 @@ import type { ConversationScope } from './index.js';
 import type { HostCompatibility } from './compatibility.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
 import { transcriptProjection } from './conversation.js';
-import { canonicalJson, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope } from './durable.js';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseDecision, parseHostEvent, parseReceipt, parseScope } from './durable.js';
 import type { ClientCommand, ConversationDocument, ConversationPort, FeedEnd, FeedItem, Receipt, SubmitResult } from './durable.js';
 
 export const SERVICE_MAX_REQUEST_BYTES = 410_000;
 export const SERVICE_MAX_RESPONSE_BYTES = 4_100_000;
-export const SERVICE_MAX_SEND_TEXT = 64_000;
-export const SERVICE_MAX_COMMAND_BYTES = 64_000;
+export const SERVICE_MAX_SEND_TEXT = DEFAULT_MAX_COMMAND_BYTES;
+export const SERVICE_MAX_COMMAND_BYTES = DEFAULT_MAX_COMMAND_BYTES;
 export type ServiceRequest =
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'metadata' }

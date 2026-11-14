@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { parseArtifactManifest } from '@agentui/contracts/artifact';
+import { parseArtifactManifest, artifactIdentityText, assertArtifactId } from '@agentui/contracts/artifact';
 
 interface Identity {
   readonly artifactId: string;
@@ -15,10 +15,9 @@ export function ArtifactIdentity() {
         const response = await fetch('/artifact.json', { signal: controller.signal, cache: 'no-store' });
         if (!response.ok) throw new Error('Build manifest unavailable');
         const value: unknown = await response.json();
-        const manifest = await parseArtifactManifest(value, async text => {
-          const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text));
-          return [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join('');
-        });
+        const manifest = parseArtifactManifest(value);
+        const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(artifactIdentityText(manifest)));
+        assertArtifactId(manifest, [...new Uint8Array(digest)].map(byte => byte.toString(16).padStart(2, '0')).join(''));
         if (manifest.platform !== 'browser-development') throw new Error('Unsupported browser build manifest');
         if (!controller.signal.aborted) setState({ artifactId: manifest.artifactId, sourceRevision: manifest.sourceRevision, dirty: manifest.sourceDirty.kind === 'dirty' });
       } catch (error) {

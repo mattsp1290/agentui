@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
 import { SERVICE_MAX_SEND_TEXT } from '@agentui/contracts/service';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
-import { recoveryModel } from './recovery.js';
+import { CommandRecovery } from './CommandRecovery.js';
 
 export function ConversationStatus({ active }: { readonly active: OpenConversation }) {
   const view = useConversation(active.store);
@@ -25,7 +25,6 @@ export function ConversationView({ actions, active }: { readonly actions: Conver
     }
   }
   const connected = actions.enabled && view.connection.kind === 'connected';
-  const { retained: recoverable, uncertain, pending } = recoveryModel(view, actions.busy);
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">RECORDED CONVERSATION</p><h1>Your conversation</h1><p className="scope-label">{active.scope.conversationId}</p></header>
     <div className="transcript" aria-label="Messages" aria-live="polite">
@@ -45,24 +44,6 @@ export function ConversationView({ actions, active }: { readonly actions: Conver
       <textarea id="message" maxLength={SERVICE_MAX_SEND_TEXT} value={text} onChange={event => void edit(event.target.value)} disabled={Boolean(actions.storageFailure)} placeholder="Write to the recorded assistant…" rows={3} />
       <div className="composer-footer"><span>Recorded playback · No live model</span><button disabled={!connected || !text.trim()}>Send</button></div>
     </form>
-    {(recoverable.length > 0 || uncertain.length > 0) && <section className="outbox" aria-label="Command recovery">
-      <h2>Command recovery</h2><p>Retry keeps the original command ID. Reconcile checks the host’s recorded result. An absent result or rejected retry cannot rule out an earlier submission; its saved command is kept.</p>
-      {recoverable.map(entry => <article key={entry.command.clientCommandId}>
-        <p><strong>{entry.command.body.kind === 'send' ? entry.command.body.text : entry.command.body.kind}</strong></p>
-        <code>{entry.command.clientCommandId}</code><p>{view.document.receipts[entry.command.clientCommandId]?.state.kind ?? 'Result unknown'}</p>
-        <div className="action-row"><button disabled={!actions.enabled} onClick={() => void actions.submit(() => active.store.retry(entry.command.clientCommandId))}>Retry original command</button>
-          <button disabled={!actions.enabled} onClick={() => void actions.reconcile(entry.command.clientCommandId)}>Reconcile command</button></div>
-      </article>)}
-      {uncertain.map(receipt => <article key={receipt.clientCommandId}><code>{receipt.clientCommandId}</code><p>{receipt.state.kind}</p>
-        <button disabled={!actions.enabled} onClick={() => void actions.reconcile(receipt.clientCommandId)}>Reconcile command</button>
-      </article>)}
-    </section>}
-    {pending.length > 0 && <section className="outbox" aria-label="Pending commands">
-      <h2>Pending commands</h2><p>These commands may still be running. Check their recorded result if progress has stopped.</p>
-      {pending.map(receipt => <article key={receipt.clientCommandId}>
-        <code>{receipt.clientCommandId}</code><p>{receipt.state.kind}</p>
-        <button disabled={!actions.enabled} onClick={() => void actions.reconcile(receipt.clientCommandId)}>Check pending command</button>
-      </article>)}
-    </section>}
+    <CommandRecovery view={view} actions={actions} retry={id => active.store.retry(id)} />
   </section>;
 }

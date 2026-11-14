@@ -2,6 +2,7 @@ import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityResult, ConversationStore } from '@agentui/client';
 import { ServiceError } from '@agentui/client/service';
 import { sameScope } from '@agentui/contracts';
+import { RECORDED_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
@@ -140,9 +141,7 @@ export function createApplicationController(deps: {
       state.active.store.disconnect();
       publish({ active: null, saved: initialSnapshot().saved, catalog: { items: [], after: null }, savedViews: { items: [], after: null } });
     }
-    const compatibility = checkCompatibility({ supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.0.0'],
-      supportedNativeRuntimes: [{ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' }],
-      expectedArtifactId: null }, metadata.compatibility);
+    const compatibility = checkCompatibility(RECORDED_CLIENT_COMPATIBILITY, metadata.compatibility);
     publish({ host: { kind: 'ready', metadata, compatibility } });
     if (compatibility.kind !== 'compatible') { state.active?.store.disconnect(); return; }
     const storage = local(owner);

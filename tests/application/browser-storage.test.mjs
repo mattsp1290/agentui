@@ -17,6 +17,36 @@ async function fixture(t) {
   return page;
 }
 
+test('saved views reject noncanonical records without overwriting local data or deleting foreign records', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const original = { version: 1, route: null, pendingCreation: null };
+    await owner.saveView('host', original);
+    const failures = [];
+    for (const value of [{ ...original, extra: true }, Object.create(original),
+      Object.defineProperty({ route: null, pendingCreation: null }, 'version', { get() { throw new Error('Getter evaluated'); }, enumerable: true })]) {
+      try { await owner.saveView('host', value); } catch (error) { failures.push(error.message); }
+    }
+    const retained = await owner.readView('host');
+    const opened = indexedDB.open('agentui-browser-views', 1);
+    const db = await new Promise((resolve, reject) => { opened.onsuccess = () => resolve(opened.result); opened.onerror = () => reject(opened.error); });
+    const write = db.transaction('records', 'readwrite');
+    const foreign = { ...original, extra: 'preserve' };
+    write.objectStore('records').put(foreign, ['view', 'foreign', 'host']);
+    await new Promise((resolve, reject) => { write.oncomplete = resolve; write.onerror = () => reject(write.error); });
+    const listed = await owner.savedViews('host');
+    const read = db.transaction('records').objectStore('records').get(['view', 'foreign', 'host']);
+    const foreignRetained = await new Promise((resolve, reject) => { read.onsuccess = () => resolve(read.result); read.onerror = () => reject(read.error); });
+    owner.close(); db.close();
+    return { failures, retained, listed, foreignRetained };
+  });
+  assert.deepEqual(result.failures, Array(3).fill('Unsupported saved view. Local records were preserved.'));
+  assert.deepEqual(result.retained, { version: 1, route: null, pendingCreation: null });
+  assert.deepEqual(result.listed, { ids: [], unreadable: 1, after: null });
+  assert.deepEqual(result.foreignRetained, { version: 1, route: null, pendingCreation: null, extra: 'preserve' });
+});
+
 test('saved view listing skips unreadable foreign rows, bounds pages and preserves every record', async t => {
   const page = await fixture(t);
   const result = await page.evaluate(async () => {

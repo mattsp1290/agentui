@@ -195,6 +195,7 @@ test('real client applies a feed page before ACK and the host retains lost repli
   const pageOne = await f.ok(pull(null), alice.cookie);
   assert.equal(pageOne.page, 1);
   denied(await f.call(pull(null), bob.cookie));
+  denied(await f.call({ op: 'close', feedId }, bob.cookie));
   const submitted = await connection.conversation(scope).submit(command(scope));
   assert.equal(submitted.receipt.state.kind, 'completed');
   assert.deepEqual(await f.ok(pull(null), alice.cookie), pageOne);

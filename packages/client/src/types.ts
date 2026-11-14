@@ -24,6 +24,7 @@ export interface ClientView<P> {
   readonly draft: string;
   readonly outbox: readonly OutboxEntry[];
   readonly connection: ConnectionState;
+  readonly submitting: readonly string[];
 }
 export interface ConversationStore<P> {
   readonly ready: Promise<void>;

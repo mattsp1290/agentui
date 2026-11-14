@@ -1,4 +1,5 @@
 import { canonicalJson } from '@agentui/contracts';
+import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import type { ClientCommand } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
@@ -8,8 +9,8 @@ import type { LocalHost } from './local-host.js';
 import { createRecordedDriver } from './recorded-driver.js';
 
 export const recordedInstallation: Installation = Object.freeze({ installationId: 'agentui-recorded-v1',
-  binding: Object.freeze({ engine: 'agentui-recorded', nativeVersion: 'recorded-v1', account: 'local',
-    authorizedScope: 'recorded-conversations', nativeFormat: 'agentui-recorded-v1' }) });
+  binding: Object.freeze({ engine: RECORDED_RUNTIME.engine, nativeVersion: RECORDED_RUNTIME.version, account: 'local',
+    authorizedScope: 'recorded-conversations', nativeFormat: RECORDED_RUNTIME.format }) });
 
 export interface RecordedHostOptions {
   readonly path: string;

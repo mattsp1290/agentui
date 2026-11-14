@@ -1,4 +1,4 @@
-import { canonicalJson } from '@agentui/contracts';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES } from '@agentui/contracts';
 import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
 import type { DispatchIdentity, DispatchObservation, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
@@ -67,7 +67,7 @@ export interface HostBudgets {
   readonly deliveryMs: number;
   readonly pollMs: number;
 }
-const DEFAULT_BUDGETS: HostBudgets = { maxCommandBytes: 64_000, maxEventBytes: 64_000, pageEvents: 64, pageBytes: 256_000,
+const DEFAULT_BUDGETS: HostBudgets = { maxCommandBytes: DEFAULT_MAX_COMMAND_BYTES, maxEventBytes: 64_000, pageEvents: 64, pageBytes: 256_000,
     replayEvents: 1000, replayBytes: 2_000_000, snapshotBytes: 4_000_000,
     subscribers: 100, deliveryMs: 30_000, pollMs: 100 };
 export function budgets(input: Partial<HostBudgets> = {}): HostBudgets {

@@ -1,5 +1,7 @@
-import { useState, type ReactNode } from 'react';
+import type { ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
+import { PairForm } from './PairForm.js';
+import { HostStatusLabel } from './HostStatusLabel.js';
 import { applicationEnabled } from '../application/application-controller.js';
 import { useApplication } from '../application/use-application.js';
 import { ConversationStatus, ConversationView } from '../application/ConversationView.js';
@@ -8,12 +10,11 @@ import '../application/application.css';
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const { controller, snapshot: app } = useApplication();
   const enabled = applicationEnabled(app);
-  const [code, setCode] = useState('');
   const conversation = app.active ? <ConversationView key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`} actions={controller.conversationActions(app.active)} active={app.active} />
     : <section className="conversation-panel empty-workspace"><p className="eyebrow">YOUR LOCAL WORKSPACE</p><h1>A conversation that stays with you.</h1><p>Pair this browser, then create or open a recorded conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p></section>;
   const controls = <div className="application-controls">
     <div className="application-status"><strong>Browser development · Recorded playback</strong>
-      <span>{app.host.kind === 'ready' ? `Host ${app.host.metadata.hostId}` : app.host.kind === 'unpaired' ? 'Pairing required' : app.host.kind === 'loading' ? 'Opening saved view…' : 'Host unavailable'}</span>
+      <HostStatusLabel host={app.host} />
     </div>
     {artifact}
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
@@ -22,10 +23,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.host.kind === 'ready' && app.host.compatibility.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.compatibility.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
-    {app.host.kind === 'unpaired' && <form className="pair-form" onSubmit={event => { event.preventDefault(); void controller.pair(code); setCode(''); }}>
-      <label htmlFor="pairing-code">Pairing code</label><input id="pairing-code" value={code} onChange={event => setCode(event.target.value)} autoComplete="off" placeholder="Code from the local host" />
-      <button disabled={app.busy || Boolean(app.storageFailure) || !code.trim()}>Pair host</button>
-    </form>}
+    {app.host.kind === 'unpaired' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="action-row">
       <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void controller.reconnect()}>Reconnect</button>
       <button disabled={!enabled || app.saved.pendingCreation !== null} onClick={() => void controller.create()}>New recorded conversation</button>

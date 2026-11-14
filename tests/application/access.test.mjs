@@ -44,18 +44,15 @@ test('pairing invitations are one use, expire, remain process-local and never st
   assert.equal(access.authorized(principal, 'browser-development', 1000), false);
   assert.deepEqual(access.devices(), [{ id: principal.id, revoked: true, expires: 3601000, active: false }]);
 });
-test('invitations and failed attempts are bounded', t => {
+test('outstanding invitations are bounded and invalid guesses do not consume a valid invitation', t => {
   const access = openAccess(join(directory(t), 'host.sqlite'));
   t.after(() => access.close());
   for (let i = 0; i < 32; i++) access.invite('browser-development', 1000);
   assert.throws(() => access.invite('browser-development', 1000), /limit/);
   assert.equal(typeof access.invite('browser-development', 301001), 'string');
-  for (let i = 0; i < 20; i++) assert.throws(() => access.pair('wrong', 'browser-development', 1000), /Invalid/);
-  assert.throws(() => access.pair('wrong', 'browser-development', 1000), /attempt limit/);
+  for (let i = 0; i < 21; i++) assert.throws(() => access.pair('wrong', 'browser-development', 1000), /Invalid/);
   const valid = access.invite('browser-development', 1000);
   assert.equal(access.pair(valid, 'browser-development', 1000).principal.hostId, access.hostId);
-  assert.throws(() => access.pair('wrong', 'browser-development', 1000, 'another-source'), /Invalid/);
-  assert.throws(() => access.pair('wrong', 'browser-development', 61001), /Invalid/);
 });
 test('exclusive directory ownership recovers after a killed process without stale PID handling', { timeout: 10000 }, async t => {
   const path = directory(t);

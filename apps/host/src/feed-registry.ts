@@ -14,7 +14,7 @@ export class FeedRegistry {
     const feed = new ServiceFeed(principalId, port.scope);
     this.feeds.set(feed.id, feed);
     try { feed.attach(port.watch(request, item => feed.receive(item))); }
-    catch (error) { this.close(feed.id); throw error; }
+    catch (error) { this.drop(feed.id); throw error; }
     return feed.id;
   }
   get(principalId: string, id: string): ServiceFeed {
@@ -24,21 +24,25 @@ export class FeedRegistry {
   }
   async pull(principalId: string, id: string, ack: number | null): Promise<ServicePull> {
     const result = await this.get(principalId, id).pull(ack);
-    if (result.kind === 'ended') this.close(id);
+    if (result.kind === 'ended') this.drop(id);
     return result;
   }
-  close(id: string): void {
+  close(principalId: string, id: string): void {
+    this.get(principalId, id);
+    this.drop(id);
+  }
+  private drop(id: string): void {
     this.feeds.get(id)?.close();
     this.feeds.delete(id);
   }
   closePrincipal(principalId: string): void {
-    for (const [id, feed] of this.feeds) if (feed.principalId === principalId) this.close(id);
+    for (const [id, feed] of this.feeds) if (feed.principalId === principalId) this.drop(id);
   }
   sweep(now = Date.now()): void {
-    for (const [id, feed] of this.feeds) if (feed.isIdle(now, 25_000)) this.close(id);
+    for (const [id, feed] of this.feeds) if (feed.isIdle(now, 25_000)) this.drop(id);
   }
   dispose(): void {
     clearInterval(this.timer);
-    for (const id of this.feeds.keys()) this.close(id);
+    for (const id of this.feeds.keys()) this.drop(id);
   }
 }
