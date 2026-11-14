@@ -6,13 +6,16 @@ import { fileURLToPath } from 'node:url';
 const root = new URL('../../../../', import.meta.url);
 const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root));
 
-export async function assertCompileCases({ prefix, cases, compilerOptions = {} }) {
-  await mkdir(new URL('.audit/', root), { recursive: true });
-  const temporary = await mkdtemp(fileURLToPath(new URL('.audit/type-cases-', root)));
+export async function assertCompileCases({ config = 'tsconfig.base.json', prefix, cases }) {
+  const base = new URL(config, root);
+  const audit = new URL('.audit/', base);
+  await mkdir(audit, { recursive: true });
+  const temporary = await mkdtemp(fileURLToPath(new URL('type-cases-', audit)));
   try {
     await writeFile(`${temporary}/tsconfig.json`, JSON.stringify({
-      extends: fileURLToPath(new URL('tsconfig.base.json', root)),
-      compilerOptions: { noEmit: true, ...compilerOptions }, files: ['probe.ts'],
+      extends: fileURLToPath(base),
+      compilerOptions: { noEmit: true, rootDir: temporary },
+      files: [`${temporary}/probe.ts`], include: [],
     }));
     for (const [source, diagnostic] of cases) {
       await writeFile(`${temporary}/probe.ts`, prefix + source);

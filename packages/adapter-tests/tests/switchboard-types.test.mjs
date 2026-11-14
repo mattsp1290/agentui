@@ -3,7 +3,7 @@ import { assertCompileCases } from './support/compile.mjs';
 
 test('host native contracts require narrowed capabilities and complete native identities', async () => {
   await assertCompileCases({
-    compilerOptions: { types: ['node'] },
+    config: 'packages/host/tsconfig.json',
     prefix: `import type { Capability, InteractionContinuation, PendingInteraction, SessionBinding, SessionReference } from '@agentui/host';
 export const binding: SessionBinding = { engine: 'fixture', nativeVersion: '1', account: 'account', authorizedScope: 'scope', nativeFormat: 'format' };
 export const session: SessionReference = { kind: 'session', formatVersion: 1, binding, opaque: 'session' };

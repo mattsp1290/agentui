@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { gunzipSync } from 'node:zlib';
 import { parseInteractionContinuation, parseSessionReference } from '@agentui/host';
 
 const root = new URL('../../../', import.meta.url);
@@ -13,7 +14,7 @@ const pending = { kind: 'approval', target, nativePolicy: native, request: nativ
   choices: [{ nativeChoiceId: 'native-once', label: 'Allow once' }] };
 const reply = { formatVersion: 1, kind: 'approval', target, nativeChoiceId: 'native-once' };
 
-test('host artifact matches its source pin, manifest and npm integrity', async () => {
+test('host artifact and retained logs match the pin, manifest and npm integrity', async () => {
   const pin = JSON.parse(await readFile(new URL('vendor/switchboard.json', root), 'utf8'));
   const host = JSON.parse(await readFile(new URL('packages/host/package.json', root), 'utf8'));
   const lock = JSON.parse(await readFile(new URL('package-lock.json', root), 'utf8'));
@@ -25,6 +26,10 @@ test('host artifact matches its source pin, manifest and npm integrity', async (
   const installed = lock.packages['node_modules/@mattsp1290/switchboard'];
   assert.equal(installed.resolved, `file:vendor/${pin.artifact}`);
   assert.equal(installed.integrity, `sha512-${createHash('sha512').update(bytes).digest('base64')}`);
+  for (const [name, log] of Object.entries(pin.qualification.logs)) {
+    const raw = gunzipSync(await readFile(new URL(`vendor/${log.path}`, root)));
+    assert.equal(createHash('sha256').update(raw).digest('hex'), log.uncompressedSha256, name);
+  }
 });
 
 test('host parses a native session and preserves an advertised approval choice', () => {

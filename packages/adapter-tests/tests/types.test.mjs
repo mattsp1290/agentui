@@ -1,12 +1,5 @@
-import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdir, mkdtemp, writeFile, rm } from 'node:fs/promises';
-import { spawnSync } from 'node:child_process';
-import { fileURLToPath } from 'node:url';
 import { assertCompileCases } from './support/compile.mjs';
-
-const root = new URL('../../../', import.meta.url);
-const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root));
 const targets = [
   ['packages/contracts', 'RunIdentity', '@agentui/contracts', ['document', 'process']],
   ['packages/sdk', 'ExtensionManifest', '@agentui/sdk', ['document', 'process']],
@@ -21,32 +14,11 @@ const targets = [
 ];
 
 for (const [workspace, type, name, forbidden, configFile = 'tsconfig.json'] of targets) {
-  test(`${name} rejects foreign ambient globals`, async () => {
-    await mkdir(new URL(`${workspace}/.audit/`, root), { recursive: true });
-    const temporary = await mkdtemp(fileURLToPath(new URL(`${workspace}/.audit/types-`, root)));
-    try {
-      const config = {
-        extends: fileURLToPath(new URL(`${workspace}/${configFile}`, root)),
-        compilerOptions: { noEmit: true, rootDir: temporary },
-        files: [`${temporary}/probe.ts`],
-        include: [],
-      };
-      await writeFile(`${temporary}/tsconfig.json`, JSON.stringify(config));
-      const prefix = `import type { ${type} } from '${name}';\nexport type Probe = ${type}${type === 'EventObserver' ? '<string>' : ''};\n`;
-      const compile = () => spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
-      await writeFile(`${temporary}/probe.ts`, prefix);
-      const positive = compile();
-      assert.equal(positive.status, 0, positive.stdout + positive.stderr);
-      for (const global of forbidden) {
-        await writeFile(`${temporary}/probe.ts`, prefix + `void ${global};\n`);
-        const negative = compile();
-        assert.notEqual(negative.status, 0);
-        assert.match(negative.stdout, new RegExp(`Cannot find name '${global}'`));
-      }
-    } finally {
-      await rm(temporary, { recursive: true, force: true });
-    }
-  });
+  test(`${name} rejects foreign ambient globals`, () => assertCompileCases({
+    config: `${workspace}/${configFile}`,
+    prefix: `import type { ${type} } from '${name}';\nexport type Probe = ${type}${type === 'EventObserver' ? '<string>' : ''};\n`,
+    cases: [['', null], ...forbidden.map((global) => [`void ${global};\n`, new RegExp(`Cannot find name '${global}'`)])],
+  }));
 }
 
 test('run authority has exactly one binding and requires its owner', async () => {
