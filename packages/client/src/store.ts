@@ -117,6 +117,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       stop({ kind: 'connecting' });
       const current = generation;
       let receiving = false;
+      let firstDelivery = true;
       try {
         await ready;
         if (current !== generation) return;
@@ -125,9 +126,11 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           if (receiving) { stop({ kind: 'failed', reason: 'Host delivered concurrent callbacks' }); return; }
           receiving = true;
           try {
-            const next = applyDelivery(delivery, item, scope, projection);
+            const previous = firstDelivery ? { ...delivery, cursor: null } : delivery;
+            const next = applyDelivery(previous, item, scope, projection);
             await Promise.resolve();
             if (current !== generation) return;
+            firstDelivery = false;
             if (next === delivery && connection.kind === 'connected') return;
             delivery = next;
             connection = { kind: 'connected' };

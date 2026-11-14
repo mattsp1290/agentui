@@ -46,6 +46,7 @@ export function applyDelivery<E, P>(state: DeliveryState<P>, item: FeedItem<E, P
     checkScope(snapshot.scope, scope);
     if (snapshot.projectionVersion !== projection.version) throw new DeliveryError('mismatch', 'Projection version mismatch; update the client or select a compatible host');
     const cursor = integer(snapshot.cursor);
+    if (state.cursor !== null && cursor < state.cursor) throw new DeliveryError('resync', 'Host snapshot cursor regressed; reconnect for a fresh snapshot');
     const document = object(snapshot.document);
     const receipts: Record<string, Receipt> = {};
     for (const [id, value] of Object.entries(object(document.receipts))) {
