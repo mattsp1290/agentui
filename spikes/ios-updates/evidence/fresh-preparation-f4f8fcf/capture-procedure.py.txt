@@ -1,0 +1,39 @@
+import datetime, hashlib, json, os, pathlib, subprocess
+root=pathlib.Path('~/git/agentui')
+spike=root/'spikes/ios-updates'
+work=spike/'.work'
+output=work/'evidence/fresh-preparation'
+output.mkdir(parents=True,exist_ok=False)
+inputs=['prepare.sh','rebuild.sh','restart.sh','package.json','package-lock.json','Podfile.lock']
+def run(cmd,env=None):
+ p=subprocess.run(cmd,cwd=root,env=env,text=True,stdout=subprocess.PIPE,stderr=subprocess.STDOUT)
+ return {'command':cmd,'exit_status':p.returncode,'output':p.stdout}
+env=os.environ.copy();env['PATH']='/tmp/agentui-ios-tools/node_modules/.bin:'+env['PATH']
+meta={'started_utc':datetime.datetime.now(datetime.timezone.utc).isoformat(),'source':run(['git','rev-parse','HEAD']), 'branch':run(['git','branch','--show-current']), 'working_tree_before':run(['git','status','--porcelain']), 'inputs':{},'warm_native_cache':True,'derived_data_retained':True,'qualification_scope':'Fresh preparation only; no new native runtime or physical-device qualification'}
+for name in inputs:
+ rel='spikes/ios-updates/'+name
+ current=(root/rel).read_bytes()
+ tested=subprocess.check_output(['git','show','7d250ae:'+rel],cwd=root)
+ meta['inputs'][rel]={'git_blob':run(['git','hash-object',rel])['output'].strip(),'sha256':hashlib.sha256(current).hexdigest(),'matches_native_tested_7d250ae':current==tested}
+ assert current==tested
+for command in [['node','--version'],['npm','--version'],['pod','--version'],['xcodebuild','-version'],['sw_vers'],['ruby','--version']]:
+ meta.setdefault('tools',[]).append(run(command,env))
+app=work/'app';backup=work/'app-before-fresh-f4f8fcf'
+assert app.is_dir() and not backup.exists()
+meta['derived_data_before']={'exists':(work/'build').is_dir(),'inode':(work/'build').stat().st_ino}
+app.rename(backup)
+meta['backup']=str(backup.relative_to(root));meta['app_absent_before_prepare']=not app.exists()
+meta['invocation']={'command':['bash','spikes/ios-updates/prepare.sh'],'cwd':str(root),'toolchain_path_prefix':'/tmp/agentui-ios-tools/node_modules/.bin'}
+(output/'provenance.json').write_text(json.dumps(meta,indent=2)+'\n')
+with (output/'prepare.log').open('w') as log:
+ p=subprocess.run(meta['invocation']['command'],cwd=root,env=env,stdout=log,stderr=subprocess.STDOUT)
+meta['prepare_exit_status']=p.returncode
+meta['lock_comparison']=run(['cmp','spikes/ios-updates/Podfile.lock','spikes/ios-updates/.work/app/ios/Podfile.lock'])
+meta['generated_lock_sha256']=hashlib.sha256((app/'ios/Podfile.lock').read_bytes()).hexdigest() if (app/'ios/Podfile.lock').exists() else None
+meta['derived_data_after']={'exists':(work/'build').is_dir(),'inode':(work/'build').stat().st_ino}
+meta['backup_preserved']=backup.is_dir()
+meta['working_tree_after']=run(['git','status','--porcelain'])
+meta['finished_utc']=datetime.datetime.now(datetime.timezone.utc).isoformat()
+(output/'provenance.json').write_text(json.dumps(meta,indent=2)+'\n')
+print(json.dumps({'exit_status':p.returncode,'lock_comparison_exit':meta['lock_comparison']['exit_status'],'evidence':str(output),'backup_preserved':meta['backup_preserved']}))
+raise SystemExit(p.returncode or meta['lock_comparison']['exit_status'])
