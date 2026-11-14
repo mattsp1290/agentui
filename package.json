@@ -27,7 +27,7 @@
     "build": "npm run clean && npm run build --workspaces",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests examples",
-    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/client/*.test.mjs examples/crew/tests/*.test.mjs tests/fork/*.test.mjs",
+    "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/client/*.test.mjs examples/crew/tests/*.test.mjs tests/fork/*.test.mjs tests/extensions/providers/contracts/*.test.mjs",
     "protocol:matrix": "node tests/protocol/report.mjs",
     "protocol:check": "node tests/protocol/report.mjs --check",
     "verify": "npm run build && npm run check && npm run lint && npm test",
