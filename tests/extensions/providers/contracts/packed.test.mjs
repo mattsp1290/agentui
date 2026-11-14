@@ -28,7 +28,7 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     const sources = await Promise.all(['crew.ts', 'local.ts'].map((name) => readFile(new URL(name, import.meta.url), 'utf8')));
     const prefix = sources.map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
     await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix, cases: [
-      ['', null],
+      ["export const constructed: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew; export const dynamic: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');", null],
       ['void process;', /Cannot find name 'process'/u],
       ['void document;', /Cannot find name 'document'/u],
       ["export type { ProviderModel } from '@agentui/sdk/providers';", /Cannot find module/u],

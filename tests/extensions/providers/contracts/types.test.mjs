@@ -6,6 +6,8 @@ export const fixtureSource = (await Promise.all(['crew.ts', 'local.ts'].map((nam
   .map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
 
 const control = `
+export const secondCrew: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew;
+export const dynamicCrew: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');
 export type CrewConnectRequest = Parameters<typeof crew.connect>[0];
 export type CrewDiscovery = Awaited<ReturnType<typeof crewBackend.discover>>;
 export const evidence: SDK.Json = { authoritative: true };
@@ -69,6 +71,7 @@ test('public providers construct and reject crossed scopes, incompatible payload
   prefix: fixtureSource + control,
   cases: [
     ['', null],
+    ["export const invalid: SDK.BackendProvider<CrewModel, 'crew-personal'> = createCrewFixture(localInstance).crew;", /not assignable/u],
     ['void crewBackend.reconcileCreation(crewSend);', /missing the following properties.*scope, agent/u],
     ['void crewBackend.reconcileCommand(crewCreation);', /not assignable/u],
     ["export const invalid: typeof crewBackend.reconcileCreation = async () => ({ kind: 'confirmed', value: { kind: 'cancel', state: 'completed' }, evidence: null });", /not assignable/u],

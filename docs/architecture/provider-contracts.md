@@ -50,25 +50,41 @@ Operation IDs and bodies remain fixed across restart and reconciliation.
 Any native request mapping needed for recovery must also survive dispatch.
 
 Reconciliation reads evidence for the original operation and never redispatches.
-Missing, failed, or rejected reconciliation lookup preserves the prior admitted, pending, or uncertain outcome.
-Unsupported lookup does not settle an earlier uncertain operation.
-The host quarantines pending or uncertain operations when reconciliation lookup is unsupported, preserving the original intent and unresolved status without replay.
-A later refusal cannot disprove an earlier ambiguous dispatch.
-`not-dispatched` describes this invocation and cannot erase prior uncertainty.
-A thrown error or rejected promise from `create` or `submit` leaves the persisted operation uncertain, never proving no dispatch.
-Providers return known outcomes as resolved values. They use `not-dispatched` or operational failures from these calls only when effectful nonacceptance is known.
-Otherwise they return `uncertain`. A failure label alone cannot prove nonacceptance or free an operation ID.
-Authentication, authorization, version, and availability failures also leave earlier uncertain dispatch unresolved.
+A resolved `rejected` result reports authoritative rejection of the original operation, with evidence correlated to its captured identity and body.
+It settles that operation negatively. Refusal or failure of the lookup instead returns `unsupported` or an operational failure.
+An inconclusive lookup returns `uncertain`. A missing record alone does not prove the original operation was never admitted.
+A thrown error or rejected JavaScript promise during reconciliation is a failed lookup, not a resolved `rejected` outcome.
+
+| Result | First `create` or `submit` | `reconcileCreation` or `reconcileCommand` |
+| --- | --- | --- |
+| `confirmed` | Record the correlated result. | Settle the original operation with its correlated result. |
+| `pending` | Record admitted processing without a confirmed result. | Record continued processing of the original operation. |
+| `rejected` | Record authoritative rejection with correlated evidence. | Settle the original operation as rejected with correlated evidence. |
+| `not-dispatched` | Record known nonacceptance of this invocation. | Preserve prior status and evidence. This says nothing about dispatch of the original operation. |
+| `uncertain` | Record unresolved acceptance or outcome. | Preserve prior unresolved status and evidence. |
+| `unsupported` | Record known nonacceptance of this invocation. | Preserve prior status and evidence. |
+| `unavailable`, `authentication-failed`, `unauthorized`, `version-unsupported` | Record known nonacceptance of this invocation with its failure label. | Preserve prior status and evidence. |
+| Thrown error or rejected promise | Record uncertainty. | Preserve prior status and evidence. |
+
+Providers return known outcomes as resolved values.
+From `create` or `submit`, `not-dispatched`, `unsupported`, and operational failures require known effectful nonacceptance of that invocation.
+If nonacceptance is not known, the provider returns `uncertain` instead.
+These labels never erase earlier uncertainty or free an operation ID for reuse.
+Lookup failures, refusal, and inconclusive results preserve positive prior evidence of admission or a confirmed result.
+The host quarantines unresolved operations when reconciliation is unsupported, preserving the original intent without replay.
+No result in the table authorizes replay or replacement of the captured operation identity or body.
 No automatic replay or universal exactly-once execution guarantee is supplied.
 
 The host verifies saved creation provenance, scope, actual instance, generation, protocol, authority binding, and local authority host.
 The host determines the expected authority kind for each installation and rejects a provider-reported authority of a different kind.
 It checks nested run, decision, and choice association with the admitted conversation.
+Conversation-scoped references retain their originating conversation so the host can detect accidental cross-conversation use within one installation.
 A `decide` choice must belong to the addressed decision in the latest applied snapshot or decision event.
 The execution authority validates current decision validity and rejects invalid or stale pairings before applying them.
 Snapshot bindings, snapshot cursors, observation request cursors, and feed item bindings and cursors must match the requested conversation.
 The host rejects mismatches without applying them.
-Optional private variance markers reject accidental instance and model widening while permitting ordinary object construction.
+With `strictFunctionTypes` enabled, optional private variance markers reject accidental instance and model widening while permitting ordinary object construction.
+Consumers must enable `strictFunctionTypes`, which `strict` includes, for this compile-time isolation. Without it, widening can compile.
 Installation isolation relies on retaining literal identities. Widening `I` to `string` is not implicitly assignable.
 Registries that erase identity through casts or wrappers must re-establish it at runtime.
 Unmarked structural intermediates can discard the optional variance markers.
@@ -90,8 +106,13 @@ Credential resolution, credential storage, disable and replacement admission rul
 Credentials stay outside client projections. The authority determines who owns execution and approvals.
 Local receipts and provider observations do not transfer remote execution authority to AgentUI.
 
+Providers may be constructed generically in `I` from a host-assigned `ProviderInstance<I>`.
+Module export and loading conventions remain downstream host work. No particular factory API is required.
+Runtime installation strings can use `I = string`, which does not distinguish two runtime strings at compile time. Runtime identity checks still apply.
+
 The two public SDK fixtures compile unrelated request and cursor models with colliding remote IDs and both authority variants.
 Compiler cases reject crossed references, incompatible requests, unsafe widening, missing versions, raw history references, and ambient globals.
 They also consume confirmed reconciliation values, route saved operations by kind, and reject crossed reconciliation families and result types.
-An isolated consumer checks the packed SDK declarations, public runtime export, and private import restrictions.
+The Crew fixture constructs confirmed creation and reconciliation results without casts inside a generic per-installation factory.
+An isolated consumer compiles that same fixture and checks the packed SDK declarations, public runtime export, and private import restrictions.
 These checks qualify the contract shape. They do not qualify a live provider, durable host enforcement, or reconnect behavior.
