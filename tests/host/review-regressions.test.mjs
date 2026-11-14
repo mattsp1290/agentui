@@ -41,6 +41,24 @@ test('repeated output quarantine retains newly learned native identity', async t
   assert.deepEqual(await host.conversation(scope).receipt('id'), quarantined);
 });
 
+test('a failed lookup returns a receipt settled by another connection during the wait', async t => {
+  const f = fixture(t), entered = deferred(), release = deferred();
+  let target;
+  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    dispatch: async (_command, captured) => { target = captured; return { kind: 'accepted', evidence: evidence(target) }; },
+    lookup: async () => { entered.resolve(); await release.promise; throw new Error('lookup disconnected'); },
+  };
+  const host = f.open({ driver }); host.createConversation(scope, installed);
+  await host.conversation(scope).submit(command('id'));
+  const recovering = host.reconcile(scope, 'id'); await entered.promise;
+  const other = f.open({ driver: { ...driver, lookup: async () => ({ kind: 'conclusive',
+    evidence: evidence(target, null, 'authoritative-native-lookup'), result: completed(note('finished')) }) } });
+  const current = await other.reconcile(scope, 'id');
+  assert.equal(current.state.kind, 'completed');
+  release.resolve();
+  assert.deepEqual(await recovering, current);
+});
+
 test('invalid Switchboard bindings fail before any conversation or intent is persisted', t => {
   const f = fixture(t), host = f.open();
   for (const value of [' ', 'a'.repeat(1025), 'bad\u0000engine']) {

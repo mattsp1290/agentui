@@ -102,8 +102,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       return inFlight(async () => {
         const result = await operation.reconcile(new AbortController().signal);
         if (result.kind !== 'ok') {
-          return stored.observation === null
-            ? store.settle(scope, id, { kind: 'outcome-unknown' }) : stored.receipt;
+          return store.settle(scope, id, { kind: 'outcome-unknown' });
         }
         return store.settle(scope, id, result.value.observation);
       });
