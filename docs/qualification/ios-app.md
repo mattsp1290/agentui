@@ -24,7 +24,7 @@ From the repository root, replace `SIMULATOR_UDID` with the chosen UDID:
 ./agentui-ios SIMULATOR_UDID
 ```
 
-The launcher selects Node 24.22.3 and npm 11.19.1. It runs `npm ci` in `apps/ios/native`, then `pod install --deployment`. Preparation compares `Podfile.lock` before and after installation and fails on drift.
+The launcher selects Node 24.22.3 and npm 11.19.1. It installs the root locked workspaces and builds the public theme and native primitive exports. It then runs `npm ci` in `apps/ios/native` and `pod install --deployment`. Preparation compares `Podfile.lock` before and after installation and fails on drift.
 
 The build checks the preparation input hashes, boots the selected simulator, and compiles the shared `AgentUI` scheme in Release mode with signing disabled. It removes the previous embedded JavaScript bundle and clears inherited React Native bundling overrides before building. It checks that `main.jsbundle` exists, installs the app, and launches `homes.birb.agentui`. Confirm that the screen says **AgentUI**, **Not connected**, and **This developer build**.
 
@@ -37,9 +37,9 @@ npm run ios:prepare
 npm run ios:run -- SIMULATOR_UDID
 ```
 
-If a preparation input changes, run `ios:prepare` again before `ios:run`. The preparation receipt covers the native manifest and locks, the platform manifest, the Podfile, and Hermes normalization.
+If a preparation input changes, run `ios:prepare` again before `ios:run`. The preparation receipt covers the root and native manifests and locks, the Podfile, Hermes normalization, Metro mapping, and the shared theme and primitive sources, compiler settings, and emitted runtime files.
 
-The native package has its own JavaScript lockfile. Root `npm ci` and `npm run verify` do not install CocoaPods or build the iOS app.
+The native package has its own JavaScript lockfile. Root `npm ci` and `npm run verify` do not install CocoaPods or build the iOS app. Cleaning or rebuilding shared packages can invalidate a previous native preparation receipt.
 
 ## Check launch without Metro
 
@@ -68,7 +68,7 @@ Record the source revision, tool versions, simulator identity, build result, and
 
 ## Packaging boundaries
 
-The committed native project is a pruned React Native Community 0.86.0 template. React is 19.3.1 and the Community CLI is 20.2.0. The project loads `apps/ios/src/shell/App.tsx` through `apps/ios/native/index.js`. Metro resolves dependencies from the isolated native package.
+The committed native project is a pruned React Native Community 0.86.0 template. React is 19.3.1 and the Community CLI is 20.2.0. The project loads `apps/ios/src/shell/App.tsx` through `apps/ios/native/index.js`. Metro maps the canonical theme and native primitive public exports from their workspace packages. External runtime dependencies, including React and React Native, resolve only from the isolated native package.
 
 Release loads `main.jsbundle` from the application bundle. Changes to the shell require another build and installation. The independent [iOS update probe](ios-updates.md) records the earlier rebuild strategy qualification.
 
@@ -82,7 +82,7 @@ After `ios:run`, use the pinned toolchain to run:
 npm run ios:verify -- SIMULATOR_UDID
 ```
 
-The check rejects a listener on port 8081, compares the installed embedded bundle with the build product, and relaunches the app. After a three-second settle period, it requires the same launched process to remain running. It records the process, bundle hash, tool versions, and screenshot under `apps/ios/native/.work/evidence`. Inspect the screenshot to confirm the disconnected screen rendered.
+The check rejects a listener on port 8081, compares the installed embedded bundle with the build product, and relaunches the app. After a three-second settle period, it requires the same launched process to remain running. It rejects a changed repository revision or local source diff since the native build. It records the build source snapshot, preparation input hashes, process, bundle hash, tool versions, and screenshot under `apps/ios/native/.work/evidence`. Inspect the screenshot to confirm the disconnected screen rendered. `provenance.txt` labels the captured source snapshot, preparation inputs, and installed JavaScript hash.
 
 Preparation normalizes React Native 0.86.0's Hermes compiler path to `${PODS_ROOT}/../../node_modules/hermes-compiler/hermesc/osx-bin/hermesc`. The upstream podspec uses an absolute checkout path in `HERMES_CLI_PATH`, which otherwise changes its CocoaPods checksum across checkout locations. `normalize-hermes.cjs` checks the expected upstream expression before changing it. Review that normalization when upgrading React Native. Native dependency versions remain locked.
 
@@ -95,5 +95,7 @@ The committed application source `0ec18a925f8f8628a4e72a253608705c0542598d` pass
 The launcher prepared dependencies, built Release with signing disabled, installed `homes.birb.agentui`, and launched the app. The offline check compared the installed bundle with the build product, relaunched the app with no listener on port 8081, and recorded a running app process. Codex inspected the [relaunch screenshot](ios-app-evidence/relaunch.png) and observed the AgentUI disconnected screen with readable text and no clipping.
 
 Fresh native preparation also passed at a different checkout path with no native dependency output directories initially present. Upstream download caches remained available. Deployment mode preserved the native lockfile after the Hermes path normalization. Repository build, type checks, lint, and all 33 tests passed. ShellCheck and whitespace checks passed.
+
+The retained files were produced by the `0ec18a9` scripts. Their output format differs from current `ios:verify`. The retained JavaScript hash filename was normalized to `main.jsbundle` after qualification without changing its digest.
 
 The [provenance record](ios-app-evidence/provenance.json) retains source input hashes and the installed JavaScript bundle `main.jsbundle` SHA-256. Retained evidence includes [native build output](ios-app-evidence/build.log.gz), [launcher output](ios-app-evidence/launcher.log.gz), [offline check output](ios-app-evidence/offline.log.gz), [fresh preparation output](ios-app-evidence/fresh-prepare.log.gz), [repository checks](ios-app-evidence/repo-verify.log.gz), and [tool versions](ios-app-evidence/toolchain.txt). These results qualify the simulator packaging slice only.

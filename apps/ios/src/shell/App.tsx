@@ -1,46 +1,41 @@
-import { SafeAreaView, ScrollView, StatusBar, StyleSheet, Text, View } from 'react-native';
+import { SafeAreaView, ScrollView, StatusBar, StyleSheet, View } from 'react-native';
+import { palettes, spacing } from '@agentui/theme';
+import { Surface, Text, ThemeProvider } from '@agentui/ui-primitives/native';
 
 export default function App() {
   return (
-    <SafeAreaView style={styles.canvas}>
-      <StatusBar barStyle="light-content" />
-      <ScrollView contentContainerStyle={styles.content}>
-        <View style={styles.header}>
-          <Text accessibilityRole="header" style={styles.brand}>AgentUI</Text>
-          <Text style={styles.subtitle}>Your agents, within reach.</Text>
-        </View>
-        <View style={styles.panel} testID="disconnected-screen">
-          <Text style={styles.status}>Not connected</Text>
-          <Text accessibilityRole="header" style={styles.title}>A home for your conversations</Text>
-          <Text style={styles.body}>
-            AgentUI connects to agents running on your Mac. Your agents and conversations stay on the host.
-          </Text>
-          <View style={styles.divider} />
-          <Text style={styles.label}>This developer build</Text>
-          <Text style={styles.body}>
-            The iOS app is installed and ready to open. Host pairing and conversations are not available in this build yet.
-          </Text>
-        </View>
-        <Text style={styles.footer}>No host is connected. No credentials are stored.</Text>
-      </ScrollView>
-    </SafeAreaView>
+    <ThemeProvider appearance="dark">
+      <SafeAreaView style={styles.canvas}>
+        <StatusBar barStyle="light-content" />
+        <ScrollView contentContainerStyle={styles.content}>
+          <View style={styles.header}>
+            <Text variant="title" accessibilityRole="header">AgentUI</Text>
+            <Text variant="muted">Your agents, within reach.</Text>
+          </View>
+          <Surface style={styles.panel} testID="disconnected-screen">
+            <Text variant="label" style={styles.status}>Not connected</Text>
+            <Text variant="title" accessibilityRole="header">A home for your conversations</Text>
+            <Text>
+              AgentUI connects to agents running on your Mac. Your agents and conversations stay on the host.
+            </Text>
+            <View style={styles.divider} />
+            <Text variant="label">This developer build</Text>
+            <Text>
+              The iOS app is installed and ready to open. Host pairing and conversations are not available in this build yet.
+            </Text>
+          </Surface>
+          <Text variant="muted">No host is connected. No credentials are stored.</Text>
+        </ScrollView>
+      </SafeAreaView>
+    </ThemeProvider>
   );
 }
 
 const styles = StyleSheet.create({
-  canvas: { flex: 1, backgroundColor: '#15171c' },
-  content: { flexGrow: 1, justifyContent: 'center', padding: 24, gap: 32 },
-  header: { gap: 8 },
-  brand: { color: '#eef0f5', fontSize: 32, fontWeight: '700' },
-  subtitle: { color: '#adb6c6', fontSize: 17, lineHeight: 26 },
-  panel: {
-    backgroundColor: '#1d2027', borderColor: '#3c4350', borderWidth: 1,
-    borderRadius: 16, padding: 24, gap: 16,
-  },
-  status: { color: '#a9b9ff', fontSize: 15, fontWeight: '600' },
-  title: { color: '#eef0f5', fontSize: 24, lineHeight: 32, fontWeight: '600' },
-  body: { color: '#adb6c6', fontSize: 17, lineHeight: 27 },
-  divider: { height: 1, backgroundColor: '#3c4350', marginVertical: 8 },
-  label: { color: '#eef0f5', fontSize: 16, fontWeight: '600' },
-  footer: { color: '#adb6c6', fontSize: 14, lineHeight: 22 },
+  canvas: { flex: 1, backgroundColor: palettes.dark.canvas },
+  content: { flexGrow: 1, justifyContent: 'center', padding: spacing.xl, gap: spacing.xxl },
+  header: { gap: spacing.sm },
+  panel: { gap: spacing.lg },
+  status: { color: palettes.dark.accent },
+  divider: { height: 1, backgroundColor: palettes.dark.border, marginVertical: spacing.sm },
 });
