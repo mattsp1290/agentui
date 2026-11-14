@@ -5,6 +5,7 @@
     "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
     "typescriptSdk": "1.0.4",
     "pythonSdk": "1.0.0",
+    "fixturePathsExecutedByAgentUI": false,
     "authority": "Retained closed canonical schema. SDK acceptance never changes canonical validity.",
     "definitionCoverageOwner": {
       "repository": "https://github.com/mattsp1290/switchboard",
@@ -34,6 +35,12 @@
     },
     "sdkRuntimeEvidence": {
       "kind": "historical-upstream-runtime-validators",
+      "canonicalLabels": {
+        "validator": "ajv",
+        "validatorVersion": "8.17.1",
+        "verifier": "scripts/verify-agui-matrix.mjs",
+        "rerunByAgentUI": false
+      },
       "typescript": {
         "package": "@ag-ui/core",
         "version": "1.0.4",
@@ -64,7 +71,7 @@
     },
     "retainedCanonicalComparison": {
       "log": "vendor/qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-agui.log.gz",
-      "scope": "Historical canonical schema and published SDK comparison; not native or installed AgentUI output."
+      "scope": "Historical canonical schema and SDK runtime validator comparison using zod/pydantic. It does not evaluate published TypeScript types, native behavior or installed AgentUI output."
     }
   },
   "nativeEvidence": {
@@ -177,7 +184,7 @@
       ]
     },
     "derivedIdentifiers": {
-      "claim": "Projected IDs encode [1, sourceKey, entity kind, native scope, native id] as reversible JSON; they are neither opaque nor run-scoped or per-invocation identifiers. Client exposure and redaction belong to agentui-7s6y/agentui-ckpw.",
+      "claim": "Decoded message, part and subagent-attribution ID samples expose [1, sourceKey, entity kind, native scope, native id] as JSON. Other identifier kinds are not decoded by these fixtures. This is a pinned observation, not a consumer decoding contract. Run scope, invocation identity and client exposure/redaction belong to agentui-7s6y/agentui-ckpw.",
       "evidence": [
         "identity-run-source-scope",
         "messages-and-opaque-content"

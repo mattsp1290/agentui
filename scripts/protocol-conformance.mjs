@@ -35,6 +35,7 @@ function verifiedInputs() {
   const fixtures = table('upstream.tsv').map(({ path, typescriptAccepts, pythonAccepts }) => {
     const [definition, validity] = path.split('/');
     assert.ok(['valid', 'invalid'].includes(validity), path);
+    for (const accepted of [typescriptAccepts, pythonAccepts]) assert.ok(['true', 'false'].includes(accepted), `${path}: ${accepted}`);
     return { path, definition, valid: validity === 'valid', typescriptAccepts: typescriptAccepts === 'true', pythonAccepts: pythonAccepts === 'true' };
   });
   const sdk = pin.artifacts.find((artifact) => artifact.package === '@ag-ui/core');
@@ -92,13 +93,14 @@ export function buildConformanceReport() {
   const { provenance, pin, vendor, definitions, fixtures, sdk, pythonSdk, project } = inputs;
   const registry = validateCoverage();
   const categories = projectCategories(inputs, registry);
-  const entries = (kind) => Object.values(registry).filter((entry) => entry.kind === kind).sort((a, b) => a.id.localeCompare(b.id))
-    .map(({ id, file, test }) => ({ id, file, test }));
+  const entries = (kind) => Object.keys(evidenceKinds[kind].bodies).sort()
+    .map((id) => ({ id, file: registry[id].file, test: registry[id].test }));
   const count = (predicate) => fixtures.filter(predicate).length;
   return {
     coverageContractVersion,
     canonical: {
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
+      fixturePathsExecutedByAgentUI: false,
       authority: reportText.authority,
       definitionCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
         matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: retainedPath('ag-ui-matrix.tsv'), verifier: pin.ownership.schemaTest },
@@ -112,6 +114,7 @@ export function buildConformanceReport() {
         typescriptSdkRuntimeRestrictiveValid: count((fixture) => fixture.valid && !fixture.typescriptAccepts),
         pythonSdkRuntimeRestrictiveValid: count((fixture) => fixture.valid && !fixture.pythonAccepts) },
       sdkRuntimeEvidence: { kind: reportText.sdkRuntimeEvidenceKind,
+        canonicalLabels: { validator: 'ajv', validatorVersion: pin.verifierTools.ajv, verifier: pin.ownership.schemaTest, rerunByAgentUI: false },
         typescript: { package: sdk.package, version: sdk.version, validator: 'zod', validatorVersion: pin.verifierTools.zod },
         python: { package: pythonSdk.package, version: pythonSdk.version, validator: 'pydantic', validatorVersion: pin.verifierTools.pydantic },
         publishedTypes: reportText.publishedTypeEvidence },

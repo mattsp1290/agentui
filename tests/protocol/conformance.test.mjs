@@ -10,4 +10,4 @@ test('protocol evidence citations resolve and the registrar matches report files
 for (const [kind, { bodies }] of Object.entries(evidenceKinds)) {
   for (const [id, body] of Object.entries(bodies)) test(evidenceTest(kind, id), () => body());
 }
-test('versioned conformance report matches immutable inputs and every owned fixture', assertReportFresh);
+test('versioned conformance report matches immutable inputs and every registered evidence ID', assertReportFresh);

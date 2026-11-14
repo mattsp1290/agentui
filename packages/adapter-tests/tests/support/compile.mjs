@@ -20,8 +20,9 @@ export async function assertCompileCases({ config = 'tsconfig.base.json', prefix
     }));
     for (const [source, diagnostic] of cases) {
       await writeFile(`${temporary}/probe.ts`, prefix + source);
-      const result = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
-      const context = `${source || '<control>'}\n${result.stdout}${result.stderr}`;
+      const result = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8', timeout: 120_000 });
+      const context = `${source || '<control>'}\n${result.error?.message ?? ''}${result.stdout}${result.stderr}`;
+      assert.ok(Number.isInteger(result.status) && !result.error, context);
       if (diagnostic === null) assert.equal(result.status, 0, context);
       else {
         assert.notEqual(result.status, 0, context);

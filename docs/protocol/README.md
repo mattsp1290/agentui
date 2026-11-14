@@ -8,8 +8,10 @@ It requires `tools` and `context` arrays that the wire may omit. Schema validati
 establishes canonical validity. AgentUI consumes the installed
 Switchboard projection through `@agentui/host/agui`. The host core
 entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
-SDK `Event` discriminators use enum members;
-parsed wire objects with literal discriminators are not directly assignable.
+SDK `Event` discriminators use enum members. Values typed with literal
+discriminators are not directly assignable. `JSON.parse`
+returns `any`, which bypasses TypeScript checking. Canonical validation establishes
+wire validity. SDK `rawEvent` accepts null even though the canonical wire forbids it.
 Compiler controls separately check the plain discriminator value set. Constructing
 an SDK `Event` uses enum values imported directly from `@ag-ui/core`; the
 `@agentui/protocol` entry intentionally exports types only.
@@ -71,10 +73,11 @@ no terminal outcome.
 
 Entity IDs can repeat across runs with the same source key and native reference.
 Owner references can reuse subagent attribution IDs across runs without lifecycle
-events. IDs reversibly encode the source key, entity kind and native reference.
-The encoding exposes those values to consumers. Client exposure and redaction belong
-to `agentui-7s6y`/`agentui-ckpw`. Consumers
-must retain run scope and handle partial streams in `agentui-7s6y`/`agentui-ckpw`.
+events. The fixtures decode message, part and subagent-attribution ID samples
+containing source keys and native references. Other identifier kinds are not
+decoded here. These observations are not a decoding API for clients.
+Consumers must retain run scope and handle partial streams. Client exposure,
+redaction and run coordination remain work for `agentui-7s6y`/`agentui-ckpw`.
 
 Validation covers individual events, not stream ordering. The pinned projection
 can map a failure before start or after a finished terminal, while rejecting

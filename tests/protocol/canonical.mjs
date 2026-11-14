@@ -17,6 +17,7 @@ export const canonicalControls = {
   'event-closed-shapes'() {
     assert.equal(validateEvent({ type: 'UNKNOWN_EVENT' }), false);
     assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm' }), true);
+    assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', rawEvent: null }), false);
     assert.equal(validateEvent({ type: 'TEXT_MESSAGE_END', messageId: 'm', unexpected: true }), false);
     assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled' } }), true);
     assert.equal(validateEvent({ type: 'RUN_FINISHED', threadId: 't', runId: 'r', outcome: { type: 'cancelled', interrupts: [] } }), false);

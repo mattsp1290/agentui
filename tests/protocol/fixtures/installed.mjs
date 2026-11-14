@@ -119,10 +119,13 @@ export const installedFixtures = {
     const message = ref('activity');
     const [snapshot] = mapped(projection, { kind: 'activity-snapshot', message, activityType: 'progress', content: { count: 0, done: false }, replace: false });
     assert.equal(snapshot.replace, false);
+    assert.equal(snapshot.activityType, 'progress');
+    assert.deepEqual(JSON.parse(snapshot.messageId), [1, 'agentui.fixture', 'message', message.scope, message.id]);
     assert.deepEqual(snapshot.content, { count: 0, done: false });
     const patch = [{ op: 'replace', path: '/done', value: true }];
     const [activity] = mapped(projection, { kind: 'activity-delta', message, activityType: 'progress', patch });
     assert.equal(activity.messageId, snapshot.messageId);
+    assert.equal(activity.activityType, 'progress');
     assert.deepEqual(activity.patch, patch);
     const publicPayload = { count: 0, done: false, empty: null };
     const envelope = { namespace: 'example.progress', schemaVersion: '1', publicPayload };
@@ -157,7 +160,15 @@ export const installedFixtures = {
     const [snapshot] = mapped(projection, { kind: 'messages-snapshot', messages });
     assert.equal(snapshot.type, 'MESSAGES_SNAPSHOT');
     assert.deepEqual(snapshot.messages.map(item => item.role), messages.map(item => item.role));
-    const [, , assistant, user, tool, activity, reasoning] = snapshot.messages;
+    const [developer, system, assistant, user, tool, activity, reasoning] = snapshot.messages;
+    assert.equal(developer.content, '');
+    assert.equal(system.content, 'policy');
+    assert.equal(assistant.content, '');
+    assert.equal(assistant.toolCalls[0].type, 'function');
+    assert.equal(activity.activityType, 'progress');
+    for (const [index, item] of snapshot.messages.entries()) {
+      assert.deepEqual(JSON.parse(item.id), [1, 'agentui.fixture', 'message', messages[index].id.scope, messages[index].id.id]);
+    }
     assert.equal(assistant.encryptedValue, 'opaque-assistant');
     assert.equal(assistant.toolCalls[0].encryptedValue, 'opaque-call');
     assert.deepEqual(assistant.toolCalls[0].function, { name: 'lookup', arguments: '{partial' });

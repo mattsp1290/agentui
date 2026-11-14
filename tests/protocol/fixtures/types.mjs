@@ -7,6 +7,7 @@ export const publishedTypeContracts = {
     prefix: `import type { Event, RunAgentInput, AgentCapabilities, BackendAvailability } from '@agentui/protocol';
 import { EventType } from '@ag-ui/core';
 export const knownEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm' };
+export const sdkOnlyRawEvent: Event = { type: EventType.TEXT_MESSAGE_END, messageId: 'm', rawEvent: null };
 export const knownDiscriminator: \`\${Event['type']}\` = 'TEXT_MESSAGE_END';
 export type SdkTypes = [Event, RunAgentInput, AgentCapabilities];
 export const sdkOnlyRequest: RunAgentInput = { threadId: 't', runId: 'r', messages: [], tools: [], context: [], state: null, forwardedProps: null };
@@ -56,6 +57,9 @@ export const negativeStates: Equal<Extract<BackendAvailability, { kind: 'unsuppo
 const families = ${JSON.stringify(projectionFacts.families)} satisfies readonly Parameters<typeof describeProjection>[0][];
 export const exhaustiveFamilies: Equal<Parameters<typeof describeProjection>[0], (typeof families)[number]> = true;
   `,
-    cases: [['', null]],
+    cases: [
+      ['', null],
+      ["export const wrongStates: Equal<BackendAvailability['kind'], 'supported'> = true;", /not assignable to type 'false'/u],
+    ],
   }),
 };
