@@ -25,7 +25,7 @@ test('saved view listing skips unreadable foreign rows, bounds pages and preserv
     const db = await new Promise((resolve, reject) => { opened.onsuccess = () => resolve(opened.result); opened.onerror = () => reject(opened.error); });
     const write = db.transaction('records', 'readwrite');
     const records = write.objectStore('records');
-    for (let index = 0; index < 105; index++) records.put({ version: 2, retained: index }, ['view', `a-${String(index).padStart(3, '0')}`, 'host']);
+    for (let index = 0; index < 105; index++) records.put({ version: 2, retained: index }, ['view', `!a-${String(index).padStart(3, '0')}`, 'host']);
     records.put({ version: 1, route: null, pendingCreation: null }, ['view', 'z-valid', 'host']);
     records.put({ version: 2, retained: 'own' }, ['view', owner.viewId, 'host']);
     await new Promise((resolve, reject) => { write.oncomplete = resolve; write.onerror = () => reject(write.error); });
@@ -39,7 +39,7 @@ test('saved view listing skips unreadable foreign rows, bounds pages and preserv
     db.close();
     return { first, second, ownFailure, retained };
   });
-  assert.deepEqual(result.first, { ids: [], unreadable: 100, after: 'a-099' });
+  assert.deepEqual(result.first, { ids: [], unreadable: 100, after: JSON.stringify(['!a-099', 'host']) });
   assert.deepEqual(result.second, { ids: ['z-valid'], unreadable: 5, after: null });
   assert.match(result.ownFailure, /Unsupported saved view.*preserved/);
   assert.equal(result.retained, 107);
@@ -66,4 +66,24 @@ test('a schema upgrade releases the old database and view lock and reports a rel
   assert.equal(result.lockReleased, true);
   assert.match(result.writeFailure, /no longer owns local storage/);
   assert.deepEqual(result.retained, { version: 1, route: null, pendingCreation: null });
+});
+
+
+test('foreign-host scans are bounded and continuation retains another host row for the same view', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const opened = indexedDB.open('agentui-browser-views', 1);
+    const db = await new Promise((resolve, reject) => { opened.onsuccess = () => resolve(opened.result); opened.onerror = () => reject(opened.error); });
+    const write = db.transaction('records', 'readwrite'), rows = write.objectStore('records');
+    for (let index = 0; index < 100; index++) rows.put({ version: 1, route: null, pendingCreation: null }, ['view', 'foreign-view', `a-${String(index).padStart(3, '0')}`]);
+    rows.put({ version: 1, route: null, pendingCreation: null }, ['view', 'foreign-view', 'z-host']);
+    await new Promise((resolve, reject) => { write.oncomplete = resolve; write.onerror = () => reject(write.error); });
+    const first = await owner.savedViews('z-host');
+    const second = await owner.savedViews('z-host', first.after);
+    owner.close(); db.close();
+    return { first, second };
+  });
+  assert.deepEqual(result.first, { ids: [], unreadable: 0, after: JSON.stringify(['foreign-view', 'a-099']) });
+  assert.deepEqual(result.second, { ids: ['foreign-view'], unreadable: 0, after: null });
 });
