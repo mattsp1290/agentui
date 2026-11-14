@@ -1,0 +1,7 @@
+Source SHA: 7d250ae54c3267997dc0f56b00281fd8076424d0
+Source label: update probe B
+Installed bundle:
+b95de99c60d9f927e42172d03d6a7200e239617fe941c36b830814684bd99808  main.jsbundle
+Checking Metro port 8081:
+lsof exit 1: no listener
+org.reactjs.native.example.AgentUIUpdateProbe: 27893

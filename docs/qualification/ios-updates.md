@@ -36,7 +36,7 @@ Measured on November 13, 2026, America/New_York.
 | --- | --- |
 | Branch | `codex/ios-update-qualification` |
 | Base | `bf16a1f`, merged foundation |
-| Probe implementation source | `b4258d6e0fb97a844e8f57e9fe1743061e85a3a2` |
+| Probe implementation source | `7d250ae54c3267997dc0f56b00281fd8076424d0` |
 | macOS | 26.6.2, build 25G83, arm64 |
 | Xcode | 26.2, build 17C52 |
 | Simulator SDK | 26.2 |
@@ -58,12 +58,12 @@ The probe has its own dependency tree and does not change the main workspace loc
 
 | Check | Result | Evidence |
 | --- | --- | --- |
-| Pinned dependency installation | PASS | npm ci and pod install logs |
+| Pinned dependency installation | PASS | npm ci, pod install --deployment, lock comparison; deployment log |
 | Release A build/install/render | PASS | build-A log and A screenshot |
-| Source edit to B without rebuild, then restart | PASS: still A | no-rebuild screenshot |
+| Source edit to B without rebuild, then restart | PASS: still A | restart-no-rebuild log and no-rebuild screenshot |
 | Fresh template generation with committed locks, warm artifact cache, DerivedData retained | PASS | clean prepare log |
 | Release B rebuild/install/render | PASS | build-B log and B screenshot |
-| B restart without Metro | PASS | B-restart screenshot, no listener on 8081 |
+| B restart without Metro | PASS | restart-B log, B-restart screenshot |
 | Repository npm run verify (regression, excludes spikes) | PASS | 11 tests, build, check, lint |
 | Compatible live-update recovery | UNQUALIFIED | No updater tested |
 | Physical-device signing/install/restart | UNQUALIFIED | No physical device or signing assumed |
@@ -85,3 +85,7 @@ This is a bounded v1 update recommendation. Existing architecture documents stil
 list broader future options. The Linux coordinator owns their cross-links and
 reconciliation when integrating this task; no product update policy is implemented
 by this probe. Native-incompatible changes remain rebuild-required in all cases.
+
+ShellCheck and Bash syntax checks passed for all three probe scripts. See
+`evidence/shellcheck.txt`. The retained restart logs report distinct A and B
+installed-bundle hashes and no Metro listener. Screenshots were visually checked.
