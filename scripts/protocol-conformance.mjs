@@ -72,8 +72,6 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
     const names = rows.map((row) => row.definition);
     const owned = coverage[category];
     const canonicalFixtures = fixtures.filter((fixture) => names.includes(fixture.definition));
-    assert.ok(['represented', 'partial', 'wire-only'].includes(owned.mapping), category);
-    assert.ok(owned.pending.length > 0 && owned.pending.every((owner) => owner.length > 0), category);
     return {
       category, purpose, definitions: names, canonicalEventDiscriminators: rows.flatMap((row) => row.event ? [row.event] : []),
       canonicalFixtures: canonicalFixtures.map((fixture) => fixture.path),

@@ -30,7 +30,7 @@ export const behaviorLimits = {
 export const coverage = {
   envelope: {
     mapping: 'represented', scope: 'Common event envelope on actual projection output.',
-    evidence: ['lifecycle-text-tools'], pending: ['AgentUI transport and UI event consumption; agentui-ckpw'],
+    evidence: ['lifecycle-text-tools', 'event-closed-shapes'], pending: ['AgentUI transport and UI event consumption; agentui-ckpw'],
   },
   text: {
     mapping: 'represented', scope: 'Observed text boundaries and fragments, including empty deltas.',
@@ -70,7 +70,7 @@ export const coverage = {
   },
   outcomes: {
     mapping: 'represented', scope: 'Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.',
-    evidence: ['terminal-interrupts-usage', 'terminal-ordering-limit'], pending: ['AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw'],
+    evidence: ['terminal-interrupts-usage', 'terminal-ordering-limit', 'event-closed-shapes'], pending: ['AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw'],
   },
   interrupts: {
     mapping: 'represented', scope: 'Observed terminal interrupts and references; no native suspend or resume proof.',

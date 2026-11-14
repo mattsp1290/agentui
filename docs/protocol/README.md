@@ -10,7 +10,9 @@ Switchboard projection through `@agentui/host/agui`. The host core
 entry remains independent of AG-UI imports. No mapper or SDK fields are copied.
 SDK `Event` discriminators use enum members;
 parsed wire objects with literal discriminators are not directly assignable.
-Compiler controls separately check the plain discriminator value set.
+Compiler controls separately check the plain discriminator value set. Constructing
+an SDK `Event` uses enum values imported directly from `@ag-ui/core`; the
+`@agentui/protocol` entry intentionally exports types only.
 
 The [versioned matrix](conformance.json) joins immutable upstream inventories to
 AgentUI's owned fixture coverage. Its version identifies canonical protocol 1.0,
@@ -114,18 +116,22 @@ npm run verify
 
 The generator derives definitions, event discriminators and raw fixture paths
 from the retained inventories. It lists SDK divergences and references hashed
-inputs instead of copying their complete rows. The catalog in
-`tests/protocol/evidence.mjs` owns one ID namespace for installed fixtures,
-canonical controls and published type contracts. Categories and behavior limits
-cite those IDs. Separate report fields retain each evidence kind's meaning.
-`tests/protocol/conformance.test.mjs` registers all catalog IDs and checks each
-kind against its actual function map. A report entry's `file` names this registrar,
+inputs instead of copying their complete rows. Evidence identity comes directly
+from the named body maps in `tests/protocol/fixtures/` and
+`tests/protocol/canonical.mjs`. `tests/protocol/evidence.mjs` associates each map
+with its evidence kind and validates citations, callability and global ID
+uniqueness. Every ID must have category credit. Categories and behavior limits
+cite those IDs; separate report fields distinguish evidence kinds.
+`tests/protocol/conformance.test.mjs` registers each body under the same derived
+name published in the report. A report entry's `file` names this registrar,
 not the module defining its body. Compiler bodies use the shared adapter-test
-helper, which requires a compiling positive control first. Canonical controls have their own module and report section.
+helper, which requires a compiling positive control first.
+Report generation imports the body definitions without invoking fixture callbacks
+or starting compiler processes. Loading the canonical module initializes Ajv
+against the retained schema, an existing pinned verification dependency. A module
+initialization failure can therefore precede the input-digest diagnostic.
 A separate identity fixture checks cross-run, source and reference scoping.
-Report generation imports metadata without executing evidence bodies. A fresh
-process checks that import graph. Qualification scope and pending ownership
-remain separate from behavioral claims.
+Qualification scope and pending ownership remain separate from behavioral claims.
 Named validator controls prove closed shapes. The freshness test rejects stale
 committed output. `protocol:check` provides the same freshness comparison as a fast
 read-only command; `verify` already includes the test. Normal verification needs

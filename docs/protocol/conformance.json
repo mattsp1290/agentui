@@ -233,7 +233,9 @@
       "installedFixtures": [
         "lifecycle-text-tools"
       ],
-      "canonicalControls": [],
+      "canonicalControls": [
+        "event-closed-shapes"
+      ],
       "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI transport and UI event consumption; agentui-ckpw"
@@ -810,7 +812,9 @@
         "terminal-interrupts-usage",
         "terminal-ordering-limit"
       ],
-      "canonicalControls": [],
+      "canonicalControls": [
+        "event-closed-shapes"
+      ],
       "publishedTypeContracts": [],
       "pendingProductOwners": [
         "AgentUI single-terminal enforcement, durable outcomes and reconciliation; agentui-7s6y and agentui-ckpw"
