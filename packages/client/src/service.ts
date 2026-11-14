@@ -1,8 +1,9 @@
 import { canonicalJson, parseScope } from '@agentui/contracts';
+import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
-import type { ServiceConnection, ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
+import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
 
 export type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 export class ServiceError extends Error {
@@ -15,7 +16,7 @@ export interface BrowserConnectionOptions {
   readonly fetch?: typeof globalThis.fetch;
   readonly onUnauthorized?: () => void;
 }
-async function readResponse(response: Response): Promise<unknown> {
+async function readResponse<K extends keyof ServiceValueMap>(response: Response, request: { readonly op: K }): Promise<ServiceResponse<ServiceValueMap[K]>> {
   const announced = response.headers.get('content-length');
   if (announced !== null && Number(announced) > SERVICE_MAX_RESPONSE_BYTES) {
     await response.body?.cancel();
@@ -43,16 +44,18 @@ async function readResponse(response: Response): Promise<unknown> {
     await reader.cancel().catch(() => {});
     throw error;
   } finally { reader.releaseLock(); }
-  try { return JSON.parse(body); }
-  catch { throw new ServiceProtocolError('Invalid JSON service response'); }
+  try { return parseServiceResponse<K>(request, JSON.parse(body)); }
+  catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
+  let credentialGeneration = 0;
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
   async function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
     timeoutMs = requestTimeoutMs): Promise<ServiceValueMap[K]> {
     const controller = new AbortController();
+    const requestedGeneration = credentialGeneration;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abort = (): void => {};
     const interrupted = new Promise<never>((_resolve, reject) => {
@@ -64,27 +67,22 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
       let body: string;
       try {
         body = canonicalJson(parseServiceRequest(value));
-        if (new TextEncoder().encode(body).byteLength > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
+        if (utf8Bytes(body) > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
       } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
       const response = await fetch('/api/v1', { method: 'POST', credentials: 'same-origin',
         headers: { 'Content-Type': 'application/json' }, body, signal: controller.signal, keepalive: value.op === 'close' });
-      if (response.status === 401) {
-        let reason = 'Pair this browser with the host';
-        try {
-          const result = parseServiceResponse<K>(value, await readResponse(response));
-          if (!result.ok && result.error.kind === 'unauthorized') reason = result.error.message;
-        } catch { await response.body?.cancel().catch(() => {}); }
-        if (value.op !== 'pair') options.onUnauthorized?.();
-        throw new ServiceError('unauthorized', reason);
+      let result: ServiceResponse<ServiceValueMap[K]>;
+      try { result = await readResponse<K>(response, value); }
+      catch (error) {
+        if (response.status !== 401) throw error;
+        result = { ok: false, error: { kind: 'unauthorized', message: 'Pair this browser with the host' } };
       }
-      const raw = await readResponse(response);
-      let result;
-      try { result = parseServiceResponse<K>(value, raw); }
-      catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
-      if (!result.ok) {
-        if (result.error.kind === 'unauthorized' && value.op !== 'pair') options.onUnauthorized?.();
-        throw new ServiceError(result.error.kind, result.error.message);
+      const unauthorized = response.status === 401 || (!result.ok && result.error.kind === 'unauthorized');
+      if (unauthorized) {
+        if (value.op !== 'pair' && requestedGeneration === credentialGeneration && !controller.signal.aborted) options.onUnauthorized?.();
+        throw new ServiceError('unauthorized', result.ok ? 'Pair this browser with the host' : result.error.message);
       }
+      if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
       return result.value;
     };
@@ -146,7 +144,7 @@ export function createBrowserConnection(options: BrowserConnectionOptions = {}):
     return { ended, close: () => finish({ kind: 'closed', cursor, reason: 'Client closed the feed' }) };
   }
   return {
-    async pair(code) { await request({ op: 'pair', code }); },
+    async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
     catalog: (after = null, limit = 100) => request({ op: 'catalog', after, limit }),
     create: scope => request({ op: 'create', scope }),

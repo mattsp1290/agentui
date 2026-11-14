@@ -67,6 +67,25 @@ test('command network failures never retry and authorization failures remain ide
   assert.equal(unauthorized, 1);
 });
 
+test('an old unauthorized reply cannot invalidate credentials paired after that request began', async () => {
+  const old = Promise.withResolvers();
+  let notifications = 0, reads = 0;
+  const unauthorized = () => new Response(JSON.stringify({ ok: false, error: { kind: 'unauthorized', message: 'Expired device' } }), {
+    status: 401, headers: { 'Content-Type': 'application/json' },
+  });
+  const connection = createBrowserConnection({ onUnauthorized: () => notifications++, fetch: async (_url, init) => {
+    if (JSON.parse(init.body).op === 'pair') return reply(null);
+    return ++reads === 1 ? old.promise : unauthorized();
+  } });
+  const previous = connection.metadata();
+  await connection.pair('replacement invitation');
+  old.resolve(unauthorized());
+  await assert.rejects(previous, error => error.kind === 'unauthorized');
+  assert.equal(notifications, 0);
+  await assert.rejects(connection.metadata(), error => error.kind === 'unauthorized');
+  assert.equal(notifications, 1);
+});
+
 test('feed ACK waits for receiver and duplicate pages are delivered once', async () => {
   const received = [], acks = [], gate = Promise.withResolvers();
   const results = [page(1), page(1), { kind: 'heartbeat' }, page(2, { kind: 'events', events: [] }), ended];

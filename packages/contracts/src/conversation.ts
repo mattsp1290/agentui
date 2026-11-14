@@ -1,3 +1,4 @@
+import { record, count, identifier } from './decode.js';
 import type { Projection } from './durable.js';
 
 export interface TranscriptMessage {
@@ -12,32 +13,22 @@ export interface Transcript {
 }
 export type TranscriptEvent = TranscriptMessage & { readonly kind: 'message-updated' };
 
-function isObject(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === 'object' && !Array.isArray(value) &&
-    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
-}
-function exact(value: Record<string, unknown>, keys: readonly string[]): void {
-  if (Object.keys(value).some(key => !keys.includes(key))) throw new Error('Unexpected transcript field');
-}
 function message(value: unknown, event: boolean): TranscriptMessage {
-  if (!isObject(value)) throw new Error('Invalid transcript message');
-  exact(value, event ? ['kind', 'messageId', 'revision', 'role', 'text', 'complete']
+  const input = record(value, event ? ['kind', 'messageId', 'revision', 'role', 'text', 'complete']
     : ['messageId', 'revision', 'role', 'text', 'complete']);
-  if (typeof value.messageId !== 'string' || !value.messageId || value.messageId.length > 1024 ||
-    typeof value.revision !== 'number' || !Number.isSafeInteger(value.revision) || value.revision < 1 ||
-    (value.role !== 'user' && value.role !== 'assistant') || typeof value.text !== 'string' ||
-    typeof value.complete !== 'boolean') throw new Error('Invalid transcript message');
-  return { messageId: value.messageId, revision: value.revision, role: value.role,
-    text: value.text, complete: value.complete };
+  const messageId = identifier(input.messageId), revision = count(input.revision);
+  if (revision < 1 || (input.role !== 'user' && input.role !== 'assistant') || typeof input.text !== 'string' ||
+    typeof input.complete !== 'boolean') throw new Error('Invalid transcript message');
+  return { messageId, revision, role: input.role, text: input.text, complete: input.complete };
 }
 export function parseTranscriptEvent(value: unknown): TranscriptEvent {
-  if (!isObject(value) || value.kind !== 'message-updated') throw new Error('Invalid transcript event');
+  if (record(value).kind !== 'message-updated') throw new Error('Invalid transcript event');
   return { kind: 'message-updated', ...message(value, true) };
 }
 export function parseTranscript(value: unknown): Transcript {
-  if (!isObject(value) || !Array.isArray(value.messages)) throw new Error('Invalid transcript');
-  exact(value, ['messages']);
-  const messages = value.messages.map(item => message(item, false));
+  const input = record(value, ['messages']);
+  if (!Array.isArray(input.messages)) throw new Error('Invalid transcript');
+  const messages = input.messages.map(item => message(item, false));
   if (new Set(messages.map(item => item.messageId)).size !== messages.length) throw new Error('Duplicate transcript message');
   return { messages };
 }

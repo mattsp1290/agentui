@@ -19,6 +19,14 @@
     "./service": {
       "types": "./dist/service.d.ts",
       "import": "./dist/service.js"
+    },
+    "./decode": {
+      "types": "./dist/decode.d.ts",
+      "import": "./dist/decode.js"
+    },
+    "./artifact": {
+      "types": "./dist/artifact.d.ts",
+      "import": "./dist/artifact.js"
     }
   },
   "files": [

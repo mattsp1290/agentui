@@ -1,3 +1,4 @@
+import { record as object, nonempty, count as integer, identifier, exact } from './decode.js';
 import type { ConversationScope } from './index.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
@@ -120,26 +121,6 @@ export function foldDocument<E, P>(document: ConversationDocument<P>, event: Hos
     }
   }
 }
-function object(value: unknown): Record<string, unknown> {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Expected object');
-  return value as Record<string, unknown>;
-}
-function nonempty(value: unknown): string {
-  if (typeof value !== 'string' || value.length === 0) throw new Error('Expected nonempty string');
-  return value;
-}
-function integer(value: unknown): number {
-  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) throw new Error('Invalid integer');
-  return value;
-}
-function identifier(value: unknown): string {
-  const parsed = nonempty(value);
-  if (parsed.length > 1024) throw new Error('Identifier exceeds length limit');
-  return parsed;
-}
-function exact(value: Record<string, unknown>, keys: readonly string[]): void {
-  if (Object.keys(value).some(key => !keys.includes(key))) throw new Error('Unexpected field');
-}
 export function parseScope(value: unknown): ConversationScope {
   const input = object(value);
   exact(input, ['hostId', 'conversationId']);
@@ -169,19 +150,21 @@ export function parseCommand(value: unknown): ClientCommand {
   return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
 }
 export function parseDecision(value: unknown): PendingDecision {
-  const input = object(value);
+  const input = object(value, ['pendingId', 'runId', 'choices', 'prompt']);
   if (!Array.isArray(input.choices)) throw new Error('Expected array');
   const choices = input.choices.map(nonempty);
   if (choices.length === 0 || new Set(choices).size !== choices.length) throw new Error('Invalid choices');
   return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt) };
 }
 export function parseReceipt(value: unknown): Receipt {
-  const input = object(value), state = object(input.state);
+  const input = object(value, ['scope', 'clientCommandId', 'hostOperationId', 'sequence', 'state']), state = object(input.state);
   const base = { scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId),
     hostOperationId: nonempty(input.hostOperationId), sequence: integer(input.sequence) };
   switch (state.kind) {
-    case 'pending': case 'accepted': case 'completed': return { ...base, state: { kind: state.kind } };
+    case 'pending': case 'accepted': case 'completed':
+      exact(state, ['kind']); return { ...base, state: { kind: state.kind } };
     case 'not-dispatched': case 'rejected': case 'uncertain':
+      exact(state, ['kind', 'reason']);
       return { ...base, state: { kind: state.kind, reason: nonempty(state.reason) } };
     default: throw new Error('Invalid receipt');
   }
@@ -190,14 +173,15 @@ export function parseHostEvent<E>(value: unknown, scope: ConversationScope, sequ
   projection: Pick<Projection<E, unknown>, 'decodeEvent'>): HostEvent<E> {
   const event = object(value);
   switch (event.kind) {
-    case 'domain': return { kind: 'domain', event: projection.decodeEvent(event.event) };
+    case 'domain': exact(event, ['kind', 'event']); return { kind: 'domain', event: projection.decodeEvent(event.event) };
     case 'receipt': {
+      exact(event, ['kind', 'receipt']);
       const parsed = parseReceipt(event.receipt);
       if (!sameScope(parsed.scope, scope) || parsed.sequence !== sequence) throw new Error('Corrupt receipt event');
       return { kind: 'receipt', receipt: parsed };
     }
-    case 'decision-opened': return { kind: 'decision-opened', decision: parseDecision(event.decision) };
-    case 'decision-closed': return { kind: 'decision-closed', pendingId: nonempty(event.pendingId) };
+    case 'decision-opened': exact(event, ['kind', 'decision']); return { kind: 'decision-opened', decision: parseDecision(event.decision) };
+    case 'decision-closed': exact(event, ['kind', 'pendingId']); return { kind: 'decision-closed', pendingId: nonempty(event.pendingId) };
     default: throw new Error('Corrupt event');
   }
 }

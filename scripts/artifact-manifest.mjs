@@ -3,10 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { lstatSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { canonicalJson } from '@agentui/contracts';
+import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest } from '@agentui/contracts/artifact';
 
 const targets = {
   host: { directory: 'apps/host/dist', nativeRuntime: { engine: 'node', version: process.versions.node, format: 'esm' } },
-  'browser-development': { directory: 'apps/desktop/web-dist-browser', nativeRuntime: { engine: 'browser', version: 'development', format: 'web-assets' } },
+  'browser-development': { directory: 'apps/desktop/web-dist-browser', nativeRuntime: BROWSER_RUNTIME },
 };
 const platform = process.argv[2];
 if (process.argv.length !== 3 || !Object.hasOwn(targets, platform)) {
@@ -53,7 +54,7 @@ const dirtyFiles = [...changed].sort().map(path => {
 });
 const assets = assetsAt(directory);
 if (assets.length === 0) throw new Error(`No built assets in ${directory}`);
-const payload = {
+const payload = manifestPayload({
   schemaVersion: 1,
   platform,
   sourceRevision: git('-C', root, 'rev-parse', 'HEAD'),
@@ -64,7 +65,7 @@ const payload = {
   artifactRuntime: target.nativeRuntime,
   lockSha256: digest(readFileSync(join(root, 'package-lock.json'))),
   assets,
-};
-const manifest = { ...payload, artifactId: digest(canonicalJson(payload)) };
+});
+const manifest = parseArtifactManifest({ ...payload, artifactId: digest(canonicalJson(payload)) }, digest);
 writeFileSync(join(directory, 'artifact.json'), `${JSON.stringify(manifest, null, 2)}\n`);
 process.stdout.write(`${target.directory}/artifact.json ${manifest.artifactId}\n`);
