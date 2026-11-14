@@ -44,6 +44,8 @@ Device lists contain at most 100 entries. Continue with `host:devices -- --data-
 
 Device lists show expiry and current activity. Expired rows remain as access history; pagination bounds each read without deleting that history. Conversation and saved-view lists also load one page at a time through **More conversations** and **More saved views**.
 
+Access records and conversations share the existing host database. The application owns the versioned `service_*` namespace; the durable host owns its conversation schema. Startup checks that their host identities agree. Keeping that existing boundary preserves paired devices and conversations across upgrades without copying authority into another database.
+
 ## Development boundary and build identity
 
 This listener binds to loopback and serves only the recorded backend. Browser credentials use an HttpOnly, SameSite Strict cookie, expire after one hour, and belong to the browser development credential class. Cookies do not isolate loopback ports. Use this entry for local recorded development; it is not the native credential transport or a remote host deployment. Pairing codes, cookies, and provider secrets do not belong in customization Git or URLs.

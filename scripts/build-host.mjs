@@ -1,5 +1,5 @@
 import { build } from 'esbuild';
-import { writeFileSync } from 'node:fs';
+import { mkdirSync, writeFileSync } from 'node:fs';
 import { isBuiltin } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -24,5 +24,8 @@ for (const output of Object.values(result.metafile.outputs)) {
     if (!imported.external || !isBuiltin(imported.path)) throw new Error(`Host bundle has an external runtime dependency: ${imported.path}`);
   }
 }
-for (const file of result.outputFiles) writeFileSync(file.path, file.contents);
+for (const file of result.outputFiles) {
+  mkdirSync(dirname(file.path), { recursive: true });
+  writeFileSync(file.path, file.contents);
+}
 writeFileSync(join(root, 'apps/host/dist/runtime-graph.json'), `${JSON.stringify(result.metafile, null, 2)}\n`);

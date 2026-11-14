@@ -1,7 +1,7 @@
 import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationPort, ConversationScope, Projection, Receipt } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
-import { budgets } from './durable-model.js';
+import { budgets, commandKey } from './durable-model.js';
 import { installation, nonempty } from './codec.js';
 import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
@@ -31,7 +31,6 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   let closed = false;
   let active = 0;
   const dispatching = new Set<string>();
-  const commandKey = (scope: ConversationScope, id: string) => JSON.stringify([scope.hostId, scope.conversationId, id]);
   let resolveDrained!: () => void;
   let rejectDrained!: (error: unknown) => void;
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
@@ -124,15 +123,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       });
       return inFlight(async () => {
         const result = await operation.reconcile(new AbortController().signal);
-        if (dispatching.has(commandKey(scope, id)) && (result.kind !== 'ok' || result.value.observation.kind === 'outcome-unknown')) {
-          const latest = store.command(scope, id);
-          if (!latest) throw new Error('Admitted command disappeared');
-          return latest.receipt;
-        }
-        if (result.kind !== 'ok') {
-          return store.settle(scope, id, { kind: 'outcome-unknown' });
-        }
-        return store.settle(scope, id, result.value.observation);
+        return store.settle(scope, id, result.kind === 'ok' ? result.value.observation : { kind: 'outcome-unknown' },
+          { live: dispatching.has(commandKey(scope, id)) });
       });
     },
     close(): void {

@@ -1,5 +1,9 @@
-import type { ClientCommand, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
+import { canonicalJson } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
 import type { DispatchIdentity, DispatchObservation, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
+
+export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
+export function commandKey(scope: ConversationScope, id: string): string { return canonicalJson([...scopeKey(scope), id]); }
 
 export interface Installation {
   readonly installationId: string;

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { parseArtifactManifest, readArtifact, readInstalledArtifact } from '../../apps/host/dist/artifact.js';
+import { parseArtifactManifest, readArtifact, readInstalledArtifact } from '../../apps/host/build/tsc/artifact.js';
 
 const generator = fileURLToPath(new URL('../../scripts/artifact-manifest.mjs', import.meta.url));
 function fixture(t) {

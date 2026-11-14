@@ -6,6 +6,7 @@ import { openDatabase } from './sqlite-schema.js';
 import { nonempty, object, installation, integer, nativeRun, output, capturedTarget, observation, cloneJson, assertDispatchIdentity } from './codec.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { CapturedTarget, ObservedResult, HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
+import { scopeKey as key } from './durable-model.js';
 
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
@@ -14,7 +15,6 @@ class OutputApplicationError extends Error {}
 class CapacityError extends Error {}
 const QUARANTINE_RESERVE_BYTES = 128;
 const DOCUMENT_JSON_BUDGET = { maxNodes: 99_936, maxDepth: 56 };
-function key(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
 
 export class SqliteStore<E, P> {
   readonly db;
@@ -195,11 +195,11 @@ export class SqliteStore<E, P> {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
-  settle(scope: ConversationScope, id: string, value: DispatchObservation<ObservedResult>): Receipt {
+  settle(scope: ConversationScope, id: string, value: DispatchObservation<ObservedResult>, context = { live: false }): Receipt {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      const transition = settlement(stored.observation, observation(value, stored.target), isQuarantined(stored));
+      const transition = settlement(stored.observation, observation(value, stored.target), isQuarantined(stored), context.live);
       switch (transition.kind) {
         case 'keep': return stored.receipt;
         case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

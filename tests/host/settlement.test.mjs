@@ -62,3 +62,12 @@ test('quarantined terminal application retains the terminal result while learnin
   const changed = { ...conclusive, evidence: evidence(native), result: { kind: 'rejected', reason: 'changed' } };
   assert.equal(settlement(conclusive, changed, true).kind, 'conflict');
 });
+
+
+test('live dispatch keeps inconclusive recovery without preventing conclusive settlement', () => {
+  for (const previous of [null, unknown, accepted, conclusive]) {
+    assert.deepEqual(settlement(previous, unknown, false, true), { kind: 'keep' });
+  }
+  assert.equal(settlement(null, conclusive, false, true).kind, 'apply');
+  assert.equal(settlement(null, unknown, false, false).kind, 'apply');
+});

@@ -1,7 +1,8 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { canonicalJson } from '@agentui/contracts';
+import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 
-export async function readJson(request: IncomingMessage, limit = 66_000): Promise<unknown> {
+export async function readJson(request: IncomingMessage, limit: number): Promise<unknown> {
   const declared = request.headers['content-length'];
   if (declared && (!/^\d+$/.test(declared) || Number(declared) > limit)) throw new Error('Request exceeds byte limit');
   const chunks: Buffer[] = [];
@@ -13,12 +14,11 @@ export async function readJson(request: IncomingMessage, limit = 66_000): Promis
     chunks.push(buffer);
   }
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-  canonicalJson(parsed);
   return parsed;
 }
 export function json(response: ServerResponse, status: number, value: unknown): void {
   const body = canonicalJson(value);
-  if (Buffer.byteLength(body) > 4_100_000) throw new Error('Response exceeds byte limit');
+  if (Buffer.byteLength(body) > SERVICE_MAX_RESPONSE_BYTES) throw new Error('Response exceeds byte limit');
   response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   response.end(body);
 }

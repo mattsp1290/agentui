@@ -14,8 +14,9 @@ export class ServiceFeed {
   private wake = () => {};
   private end: FeedEnd | null = null;
   private feed: Feed | null = null;
-  touched = Date.now();
+  private touched = Date.now();
   constructor(readonly principalId: string, readonly scope: ConversationScope) {}
+  isIdle(now: number, limit: number): boolean { return now - this.touched > limit; }
   attach(feed: Feed): void {
     this.feed = feed;
     void feed.ended.then(end => { this.end = end; this.wake(); });

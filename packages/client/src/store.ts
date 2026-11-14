@@ -1,15 +1,17 @@
 import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
-import type { CommandBody, ConversationDocument, Feed, Receipt, SubmitResult } from '@agentui/contracts';
+import type { CommandBody, Feed, Receipt, SubmitResult } from '@agentui/contracts';
 import { applyDelivery, decodeReceipt, DeliveryError } from './delivery.js';
 import type { DeliveryState } from './delivery.js';
 import { copyJson, immutable, restore } from './local-state.js';
 import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
-type ReplayState<P> =
-  | { readonly kind: 'empty'; readonly document: ConversationDocument<P>; readonly cursor: null }
-  | { readonly kind: 'valid'; readonly delivery: DeliveryState<P> }
-  | { readonly kind: 'resync-required'; readonly document: ConversationDocument<P>; readonly cursor: number | null;
-    readonly cause: { readonly kind: 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string } };
+type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
+type ReplayState<P> = { readonly delivery: DeliveryState<P> } &
+  ({ readonly kind: 'valid' } | { readonly kind: 'untrusted'; readonly cause: ReplayCause });
+function baseline<P>(replay: ReplayState<P>): DeliveryState<P> {
+  if (replay.kind === 'valid') return replay.delivery;
+  return { document: replay.delivery.document, cursor: null, identities: new Map<number, string>() };
+}
 
 function acknowledgementBoundary(): Promise<void> { return Promise.resolve(); }
 function settled(receipt: Receipt): boolean {
@@ -29,7 +31,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   const scope = immutable(parseScope(options.scope));
   if (!sameScope(scope, port.scope)) throw new Error('Port scope mismatch');
   let local = restore(null, scope);
-  let replay: ReplayState<P> = { kind: 'empty', document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null };
+  let replay: ReplayState<P> = { kind: 'untrusted', cause: { kind: 'cold' },
+    delivery: { document: immutable({ domain: projection.initial(), receipts: {}, decisions: {} }), cursor: null, identities: new Map() } };
   let connection: ConnectionState = { kind: 'disconnected' };
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
@@ -37,7 +40,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let generation = 0;
   const inFlight = new Set<string>();
   function makeView(): ClientView<P> {
-    const applied = replay.kind === 'valid' ? replay.delivery : replay;
+    const applied = replay.delivery;
     return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection) });
   }
   function publish(): void {
@@ -61,13 +64,11 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
   function requireCompatible(): void {
-    if (replay.kind === 'resync-required' && replay.cause.kind === 'mismatch') throw new Error(replay.cause.reason);
+    if (replay.kind === 'untrusted' && replay.cause.kind === 'mismatch') throw new Error(replay.cause.reason);
   }
-  function invalidate(mismatchReason: string | null = null): void {
-    const applied = replay.kind === 'valid' ? replay.delivery : replay;
-    const cause: Extract<ReplayState<P>, { kind: 'resync-required' }>['cause'] = mismatchReason !== null ? { kind: 'mismatch', reason: mismatchReason }
-      : replay.kind === 'resync-required' ? replay.cause : { kind: 'invalid' };
-    replay = { kind: 'resync-required', document: applied.document, cursor: applied.cursor, cause };
+  function invalidate(cause: ReplayCause): void {
+    if (replay.kind === 'untrusted' && replay.cause.kind === 'mismatch' && cause.kind !== 'mismatch') cause = replay.cause;
+    replay = { kind: 'untrusted', delivery: replay.delivery, cause };
   }
   function stop(next: ConnectionState): void {
     generation++;
@@ -159,13 +160,13 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       try {
         await ready;
         if (current !== generation) return;
-        const after = replay.kind === 'valid' ? replay.delivery.cursor : null;
+        const after = baseline(replay).cursor;
         const opened = port.watch({ after, projectionVersion: projection.version }, async item => {
           if (current !== generation) return;
-          if (receiving) { invalidate(); stop({ kind: 'failed', reason: 'Host delivered concurrent callbacks' }); return; }
+          if (receiving) { invalidate({ kind: 'invalid' }); stop({ kind: 'failed', reason: 'Host delivered concurrent callbacks' }); return; }
           receiving = true;
           try {
-            const previous = replay.kind === 'valid' ? replay.delivery : { document: replay.document, cursor: null, identities: new Map<number, string>() };
+            const previous = baseline(replay);
             const next = applyDelivery(previous, item, scope, projection);
             await acknowledgementBoundary();
             if (current !== generation) return;
@@ -175,7 +176,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
             publish();
           } catch (error) {
             if (current === generation) {
-              invalidate(error instanceof DeliveryError && error.kind === 'mismatch' ? error.message : null);
+              invalidate(error instanceof DeliveryError && error.kind === 'mismatch' ? { kind: 'mismatch', reason: error.message } : { kind: 'invalid' });
               stop({ kind: error instanceof DeliveryError ? error.kind : 'resync', reason: error instanceof Error ? error.message : 'Feed delivery failed' });
             }
             throw error;
@@ -187,7 +188,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           if (current !== generation) return;
           const next: ConnectionState = end.kind === 'closed' ? { kind: 'disconnected' }
             : { kind: end.kind === 'refused' ? 'mismatch' : end.kind, reason: end.reason };
-          if (end.kind === 'resync' || end.kind === 'refused') invalidate(end.kind === 'refused' ? end.reason : null);
+          if (end.kind === 'resync' || end.kind === 'refused') invalidate(end.kind === 'refused' ? { kind: 'mismatch', reason: end.reason } : { kind: 'invalid' });
           stop(next);
         }, error => {
           if (current === generation) stop({ kind: 'failed', reason: error instanceof Error ? error.message : 'Feed failed' });
