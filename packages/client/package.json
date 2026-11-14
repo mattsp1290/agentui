@@ -11,14 +11,18 @@
     "./react": {
       "types": "./dist/react.d.ts",
       "import": "./dist/react.js"
+    },
+    "./service": {
+      "types": "./dist/service.d.ts",
+      "import": "./dist/service.js"
     }
   },
   "files": [
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.react.json",
-    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.react.json --noEmit"
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.react.json && tsc -p tsconfig.service.json",
+    "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.service.json --noEmit"
   },
   "dependencies": {
     "@agentui/contracts": "0.0.0"
