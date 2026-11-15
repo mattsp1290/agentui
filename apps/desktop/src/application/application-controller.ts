@@ -328,7 +328,7 @@ export function createApplicationController(deps: {
           cancel: runId => invoke(() => target.store.cancel(runId)),
         },
         async submit(operation) {
-          try { await submitCommand(owner, target, operation); } catch { /* UI failures are reported by submitCommand. */ }
+          try { await submitCommand(owner, target, operation); } catch {}
         },
         reconcile: id => run(async owner => {
           requireTarget(owner, target);
