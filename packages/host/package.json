@@ -27,6 +27,10 @@
     "./customization": {
       "types": "./dist/customization/index.d.ts",
       "import": "./dist/customization/index.js"
+    },
+    "./claude-sdk": {
+      "types": "./dist/claude-sdk-driver.d.ts",
+      "import": "./dist/claude-sdk-driver.js"
     }
   },
   "files": [
@@ -42,12 +46,17 @@
   "dependencies": {
     "@ag-ui/core": "file:../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-core-1.0.4.tgz",
     "@agentui/contracts": "0.0.0",
-    "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+    "@agentui/sdk": "0.0.0",
+    "@agentui/switchboard-claude": "file:../../vendor/switchboard-5af2137fd4353716f54e7a8ae36390bd62d0b97e.tgz",
+    "@agentui/switchboard-codex": "file:../../vendor/switchboard-a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c.tgz",
+    "@agentui/switchboard-pi": "file:../../vendor/switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
+    "@anthropic-ai/claude-agent-sdk": "0.3.323",
+    "@anthropic-ai/sdk": "1.8.0",
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@agentui/switchboard-pi": "file:../../vendor/switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
-    "@agentui/sdk": "0.0.0",
-    "@agentui/switchboard-codex": "file:../../vendor/switchboard-a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c.tgz",
-    "@openai/codex-sdk": "0.169.0"
+    "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "@openai/codex-sdk": "0.169.0",
+    "zod": "4.6.7"
   }
 }
