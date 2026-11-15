@@ -7,10 +7,13 @@ import { applicationEnabled } from '../application/application-controller.js';
 import { useApplication } from '../application/use-application.js';
 import { ConversationStatus, ConversationView } from '../application/ConversationView.js';
 import '../application/application.css';
+import customization from '../application/customization-selection.js';
+import { CustomizationModules } from '../application/CustomizationModules.js';
 
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const { controller, snapshot: app } = useApplication();
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
+  const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const enabled = applicationEnabled(app);
   const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
   const agent = runtime?.engine === 'codex' ? 'codex' : runtime?.engine === 'pi' ? 'pi' : runtime?.engine === 'agentui-recorded' ? 'recorded' : 'local';
@@ -59,7 +62,10 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
   const views = <>
-    <div className="chat-view" hidden={selectedView !== 'chats'}>{conversation}</div>
+    <div className="chat-view" hidden={selectedView !== 'chats'}>{conversation}
+      {children === undefined && customization && customizationEnabled && <CustomizationModules customization={customization}
+        active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />}
+    </div>
     <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>
       <section className="settings-section"><h2>Connection</h2>
@@ -79,7 +85,8 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4m4 0h8M4 12h8m4 0h4M4 18h2m4 0h10"/><circle cx="10" cy="6" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg>
     </button>
   </nav>;
-  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} onRestore={() => setSelectedView('chats')}
+  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} restoreMode={children === undefined ? 'managed' : 'remount'}
+    onRestore={() => { setCustomizationEnabled(false); setSelectedView('chats'); }}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
     buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded host'}>{children}</DesktopShell>;
 }

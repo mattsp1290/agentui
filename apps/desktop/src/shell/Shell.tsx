@@ -3,11 +3,15 @@ import { Button, Surface, Text, ThemeScope } from '@agentui/ui-primitives/deskto
 
 type ContentState = { readonly kind: 'ready' } | { readonly kind: 'failed' };
 
-class ContentBoundary extends Component<{ readonly children: ReactNode }, ContentState> {
+class ContentBoundary extends Component<{ readonly children: ReactNode; readonly revision: number }, ContentState> {
   override state: ContentState = { kind: 'ready' };
 
   static getDerivedStateFromError(): ContentState {
     return { kind: 'failed' };
+  }
+
+  override componentDidUpdate(previous: Readonly<{ readonly children: ReactNode; readonly revision: number }>) {
+    if (this.state.kind === 'failed' && previous.revision !== this.props.revision) this.setState({ kind: 'ready' });
   }
 
   override render() {
@@ -47,13 +51,14 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children, defaultView, protectedContent, navigation, activeView, onRestore, status, buildLabel }: {
+export function DesktopShell({ children, defaultView, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
   readonly children?: ReactNode;
   readonly defaultView?: ReactNode;
   readonly protectedContent?: ReactNode;
   readonly navigation?: ReactNode;
   readonly activeView?: 'chats' | 'settings';
   readonly onRestore?: () => void;
+  readonly restoreMode?: 'remount' | 'managed';
   readonly status?: ReactNode;
   readonly buildLabel?: string;
 }) {
@@ -69,7 +74,8 @@ export function DesktopShell({ children, defaultView, protectedContent, navigati
     {navigation}
     {protectedContent}
     <main id="main-content">
-      <ContentBoundary key={view.kind === 'initial' ? 0 : view.revision}>
+      <ContentBoundary key={restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision}
+        revision={view.kind === 'initial' ? 0 : view.revision}>
         {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
       </ContentBoundary>
     </main>
