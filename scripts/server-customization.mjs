@@ -15,6 +15,7 @@ const failure = code => Object.assign(new Error({
   'build-failed': 'Could not compile server customization sources.',
   'artifact-changed': 'Server customization output changed during validation.',
   'publication-failed': 'Could not publish server customization artifact.',
+  'toolchain-mismatch': 'Server customization requires Node >=24.22.3 <25.',
 }[code]), { code });
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const inside = (root, path) => { const part = relative(root, path); return part === '' || part !== '..' && !part.startsWith('../') && !isAbsolute(part); };
@@ -54,6 +55,7 @@ async function compiler(nodes, entries, directory, abi) {
   const approved = path => canonical.some(root => inside(root, path));
   const plugin = { name: 'prepared-customization', setup(builder) {
     builder.onResolve({ filter: /.*/ }, async args => {
+      if (args.path === 'module' || args.path === 'node:module') throw failure('build-failed');
       if (Object.hasOwn(abi.imports, args.path) || isNodeBuiltin(args.path)) return { path: args.path, external: true };
       if (args.path.startsWith('@agentui/') || args.path.includes(':') && !isAbsolute(args.path)) throw failure('build-failed');
       if (args.pluginData?.resolving) return;
@@ -67,7 +69,8 @@ async function compiler(nodes, entries, directory, abi) {
       const contents = await readFile(args.path, 'utf8');
       rejectRuntimeLookups(contents, args.path);
       const extension = args.path.split('.').at(-1);
-      return { contents, loader: ['ts', 'tsx', 'jsx'].includes(extension) ? extension : 'js' };
+      const loader = ['ts', 'mts', 'cts'].includes(extension) ? 'ts' : ['tsx', 'jsx'].includes(extension) ? extension : 'js';
+      return { contents, loader };
     });
   } };
   const contents = entries.map((entry, index) => `import entry${index} from ${JSON.stringify(join(entry.node.directory, entry.source))};`).join('\n') +
@@ -75,7 +78,7 @@ async function compiler(nodes, entries, directory, abi) {
   try {
     const result = await build({ stdin: { contents, sourcefile: 'agentui-server-catalog.mjs', resolveDir: canonical[0], loader: 'js' },
       absWorkingDir: canonical[0], outfile: join(directory, 'entries.mjs'), bundle: true, splitting: false, format: 'esm', platform: 'node',
-      target: `node${process.versions.node}`, conditions: ['node', 'import'], mainFields: ['module', 'main'],
+      target: `node${process.versions.node}`, conditions: ['node'], mainFields: ['main'],
       tsconfigRaw: { compilerOptions: { experimentalDecorators: false, useDefineForClassFields: true, jsx: 'transform' } },
       jsx: 'transform', sourcemap: false, legalComments: 'none', charset: 'utf8', minify: false,
       write: false, metafile: true, logLevel: 'silent', plugins: [plugin] });
@@ -118,6 +121,8 @@ async function builderIdentity() {
 }
 
 export async function buildServerCustomization({ reference, out }) {
+  const [major, minor, patch] = process.versions.node.split('.').map(Number);
+  if (major !== 24 || minor < 22 || minor === 22 && patch < 3) throw failure('toolchain-mismatch');
   let directory = resolve(out);
   let parent = dirname(directory);
   let reserved = false, owner, prepared;
