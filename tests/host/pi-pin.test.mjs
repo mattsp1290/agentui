@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = new URL('../../', import.meta.url);
@@ -13,8 +13,7 @@ test('Pi host consumes the pinned public Switchboard artifact with SDK-free decl
   assert.equal(createHash('sha256').update(readFileSync(new URL(`vendor/${pin.artifact}`, root))).digest('hex'), pin.sha256);
   assert.equal(host.dependencies['@earendil-works/pi-ai'], pin.nativeSdk);
   assert.equal(host.dependencies['@earendil-works/pi-coding-agent'], pin.nativeSdk);
-  const require = createRequire(new URL('packages/host/package.json', root));
-  const entry = require.resolve('@agentui/switchboard-pi/pi');
+  const entry = fileURLToPath(import.meta.resolve('@agentui/switchboard-pi/pi'));
   const declarations = readFileSync(entry.replace(/\.js$/, '.d.ts'), 'utf8');
   assert(!declarations.includes('@earendil-works/'), 'Public Pi types must not expose native SDK declarations');
   const lock = json('package-lock.json');
