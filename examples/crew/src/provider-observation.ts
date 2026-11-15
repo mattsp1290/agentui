@@ -16,7 +16,7 @@ const workItemArguments = z.strictObject({ operation_id: z.uuid() });
 const questionArguments = z.strictObject({});
 export function observation(binding: ProviderConversation<string>, memberId: string,
   use: <T>(action: (client: CrewClient, token: string) => Promise<T>) => Promise<T>, baseUrl: string,
-  previous: CrewCursor | null) {
+  previous: CrewCursor | null, ownerDetails: boolean) {
   let cursor: CrewCursor = { epoch: randomUUID(), sequence: 0, requests: previous?.requests ?? [] };
   let state: CrewState = { binding: stateSchema.shape.binding.parse(binding), messages: [], run: null };
   let remote: z.infer<typeof remoteSchema> | undefined;
@@ -30,28 +30,38 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   let stop: (() => void) | undefined;
   let tail = Promise.resolve();
   let timer: ReturnType<typeof setTimeout> | undefined;
-  function snapshot(nextCursor = cursor): ProviderSnapshot<CrewModel, string> {
+  const detailReads = new AbortController();
+  async function snapshot(client: CrewClient): Promise<ProviderSnapshot<CrewModel, string>> {
     const cards = [...remote?.pendingApprovals ?? [], ...remote?.pendingQuestions ?? []];
-    return { binding, projectionVersion: 1, cursor: { binding, kind: 'provider-cursor', opaque: cursorSchema.parse(nextCursor) },
-      state: stateSchema.parse(state), decisions: cards.flatMap(card => {
-        const tool = tools.get(card.approvalId);
-        let complete = false;
-        if (tool && tool.name === card.toolName) {
-          try {
-            const args: unknown = JSON.parse(tool.arguments);
-            complete = card.toolName === 'choose_next_step' ? questionArguments.safeParse(args).success
-              : card.toolName === 'record_work_item' && card.argumentsComplete === true &&
-                workItemArguments.safeParse(args).data?.operation_id === card.requestId;
-          } catch { /* Incomplete tool arguments cannot authorize a choice. */ }
-        }
-        const choices = card.choices.filter(choice => choice === 'deny' || complete &&
-          (card.toolName === 'record_work_item' ? choice === 'approve' : choice === 'inspect' || choice === 'test'));
-        if (!choices.length) return [];
-        const details = complete ? tool?.arguments : 'Action details are incomplete. Crew may have redacted the proposed note. Only Deny is available.';
-        return [{ ref: reference(binding, 'decision', approvalKey(card)), run: reference(binding, 'run', card.requestId),
-          prompt: `${card.summary}\n${details}`, choices: choices.map(choice => ({
-            ref: reference(binding, 'choice', JSON.stringify([approvalKey(card), choice])), label: choiceLabels[choice] })) }];
-      }) };
+    const decisions: ProviderSnapshot<CrewModel, string>['decisions'][number][] = [];
+    for (const card of cards) {
+      const tool = tools.get(card.approvalId);
+      let complete = false;
+      let ownerPrompt: string | undefined;
+      if (ownerDetails && card.toolName === 'record_work_item') {
+        const detail = await client.approvalDetail({ conversationId: card.conversationId, memberId: card.memberId,
+          requestId: card.requestId, invocationId: card.invocationId, approvalId: card.approvalId, version: card.version },
+        { signal: AbortSignal.any([detailReads.signal, AbortSignal.timeout(10000)]) });
+        ownerPrompt = `${detail.toolName}\n${JSON.stringify(detail.arguments, null, 2)}`;
+        complete = true;
+      } else if (tool && tool.name === card.toolName) {
+        try {
+          const args: unknown = JSON.parse(tool.arguments);
+          complete = card.toolName === 'choose_next_step' ? questionArguments.safeParse(args).success
+            : card.toolName === 'record_work_item' && card.argumentsComplete === true &&
+              workItemArguments.safeParse(args).data?.operation_id === card.requestId;
+        } catch { /* Incomplete tool arguments cannot authorize a choice. */ }
+      }
+      const choices = card.choices.filter(choice => choice === 'deny' || complete &&
+        (card.toolName === 'record_work_item' ? choice === 'approve' : choice === 'inspect' || choice === 'test'));
+      if (!choices.length) continue;
+      const details = ownerPrompt ?? (complete ? tool?.arguments : 'Action details are incomplete. Crew may have redacted the proposed note. Only Deny is available.');
+      decisions.push({ ref: reference(binding, 'decision', approvalKey(card)), run: reference(binding, 'run', card.requestId),
+        prompt: `${card.summary}\n${details}`, choices: choices.map(choice => ({
+          ref: reference(binding, 'choice', JSON.stringify([approvalKey(card), choice])), label: choiceLabels[choice] })) });
+    }
+    return { binding, projectionVersion: 1, cursor: { binding, kind: 'provider-cursor', opaque: cursorSchema.parse(cursor) },
+      state: stateSchema.parse(state), decisions };
   }
   const enqueue = (action: () => Promise<void>) => {
     const task = tail.then(action);
@@ -68,10 +78,10 @@ export function observation(binding: ProviderConversation<string>, memberId: str
         cancellation: receipt.cancellation ?? null } };
     } catch { /* Missing or unavailable status is not proof of completion. */ }
   }
-  async function publish() {
+  async function publish(snapshot: ProviderSnapshot<CrewModel, string>) {
     if (closed || !receiver) return;
     const next = { ...cursor, sequence: cursor.sequence + 1 };
-    const replacement = snapshot(next);
+    const replacement = { ...snapshot, cursor: { ...snapshot.cursor, opaque: cursorSchema.parse(next) } };
     await receiver({ kind: 'snapshot', snapshot: replacement });
     cursor = next; admitted = replacement.cursor;
   }
@@ -113,9 +123,11 @@ export function observation(binding: ProviderConversation<string>, memberId: str
       state = { ...state, messages: current ? state.messages.map(message => message === current ? next : message) : [...state.messages, next] };
     } else return;
     if (!sawMessages || !remote) return;
-    ready.resolve(snapshot());
+    const replacement = await snapshot(client);
+    if (closed) return;
+    ready.resolve(replacement);
     await gate.promise;
-    await publish();
+    await publish(replacement);
   }
   const lifetime = use(async (client, token) => {
     if (closed) return;
@@ -140,13 +152,13 @@ export function observation(binding: ProviderConversation<string>, memberId: str
       return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers });
     };
     let detaching: Promise<void> | undefined;
-    stop = () => { observer.abortRun(); detaching ??= observer.detachActiveRun(); void detaching.catch(() => {}); };
+    stop = () => { detailReads.abort(); observer.abortRun(); detaching ??= observer.detachActiveRun(); void detaching.catch(() => {}); };
     const subscription = observer.subscribe({ onEvent: ({ event }) => enqueue(() => reduce(event, client)) });
     const run = observer.runAgent();
     const poll = async () => {
       if (closed) return;
       try { await enqueue(async () => {
-        if (state.run && !['completed', 'cancelled', 'failed'].includes(state.run.status)) { await refresh(client); await publish(); }
+        if (state.run && !['completed', 'cancelled', 'failed'].includes(state.run.status)) { await refresh(client); await publish(await snapshot(client)); }
       }); } catch { return; }
       if (!closed) timer = setTimeout(() => { void poll(); }, 750);
     };
@@ -163,7 +175,7 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     .finally(() => { ready.reject(new Error('Crew baseline unavailable')); });
   const timeout = setTimeout(() => { ready.reject(new Error('Crew baseline timed out')); close(); }, 15000);
   void ready.promise.then(() => clearTimeout(timeout), () => clearTimeout(timeout));
-  function close() { endKind = 'closed'; closed = true; clearTimeout(timer); gate.resolve(); stop?.(); }
+  function close() { endKind = 'closed'; closed = true; detailReads.abort(); clearTimeout(timer); gate.resolve(); stop?.(); }
   return { ready: ready.promise, close, ended: completion.promise,
     attach(receive: (item: ProviderItem<CrewModel, string>) => Promise<void>) { receiver = receive; gate.resolve(); },
   };

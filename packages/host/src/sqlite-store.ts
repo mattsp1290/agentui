@@ -157,16 +157,19 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         for (const pending of change.output.decisions) {
           const id = pending.visible.pendingId, data = canonicalJson(pending);
           const prior = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
+          let retained = pending;
           if (prior && prior.data !== data) {
-            const previous = object(json(prior.data));
-            if (prior.status !== 'open' || canonicalJson(previous.reference) !== canonicalJson(pending.reference) ||
-              parseDecision(previous.visible).runId !== pending.visible.runId) throw new Error('Provider decision changed');
-            this.db.prepare('UPDATE pending_decisions SET data=? WHERE host=? AND conversation=? AND id=?').run(data, ...key(scope), id);
+            const previous = providerDecision(json(prior.data), creation.observation.binding, original.installation);
+            if (canonicalJson(previous.reference) !== canonicalJson(pending.reference) ||
+              previous.visible.runId !== pending.visible.runId) throw new Error('Provider decision changed');
+            if (prior.status === 'open') {
+              this.db.prepare('UPDATE pending_decisions SET data=? WHERE host=? AND conversation=? AND id=?').run(data, ...key(scope), id);
+            } else retained = previous;
           }
           requireRun(pending.visible.runId);
           if (!prior) this.db.prepare("INSERT INTO pending_decisions(host, conversation, id, run, data, status, operation) VALUES (?, ?, ?, ?, ?, 'open', NULL)")
             .run(...key(scope), id, pending.visible.runId, data);
-          if (prior?.status !== 'closed') decisions.set(id, visibleProviderDecision(pending, prior?.status === 'reserved'));
+          if (prior?.status !== 'closed') decisions.set(id, visibleProviderDecision(retained, prior?.status === 'reserved'));
         }
         for (const row of this.db.prepare("SELECT id FROM pending_decisions WHERE host=? AND conversation=? AND status='open'").all(...key(scope))) {
           const id = nonempty(row.id);

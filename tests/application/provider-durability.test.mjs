@@ -15,6 +15,53 @@ const effects = (remote, path) => remote.requests.filter(request => request.path
 const acknowledged = (extension, item) => extension.calls.ack.some(value =>
   JSON.stringify(value) === JSON.stringify(item));
 
+for (const native of [false, true]) test(`${native ? 'host' : 'remote'} decision enrichment updates open material and preserves reserved commands and closed tombstones through SQLite reopen`, async t => {
+  const remote = await providerService(t, { native }), a = remote.extension({ controls: true });
+  const f = await fixture(t, [a]), scope = await f.create(), port = f.client.conversation(scope);
+  await until(() => a.calls.ready === 1);
+  const binding = remote.conversations.get('chat').snapshot.binding;
+  remote.command((operation, path) => ({ kind: 'confirmed', value: { kind: 'decide',
+    state: path === '/lookup' || operation.decision.ref.opaqueId === 'closed' ? 'completed' : 'accepted' }, evidence: null }));
+  const snapshot = structuredClone(remote.conversations.get('chat').snapshot);
+  snapshot.cursor = remote.cursor(binding);
+  snapshot.decisions = ['open', 'reserved', 'closed'].map(id => decision(remote, binding, id));
+  const first = remote.emit({ kind: 'snapshot', snapshot }); await until(() => acknowledged(a, first));
+  assert.equal((await port.submit(approve(scope, 'reserved'))).receipt.state.kind, 'accepted');
+  assert.equal((await port.submit(approve(scope, 'closed'))).receipt.state.kind, 'completed');
+  const before = fullState(f), captured = effects(remote, '/submit').find(value => value.input.decision.ref.opaqueId === 'reserved').input;
+  snapshot.cursor = remote.cursor(binding);
+  snapshot.decisions = snapshot.decisions.map(pending => ({ ...pending, prompt: 'record_work_item\nComplete owner note',
+    choices: [{ ref: remote.ref(binding, 'choice', 'new-choice'), label: 'New material' }] }));
+  const enriched = remote.emit({ kind: 'snapshot', snapshot }); await until(() => acknowledged(a, enriched));
+  function assertRetained() {
+    const state = fullState(f), doc = document(state);
+    assert.deepEqual(state.commands, before.commands);
+    assert.deepEqual(doc.receipts, document(before).receipts);
+    for (const id of ['reserved', 'closed']) assert.deepEqual(state.decisions.find(row => row.id === id), before.decisions.find(row => row.id === id));
+    assert.deepEqual(doc.decisions.reserved, document(before).decisions.reserved);
+    assert.equal(doc.decisions.reserved.reserved, true);
+    assert.equal(Object.hasOwn(doc.decisions, 'closed'), false);
+    assert.equal(doc.decisions.open.prompt, 'record_work_item\nComplete owner note');
+    assert.deepEqual(doc.decisions.open.choices, ['new-choice']);
+  }
+  assertRetained();
+  const b = remote.extension({ controls: true }); await f.restart([b]); await until(() => b.calls.ready === 1);
+  snapshot.cursor = remote.cursor(binding);
+  const replay = remote.emit({ kind: 'snapshot', snapshot }); await until(() => acknowledged(b, replay));
+  assertRetained();
+  for (const changed of ['run', 'reference']) {
+    const invalid = structuredClone(snapshot); invalid.cursor = remote.cursor(binding);
+    if (changed === 'run') invalid.decisions[1].run = remote.ref(binding, 'run', 'different-run');
+    else invalid.decisions[1].ref.binding.authority.binding.opaqueSessionId = 'different-conversation';
+    const stored = fullState(f);
+    await assert.rejects(b.calls.receive({ kind: 'snapshot', snapshot: invalid }));
+    assert.deepEqual(fullState(f), stored);
+  }
+  assert.equal((await f.client.reconcile(scope, 'reserved')).state.kind, 'completed');
+  assert.deepEqual(effects(remote, '/lookup').at(-1).input, captured);
+  assert.equal(effects(remote, '/submit').length, 2);
+});
+
 for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authority commits before lost connector acknowledgement and deduplicates exact HTTP replay`, { timeout: 15_000 }, async t => {
   const remote = await providerService(t, { native }), boundary = Promise.withResolvers();
   const lostAcknowledgement = new Error('Lost connector acknowledgement after durable acceptance');

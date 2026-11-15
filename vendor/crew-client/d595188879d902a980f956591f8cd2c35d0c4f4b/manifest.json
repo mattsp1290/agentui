@@ -1,0 +1,24 @@
+{
+  "package": "@birbcrew/client",
+  "version": "0.1.0",
+  "sourceRevision": "d595188879d902a980f956591f8cd2c35d0c4f4b",
+  "sourcePackageTree": "7caf04d1eb3d5cd90546fec2c3f52249b098bf4f",
+  "sourceRepository": "git@github.com:mattsp1290/crew.git",
+  "sourceWasClean": true,
+  "sourceArchive": "source.tar.gz",
+  "sourceArchiveSha256": "eb35b890f4d507e12c6baed4f7be5a146086dfb0b5bb30091e8bb777405b804b",
+  "packageArchive": "birbcrew-client-0.1.0.tgz",
+  "packageArchiveSha256": "7f8c31999dfc8e43035eb0820679651fdeb23ec73c0c435b376912dc8d1ac03d",
+  "npmIntegrity": "sha512-wK5wkRGu83dNc5Y8Tmuu9JqsFUhReoUqJvVMPEejs5rVULMoHFcAjY+Jv06BCEjROZO4QVAB8ijmpe28WN3bYw==",
+  "build": {
+    "node": "22.23.3",
+    "npm": "10.9.9",
+    "typescript": "5.9.3",
+    "command": "npm run verify:client (scripts/verify-client-package.mjs uses Node 22 npm for build:client and npm pack ./packages/client --json --pack-destination <output>)",
+    "sourceRevision": "b3924743b33dcb3fef553af2e0febae3a329a06c",
+    "sourceExtraction": "Source archive retained separately with git archive d595188879d902a980f956591f8cd2c35d0c4f4b packages/client",
+    "dependencySource": "Existing Crew portable-package verification; final source package tree is identical to the build revision. All 12 package files compared with the frozen build and exact source Git objects."
+  },
+  "license": "MIT",
+  "sourceTree": "2de8d9745b66eeb669e049b1c0b2ae53969a570d"
+}
