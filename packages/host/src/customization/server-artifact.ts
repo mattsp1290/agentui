@@ -145,23 +145,24 @@ export interface ServerCatalogPlan {
 }
 export function planServerCatalog(root: ResolvedCustomizationPackage, sdkVersion: string): ServerCatalogPlan {
   const nodes = customizationPreorder(root, node => node.identity, node => node.extensions);
-  const sources: string[] = [];
   const packages = nodes.map((node): ServerArtifactPackage => {
     let npm: ServerArtifactNpm = node.npm;
     if (node.npm.kind === 'locked') { const { directory: _directory, ...locked } = node.npm; npm = locked; }
     const local = node.customization?.local;
-    for (const entry of local?.manifest.entries ?? []) {
-      if (entry.kind !== 'server') continue;
-      const source = local?.sources.get(entry.module);
-      if (!source) throw CustomizationError.fixed('invalid-graph');
-      sources.push(resolve(node.directory, source));
-    }
     return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs, npm,
       local: local ? { manifest: local.manifest,
         sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : 0) } : null,
       shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
   });
-  return { catalog: serverCatalog(packages, sdkVersion), repositoryDirectory: root.repositoryDirectory,
+  const catalog = serverCatalog(packages, sdkVersion);
+  const absolute = new Map(nodes.map(node => [node.identity,
+    new Map([...(node.customization?.local?.sources ?? [])].map(([module, source]) => [module, resolve(node.directory, source)]))]));
+  const sources = catalog.entries.map(entry => {
+    const source = absolute.get(entry.packageIdentity)?.get(entry.module);
+    if (!source) throw CustomizationError.fixed('invalid-graph');
+    return source;
+  });
+  return { catalog, repositoryDirectory: root.repositoryDirectory,
     roots: [...new Set(nodes.map(node => node.repositoryDirectory))], sources };
 }
 function freeze<T>(value: T): T {
