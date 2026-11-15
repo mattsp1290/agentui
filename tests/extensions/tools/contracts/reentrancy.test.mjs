@@ -58,7 +58,7 @@ test('decoder may release its pin and retire while its call retains resources', 
   snapshot = pin([generation]);
   let call;
   try {
-    call = snapshot.invoke('demo__x', {});
+    call = snapshot.invoke('demo__x', {}, snapshot.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '');
     await Promise.resolve();
     assert.deepEqual(events, []);
     finish();

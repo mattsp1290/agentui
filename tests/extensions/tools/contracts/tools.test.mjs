@@ -71,13 +71,13 @@ test('pins hold retired generations and active calls until they drain', async ()
     },
   });
   const p = pin([a]);
-  const call = p.invoke('demo__x', {});
+  const call = p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '');
   const retired = a.retire();
   assert.equal(retired, a.retire());
   assert.throws(() => pin([a]), /Invalid or retired/u);
   p.release();
   p.release();
-  assert.deepEqual(await p.invoke('demo__x', {}), { kind: 'refused', code: 'released' });
+  assert.deepEqual(await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'refused', code: 'released' });
   assert.equal(disposed, 0);
   finish('done');
   assert.equal((await call).output, 'done');
@@ -111,8 +111,8 @@ test('old and new generations and multiple pins are independent', async () => {
   const done = a.retire();
   const b = await make();
   const newer = pin([b]);
-  assert.equal((await p.invoke('demo__x', {})).output, 'old');
-  assert.equal((await newer.invoke('demo__text_length', { text: 'abc' })).output, '3');
+  assert.equal((await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).output, 'old');
+  assert.equal((await newer.invoke('demo__text_length', { text: 'abc' }, newer.bindings.find(binding => binding.name === 'demo__text_length')?.activationId ?? '')).output, '3');
   p.release();
   assert.equal(disposed, 0);
   q.release();
@@ -155,8 +155,8 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
   localRun.conversation.conversationId = 'later';
   assert.equal(p.run.conversation.conversationId, 'snapshot');
   assert.equal(p.definitions[0].name, 'demo__x');
-  assert.equal((await p.invoke('demo__x', { value: '!' })).output, 'ok!');
-  assert.equal((await p.invoke('demo__x', { value: 3 })).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { value: '!' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).output, 'ok!');
+  assert.equal((await p.invoke('demo__x', { value: 3 }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
   for (const caps of [
     undefined,
     {},
@@ -371,8 +371,8 @@ test('arguments are not defaulted or coerced and decoder errors refuse', async (
     },
   });
   const p = pin([g]);
-  assert.equal((await p.invoke('demo__x', {})).code, 'decode-failed');
-  assert.equal((await p.invoke('demo__x', { n: '4' })).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'decode-failed');
+  assert.equal((await p.invoke('demo__x', { n: '4' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
   p.release();
   await g.retire();
 });
@@ -380,8 +380,8 @@ test('arguments are not defaulted or coerced and decoder errors refuse', async (
 test('ios pins select ios generations and refuse unknown names', async () => {
   const g = await make({ platform: 'ios' });
   const p = pin([g], { platform: 'ios' });
-  assert.equal((await p.invoke('demo__text_length', { text: 'hi' })).output, '2');
-  assert.equal((await p.invoke('missing', {})).code, 'unknown-tool');
+  assert.equal((await p.invoke('demo__text_length', { text: 'hi' }, p.bindings.find(binding => binding.name === 'demo__text_length')?.activationId ?? '')).output, '2');
+  assert.equal((await p.invoke('missing', {}, p.bindings.find(binding => binding.name === 'missing')?.activationId ?? '')).code, 'unknown-tool');
   p.release();
   await g.retire();
 });
@@ -410,7 +410,7 @@ test('handler rejection drains an in-flight call and nonstring results reject', 
     },
   });
   const p = pin([g]);
-  const call = p.invoke('demo__x', {});
+  const call = p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '');
   const retired = g.retire();
   p.release();
   reject(new Error('handler'));
@@ -432,7 +432,7 @@ test('handler rejection drains an in-flight call and nonstring results reject', 
     },
   });
   const q = pin([other]);
-  await assert.rejects(q.invoke('demo__x', {}), /string/);
+  await assert.rejects(q.invoke('demo__x', {}, q.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), /string/);
   q.release();
   await other.retire();
 });
@@ -461,8 +461,8 @@ test('registration captures methods and schema independently', async () => {
   contribution.decodeInput = () => 'changed';
   contribution.execute = async () => 'changed';
   const p = pin([g]);
-  assert.equal((await p.invoke('demo__x', { n: 'original' })).output, 'original');
-  assert.equal((await p.invoke('demo__x', { n: 2 })).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { n: 'original' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).output, 'original');
+  assert.equal((await p.invoke('demo__x', { n: 2 }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
   p.release();
   await g.retire();
   await assert.rejects(make({ namespace: ['demo'] }));
@@ -530,11 +530,11 @@ test('refusals and failed pins drain retired generations', async () => {
   assert.throws(() => pin([Object.create(Object.getPrototypeOf(g))]), /Invalid or retired/);
   const p = pin([g]);
   const retired = g.retire();
-  assert.equal((await p.invoke('demo__x', { n: 'bad' })).code, 'invalid-arguments');
-  assert.equal((await p.invoke('demo__x', { bad: true })).code, 'decode-failed');
-  assert.equal((await p.invoke('missing', {})).code, 'unknown-tool');
+  assert.equal((await p.invoke('demo__x', { n: 'bad' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { bad: true }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'decode-failed');
+  assert.equal((await p.invoke('missing', {}, p.bindings.find(binding => binding.name === 'missing')?.activationId ?? '')).code, 'unknown-tool');
   p.release();
-  assert.equal((await p.invoke('demo__x', {})).code, 'released');
+  assert.equal((await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'released');
   await retired;
   assert.equal(disposed, 1);
 });
@@ -584,8 +584,8 @@ test('optional definitions and empty schemas preserve object arguments', async (
       },
     });
     const p = pin([g]);
-    assert.equal((await p.invoke('demo__x', {})).kind, 'completed');
-    assert.equal((await p.invoke('demo__x', 'text')).code, 'invalid-arguments');
+    assert.equal((await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).kind, 'completed');
+    assert.equal((await p.invoke('demo__x', 'text', p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
     if (parameters === undefined || !Object.keys(parameters).length)
       assert.deepEqual(p.definitions[0].parameters, { type: 'object' });
     p.release();
@@ -727,7 +727,7 @@ test('disabled pins do not retain and concurrent calls drain', async () => {
   pin([g], { capabilities: undefined });
   pin([g], { platform: 'ios' });
   const p = pin([g]);
-  const calls = [p.invoke('demo__x', {}), p.invoke('demo__x', {})];
+  const calls = [p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')];
   const retire = g.retire;
   const done = retire();
   p.release();
@@ -809,7 +809,7 @@ test('JSON snapshots preserve data without invoking hidden serialization hooks',
   });
   const snapshot = pin([generation]);
   try {
-    const result = await snapshot.invoke('demo__x', args);
+    const result = await snapshot.invoke('demo__x', args, snapshot.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '');
     assert.equal(hookCalls, 0);
     assert.deepEqual(snapshot.definitions[0].metadata, {});
     assert.deepEqual(result, { kind: 'completed', output: 'original' });
@@ -826,7 +826,7 @@ test('copied generation handles are refused without affecting the original', asy
   try {
     assert.throws(() => pin([{ ...g }]), /Invalid or retired/u);
     p = pin([g]);
-    assert.equal((await p.invoke('demo__text_length', { text: 'safe' })).output, '4');
+    assert.equal((await p.invoke('demo__text_length', { text: 'safe' }, p.bindings.find(binding => binding.name === 'demo__text_length')?.activationId ?? '')).output, '4');
   } finally {
     p?.release();
     await g.retire();
@@ -860,8 +860,8 @@ test('property dependency named id works without references', async () => {
     },
   });
   const p = pin([g]);
-  assert.equal((await p.invoke('demo__x', { id: 'x' })).code, 'invalid-arguments');
-  assert.equal((await p.invoke('demo__x', { id: 'x', name: 'name' })).output, 'ok');
+  assert.equal((await p.invoke('demo__x', { id: 'x' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { id: 'x', name: 'name' }, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).output, 'ok');
   p.release();
   await g.retire();
 });
@@ -912,7 +912,39 @@ test('annotation data may contain reference-shaped keys', async () => {
     return { dispose() {} };
   } });
   const p = pin([g]);
-  assert.equal((await p.invoke('demo__x', {})).output, 'ok');
+  assert.equal((await p.invoke('demo__x', {}, p.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).output, 'ok');
   p.release();
   await g.retire();
+});
+
+test('pins bind immutable activation identities even when generation labels match', async () => {
+  const effects = [];
+  const activate = label => ({ frontendTools }) => {
+    frontendTools.add({
+      definition: { name: 'text_length', description: 'count' },
+      decodeInput: value => value.text,
+      async execute(text) { effects.push(label); return String(text.length); },
+    });
+    return { dispose() {} };
+  };
+  const first = await make({ activate: activate('original') });
+  const second = await make({ activate: activate('replacement') });
+  const oldPin = pin([first]), newPin = pin([second]);
+  try {
+    assert.notEqual(first.activationId, second.activationId);
+    assert.deepEqual(await newPin.invoke('demo__text_length', { text: 'hello' }),
+      { kind: 'refused', code: 'activation-mismatch' });
+    assert.deepEqual(oldPin.bindings, [{ name: 'demo__text_length', activationId: first.activationId }]);
+    assert.ok(Object.isFrozen(oldPin.bindings));
+    assert.ok(Object.isFrozen(oldPin.bindings[0]));
+    assert.deepEqual(await newPin.invoke('demo__text_length', { text: 'hello' }, first.activationId),
+      { kind: 'refused', code: 'activation-mismatch' });
+    assert.deepEqual(effects, []);
+    assert.deepEqual(await oldPin.invoke('demo__text_length', { text: 'hello' }, first.activationId),
+      { kind: 'completed', output: '5' });
+    assert.deepEqual(effects, ['original']);
+  } finally {
+    oldPin.release(); newPin.release();
+    await Promise.all([first.retire(), second.retire()]);
+  }
 });

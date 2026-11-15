@@ -15,6 +15,7 @@ AgentUI owns conversation coordination and customization deployment. It consumes
 | `@agentui/ui-primitives/desktop` | DOM controls and system theme scope | React and DOM |
 | `@agentui/ui-primitives/native` | React Native controls | React Native, without DOM |
 | `@agentui/host` | Public Switchboard consumption boundary | Node |
+| `@agentui/host/frontend-tools` | Durable frontend-call coordination on an existing local host handle | Node, without DOM |
 | `@agentui/host/agui` | Installed Switchboard AG-UI projection consumer | Node |
 | `@agentui/adapter-tests` | Downstream package and boundary checks | Node |
 | `@agentui/desktop` | Tauri client entry contracts | React and DOM |

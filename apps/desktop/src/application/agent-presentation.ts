@@ -1,4 +1,5 @@
 import { CLAUDE_SDK_CHAT_LABELS, CLAUDE_SDK_RUNTIMES, CODEX_SDK_CHAT_LABEL, PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
+import type { AgentDescriptor } from '@agentui/contracts/service';
 import type { NativeRuntimeIdentity } from '@agentui/contracts/compatibility';
 
 const savedConversations = 'The local host manages your saved conversations and approvals.';
@@ -31,6 +32,11 @@ export const AGENT_PRESENTATION = {
     assistant: 'Recorded assistant', placeholder: 'Write to the recorded assistant…', footer: 'Recorded playback · No live model',
     live: false, hostLabel: 'Browser development · Recorded playback', buildLabel: 'Browser development · Recorded host', settings: savedConversations,
   },
+  provider: {
+    assistant: 'Provider', placeholder: 'Messaging is not available yet', footer: 'Provider conversation · Messaging is not available yet',
+    live: false, hostLabel: 'Provider', buildLabel: 'Provider',
+    settings: 'Your host saves this provider conversation. Messaging will be available in a later update.',
+  },
   local: {
     assistant: 'Assistant', placeholder: 'Write a message…', footer: 'Local agent',
     live: false, hostLabel: 'Local agent', buildLabel: 'Local host', settings: savedConversations,
@@ -38,7 +44,11 @@ export const AGENT_PRESENTATION = {
 };
 export type Agent = keyof typeof AGENT_PRESENTATION;
 
-export function agentPresentation(runtime: NativeRuntimeIdentity | null) {
+export function agentPresentation(runtime: NativeRuntimeIdentity | Extract<AgentDescriptor, { kind: 'provider' }> | null) {
+  if (runtime && 'kind' in runtime) return { agent: 'provider' as const, presentation: {
+    ...AGENT_PRESENTATION.provider, assistant: runtime.label, hostLabel: runtime.label,
+    buildLabel: runtime.label,
+  } };
   let agent: Agent;
   switch (runtime?.engine) {
     case 'codex': agent = 'codex'; break;

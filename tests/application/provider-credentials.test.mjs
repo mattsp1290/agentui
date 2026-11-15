@@ -10,7 +10,7 @@ import { createProviderAuthority } from '../../apps/host/build/tsc/provider-cred
 const instance = { namespace: 'example-crew', installationId: 'personal', generation: '1', protocolVersion: 'v1' };
 const service = 'http://127.0.0.1:12345';
 const secret = 'PRIVATE_PROVIDER_SENTINEL_71';
-const installation = { id: 'service', instance, service, authentication: { kind: 'secret', revision: 'revision-1', resolve: async () => secret } };
+const installation = { expectedAuthority: 'remote-provider', id: 'service', instance, service, authentication: { kind: 'secret', revision: 'revision-1', resolve: async () => secret } };
 function database(t) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-credentials-'));
   const path = join(directory, 'host.sqlite');

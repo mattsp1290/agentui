@@ -60,7 +60,7 @@ for (const gate of [{ clientProvided: false }, { clientProvided: true, supported
     } } });
     try {
       assert.deepEqual(snapshot.definitions, []);
-      assert.equal((await snapshot.invoke('demo__x', {})).code, 'unknown-tool');
+      assert.equal((await snapshot.invoke('demo__x', {}, snapshot.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).code, 'unknown-tool');
       await generation.retire();
     } finally { snapshot.release(); await generation.retire(); }
   });
@@ -92,7 +92,7 @@ test('pins do not retain a zero-tool generation while another generation serves 
     await setImmediate();
     assert.equal(disposed, 1);
     await retired;
-    assert.equal((await snapshot.invoke('demo__x', {})).kind, 'completed');
+    assert.equal((await snapshot.invoke('demo__x', {}, snapshot.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? '')).kind, 'completed');
   } finally { snapshot.release(); await Promise.all([retired, generation.retire()]); }
 });
 
@@ -143,7 +143,7 @@ for (const asyncAccept of [false, true]) {
     assert.deepEqual(result.contributions.modules, ['decoded']);
     const snapshot = pin([result.generation]);
     try {
-      assert.deepEqual(await snapshot.invoke('demo__x', {}), { kind: 'completed', output: 'accepted tool' });
+      assert.deepEqual(await snapshot.invoke('demo__x', {}, snapshot.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'completed', output: 'accepted tool' });
     } finally { snapshot.release(); await result.generation.retire(); }
     assert.equal(reads, 1);
     assert.equal(disposed, 1);
