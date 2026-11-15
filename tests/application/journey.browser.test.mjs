@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
+import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { preview } from 'vite';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 
@@ -798,7 +799,7 @@ test('revoked extension commands retain the visible access explanation', { timeo
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() {
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '${EXTENSION_SDK_VERSION}', activate() {
     return { modules: [{ id: 'commands', label: 'Commands', component({ commands }) {
       window.capturedCommands = commands;
       return React.createElement('span', null, 'Captured extension commands');
