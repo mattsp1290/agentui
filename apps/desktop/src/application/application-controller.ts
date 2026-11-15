@@ -7,7 +7,9 @@ import type { ConversationScope, SubmitResult } from '@agentui/contracts';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { ConversationCatalogEntry, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { ConversationCommands } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
+import { conversationResponding } from './responding.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
 type HostState =
@@ -31,6 +33,7 @@ export interface ApplicationSnapshot {
   readonly busy: boolean;
 }
 export interface ConversationActions {
+  readonly commands: ConversationCommands;
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
 }
@@ -215,6 +218,21 @@ export function createApplicationController(deps: {
     try { await operation(owner); }
     catch (cause) { fail(owner, classifyFailure(cause)); } finally { if (session === owner) publish({ busy: false }); }
   }
+  async function submitCommand(owner: Session | null, target: OpenConversation, operation: () => Promise<SubmitResult>): Promise<SubmitResult> {
+    if (!owner || session !== owner) throw new Error('This application has closed.');
+    if (state.busy) throw new Error('Another operation is in progress.');
+    publish({ busy: true, error: '' });
+    try {
+      requireTarget(owner, target);
+      const result = await current(owner, operation());
+      if (result.kind === 'rejected') publish({ error: result.reason });
+      else if (result.receipt.state.kind === 'rejected') publish({ error: result.receipt.state.reason });
+      return result;
+    } catch (cause) {
+      fail(owner, classifyFailure(cause));
+      throw cause;
+    } finally { if (session === owner) publish({ busy: false }); }
+  }
   async function completeCreation(owner: Session, scope: ConversationScope): Promise<void> {
     await current(owner, owner.connection.create(scope));
     await save(owner, { version: 1, route: scope, pendingCreation: null });
@@ -291,13 +309,27 @@ export function createApplicationController(deps: {
       await install(owner, scope);
     }),
     conversationActions(target) {
+      const owner = session;
+      const invoke = (operation: () => Promise<SubmitResult>, sending = false) => submitCommand(owner, target, () => {
+        const view = target.store.getSnapshot();
+        if (view.connection.kind !== 'connected') throw new Error('Connect the conversation before continuing.');
+        if (sending && state.host.kind === 'ready' && conversationResponding(state.host.metadata.compatibility.nativeRuntime.engine, view.document.domain)) {
+          throw new Error('Wait for the current response before sending.');
+        }
+        return operation();
+      });
       return {
-        submit: operation => run(async owner => {
-          requireTarget(owner, target);
-          const result = await current(owner, operation());
-          if (result.kind === 'rejected') throw new Error(result.reason);
-          if (result.kind === 'receipt' && result.receipt.state.kind === 'rejected') throw new Error(result.receipt.state.reason);
-        }),
+        commands: {
+          send: text => invoke(() => {
+            if (typeof text !== 'string') throw new Error('An explicit message is required.');
+            return target.store.send(text);
+          }, true),
+          approve: (pendingId, choiceId) => invoke(() => target.store.approve(pendingId, choiceId)),
+          cancel: runId => invoke(() => target.store.cancel(runId)),
+        },
+        async submit(operation) {
+          try { await submitCommand(owner, target, operation); } catch {}
+        },
         reconcile: id => run(async owner => {
           requireTarget(owner, target);
           await current(owner, owner.connection.reconcile(target.scope, id));

@@ -249,3 +249,57 @@ test('a lost Stop reply keeps its exact run and command ID after recreation with
   assert.deepEqual(second.store.getSnapshot().outbox[0].command, saved);
   assert.equal(second.store.getSnapshot().draft, 'My next question');
 });
+
+for (const draft of ['unfinished draft', 'review prompt']) {
+  for (const kind of ['accepted', 'completed']) {
+    test(`explicit ${kind} send preserves ${draft === 'review prompt' ? 'identical' : 'different'} composer draft`, async () => {
+      const { store, port, drafts } = fixture();
+      await store.setDraft(draft);
+      port.submit = async command => {
+        port.submitted.push(structuredClone(command));
+        assert.equal(drafts.value.outbox[0].draftRevision, null);
+        return { kind: 'receipt', receipt: receipt(command, kind) };
+      };
+      const result = await store.send('review prompt');
+      assert.deepEqual(port.submitted[0].body, { kind: 'send', text: 'review prompt' });
+      assert.equal(result.receipt.state.kind, kind);
+      assert.equal(store.getSnapshot().draft, draft);
+      assert.deepEqual(store.getSnapshot().outbox, []);
+      assert.equal(drafts.value.draft, draft);
+    });
+  }
+}
+
+test('explicit send never dispatches before persistence or falls back from empty input', async () => {
+  const { store, port, drafts } = fixture();
+  await store.setDraft('keep');
+  await assert.rejects(store.send(''));
+  assert.equal(port.submitted.length, 0);
+  assert.equal(store.getSnapshot().draft, 'keep');
+  drafts.save = async () => { throw new Error('disk full'); };
+  await assert.rejects(store.send('review prompt'), /disk full/);
+  assert.equal(port.submitted.length, 0);
+  assert.equal(store.getSnapshot().draft, 'keep');
+  assert.deepEqual(store.getSnapshot().outbox, []);
+});
+
+test('explicit send restores without dispatch and retries its exact ID, body and null draft ownership', async () => {
+  const first = fixture();
+  await first.store.setDraft('review prompt');
+  first.port.submit = async command => { first.port.submitted.push(structuredClone(command)); throw new Error('reply lost'); };
+  await assert.rejects(first.store.send('review prompt'), /reply lost/);
+  const [entry] = first.drafts.value.outbox;
+  assert.equal(entry.draftRevision, null);
+  const second = fixture({ drafts: storage(first.drafts.value) });
+  await second.store.ready;
+  assert.deepEqual(second.port.submitted, []);
+  assert.deepEqual(second.store.getSnapshot().outbox, [entry]);
+  second.port.submit = async command => {
+    second.port.submitted.push(structuredClone(command));
+    return { kind: 'receipt', receipt: receipt(command, 'accepted') };
+  };
+  await second.store.retry(entry.command.clientCommandId);
+  assert.deepEqual(second.port.submitted, first.port.submitted);
+  assert.equal(second.store.getSnapshot().draft, 'review prompt');
+  assert.deepEqual(second.store.getSnapshot().outbox, []);
+});

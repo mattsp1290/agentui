@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
+import { conversationResponding } from './responding.js';
 
 type DraftEditor =
   | { readonly kind: 'saved' | 'saving'; readonly text: string }
@@ -46,8 +47,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   const connected = enabled && view.connection.kind === 'connected';
   const live = agent === 'codex' || agent === 'pi';
   const run = live ? view.document.domain.currentRun : null;
-  const responding = live && (Boolean(run && run.kind !== 'ended') ||
-    (!run && view.document.domain.messages.some(message => message.role === 'assistant' && !message.complete)));
+  const responding = conversationResponding(agent, view.document.domain);
   const retainedCancel = run && view.outbox.some(entry => entry.command.body.kind === 'cancel' && entry.command.body.runId === run.runId);
   const stopping = run?.kind === 'stopping' || Boolean(retainedCancel) ||
     (stopPending?.store === active.store && stopPending.runId === run?.runId);
