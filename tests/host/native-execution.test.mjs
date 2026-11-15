@@ -105,3 +105,57 @@ test('a foreign native recovery identity cannot overwrite accepted evidence or i
   assert.deepEqual(await reopened.reconcile(scope, 'accepted'), original.receipt);
   assert.deepEqual(persisted(f.path), before);
 });
+
+test('a local refusal remains terminal across retries, authorization changes, reconciliation and reopen', async t => {
+  const f = fixture(t);
+  const refused = { kind: 'not-dispatched', reason: 'Provider is already stopping this response.' };
+  let dispatches = 0, lookups = 0, authorized = true;
+  const driver = { ...f.driver,
+    async dispatch() { dispatches++; return refused; },
+    async lookup() { lookups++; return { kind: 'outcome-unknown' }; },
+  };
+  const host = f.open({ driver, authorize: () => authorized }); host.createConversation(scope, installed);
+  const port = host.conversation(scope), cmd = command('refused');
+  const submitted = await port.submit(cmd);
+  assert.equal(submitted.kind, 'receipt');
+  assert.deepEqual(submitted.receipt.state, refused);
+  const before = persisted(f.path);
+  assert.equal(before.commands[0].observation, canonicalJson(refused));
+  refused.reason = 'Changed after settlement';
+  assert.deepEqual(await port.submit(cmd), submitted);
+  assert.deepEqual(await port.submit(command('refused', { kind: 'send', text: 'different' })),
+    { kind: 'rejected', reason: 'command-id-conflict' });
+  assert.deepEqual(await host.reconcile(scope, cmd.clientCommandId), submitted.receipt);
+  authorized = false;
+  assert.deepEqual(await port.submit(cmd), { kind: 'rejected', reason: 'invalid-or-unauthorized-command' });
+  await assert.rejects(port.receipt(cmd.clientCommandId), /Unauthorized scope/);
+  await assert.rejects(host.reconcile(scope, cmd.clientCommandId), /Unauthorized scope/);
+  assert.deepEqual(persisted(f.path), before);
+  host.close(); await host.drained;
+  const reopened = f.open({ driver: [] });
+  assert.deepEqual(await reopened.conversation(scope).submit(cmd), submitted);
+  assert.deepEqual(await reopened.conversation(scope).submit(command('refused', { kind: 'send', text: 'different' })),
+    { kind: 'rejected', reason: 'command-id-conflict' });
+  assert.deepEqual(await reopened.reconcile(scope, cmd.clientCommandId), submitted.receipt);
+  assert.deepEqual(persisted(f.path), before);
+  assert.equal(dispatches, 1);
+  assert.equal(lookups, 0);
+});
+
+for (const [name, dispatch] of [
+  ['malformed local refusal', async () => ({ kind: 'not-dispatched', reason: '' })],
+  ['malformed native evidence', async () => ({ kind: 'accepted', evidence: {} })],
+  ['dispatch exception', async () => { throw new Error('Transport failed after dispatch'); }],
+]) {
+  test(`${name} remains uncertain rather than becoming a local refusal`, async t => {
+    const f = fixture(t);
+    let dispatches = 0;
+    const driver = { ...f.driver, async dispatch(...args) { dispatches++; return dispatch(...args); } };
+    const host = f.open({ driver }); host.createConversation(scope, installed);
+    const cmd = command('uncertain'), submitted = await host.conversation(scope).submit(cmd);
+    assert.deepEqual(submitted.receipt.state, { kind: 'uncertain', reason: 'provider-outcome-unknown' });
+    assert.equal(persisted(f.path).commands[0].observation, canonicalJson({ kind: 'outcome-unknown' }));
+    assert.deepEqual(await host.conversation(scope).submit(cmd), submitted);
+    assert.equal(dispatches, 1);
+  });
+}

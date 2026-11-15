@@ -37,6 +37,16 @@ function fixture(t, mode = 'stream') {
   });
   const log = () => existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   return { open,
+    records() {
+      const db = new DatabaseSync(join(dir, 'host.sqlite'));
+      try {
+        return {
+          observations: Object.fromEntries(db.prepare('SELECT id, observation FROM commands').all()
+            .map(row => [row.id, JSON.parse(row.observation)])),
+          events: db.prepare('SELECT payload FROM events ORDER BY sequence').all().map(row => JSON.parse(row.payload).event),
+        };
+      } finally { db.close(); }
+    },
     legacySnapshot() {
       const db = new DatabaseSync(join(dir, 'host.sqlite'));
       try {
@@ -172,15 +182,22 @@ for (const [mode, outcome] of [['delayed-stop', 'interrupted'], ['natural-race',
     const partial = await observe(session.port, document => assistant(document).some(message => message.text === 'Hello'));
     const runId = partial.domain.currentRun.runId;
     const cancel = command('stop-once', { kind: 'cancel', runId });
+    const duplicate = command('stop-twice', { kind: 'cancel', runId });
     const [first, second] = await Promise.all([
-      session.port.submit(cancel), session.port.submit(command('stop-twice', { kind: 'cancel', runId })),
+      session.port.submit(cancel), session.port.submit(duplicate),
     ]);
     assert.equal(first.receipt.state.kind, 'completed');
-    assert.equal(second.kind === 'rejected' || (second.kind === 'receipt' && second.receipt.state.kind === 'uncertain'), true);
+    assert.equal(second.kind, 'receipt');
+    assert.deepEqual(second.receipt.state, { kind: 'not-dispatched', reason: 'Codex is already stopping this response.' });
+    const records = f.records();
+    assert.deepEqual(records.observations['stop-twice'], second.receipt.state);
+    assert.deepEqual(records.events.filter(event => event.kind === 'domain' && event.event.kind === 'run-stop-requested')
+      .map(event => event.event), [{ kind: 'run-stop-requested', runId, clientCommandId: 'stop-once' }]);
     assert.deepEqual((await snapshot(session.port)).document.domain.currentRun,
       { kind: 'stopping', runId, clientCommandId: 'stop-once' });
     assert.equal(session.driver.capability(command('too-soon')).kind, 'unsupported');
     assert.deepEqual(await session.port.submit(cancel), first);
+    assert.deepEqual(await session.port.submit(duplicate), second);
     const done = await observe(session.port, document => document.domain.currentRun.kind === 'ended');
     assert.deepEqual(done.domain.currentRun, { kind: 'ended', runId, outcome });
     assert.ok(assistant(done).some(message => message.text.startsWith('Hello') && message.complete));

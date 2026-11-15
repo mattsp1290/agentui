@@ -382,7 +382,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
             target.run.identity.runId !== command.body.runId || scopeKey(turn.scope) !== scopeKey(command.scope)) {
             throw new Error('Codex turn is no longer active');
           }
-          if (turn.stopCommandId) throw new Error('Codex is already stopping this response.');
+          if (turn.stopCommandId) return { kind: 'not-dispatched', reason: 'Codex is already stopping this response.' };
           turn.stopCommandId = command.clientCommandId;
           try {
             publish(turn, [{ kind: 'run-stop-requested', runId: command.body.runId, clientCommandId: command.clientCommandId }]);

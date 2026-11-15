@@ -1,5 +1,5 @@
 import { canonicalJson } from '@agentui/contracts';
-import type { ObservedResult, StoredCommand } from './durable-model.js';
+import type { NotDispatched, ObservedResult, StoredCommand } from './durable-model.js';
 
 interface Evidence<S> {
   readonly correlation: string;
@@ -8,7 +8,7 @@ interface Evidence<S> {
 }
 export type SettlementObservation<S> =
   | { readonly kind: 'outcome-unknown' }
-  | { readonly kind: 'not-dispatched'; readonly reason: 'aborted' | 'intent-failed' }
+  | NotDispatched
   | { readonly kind: 'accepted'; readonly evidence: Evidence<S> }
   | { readonly kind: 'conclusive'; readonly evidence: Evidence<S>; readonly result: ObservedResult };
 export const OUTPUT_REJECTED = 'output-rejected';
