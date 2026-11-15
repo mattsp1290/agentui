@@ -225,7 +225,13 @@ export async function observeProvider<M extends ProviderModel, I extends string>
         await tail;
         if (failed) return failed;
         if (stopping) return 'closed';
-        if (end.kind !== 'resync') return 'provider-disconnected';
+        switch (end.kind) {
+          case 'unsupported': case 'version-unsupported': return 'unsupported';
+          case 'authentication-failed': case 'unauthorized': return 'original-credentials-unavailable';
+          case 'closed': case 'disconnected': case 'unavailable': return 'provider-disconnected';
+          case 'resync': break;
+          default: { const _exhaustive: never = end.kind; return _exhaustive; }
+        }
         if (attempt.progressed()) recoverySpent = false;
         if (recoverySpent) return 'retry-exhausted';
         recoverySpent = true;

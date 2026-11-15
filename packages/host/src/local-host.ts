@@ -187,7 +187,6 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          if (provider) { await observeProvider(scope); authorized(scope); }
           const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);

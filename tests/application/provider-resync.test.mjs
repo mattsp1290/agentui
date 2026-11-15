@@ -124,11 +124,19 @@ test('immediate repeated resync stops until an explicit retry instead of spinnin
   for (let i = 0; i < 3; i++) assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'stopped', reason: 'retry-exhausted' });
   assert.equal(observations, 2); assert.equal(snapshots, 2);
   assert.equal((await readSnapshot(f.client.conversation(scope), 2)).cursor, saved(f).conversation.head);
-  assert.equal((await f.client.conversation(scope).submit(send(scope, 'retry'))).receipt.state.kind, 'accepted');
+  const port = f.client.conversation(scope), command = send(scope, 'while-paused');
+  const accepted = await port.submit(command);
+  assert.equal(accepted.receipt.state.kind, 'accepted');
+  assert.deepEqual(await port.submit(command), accepted);
+  assert.equal((await port.submit({ version: 1, scope, clientCommandId: 'rejected-stop',
+    body: { kind: 'cancel', runId: 'missing-run' } })).kind, 'rejected');
+  assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'stopped', reason: 'retry-exhausted' });
+  assert.equal(observations, 2); assert.equal(snapshots, 2);
+  await f.client.providerObservation({ scope, action: 'retry' });
   await until(() => observations === 4);
   await new Promise(resolve => setImmediate(resolve));
-  assert.equal(snapshots, 3);
-  await f.running.close(); assert.equal(observations, 4); assert.equal(snapshots, 3);
+  assert.equal(snapshots, 4);
+  await f.running.close(); assert.equal(observations, 4); assert.equal(snapshots, 4);
 });
 
 for (const progress of ['event', 'duplicate', 'snapshot']) test(`${progress === 'event' ? 'new committed event does' : progress === 'duplicate' ? 'duplicate replay does not' : 'feed snapshot does not'} allow another resync recovery`, { timeout: 15_000 }, async t => {

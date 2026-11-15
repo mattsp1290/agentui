@@ -85,6 +85,60 @@ test('paused provider keeps its healthy journal and later receipt while other ch
   await assert.rejects(status(f, { ...scope, hostId: 'foreign' }), error => error.kind === 'forbidden');
 });
 
+test('Stop reaches the provider while an explicit retry snapshot is still pending', { timeout: 15_000 }, async t => {
+  const remote = await providerService(t, { native: true }), a = remote.extension({ controls: true });
+  const f = await fixture(t, [a]), scope = await f.create();
+  await until(() => a.calls.ready === 1);
+  const binding = remote.conversations.get('chat').snapshot.binding;
+  remote.emit(remote.makeEvent(binding, 'Still running', 1));
+  await until(() => document(f).domain.currentRun?.kind === 'running');
+  a.calls.disconnect(); await waitStopped(f, scope);
+  const gate = Promise.withResolvers(), entered = Promise.withResolvers(), snapshot = a.backend.snapshot;
+  a.backend.snapshot = async selected => { entered.resolve(); await gate.promise; return snapshot(selected); };
+  const retry = status(f, scope, 'retry');
+  await entered.promise;
+  try {
+    remote.command(operation => {
+      assert.equal(operation.kind, 'cancel'); assert.deepEqual(operation.binding, binding);
+      return { kind: 'confirmed', value: { kind: 'cancel', state: 'accepted' }, evidence: null };
+    });
+    const command = { version: 1, scope, clientCommandId: 'stop-during-retry',
+      body: { kind: 'cancel', runId: document(f).domain.currentRun.runId } };
+    const submitting = f.client.conversation(scope).submit(command);
+    await until(() => remote.requests.some(request => request.path === '/submit' && request.input.kind === 'cancel'));
+    const accepted = await submitting;
+    assert.equal(accepted.receipt.state.kind, 'accepted');
+    assert.deepEqual(await f.client.conversation(scope).submit(command), accepted);
+    assert.deepEqual(await status(f, scope), { kind: 'recovering' });
+    assert.equal(a.calls.observe.length, 1);
+    assert.equal(remote.requests.filter(request => request.path === '/snapshot').length, 1);
+    assert.equal(remote.requests.filter(request => request.path === '/submit').length, 1);
+  } finally { gate.resolve(); await retry; }
+  await until(() => a.calls.ready === 2);
+  assert.equal(remote.requests.filter(request => request.path === '/snapshot').length, 2);
+});
+
+for (const [ending, reason, retryable] of [
+  ['unsupported', 'unsupported', false], ['version-unsupported', 'unsupported', false],
+  ['authentication-failed', 'original-credentials-unavailable', false], ['unauthorized', 'original-credentials-unavailable', false],
+  ['closed', 'provider-disconnected', true], ['disconnected', 'provider-disconnected', true], ['unavailable', 'provider-disconnected', true],
+]) test(`provider feed ending ${ending} retains its safe reason and retry policy`, async t => {
+  const remote = await providerService(t), a = remote.extension();
+  let observations = 0;
+  a.backend.observe = () => {
+    observations++;
+    return { close() {}, ended: Promise.resolve({ kind: ending, cursor: null, reason: 'SECRET_RAW_PROVIDER_ERROR' }) };
+  };
+  const f = await fixture(t, [a]), scope = await f.create();
+  await waitStopped(f, scope, reason);
+  const result = await status(f, scope), before = saved(f), requests = remote.requests.length;
+  assert.equal(canRetryObservation(result), retryable);
+  assert.doesNotMatch(JSON.stringify(result), /SECRET/);
+  if (!retryable) assert.deepEqual(await status(f, scope, 'retry'), result);
+  assert.equal(observations, 1); assert.equal(remote.requests.length, requests);
+  assert.deepEqual(saved(f), before);
+});
+
 for (const [failure, reason] of [['unsupported', 'unsupported'], ['unavailable', 'snapshot-unavailable'], ['throws', 'snapshot-unavailable'], ['invalid', 'invalid-projection']]) {
   test(`manual retry reports ${failure} safely and preserves every saved row`, async t => {
     const remote = await providerService(t), a = remote.extension(), f = await fixture(t, [a]), scope = await f.create();
