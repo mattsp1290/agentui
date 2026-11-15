@@ -31,7 +31,7 @@ function fixture() {
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION,
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
@@ -828,4 +828,43 @@ test('active descriptors override default controls and unavailable history stays
   await f.app.conversationActions(target).reconcile('old-command');
   assert.equal(effects, 0);
   assert.equal(f.submitted.length, 0);
+});
+
+test('definitive creation refusal releases only its current pending scope and preserves the previous route and draft', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  await f.app.getSnapshot().active.store.setDraft('Keep this original draft');
+  f.behavior.create = async () => { throw new ServiceError('create-rejected', 'Provider refused creation'); };
+  await f.app.create('other');
+  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
+  assert.deepEqual(f.app.getSnapshot().saved.route, scope);
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Keep this original draft');
+  await f.app.create('other');
+  assert.equal(f.created.length, 2);
+  const pending = deferred();
+  f.behavior.create = () => pending.promise;
+  const creating = f.app.create('other');
+  await new Promise(resolve => setImmediate(resolve));
+  const originalPending = f.views.get('original-view/host').pendingCreation;
+  await f.app.dispose();
+  await f.app.start();
+  pending.reject(new ServiceError('create-rejected', 'Late refusal'));
+  await creating;
+  assert.deepEqual(f.views.get('original-view/host').pendingCreation, originalPending);
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, originalPending);
+});
+
+test('legacy pending recovery keeps host-recorded provider identity despite a different selected agent', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: null, pendingCreation: { scope, agentId: null } });
+  const original = { id: 'original-provider', kind: 'provider', label: 'Provider', namespace: 'example', protocolVersion: '1', commands: [], availability: { kind: 'ready' } };
+  f.behavior.agentLookup = async () => original;
+  f.behavior.create = async () => { throw new ServiceError('unavailable', 'Original creation is unknown'); };
+  await f.app.start();
+  await f.app.recoverCreation('other');
+  assert.deepEqual(f.selected, ['original-provider']);
+  assert.equal(f.app.getSnapshot().saved.pendingCreation.agentId, 'original-provider');
+  await f.app.recoverCreation('other');
+  assert.deepEqual(f.selected, ['original-provider', 'original-provider']);
 });

@@ -35,7 +35,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </option>);
   const searchConnection = app.host.kind === 'ready' && !app.storageFailure
     ? JSON.stringify([app.host.metadata.hostId, app.host.metadata.principalId]) : null;
-  const runtime = app.active?.agent.runtime ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
+  const runtime = (app.active ? ('runtime' in app.active.agent ? app.active.agent.runtime : app.active.agent) : null) ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
   const { agent, presentation } = agentPresentation(runtime);
   const conversation = app.active
     ? <ConversationView
@@ -59,7 +59,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
         <label className="agent-choice">Agent for new chat<select aria-label="Agent for new chat" disabled={!enabled || app.saved.pendingCreation !== null} value={selected?.id ?? ''} onChange={event => setSelectedAgent(event.target.value)}>{options}</select></label>
-        <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected?.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
+        <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
       </div>
       {selected?.availability.kind === 'unavailable' && <p role="note">{selected.availability.reason}</p>}
       {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>

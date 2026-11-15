@@ -18,7 +18,7 @@ export const SERVICE_SEARCH_EXCERPT_LENGTH = 160;
 export const SERVICE_EVENT_PAGE = Object.freeze({ events: HOST_DEFAULT_PAGE_EVENTS, bytes: HOST_DEFAULT_PAGE_BYTES });
 export const SERVICE_SNAPSHOT_BYTES = HOST_DEFAULT_SNAPSHOT_BYTES;
 export const SERVICE_MAX_RESPONSE_BYTES = SERVICE_SNAPSHOT_BYTES + SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES;
-export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable'] as const;
+export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable', 'create-rejected'] as const;
 export type ServiceFailureKind = typeof SERVICE_FAILURE_KINDS[number];
 export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
@@ -35,13 +35,16 @@ export type ServiceRequest =
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string };
-export interface AgentDescriptor {
+interface AgentDescription {
   readonly id: string;
   readonly label: string;
-  readonly runtime: NativeRuntimeIdentity;
   readonly commands: readonly ('send' | 'cancel' | 'approve')[];
   readonly availability: { readonly kind: 'ready' } | { readonly kind: 'unavailable'; readonly reason: string };
 }
+export type NativeAgentDescriptor = AgentDescription & { readonly runtime: NativeRuntimeIdentity };
+export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
+  readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
+});
 export interface ServiceMetadata {
   readonly agents: readonly AgentDescriptor[];
   readonly defaultAgentId: string;
@@ -142,8 +145,9 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
   }
 }
 function agentDescriptor(value: unknown): AgentDescriptor {
-  const input = record(value, ['id', 'label', 'runtime', 'commands', 'availability']);
-  const runtime = record(input.runtime, ['engine', 'version', 'format']);
+  const input = record(value);
+  exact(input, input.kind === 'provider' ? ['id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
+    : ['id', 'label', 'runtime', 'commands', 'availability']);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
   if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
@@ -157,8 +161,10 @@ function agentDescriptor(value: unknown): AgentDescriptor {
     if (command !== 'send' && command !== 'cancel' && command !== 'approve') throw new Error('Invalid agent command');
     return command;
   });
-  return { id: identifier(input.id), label: identifier(input.label), commands, availability,
-    runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) } };
+  const common = { id: identifier(input.id), label: identifier(input.label), commands, availability };
+  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
+  const runtime = record(input.runtime, ['engine', 'version', 'format']);
+  return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) } };
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
@@ -261,5 +267,6 @@ export function parseServiceResponse<K extends keyof ServiceValueMap>(request: {
   const kind = SERVICE_FAILURE_KINDS.find(kind => kind === error.kind);
   if (input.ok !== false || kind === undefined ||
     typeof error.message !== 'string' || !error.message) throw new Error('Invalid service error');
+  if (kind === 'create-rejected' && request.op !== 'create') throw new Error('Invalid creation refusal');
   return { ok: false, error: { kind, message: error.message } };
 }

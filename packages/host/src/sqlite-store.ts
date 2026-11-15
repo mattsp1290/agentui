@@ -1,3 +1,5 @@
+import { creationObservation, providerCreation, conversationInstallation } from './provider-creation.js';
+import type { ConversationInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
@@ -52,15 +54,58 @@ export class SqliteStore<E, P> {
   }
   create(scope: ConversationScope, installed: Installation): void {
     this.transaction(() => {
-      const existing = this.db.prepare('SELECT installation FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
-      if (existing) {
-        if (existing.installation !== canonicalJson(installed)) throw new Error('Installation is immutable');
-        return;
+      if (this.creation(scope)) throw new Error('Provider creation already reserved');
+      this.insertConversation(scope, installed);
+    });
+  }
+  private insertConversation(scope: ConversationScope, installed: ConversationInstallation): void {
+    const existing = this.db.prepare('SELECT installation FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
+    if (existing) {
+      if (existing.installation !== canonicalJson(installed)) throw new Error('Installation is immutable');
+      return;
+    }
+    const initial = { domain: this.projection.initial(), receipts: {}, decisions: {} };
+    const document = this.encodeDocument(scope, initial);
+    this.db.prepare('INSERT INTO conversations(host, conversation, installation, head, version, document, bytes) VALUES (?, ?, ?, 0, ?, ?, ?)')
+      .run(...key(scope), canonicalJson(installed), this.projection.version, document, Buffer.byteLength(document));
+  }
+  creation(scope: ConversationScope): StoredCreation | null {
+    const row = this.db.prepare('SELECT original, status, observation FROM provider_creations WHERE host=? AND conversation=?').get(...key(scope));
+    if (!row) return null;
+    const original = providerCreation(json(row.original), scope);
+    if (row.status !== 'reserved' && row.status !== 'attempted' && row.status !== 'observed') throw new Error('Invalid creation status');
+    const observation = row.observation === null ? null : creationObservation(json(row.observation), original);
+    if ((row.status === 'observed') !== (observation !== null)) throw new Error('Invalid creation status');
+    return { ...original, status: row.status, observation };
+  }
+  reserveCreation(original: ProviderCreation): void {
+    this.transaction(() => {
+      const scope = original.intent.scope;
+      if (this.creation(scope) || this.findInstallation(scope)) throw new Error('Creation already reserved');
+      const encoded = canonicalJson(providerCreation(original, scope));
+      this.db.prepare("INSERT INTO provider_creations(host,conversation,original,status) VALUES(?,?,?,'reserved')").run(...key(scope), encoded);
+    });
+  }
+  attemptCreation(original: ProviderCreation): void {
+    this.transaction(() => {
+      const row = this.db.prepare('SELECT original, status FROM provider_creations WHERE host=? AND conversation=?').get(...key(original.intent.scope));
+      if (row?.original !== canonicalJson(original) || row.status !== 'reserved') throw new Error('Creation intent changed');
+      this.db.prepare("UPDATE provider_creations SET status='attempted' WHERE host=? AND conversation=?").run(...key(original.intent.scope));
+    });
+  }
+  settleCreation(original: ProviderCreation, value: CreationObservation): CreationObservation {
+    return this.transaction(() => {
+      const scope = original.intent.scope, current = this.creation(scope);
+      if (!current || canonicalJson({ installation: current.installation, intent: current.intent, credential: current.credential }) !== canonicalJson(original)) {
+        throw new Error('Creation intent changed');
       }
-      const initial = { domain: this.projection.initial(), receipts: {}, decisions: {} };
-      const document = this.encodeDocument(scope, initial);
-      this.db.prepare('INSERT INTO conversations(host, conversation, installation, head, version, document, bytes) VALUES (?, ?, ?, 0, ?, ?, ?)')
-        .run(...key(scope), canonicalJson(installed), this.projection.version, document, Buffer.byteLength(document));
+      if (current.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(current.observation.kind)) return current.observation;
+      const observed = creationObservation(value, original);
+      if (current.observation?.kind === 'pending' && observed.kind === 'uncertain') return current.observation;
+      if (observed.kind === 'confirmed') this.insertConversation(scope, original.installation);
+      this.db.prepare("UPDATE provider_creations SET status='observed', observation=? WHERE host=? AND conversation=?")
+        .run(canonicalJson(observed), ...key(scope));
+      return observed;
     });
   }
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
@@ -73,12 +118,12 @@ export class SqliteStore<E, P> {
     const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
     return { scope, projectionVersion: this.projection.version, cursor, document };
   }
-  findInstallation(scope: ConversationScope): Installation | null {
+  findInstallation(scope: ConversationScope): ConversationInstallation | null {
     const row = this.db.prepare('SELECT installation FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
-    return row ? installation(json(row.installation)) : null;
+    return row ? conversationInstallation(json(row.installation)) : null;
   }
-  inspect(scope: ConversationScope): { readonly installation: Installation; readonly snapshot: Snapshot<P> } {
-    return { installation: installation(json(this.conversation(scope).installation)), snapshot: this.snapshot(scope) };
+  inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> } {
+    return { installation: conversationInstallation(json(this.conversation(scope).installation)), snapshot: this.snapshot(scope) };
   }
   head(scope: ConversationScope): number {
     const row = this.db.prepare('SELECT head, version FROM conversations WHERE host=? AND conversation=?').get(...key(scope));

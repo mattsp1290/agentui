@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { ServiceProtocolError } from '@agentui/client/service';
 import { createMacConnection, macAccess } from '@agentui/client/mac';
 import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
@@ -7,7 +8,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
   const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];
   const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [descriptor], defaultAgentId: 'agent', hostId: 'host', principalId: 'principal', compatibility: {
-    wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
+    wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' },
   } };
   const old = Promise.withResolvers();
@@ -40,4 +41,19 @@ test('Mac adapter uses immutable native observations through the real shared eng
   const before = calls.length;
   await assert.rejects(disconnected.metadata(), error => error.kind === 'unauthorized');
   assert.equal(calls.length, before);
+});
+
+test('native bridge transports provider descriptors and accepts creation refusal only with create HTTP 409', async () => {
+  const scope = { hostId: 'host', conversationId: 'chat' };
+  const descriptor = { kind: 'provider', id: 'provider', label: 'Remote', namespace: 'example', protocolVersion: '1', commands: [], availability: { kind: 'ready' } };
+  let status = 409, mode = 'negative';
+  const connection = createMacConnection({ kind: 'ready', observation: 'current', hostId: 'host', principalId: 'principal' }, async command => {
+    assert.equal(command.kind, 'execute');
+    return mode === 'descriptor' ? { status: 200, body: JSON.stringify({ ok: true, value: descriptor }) }
+      : { status, body: JSON.stringify({ ok: false, error: { kind: 'create-rejected', message: 'No conversation was created' } }) };
+  });
+  mode = 'descriptor'; assert.deepEqual(await connection.conversationAgent(scope), descriptor);
+  mode = 'negative'; await assert.rejects(connection.create(scope, descriptor.id), error => error.kind === 'create-rejected');
+  for (status of [200, 400, 503]) await assert.rejects(connection.create(scope, descriptor.id), error => error instanceof ServiceProtocolError);
+  status = 409; await assert.rejects(connection.conversationAgent(scope), error => error instanceof ServiceProtocolError);
 });

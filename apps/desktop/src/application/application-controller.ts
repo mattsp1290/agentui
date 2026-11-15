@@ -66,6 +66,7 @@ const DETACHED_VIEW = {
   active: null, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
 } satisfies Pick<ApplicationSnapshot, 'active' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
+  if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
     runtime.version === agent.runtime.version && runtime.format === agent.runtime.format) ? agent
     : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
@@ -147,6 +148,7 @@ export function createApplicationController(deps: {
     const view = requireSaved(owner);
     try {
       await current(owner, view.storage.saveView(view.hostId, next));
+      if (owner.view?.storage !== view.storage) throw new Error('The saved view changed.');
       owner.view = { ...view, saved: next };
       publish({});
     } catch (cause) { failStorage(owner, view.storage, cause); throw cause; }
@@ -252,7 +254,17 @@ export function createApplicationController(deps: {
     } finally { if (session === owner) publish({ busy: false }); }
   }
   async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
-    await current(owner, owner.connection.create(scope, agentId));
+    const view = requireSaved(owner), host = requireHost(owner);
+    const matches = () => session === owner && state.host.kind === 'ready' && state.host.metadata.principalId === host.principalId && state.host.metadata.hostId === host.hostId && owner.view?.storage === view.storage && owner.view.saved !== null && owner.view.hostId === scope.hostId &&
+      owner.view.saved?.pendingCreation?.agentId === agentId && sameScope(owner.view.saved.pendingCreation.scope, scope);
+    try { await current(owner, owner.connection.create(scope, agentId)); }
+    catch (error) {
+      if (error instanceof ServiceError && error.kind === 'create-rejected' && matches()) {
+        await save(owner, { ...requireSaved(owner).saved, pendingCreation: null });
+      }
+      throw error;
+    }
+    if (!matches()) throw new Error('The creation view changed. Recover it in its original view.');
     await save(owner, { version: 2, route: scope, pendingCreation: null });
     publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
     await install(owner, scope);
@@ -346,14 +358,16 @@ export function createApplicationController(deps: {
       await completeCreation(owner, scope, selected);
     }),
     recoverCreation: (selected) => run(async owner => {
-      const { saved } = requireSaved(owner);
+      const view = requireSaved(owner), { saved } = view;
       const pending = saved.pendingCreation;
       if (!pending) return;
       const existing = await current(owner, owner.connection.conversationAgent(pending.scope));
+      if (requireSaved(owner) !== view) throw new Error('The creation view changed.');
       const agentId = existing?.id ?? selected ?? pending.agentId;
       if (agentId === null) throw new Error('This older pending creation has no saved agent. Choose an agent explicitly to continue.');
       if (!existing && selected !== undefined) {
         const host = await current(owner, owner.connection.metadata());
+        if (requireSaved(owner) !== view) throw new Error('The creation view changed.');
         const agent = host.agents.find(agent => agent.id === selected);
         if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
       }
@@ -374,7 +388,7 @@ export function createApplicationController(deps: {
         const view = target.store.getSnapshot();
         if (view.connection.kind !== 'connected') throw new Error('Connect the conversation before continuing.');
         if (!target.agent.commands.includes(kind)) throw new Error('This agent does not support that command.');
-        if (kind === 'send' && conversationResponding(agentPresentation(target.agent.runtime).agent, view.document.domain)) {
+        if (kind === 'send' && conversationResponding(agentPresentation('runtime' in target.agent ? target.agent.runtime : target.agent).agent, view.document.domain)) {
           throw new Error('Wait for the current response before sending.');
         }
         return operation();

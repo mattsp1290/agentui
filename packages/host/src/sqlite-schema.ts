@@ -44,6 +44,13 @@ export function openDatabase(path: string): DatabaseSync {
     const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
     const missing = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits'].filter(name => !tables.has(name));
     if (missing.length) throw new Error(`Incomplete database schema version 1: missing ${missing.join(', ')}`);
+    db.exec(`CREATE TABLE IF NOT EXISTS provider_creations (
+      host TEXT NOT NULL, conversation TEXT NOT NULL, original TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('reserved','attempted','observed')), observation TEXT,
+      PRIMARY KEY(host, conversation));`);
+    if (db.prepare('SELECT 1 FROM provider_creations WHERE NOT json_valid(original) OR (observation IS NOT NULL AND NOT json_valid(observation)) LIMIT 1').get()) {
+      throw new Error('Corrupt creation metadata');
+    }
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
     db.exec('PRAGMA synchronous=FULL;');
