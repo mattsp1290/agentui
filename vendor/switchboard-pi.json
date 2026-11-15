@@ -1,0 +1,14 @@
+{
+  "sourceRepository": "https://github.com/mattsp1290/switchboard",
+  "sourceRevision": "81d737853a126bc6939f54dc5b87e1400ca88acc",
+  "artifact": "switchboard-81d737853a126bc6939f54dc5b87e1400ca88acc.tgz",
+  "sha256": "58a74b2f30a5f73a7b5c01eecda811f88ab1a1232cd63334c1e5cf1b3dbb8d6c",
+  "packageName": "@mattsp1290/switchboard",
+  "installedAlias": "@agentui/switchboard-pi",
+  "entrypoint": "./pi",
+  "nativeSdk": "1.5.2",
+  "provider": "opencode-go",
+  "model": "glm-5.3",
+  "license": "MIT",
+  "limits": "Bounded text-only Pi sessions. Existing core and AG-UI package qualification remains on the separate historical pin. No tools, native feature hooks, external discovery, proxy routing or cross-process writer qualification claimed."
+}

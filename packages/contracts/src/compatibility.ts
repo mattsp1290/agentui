@@ -33,6 +33,7 @@ export const SERVICE_WIRE_VERSION = 1;
 export const EXTENSION_SDK_VERSION = '0.0.0';
 export const RECORDED_RUNTIME = Object.freeze({ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
 export const CODEX_RUNTIME = Object.freeze({ engine: 'codex', version: '0.167.2', format: 'codex-app-server-v2' });
+export const PI_RUNTIME = Object.freeze({ engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-v1' });
 export const RECORDED_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze({
   supportedWireVersions: Object.freeze([SERVICE_WIRE_VERSION]),
   supportedExtensionSdkVersions: Object.freeze([EXTENSION_SDK_VERSION]),
@@ -40,6 +41,6 @@ export const RECORDED_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze(
 });
 export const SOLO_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze({
   ...RECORDED_CLIENT_COMPATIBILITY,
-  supportedNativeRuntimes: Object.freeze([RECORDED_RUNTIME, CODEX_RUNTIME]),
+  supportedNativeRuntimes: Object.freeze([RECORDED_RUNTIME, CODEX_RUNTIME, PI_RUNTIME]),
 });
 

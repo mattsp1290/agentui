@@ -235,3 +235,26 @@ test('restart accepts an existing message-only SQLite snapshot at projection ver
     messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,
   });
 });
+
+test('Pi restart seals its unfinished response and names the provider without suggesting tool actions', async t => {
+  const f = fixture(t), original = f.open();
+  const piInstallation = { installationId: 'pi-chat-v1', binding: { ...installation.binding,
+    engine: 'pi', nativeVersion: '1.5.2', nativeFormat: 'pi-sdk-chat-v1' } };
+  original.createConversation(scope, piInstallation);
+  original.append(scope, { ...empty(), events: [
+    { kind: 'run-started', runId: 'pi-run', previousRunId: null },
+    message('partial-pi', 'Keep this streamed text'),
+  ] });
+  original.close();
+  await original.drained;
+  const reopened = f.open();
+  recoverCodexConversations(reopened, scope.hostId, piInstallation, 'Pi');
+  const recovered = reopened.inspect(scope).snapshot;
+  assert.deepEqual(recovered.document.domain.currentRun, { kind: 'ended', runId: 'pi-run', outcome: 'connection-lost' });
+  assert.equal(recovered.document.domain.messages[0].complete, true);
+  assert.equal(recovered.document.domain.messages[0].text, 'Keep this streamed text');
+  assert.match(recovered.document.domain.messages[1].text, /The Pi connection was interrupted/);
+  assert.doesNotMatch(recovered.document.domain.messages[1].text, /Codex|actions/);
+  recoverCodexConversations(reopened, scope.hostId, piInstallation, 'Pi');
+  assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
+});

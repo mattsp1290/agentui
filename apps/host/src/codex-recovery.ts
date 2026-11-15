@@ -5,7 +5,7 @@ import { HostCapacityError } from '@agentui/host';
 import type { Installation, LocalHost } from '@agentui/host';
 
 export function recoverCodexConversations(
-  host: LocalHost<TranscriptEvent, Transcript>, hostId: string, installation: Installation,
+  host: LocalHost<TranscriptEvent, Transcript>, hostId: string, installation: Installation, displayName = 'Codex',
 ): void {
   const installed = canonicalJson(installation);
   let after: string | null = null;
@@ -38,21 +38,21 @@ export function recoverCodexConversations(
         } catch (fallbackError) {
           if (!(fallbackError instanceof HostCapacityError)) throw fallbackError;
         }
-        process.emitWarning(`Could not finish Codex recovery for conversation ${scope.conversationId}. Its history is full; start a new conversation.`,
-          { code: 'AGENTUI_CODEX_RECOVERY_CAPACITY' });
+        process.emitWarning(`Could not finish ${displayName} recovery for conversation ${scope.conversationId}. Its history is full; start a new conversation.`,
+          { code: `AGENTUI_${displayName.toUpperCase()}_RECOVERY_CAPACITY` });
         continue;
       }
       try {
         host.append(scope, {
           events: [{ kind: 'message-updated', messageId: `interrupted:${randomUUID()}`,
             revision: 1, role: 'assistant', complete: true,
-            text: 'The Codex connection was interrupted when the host stopped. Check any unconfirmed actions before retrying them.' }],
+            text: `The ${displayName} connection was interrupted when the host stopped. ${displayName === 'Codex' ? 'Check any unconfirmed actions before retrying them.' : 'You can send another message to continue.'}` }],
           runs: [], decisions: [],
         });
       } catch (error) {
         if (!(error instanceof HostCapacityError)) throw error;
-        process.emitWarning(`Could not add the Codex interruption notice to conversation ${scope.conversationId}. Its history is full; start a new conversation.`,
-          { code: 'AGENTUI_CODEX_RECOVERY_CAPACITY' });
+        process.emitWarning(`Could not add the ${displayName} interruption notice to conversation ${scope.conversationId}. Its history is full; start a new conversation.`,
+          { code: `AGENTUI_${displayName.toUpperCase()}_RECOVERY_CAPACITY` });
       }
     }
     if (page.length < 100) return;
