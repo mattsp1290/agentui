@@ -3,7 +3,7 @@ import type { ConversationScope, Json, Projection } from '@agentui/contracts';
 import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
 import type { DispatchEvidence, DispatchIdentity } from '@mattsp1290/switchboard';
 import type { CapturedTarget, HostOutput, Installation, NativeRun, NotDispatched, ObservedResult, ProviderDispatchObservation, ProviderDriver, NativeStoredCommand } from './durable-model.js';
-import { array, cloneJson, nonempty, object, positiveInteger } from './codec.js';
+import { array, copyCanonicalJson, nonempty, object, positiveInteger } from './codec.js';
 import type { SettlementObservation } from './settlement.js';
 
 function assertDispatchIdentity(identity: DispatchIdentity): void {
@@ -41,7 +41,7 @@ export function output<E>(value: unknown, projection: Pick<Projection<E, unknown
     runs: array(input.runs).map(run => nativeRun(run, installed, scope)),
     decisions: array(input.decisions).map(value => {
       const input = object(value);
-      const continuation: Json = cloneJson(input.continuation);
+      const continuation: Json = copyCanonicalJson(input.continuation);
       return { visible: parseDecision(input.visible), continuation };
     }) };
 }
@@ -53,7 +53,7 @@ export function parseEvidence(value: unknown, identity: DispatchIdentity): Dispa
   const native = evidence.nativeOperation === null ? null : object(evidence.nativeOperation);
   const parsedEvidence: DispatchEvidence = { identity, source: evidence.source,
     nativeOperation: native ? { namespace: nonempty(native.namespace), id: nonempty(native.id) } : null,
-    observation: { namespace: nonempty(extension.namespace), schemaVersion: positiveInteger(extension.schemaVersion), data: cloneJson(extension.data) },
+    observation: { namespace: nonempty(extension.namespace), schemaVersion: positiveInteger(extension.schemaVersion), data: copyCanonicalJson(extension.data) },
   };
   return parsedEvidence;
 }
@@ -63,7 +63,7 @@ export function capturedTarget(value: unknown, scope: ConversationScope): Captur
   const run = input.run === null ? null : nativeRun(input.run, installed, scope);
   const storedDecision = input.decision === null ? null : object(input.decision);
   const parsedDecision = storedDecision === null ? null : {
-    visible: parseDecision(storedDecision.visible), continuation: cloneJson(storedDecision.continuation),
+    visible: parseDecision(storedDecision.visible), continuation: copyCanonicalJson(storedDecision.continuation),
   };
   const target: CapturedTarget = { installation: installed, run, decision: parsedDecision,
     identity: { hostOperationId: nonempty(identity.hostOperationId), target: run
@@ -87,7 +87,7 @@ export function observation(value: unknown, target: CapturedTarget): ProviderDis
   if (result.kind === 'rejected') return { kind: 'conclusive', evidence: parsedEvidence, result: { kind: 'rejected', reason: nonempty(result.reason) } };
   if (result.kind !== 'completed') throw new Error('Invalid command result');
   return { kind: 'conclusive', evidence: parsedEvidence, result: {
-    kind: 'completed', output: cloneJson(result.output),
+    kind: 'completed', output: copyCanonicalJson(result.output),
   } };
 }
 

@@ -2,7 +2,7 @@ import { parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { CommandBody, Feed, Receipt, SubmitResult } from '@agentui/contracts';
 import { applyDelivery, decodeReceipt, DeliveryError } from './delivery.js';
 import type { DeliveryState } from './delivery.js';
-import { copyJson, immutable, restore } from './local-state.js';
+import { copyCanonicalJson, immutable, restore } from './local-state.js';
 import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
 type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
@@ -94,7 +94,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         return result;
       }
       if (result.kind !== 'receipt') throw new Error('Unsupported submit result');
-      const receipt = immutable(decodeReceipt(copyJson(result.receipt), scope));
+      const receipt = immutable(decodeReceipt(copyCanonicalJson(result.receipt), scope));
       if (receipt.clientCommandId !== id) throw new Error('Submit receipt command ID mismatch');
       await enqueue(async () => {
         const next = settle(local, receipt);
@@ -146,7 +146,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       await ready;
       const value = await port.receipt(clientCommandId);
       if (value === null) return null;
-      const receipt = immutable(decodeReceipt(copyJson(value), scope));
+      const receipt = immutable(decodeReceipt(copyCanonicalJson(value), scope));
       if (receipt.clientCommandId !== clientCommandId) throw new Error('Lookup receipt command ID mismatch');
       await enqueue(async () => {
         const next = settle(local, receipt);

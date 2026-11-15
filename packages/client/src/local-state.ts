@@ -22,12 +22,12 @@ export function string(value: unknown): string {
   if (typeof value !== 'string') throw new Error('Expected string');
   return value;
 }
-export function copyJson<T>(value: T): T {
+export function copyCanonicalJson<T>(value: T): T {
   return JSON.parse(canonicalJson(value)) as T;
 }
 export function restore(value: unknown, scope: ConversationScope): LocalRecords {
   if (value === null) return immutable({ version: 1, scope, draft: '', draftRevision: 0, outbox: [] });
-  const input = object(copyJson(value));
+  const input = object(copyCanonicalJson(value));
   if (input.version !== 1) throw new Error('Unsupported local storage version');
   if (!sameScope(parseScope(input.scope), scope)) throw new Error('Local storage scope mismatch');
   if (!Array.isArray(input.outbox)) throw new Error('Invalid outbox');
