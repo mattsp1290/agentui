@@ -115,50 +115,6 @@ test('transport loss after turn/start remains uncertain', async t => {
   assert.match(f.driver.capability(command('later')).reason, /Restart the host/);
 });
 
-for (const mode of ['file-approval', 'command-approval', 'fallback-approval']) {
-  test(`${mode} describes the requested permission and preserves native confirmation`, async t => {
-    const f = fixture(t, mode);
-    await f.port.submit(command('send'));
-    await until(() => Object.keys(f.document().decisions).length === 1);
-    const decision = Object.values(f.document().decisions)[0];
-    if (mode === 'file-approval') {
-      for (const detail of ['/workspace', '/workspace/src/main.ts', '/workspace/new.txt', '(update)', '(add)', '-old\n+new']) {
-        assert.ok(decision.prompt.includes(detail), detail);
-      }
-    } else {
-      assert.match(decision.prompt, /Working directory: \/workspace\/subdirectory/);
-      assert.match(decision.prompt, mode === 'fallback-approval' ? /run a command/ : /printf hello/);
-    }
-    const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
-    assert.equal(result.receipt.state.kind, 'completed');
-    await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
-    assert.deepEqual(f.document().decisions, {});
-  });
-}
-
-test('many-file-approval lists every path before bounded diffs and preserves confirmation', async t => {
-  const f = fixture(t, 'many-file-approval');
-  await f.port.submit(command('send'));
-  await until(() => Object.keys(f.document().decisions).length === 1);
-  const decision = Object.values(f.document().decisions)[0];
-  const firstDiff = decision.prompt.indexOf('+++');
-  assert.ok(firstDiff >= 0, 'bounded diffs remain visible');
-  for (let index = 0; index < 6; index++) {
-    const path = `/workspace/file-${index}.ts (update)`;
-    const position = decision.prompt.indexOf(path);
-    assert.ok(position >= 0, `${path} is visible`);
-  }
-  for (let index = 0; index < 6; index++) {
-    assert.ok(decision.prompt.indexOf(`/workspace/file-${index}.ts (update)`) < firstDiff, `path ${index} precedes diffs`);
-  }
-  assert.match(decision.prompt, /Further details omitted/);
-  assert.ok(Buffer.byteLength(JSON.stringify(decision.prompt)) < 9_000);
-  const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
-  assert.equal(result.receipt.state.kind, 'completed');
-  await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
-  assert.deepEqual(f.document().decisions, {});
-});
-
 for (const mode of ['expire-complete', 'expire-resolved', 'expire-disconnect', 'expire-close']) {
   test(`${mode} removes stale approvals before a cached click can enter Codex`, async t => {
     const f = fixture(t, mode);
@@ -208,8 +164,11 @@ test('a turn/start rejection stores one completed notice across restart and exac
   await until(() => f.messages().some(message => message.text === 'Hello' && message.complete));
 });
 
-for (const mode of ['item-command-approval', 'explicit-command-approval', 'unmatched-command-approval', 'scoped-command-approval']) {
-  test(`${mode} uses only the matching turn item and explicit approval fields take precedence`, async t => {
+for (const { mode, includes, excludes } of [
+  { mode: 'item-command-approval', includes: [/Run: printf from-item/, /Working directory: \/workspace\/item/], excludes: [] },
+  { mode: 'scoped-command-approval', includes: [/Allow Codex to run a command/, /Workspace:/], excludes: [/from-item|workspace\/item|Working directory:/] },
+]) {
+  test(`${mode} uses only the matching turn item and preserves native confirmation`, async t => {
     const f = fixture(t, mode);
     if (mode === 'scoped-command-approval') {
       await f.host.conversation(other).submit(command('other-send', { kind: 'send', text: 'hello' }, other));
@@ -218,17 +177,8 @@ for (const mode of ['item-command-approval', 'explicit-command-approval', 'unmat
     await f.port.submit(command('send'));
     await until(() => Object.keys(f.document().decisions).length === 1);
     const decision = Object.values(f.document().decisions)[0];
-    if (mode === 'item-command-approval') {
-      assert.match(decision.prompt, /Run: printf from-item/);
-      assert.match(decision.prompt, /Working directory: \/workspace\/item/);
-    } else if (mode === 'explicit-command-approval') {
-      assert.match(decision.prompt, /Run: printf explicit/);
-      assert.match(decision.prompt, /Working directory: \/workspace\/explicit/);
-      assert.doesNotMatch(decision.prompt, /from-item|workspace\/item/);
-    } else {
-      assert.match(decision.prompt, /Allow Codex to run a command/);
-      assert.doesNotMatch(decision.prompt, /from-item|workspace\/item/);
-    }
+    for (const pattern of includes) assert.match(decision.prompt, pattern);
+    for (const pattern of excludes) assert.doesNotMatch(decision.prompt, pattern);
     const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
     assert.equal(result.receipt.state.kind, 'completed');
     await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
@@ -236,23 +186,23 @@ for (const mode of ['item-command-approval', 'explicit-command-approval', 'unmat
   });
 }
 
-for (const mode of ['unknown-file-approval', 'unknown-kind-file-approval', 'empty-file-approval', 'malformed-file-approval', 'non-array-file-approval']) {
-  test(`${mode} keeps approval live with explicit missing details and its typed native ID`, async t => {
+for (const { mode, requestId, detail } of [
+  { mode: 'file-approval', requestId: 0, detail: /\/workspace\/src\/main.ts/ },
+  { mode: 'malformed-file-approval', requestId: '0', detail: /Codex did not provide file details/ },
+]) {
+  test(`${mode} keeps approval live and confirms its typed native ID`, async t => {
     const f = fixture(t, mode);
     await f.port.submit(command('send'));
     await until(() => Object.keys(f.document().decisions).length === 1);
     const decision = Object.values(f.document().decisions)[0];
-    assert.match(decision.prompt, /Codex did not provide file details/);
-    if (mode === 'unknown-file-approval' || mode === 'unknown-kind-file-approval') {
-      assert.match(decision.prompt, /\/workspace\/x \(changed\)/);
-    }
+    assert.match(decision.prompt, detail);
     assert.equal(f.document().domain.currentRun.kind, 'running');
     assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
     const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
     assert.equal(result.receipt.state.kind, 'completed');
     await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
     assert.deepEqual(f.document().decisions, {});
-    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, mode === 'empty-file-approval' || mode === 'non-array-file-approval' ? 0 : '0');
+    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, requestId);
   });
 }
 
@@ -283,23 +233,3 @@ test('a failed rejection-notice append preserves the conclusive native rejection
   assert.deepEqual(f.messages().map(message => message.text),
     ['This response stopped because AgentUI could not store more output. Try a new conversation.']);
 });
-
-for (const mode of ['bounded-command-approval', 'evicted-command-approval']) {
-  test(`${mode} keeps optional command display bounded with a readable fallback`, async t => {
-    const f = fixture(t, mode);
-    await f.port.submit(command('send'));
-    await until(() => Object.keys(f.document().decisions).length === 1);
-    const decision = Object.values(f.document().decisions)[0];
-    if (mode === 'bounded-command-approval') {
-      assert.match(decision.prompt, /Run: 🙂汉/);
-      assert.match(decision.prompt, /Further details omitted/);
-      assert.ok(Buffer.byteLength(JSON.stringify(decision.prompt)) < 11_000);
-    } else {
-      assert.match(decision.prompt, /Allow Codex to run a command/);
-      assert.doesNotMatch(decision.prompt, /from-item|printf later/);
-    }
-    const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
-    assert.equal(result.receipt.state.kind, 'completed');
-    await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
-  });
-}

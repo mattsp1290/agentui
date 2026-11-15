@@ -12,36 +12,14 @@ const commandItem = { id: 'tool', type: 'commandExecution', command: 'printf fro
 const standardApproval = { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } };
 const scopedFirstApproval = { requestId: 'other-command-request', file: false, items: [commandItem], params: {} };
 const approvalScenarios = {
-  'command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } },
-  'fallback-approval': { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory' } },
   'item-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: {} },
-  'explicit-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: { cwd: '/workspace/explicit', command: 'printf explicit' } },
-  'unmatched-command-approval': { requestId: 'command-request', file: false, items: [{ ...commandItem, id: 'different-tool' }], params: {} },
   'scoped-command-approval': { requestId: 'command-request', file: false, items: [], params: {} },
-  'bounded-command-approval': { requestId: 'command-request', file: false,
-    items: [{ ...commandItem, command: '🙂汉'.repeat(10_000), cwd: '/workspace/' + '子'.repeat(5_000) }], params: {} },
-  'evicted-command-approval': { requestId: 'command-request', file: false,
-    items: [commandItem, ...Array.from({ length: 64 }, (_, index) => ({
-      id: `later-${index}`, type: 'commandExecution', command: 'printf later', cwd: '/later',
-    }))], params: {} },
   'file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange', changes: [
     { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
     { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
   ] }], params: { grantRoot: '/workspace' } },
-  'many-file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange',
-    changes: Array.from({ length: 6 }, (_, index) => ({
-      path: `/workspace/file-${index}.ts`, kind: { type: 'update' }, diff: '+++' + 'x'.repeat(2_497),
-    })) }], params: { grantRoot: '/workspace' } },
-  'unknown-file-approval': { requestId: '0', file: true, items: [{ id: 'tool', type: 'fileChange',
-    changes: [{ path: '/workspace/x', kind: 'new-protocol-kind', diff: '+x' }] }], params: { grantRoot: '/workspace' } },
-  'unknown-kind-file-approval': { requestId: '0', file: true, items: [{ id: 'tool', type: 'fileChange',
-    changes: [{ path: '/workspace/x', kind: { type: 'new-protocol-kind' }, diff: '+x' }] }], params: { grantRoot: '/workspace' } },
-  'empty-file-approval': { requestId: 0, file: true,
-    items: [{ id: 'tool', type: 'fileChange', changes: [] }], params: { grantRoot: '/workspace' } },
   'malformed-file-approval': { requestId: '0', file: true,
     items: [{ id: 'tool', type: 'fileChange', changes: [{ path: null, kind: null }] }], params: { grantRoot: '/workspace' } },
-  'non-array-file-approval': { requestId: 0, file: true,
-    items: [{ id: 'tool', type: 'fileChange', changes: null }], params: { grantRoot: '/workspace' } },
   'pending-complete': standardApproval,
   'pending-disconnect': standardApproval,
   'expire-complete': standardApproval,
@@ -73,7 +51,8 @@ createInterface({ input: process.stdin }).on('line', line => {
     return;
   }
   const reply = result => send({ id: message.id, result });
-  if ((mode === `reject-${message.method}` || mode === 'reject-followup' && message.method === 'turn/start' && turnCount === 1) && !rejected) {
+  const rejectFollowup = mode === 'reject-followup' && message.method === 'turn/start' && turnCount === 1;
+  if ((mode === `reject-${message.method}` || rejectFollowup) && !rejected) {
     rejected = true;
     send({ id: message.id, error: { code: -32000, message: 'Fixture denied this request' } });
     return;

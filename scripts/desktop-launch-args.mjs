@@ -1,6 +1,4 @@
-import { pathToFileURL } from 'node:url';
-
-export function validateDesktopArgs(args) {
+function validateDesktopArgs(args) {
   if (args.length === 0) return;
   if (args.length !== 2 || args[0] !== '--host-url') {
     throw new Error('Use --host-url http://127.0.0.1:PORT/browser.html');
@@ -14,10 +12,8 @@ export function validateDesktopArgs(args) {
   }
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try { validateDesktopArgs(process.argv.slice(2)); }
-  catch (error) {
-    process.stderr.write(`Cannot connect to AgentUI host: ${error.message}\n`);
-    process.exitCode = 1;
-  }
+try { validateDesktopArgs(process.argv.slice(2)); }
+catch (error) {
+  process.stderr.write(`Cannot connect to AgentUI host: ${error.message}\n`);
+  process.exitCode = 1;
 }
