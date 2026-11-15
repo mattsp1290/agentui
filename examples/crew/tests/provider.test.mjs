@@ -532,7 +532,6 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   assert.deepEqual(JSON.parse(saved(f).conversation.document).domain.currentRun, { kind: 'running', runId });
   const original = saved(f).commands.find(row => row.id === 'send');
   receipt.cancellation = { receiptId: randomUUID(), delivery: 'delivered', nativeTermination: 'confirmed', effects: 'not_assessed' };
-  const reopenStart = remote.calls.length;
   await f.restart([remote.extension()]);
   await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== historical.cursor.opaque.epoch);
   const restored = saved(f), checkpoint = JSON.parse(restored.checkpoint.data);
@@ -540,10 +539,11 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   assert.deepEqual(checkpoint.state.run, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
   assert.deepEqual(JSON.parse(restored.conversation.document).domain.currentRun, { kind: 'ended', runId, outcome: 'interrupted' });
   assert.deepEqual(JSON.parse(restored.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
+  const recoveryStart = remote.calls.length;
   assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'completed');
   assert.equal(saved(f).commands.find(row => row.id === 'send').target, original.target);
-  assert(remote.calls.slice(reopenStart).every(call => call.method === 'GET'));
-  assert(remote.calls.slice(reopenStart).some(call => call.path.endsWith(requestId)));
+  assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET' && call.path.endsWith(requestId)));
+  assert(remote.calls.slice(recoveryStart).length > 0);
   const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source.data;
   assert.deepEqual(evidence, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
   const browser = await chromium.launch(); t.after(() => browser.close());
