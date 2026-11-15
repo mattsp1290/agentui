@@ -119,8 +119,6 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       return { contributionId: id, instance: identity, expectedAuthority: assertAuthorized().expectedAuthority, capabilities: normalized, agents };
     } catch {
       failed();
-      await authority.close();
-      await close();
       throw new Error('Provider discovery failed');
     }
   }
@@ -286,8 +284,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       await Promise.allSettled(pending);
       for (const stream of draining) stop(stream);
       const results = await Promise.allSettled([...draining].map(stream => stream.drained));
-      results.push(...await authorityResults);
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
+      results.push(...await authorityResults);
       results.push(...await Promise.allSettled(lifetimes.map(lifetime => Promise.resolve().then(() => lifetime.dispose()))));
       catalog = [];
       if (cleanupFailed || results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
