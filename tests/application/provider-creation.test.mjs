@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { chromium } from 'playwright';
 import { createBrowserConnection } from '@agentui/client/service';
+import { createProviderRegistry } from '@agentui/host';
+import { fixture as hostFixture, scope as hostScope } from '../host/fixture.mjs';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { crew, crewBackend, crewPresentation } from '../extensions/providers/contracts/crew.ts';
 import { local, localBackend, localPresentation } from '../extensions/providers/contracts/local.ts';
@@ -26,7 +28,7 @@ registerHooks({ resolve(specifier, context, next) {
 } });
 const { startBrowserHost } = await import('../../apps/host/build/tsc/server.js');
 const secret = 'PRIVATE_CREATION_SECRET';
-function extension({ native = false, create, lookup, service = 'http://127.0.0.1:12345', revision = '1', generation } = {}) {
+function extension({ native = false, create, lookup, service = 'http://127.0.0.1:12345', revision = '1', generation, name } = {}) {
   const base = native ? localBackend : crewBackend, provider = native ? local : crew;
   const presentation = { ...(native ? localPresentation : crewPresentation) };
   if (generation) presentation.instance = { ...presentation.instance, generation };
@@ -38,12 +40,12 @@ function extension({ native = false, create, lookup, service = 'http://127.0.0.1
   } });
   const confirmed = operation => ({ kind: 'confirmed', value: binding(operation), evidence: { operationId: operation.operationId } });
   const connected = { ...base, instance: presentation.instance,
-    async discover() { return { kind: 'available', agents: [{ ref: { kind: 'agent', instance: presentation.instance, opaqueId: 'same-agent' }, name: native ? 'Local provider' : 'Remote provider' }] }; },
+    async discover() { return { kind: 'available', agents: [{ ref: { kind: 'agent', instance: presentation.instance, opaqueId: 'same-agent' }, name: name ?? (native ? 'Local provider' : 'Remote provider') }] }; },
     async create(operation) { calls.creates.push(structuredClone(operation)); return create ? create(operation, { confirmed, context, credential }) : confirmed(operation); },
     async reconcileCreation(operation) { calls.lookups.push(structuredClone(operation)); return lookup ? lookup(operation, { confirmed, context, credential }) : confirmed(operation); },
     async submit() { calls.submits++; assert.fail('Messaging must remain disabled'); }, async close() {},
   };
-  return { calls, connected, confirmed, value: {
+  return { calls, connected, confirmed, rename(value) { name = value; }, value: {
     manifest: { namespace: presentation.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
     entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(value) {
       context = value;
@@ -287,3 +289,64 @@ for (const kind of ['not-dispatched', 'unsupported', 'authentication-failed']) {
     assert.equal(a.calls.creates.length, 1); assert.equal(a.calls.lookups.length, 1);
   });
 }
+
+
+test('provider display rename preserves HTTP identity, confirmed history and original lost-reply recovery', async t => {
+  const a = extension({ name: 'Before', create: (operation, { confirmed }) => operation.scope.conversationId === 'lost-rename'
+    ? { kind: 'uncertain', reason: 'lost response', evidence: null } : confirmed(operation) });
+  const f = await fixture(t, [a]), agent = await selected(f, 'Before');
+  const confirmedScope = f.scope('confirmed-rename'), lostScope = f.scope('lost-rename');
+  await f.client.create(confirmedScope, agent.id);
+  await unavailable(f.client.create(lostScope, agent.id));
+  const originals = f.inspect(db => db.prepare('SELECT conversation,original FROM provider_creations ORDER BY conversation').all());
+  const next = extension({ name: 'After' }); await f.restart([next]);
+  const renamed = await selected(f, 'After');
+  assert.equal(renamed.id, agent.id);
+  assert.deepEqual(await f.client.conversationAgent(confirmedScope), renamed);
+  assert.equal(renamed.availability.kind, 'ready');
+  assert.deepEqual(await f.client.create(confirmedScope, renamed.id), confirmedScope);
+  assert.deepEqual(await f.client.create(lostScope, renamed.id), lostScope);
+  assert.equal(next.calls.creates.length, 0);
+  assert.deepEqual(next.calls.lookups, [a.calls.creates[1]]);
+  assert.deepEqual(f.inspect(db => db.prepare('SELECT conversation,original FROM provider_creations ORDER BY conversation').all()), originals);
+  assert.deepEqual(f.inspect(db => db.prepare('SELECT installation FROM conversations ORDER BY conversation').all().map(row => JSON.parse(row.installation).agent.name)), ['Before', 'Before']);
+});
+
+test('live rediscovery accepts an already selected agent after its display name changes', async t => {
+  const a = extension({ name: 'Before' }), f = await fixture(t, [a]), agent = await selected(f, 'Before');
+  a.rename('After');
+  const catalog = await f.running.discoverProviders();
+  assert.equal(catalog[0].agents[0].name, 'After');
+  const scope = f.scope('rediscovered');
+  assert.deepEqual(await f.client.create(scope, agent.id), scope);
+  assert.equal(a.calls.creates.length, 1);
+  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations').get().original).installation.agent.name), 'Before');
+});
+
+test('direct creation retry accepts a display rename while retaining its captured intent and rejecting foreign identity', async t => {
+  const a = extension({ name: 'Before', create: () => ({ kind: 'pending', evidence: null }) });
+  const registry = createProviderRegistry([{ ...a.value, authority: {
+    credentials: {}, issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {},
+  } }]);
+  await registry.activate(); t.after(() => registry.close());
+  const [discovered] = await registry.discover();
+  const target = { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance,
+    agent: discovered.agents[0], presentationVersion: 1, expectedAuthority: discovered.expectedAuthority };
+  const f = hostFixture(t), host = f.open();
+  assert.equal((await host.createProviderConversation(hostScope, target, registry)).kind, 'pending');
+  const captured = host.creation(hostScope);
+  a.rename('After'); await registry.discover();
+  const renamed = { ...target, agent: { ...target.agent, name: 'After' } };
+  assert.equal((await host.createProviderConversation(hostScope, renamed, registry)).kind, 'confirmed');
+  assert.deepEqual(host.creation(hostScope).installation, captured.installation);
+  assert.deepEqual(host.creation(hostScope).intent, captured.intent);
+  assert.deepEqual(host.creation(hostScope).credential, captured.credential);
+  assert.deepEqual(a.calls.lookups, a.calls.creates);
+  for (const changed of [
+    { ...renamed, agent: { ...renamed.agent, opaqueId: 'foreign' } },
+    { ...renamed, instance: { ...renamed.instance, generation: 'foreign' } },
+    { ...renamed, contributionId: 'foreign' },
+    { ...renamed, expectedAuthority: 'agentui-host' },
+  ]) await assert.rejects(host.createProviderConversation(hostScope, changed, registry), /Creation agent is immutable/);
+  assert.equal(a.calls.creates.length, 1); assert.equal(a.calls.lookups.length, 1);
+});

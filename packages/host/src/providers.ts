@@ -263,7 +263,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
-      if (!discovered?.agents.some(agent => canonicalJson(agent) === canonicalJson(selected.agent))) throw new Error('Provider agent unavailable');
+      if (!discovered?.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider agent unavailable');
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);

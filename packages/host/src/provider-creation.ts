@@ -14,6 +14,9 @@ export interface ProviderInstallation {
   readonly presentationVersion: 1;
   readonly expectedAuthority: RunAuthority['kind'];
 }
+export function providerInstallationKey(value: ProviderInstallation): string {
+  return canonicalJson({ ...value, agent: { opaqueId: value.agent.opaqueId } });
+}
 export type ConversationInstallation = Installation | ProviderInstallation;
 export interface ProviderCreation {
   readonly installation: ProviderInstallation;

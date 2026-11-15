@@ -35,6 +35,10 @@ export class SqliteStore<E, P> {
       if (this.db.prepare('SELECT 1 FROM conversations WHERE NOT json_valid(document) OR NOT json_valid(installation) LIMIT 1').get()) throw new Error('Corrupt stored JSON');
       if (projection === transcriptProjection) migrateTranscriptDatabase(this.db);
       if (this.db.prepare('SELECT 1 FROM conversations WHERE version<>? LIMIT 1').get(projection.version)) throw new Error('Incompatible projection');
+      this.db.exec(`CREATE TABLE IF NOT EXISTS provider_creations (
+        host TEXT NOT NULL, conversation TEXT NOT NULL, original TEXT NOT NULL,
+        status TEXT NOT NULL CHECK(status IN ('reserved','attempted','observed')), observation TEXT,
+        PRIMARY KEY(host, conversation));`);
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }

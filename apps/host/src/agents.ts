@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalJson } from '@agentui/contracts';
 import { CLAUDE_SDK_CHAT_LABELS, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_CHAT_LABEL, CODEX_SDK_RUNTIME, PI_CHAT_LABEL, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import type { AgentDescriptor, NativeAgentDescriptor } from '@agentui/contracts/service';
+import { providerInstallationKey } from '@agentui/host';
 import type { Installation, ProviderInstallation } from '@agentui/host';
 
 export interface InstalledAgent {
@@ -28,7 +29,7 @@ export function describeAgent(installation: Installation, availability: AgentDes
 }
 
 export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability']): AgentDescriptor {
-  return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(canonicalJson(installation)).digest('hex')}`,
+  return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(providerInstallationKey(installation)).digest('hex')}`,
     label: installation.agent.name, namespace: installation.instance.namespace, protocolVersion: installation.instance.protocolVersion,
     commands: [], availability };
 }

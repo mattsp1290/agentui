@@ -6,6 +6,7 @@ import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
+import { providerInstallationKey } from './provider-creation.js';
 import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
 import type { createProviderRegistry } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
@@ -76,7 +77,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       authorized(scope);
       const prior = store.creation(scope);
       if (!prior && store.findInstallation(scope)) throw new Error('Conversation already exists without provider creation provenance');
-      if (prior && canonicalJson(prior.installation) !== canonicalJson(target)) throw new Error('Creation agent is immutable');
+      if (prior && providerInstallationKey(prior.installation) !== providerInstallationKey(target)) throw new Error('Creation agent is immutable');
       const key = canonicalJson(scope), leased = creating.get(key);
       if (leased) return leased;
       if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) return prior.observation;
