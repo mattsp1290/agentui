@@ -10,6 +10,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
+import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { createCrewFixture } from '../extensions/providers/contracts/crew.ts';
 
 const main = fileURLToPath(new URL('../../apps/host/dist/main.js', import.meta.url));
@@ -26,11 +27,11 @@ async function fixture(t, service = 'https://example.com') {
   ] }));
   const manifest = { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.mjs' }] };
   const input = { version: 1, extensions: [{ directory: './crew-v1', installations: [
-    { id: 'service', instance: { ...instance }, service, expectedAuthority: 'remote-provider', authentication: { kind: 'environment', variable: 'CREW_TOKEN', revision: 'first' } },
+    { id: 'service', instance: { ...instance }, service, expectedAuthority: 'remote-provider', authentication: { kind: 'environment', variable: 'AGENTUI_EXTENSION_CREW_TOKEN', revision: 'first' } },
   ] }] };
   const module = `import { appendFileSync, writeFileSync } from 'node:fs';
     import { createCrewFixture } from ${JSON.stringify(new URL('../extensions/providers/contracts/crew.ts', import.meta.url).href)};
-    writeFileSync(${JSON.stringify(marker)}, 'imported');
+    writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ credentialPresent: Object.hasOwn(process.env, 'AGENTUI_EXTENSION_CREW_TOKEN') }));
     const instance = ${JSON.stringify(instance)}, service = ${JSON.stringify(service)};
     const fixture = createCrewFixture(instance);
     export default { kind: 'server', sdkVersion: ${JSON.stringify(EXTENSION_SDK_VERSION)}, activate(context) {
@@ -62,7 +63,7 @@ async function fixture(t, service = 'https://example.com') {
   const children = [];
   const launch = (args, environment = {}) => {
     const child = spawn(process.execPath, [main, ...args, '--data-dir', join(directory, 'data')], {
-      cwd: directory, env: { ...process.env, CREW_TOKEN: secret, ...environment }, stdio: ['ignore', 'pipe', 'pipe'],
+      cwd: directory, env: { ...process.env, AGENTUI_EXTENSION_CREW_TOKEN: secret, ...environment }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = '';
     child.stdout.setEncoding('utf8').on('data', text => { stdout += text; });
@@ -99,7 +100,7 @@ async function stop(running) {
   running.child.kill('SIGTERM'); assert.equal(await running.exited, 0, running.stderr);
 }
 function privateDiagnostics(running) {
-  assert.doesNotMatch(running.stdout + running.stderr, /PRIVATE_CLI_EXTENSION_SECRET|PRIVATE_EXTENSION_ERROR|CREW_TOKEN|not-installed|server\.mjs/);
+  assert.doesNotMatch(running.stdout + running.stderr, /PRIVATE_CLI_EXTENSION_SECRET|PRIVATE_EXTENSION_ERROR|AGENTUI_EXTENSION_CREW_TOKEN|not-installed|server\.mjs/);
 }
 
 test('bundled serve selects an installed public provider, pairs, creates and sends with host credentials, then disposes on SIGTERM', { timeout: 20000 }, async t => {
@@ -116,9 +117,32 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
   });
   await new Promise(resolve => remote.listen(0, '127.0.0.1', resolve));
   t.after(() => new Promise(resolve => remote.close(resolve)));
-  const f = await fixture(t, `http://127.0.0.1:${remote.address().port}`), running = f.start();
-  const info = await ready(running);
-  assert.equal(info.mode, 'serve'); assert.equal(await readFile(f.marker, 'utf8'), 'imported');
+  const f = await fixture(t, `http://127.0.0.1:${remote.address().port}`);
+  const executable = join(f.directory, 'codex'), nativeEnvironment = join(f.directory, 'native-environment.json');
+  await writeFile(executable, `#!${process.execPath}
+    import { writeFileSync } from 'node:fs';
+    if (process.argv.includes('--version')) {
+      writeFileSync(${JSON.stringify(nativeEnvironment)}, JSON.stringify({
+        credentialPresent: Object.hasOwn(process.env, 'AGENTUI_EXTENSION_CREW_TOKEN'),
+        unselected: process.env.AGENTUI_EXTENSION_UNSELECTED, nativeKey: process.env.OPENCODE_GO_API_KEY,
+        anthropicKey: process.env.AGENTUI_ANTHROPIC_API_KEY, path: process.env.PATH, sentinel: process.env.AGENTUI_ENV_SENTINEL,
+      }));
+      console.log(${JSON.stringify('codex-cli ' + CODEX_RUNTIME.version)});
+      process.exitCode = 1;
+    } else { process.exit(1); }
+  `, { mode: 0o700 });
+  await writeFile(f.config, JSON.stringify({ version: 1, default: 'native', agents: [
+    { name: 'native', kind: 'codex', workspace: f.directory, executable },
+  ] }));
+  const environment = { AGENTUI_EXTENSION_UNSELECTED: 'unselected', OPENCODE_GO_API_KEY: 'native-key',
+    AGENTUI_ANTHROPIC_API_KEY: 'anthropic-key', PATH: process.env.PATH, AGENTUI_ENV_SENTINEL: 'preserved' };
+  const running = f.start([], environment), info = await ready(running);
+  assert.equal(info.mode, 'serve');
+  assert.deepEqual(JSON.parse(await readFile(f.marker, 'utf8')), { credentialPresent: false });
+  assert.deepEqual(JSON.parse(await readFile(nativeEnvironment, 'utf8')), {
+    credentialPresent: false, unselected: 'unselected', nativeKey: 'native-key', anthropicKey: 'anthropic-key',
+    path: process.env.PATH, sentinel: 'preserved',
+  });
   let cookie = ''; const payloads = [];
   const call = async body => {
     const response = await fetch(`${info.origin}/api/v1`, { method: 'POST', signal: AbortSignal.timeout(5000), headers: {
@@ -143,11 +167,11 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
   assert.equal(sent.value.receipt.state.kind, 'completed');
   assert.ok(requests.includes('/agents')); assert.equal(requests.filter(path => path === '/create').length, 1);
   assert.equal(requests.filter(path => path === '/send').length, 1);
-  assert.doesNotMatch(JSON.stringify(payloads), /PRIVATE_CLI_EXTENSION_SECRET|CREW_TOKEN|opaqueHandle|not-installed/);
+  assert.doesNotMatch(JSON.stringify(payloads), /PRIVATE_CLI_EXTENSION_SECRET|AGENTUI_EXTENSION_CREW_TOKEN|opaqueHandle|not-installed/);
   const db = new DatabaseSync(join(f.directory, 'data', 'host.sqlite'), { readOnly: true });
   try {
     const rows = db.prepare('SELECT * FROM service_provider_credentials').all(); assert.equal(rows.length, 1);
-    assert.equal(rows[0].revision, 'first'); assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_CLI_EXTENSION_SECRET|CREW_TOKEN/);
+    assert.equal(rows[0].revision, 'first'); assert.doesNotMatch(JSON.stringify(rows), /PRIVATE_CLI_EXTENSION_SECRET|AGENTUI_EXTENSION_CREW_TOKEN/);
   } finally { db.close(); }
   await stop(running); assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\ndispose\n');
   privateDiagnostics(running);
@@ -155,12 +179,32 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
   const unchanged = f.launch(['serve', '--config', f.config, '--port', '0']); await ready(unchanged); await stop(unchanged);
 });
 
+test('raw readiness announcement immediately followed by SIGTERM drains the provider and exits normally', { timeout: 15000 }, async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.installed, 'server.mjs'), f.module.replace("discover: () => request('/agents')",
+    'discover: () => fixture.crewBackend.discover()'));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await rm(f.lifecycle, { force: true });
+    const running = f.start(), lines = createInterface({ input: running.child.stdout });
+    try {
+      await Promise.race([
+        new Promise(resolve => lines.once('line', () => { running.child.kill('SIGTERM'); resolve(); })),
+        running.exited.then(() => { throw new Error(running.stderr); }),
+      ]);
+      assert.equal(await running.exited, 0, running.stderr); assert.equal(running.child.signalCode, null);
+      const lifecycle = await readFile(f.lifecycle, 'utf8'); assert.equal(lifecycle, 'close\ndispose\n');
+      t.diagnostic(JSON.stringify({ attempt, exitCode: running.child.exitCode, signal: running.child.signalCode, lifecycle }));
+      privateDiagnostics(running);
+    } finally { lines.close(); }
+  }
+});
+
 for (const [name, change] of [
   ['selection schema', (f, second) => { second.extra = secret; }],
   ['manifest SDK', (f, second, manifest) => { manifest.sdkVersion = '99.0.0'; }],
   ['manifest server declaration', (f, second, manifest) => { manifest.entries[0].kind = 'desktop'; }],
   ['grant', (f, second) => { second.installations[0].service = `https://example.com/private?token=${secret}`; }],
-  ['environment', (f, second) => { second.installations[0].authentication.variable = 'MISSING_CLI_TOKEN_94'; }],
+  ['environment', (f, second) => { second.installations[0].authentication.variable = 'AGENTUI_EXTENSION_MISSING_CLI_TOKEN_94'; }],
 ]) test(`later invalid ${name} prevents every selected import and listener announcement`, { timeout: 10000 }, async t => {
   const f = await fixture(t), second = structuredClone(f.input.extensions[0]), manifest = structuredClone(f.manifest);
   second.directory = './second'; second.installations[0].instance.namespace = 'second'; manifest.namespace = 'second';

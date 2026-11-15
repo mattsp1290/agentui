@@ -155,7 +155,7 @@ The version 1 selection document has this shape:
 			"expectedAuthority": "remote-provider",
 			"authentication": {
 				"kind": "environment",
-				"variable": "CREW_TOKEN",
+				"variable": "AGENTUI_EXTENSION_CREW_TOKEN",
 				"revision": "rotation-1"
 			}
 		}]
@@ -189,17 +189,21 @@ Each grant's namespace must match its package manifest.
 `service` must be an HTTP or HTTPS origin without credentials, a query, a fragment, or a non-root path.
 
 `authentication` accepts either the environment reference shown above or exactly `{ "kind": "unauthenticated" }`.
-Environment names follow `[A-Za-z_][A-Za-z0-9_]*`.
+Environment names follow `AGENTUI_EXTENSION_[A-Za-z0-9_]+` and have at most 1024 characters.
 Missing or blank secrets fail startup. The host captures the original secret bytes without trimming.
-The host keeps the value in a private resolver and persists only grant metadata.
+After the entire selection passes validation, the host removes only referenced variables from its environment before extension activation and native child startup.
+Extensions access the captured value through the existing credential authority. The host persists only grant metadata.
+Unreferenced variables remain available, including other variables with the reserved prefix.
 Changing the process environment after configuration decoding does not change the captured value.
 Use a new explicit `revision` and restart to rotate a credential. Literal secrets are not accepted in the document.
 
-The reader validates the complete selection, every package manifest, all grants, and all environment references before importing selected code.
+The host validates the complete selection, every package manifest, all grants, and all environment references before importing selected code.
 Configuration failures report `Invalid server extension configuration` without paths, secret names, values, or underlying exception text.
 The existing loader then checks each entry's filesystem path and imported export.
 An earlier entry can execute import effects before a later entry fails those loader checks.
 
+Removing referenced variables reduces explicit inheritance by native child processes.
+It does not isolate credentials from full-trust extensions, same-user processes, existing environment snapshots, or the same secret under another variable name.
 Installed entries are trusted ordinary filesystem modules with host process privileges.
 This selection does not consume [compiled server artifacts](../customization/server-artifacts.md) or provide their retained-byte integrity guarantees.
 Use distinct immutable installation directories for package revisions because Node caches imported module URLs.

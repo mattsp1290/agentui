@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import type { BrowserHostOptions } from './server.js';
 import { startBrowserHost } from './server.js';
 import { readAgentConfiguration } from './agent-config.js';
-import { readServerExtensionConfiguration } from './server-extension-config.js';
+import { takeServerExtensionConfiguration } from './server-extension-config.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
 import { readObservabilityConfiguration } from './observability.js';
 
@@ -40,7 +40,7 @@ async function main(): Promise<void> {
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
     if (values.extensions !== undefined && !values.extensions.trim()) throw new Error('Invalid server extension configuration');
-    const providerExtensions = values.extensions === undefined ? undefined : readServerExtensionConfiguration(resolve(values.extensions), process.env);
+    const providerExtensions = values.extensions === undefined ? undefined : takeServerExtensionConfiguration(resolve(values.extensions), process.env);
     const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
       accessMode: values.trusted ? 'trusted' : 'paired',
       ...(providerExtensions === undefined ? {} : { providerExtensions }),
