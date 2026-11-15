@@ -47,6 +47,11 @@
     "ios:run": "bash apps/ios/native/run.sh",
     "ios:verify": "bash apps/ios/native/verify.sh"
   },
+  "overrides": {
+    "@birbcrew/client@0.1.0": {
+      "zod": "4.6.6"
+    }
+  },
   "devDependencies": {
     "@types/node": "24.19.2",
     "ajv": "8.20.0",
