@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
+import { existsSync, realpathSync } from 'node:fs';
+import { join } from 'node:path';
 import { PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { identifier, record } from '@agentui/contracts/decode';
 import { canonicalJson } from '@agentui/contracts';
@@ -14,19 +15,21 @@ export interface PiDriverOptions {
   readonly cwd: string;
   readonly sessionDirectory: string;
   readonly apiKey: string;
+  readonly currentRunId: (scope: ConversationScope) => string | null;
   readonly append: (scope: ConversationScope, output: HostOutput<TranscriptEvent>) => void;
 }
 interface Turn {
   readonly scope: ConversationScope;
   readonly session: PiSession;
   readonly run: NativeRun;
-  readonly rendered: string[];
+  readonly rendered: { text: string; complete: boolean }[];
   text: string;
   revision: number;
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   ended: boolean;
   storageFailed: boolean;
+  registered: boolean;
 }
 type Observation = NativeDispatchObservation<CommandResult<TranscriptEvent>>;
 const empty = (): HostOutput<TranscriptEvent> => ({ events: [], runs: [], decisions: [] });
@@ -58,6 +61,8 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
   } };
   const active = new Map<string, Turn>();
   const busy = new Set<string>();
+  const cleanupFailed = new Set<string>();
+  const finalizations = new Set<Promise<void>>();
   let closing = false;
   let closePromise: Promise<void> | undefined;
   function publish(turn: Turn, events: readonly TranscriptEvent[]) {
@@ -68,44 +73,65 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
     const text = parts(turn.text);
     for (let index = 0; index < Math.max(text.length, turn.rendered.length); index++) {
       const value = text[index] ?? '';
-      if (!complete && turn.rendered[index] === value) continue;
+      const previous = turn.rendered[index];
+      if (previous?.complete || !complete && previous?.text === value) continue;
       publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
         revision: ++turn.revision, role: 'assistant', text: value, complete }]);
-      turn.rendered[index] = value;
+      turn.rendered[index] = { text: value, complete };
     }
+  }
+  function registerReference(turn: Turn) {
+    if (turn.registered || !existsSync(join(options.sessionDirectory, turn.session.sessionFile))) return;
+    options.append(turn.scope, { ...empty(), runs: [turn.run] });
+    turn.registered = true;
   }
   function finish(turn: Turn, terminal: PiTerminal) {
     if (turn.ended) return;
     turn.ended = true;
     clearTimeout(turn.timer); turn.timer = undefined;
-    try {
-      if (!turn.storageFailed) {
-        if (terminal.outcome === 'failed') turn.text += '\n\nPi could not finish this response. You can send another message.';
-        render(turn, true);
-        const outcome: RunOutcome = closing ? 'connection-lost' : terminal.outcome;
-        publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome }]);
-      }
-    } finally {
-      void turn.session.close().then(() => {
-        active.delete(canonicalJson(turn.scope));
-        busy.delete(canonicalJson(turn.scope));
-      }, () => {
+    // Native terminal callbacks must return before close can await the native completion.
+    const finalization = Promise.resolve().then(async () => {
+      const key = canonicalJson(turn.scope);
+      try { registerReference(turn); } catch { outputFailed(turn); }
+      try {
+        await turn.session.close();
+        active.delete(key);
+        busy.delete(key);
+      } catch {
+        cleanupFailed.add(key);
+        turn.text += '\n\nPi session cleanup failed. Restart the host before continuing.';
         process.emitWarning('Pi session cleanup failed. Restart the host before continuing.', { code: 'AGENTUI_PI_CLEANUP' });
-      });
-    }
+      }
+      try {
+        registerReference(turn);
+        if (terminal.outcome === 'failed' && !turn.storageFailed && !cleanupFailed.has(key)) {
+          turn.text += '\n\nPi could not finish this response. You can send another message.';
+        }
+        render(turn, true);
+      } catch { outputFailed(turn); try { render(turn, true); } catch {} }
+      const outcome: RunOutcome = closing && terminal.outcome !== 'completed' ? 'connection-lost'
+        : cleanupFailed.has(key) || turn.storageFailed ? 'failed' : terminal.outcome;
+      try { publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome }]); }
+      catch {
+        outputFailed(turn);
+        try { publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome: 'failed' }]); }
+        catch { process.emitWarning('Could not store Pi output. Start a new conversation.', { code: 'AGENTUI_PI_STORAGE' }); }
+      }
+    });
+    finalizations.add(finalization);
+    void finalization.then(() => finalizations.delete(finalization), () => finalizations.delete(finalization));
   }
   function outputFailed(turn: Turn) {
     if (turn.storageFailed) return;
     turn.storageFailed = true;
     clearTimeout(turn.timer); turn.timer = undefined;
-    try { render(turn, true); } catch {}
-    try { publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome: 'failed' }]); }
-    catch { process.emitWarning('Could not store Pi output. Start a new conversation.', { code: 'AGENTUI_PI_STORAGE' }); }
     void turn.session.abort().catch(() => {});
+    finish(turn, { kind: 'ended', outcome: 'failed' });
   }
   function receive(turn: Turn, event: PiEvent) {
     if (turn.ended || turn.storageFailed) return;
     try {
+      registerReference(turn);
       if (event.kind === 'ended') { finish(turn, event); return; }
       turn.text = event.text;
       turn.timer ??= setTimeout(() => {
@@ -137,6 +163,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
       if (closing) return { kind: 'unsupported', reason: 'Pi is disconnected. Restart the host to connect again.' };
       if (command.body.kind === 'approve') return { kind: 'unsupported', reason: 'This Pi chat has no tools or approvals.' };
       const key = canonicalJson(command.scope);
+      if (cleanupFailed.has(key)) return { kind: 'unsupported', reason: 'Pi session cleanup failed. Restart the host before continuing.' };
       if (command.body.kind === 'send' && busy.size >= 32) return { kind: 'unsupported', reason: 'Pi is responding in too many conversations. Wait for a response to finish.' };
       if (command.body.kind === 'send' && busy.has(key)) return { kind: 'unsupported', reason: 'Pi is still responding. Wait for it to finish.' };
       if (command.body.kind === 'cancel') {
@@ -163,25 +190,21 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
               binding: { namespace: 'pi-sdk-session', installationId: installation.installationId, opaqueSessionId: opaque } } },
             reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque } };
           turn = { scope: command.scope, session, run, rendered: [], text: '', revision: 0,
-            timer: undefined, stopCommandId: null, ended: false, storageFailed: false };
+            timer: undefined, stopCommandId: null, ended: false, storageFailed: false, registered: false };
           active.set(key, turn);
           options.append(command.scope, { events: [
             { kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`, revision: 1,
               role: 'user', text: command.body.text, complete: true },
-            { kind: 'run-started', runId, previousRunId: target.run?.identity.runId ?? null },
-          ], runs: [run], decisions: [] });
+            { kind: 'run-started', runId, previousRunId: options.currentRunId(command.scope) },
+          ], runs: [], decisions: [] });
           const current = turn;
           const admitted = await session.prompt(command.body.text, event => receive(current, event));
-          void admitted.finished.then(result => {
-            try { finish(current, result); } catch { outputFailed(current); }
-          }, () => {
-            try { finish(current, { kind: 'ended', outcome: 'failed' }); } catch { outputFailed(current); }
-          });
+          void admitted.finished.then(result => finish(current, result),
+            () => finish(current, { kind: 'ended', outcome: 'failed' }));
+          registerReference(current);
           return evidence(command, target, session, 'preflight-started');
         } catch {
-          if (turn) {
-            try { finish(turn, { kind: 'ended', outcome: 'failed' }); } catch { outputFailed(turn); }
-          }
+          if (turn) finish(turn, { kind: 'ended', outcome: 'failed' });
           if (!turn) busy.delete(key);
           throw new Error('Pi could not start this response. Check command recovery before trying again.');
         }
@@ -210,7 +233,11 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
     close() {
       if (closePromise) return closePromise;
       closing = true;
-      closePromise = runtime.close();
+      closePromise = (async () => {
+        try { await runtime.close(); }
+        finally { await Promise.all(finalizations); }
+        if (cleanupFailed.size) throw new Error('Pi session cleanup failed. Restart the host before continuing.');
+      })();
       return closePromise;
     },
   };

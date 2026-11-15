@@ -18,6 +18,8 @@ async function fixture(t) {
   const requests = [];
   let release;
   let held = false;
+  let failFirstAppend = false;
+  let rejectOutput = null;
   const original = globalThis.fetch;
   globalThis.fetch = async (input, init) => {
     assert.equal(String(input), 'https://opencode.ai/inference/go/openai/v1/chat/completions');
@@ -35,9 +37,22 @@ async function fixture(t) {
   const open = async () => {
     let host;
     const driver = await createPiDriver({ cwd: directory, sessionDirectory: join(directory, 'pi'), apiKey: key,
-      append: (value, output) => host.append(value, output) });
+      currentRunId: value => host.inspect(value).snapshot.document.domain.currentRun?.runId ?? null,
+      append: (value, output) => {
+        if (rejectOutput?.(output)) { rejectOutput = null; throw new Error('Output storage unavailable'); }
+        host.append(value, output);
+        if (failFirstAppend && output.events.some(event => event.kind === 'run-started')) {
+          failFirstAppend = false;
+          throw new Error('Storage acknowledgement failed before native prompt');
+        }
+      } });
     host = openLocalHost({ path: join(directory, 'host.sqlite'), projection: transcriptProjection, driver, authorize: () => true });
-    const instance = { host, driver, port: host.conversation(scope), async close() { await driver.close(); host.close(); await host.drained; } };
+    let closed = false;
+    const instance = { host, driver, port: host.conversation(scope), async close() {
+      if (closed) return;
+      closed = true;
+      try { await driver.close(); } finally { host.close(); await host.drained; }
+    } };
     instances.push(instance);
     return instance;
   };
@@ -46,7 +61,7 @@ async function fixture(t) {
     globalThis.fetch = original;
     await rm(directory, { recursive: true, force: true });
   });
-  return { directory, requests, open, hold: () => { held = true; }, finish: () => release() };
+  return { directory, requests, open, failOutput: predicate => { rejectOutput = predicate; }, failBeforePrompt: () => { failFirstAppend = true; }, hold: () => { held = true; }, finish: () => release() };
 }
 
 test('Pi host streams with one dispatch per command, follows up, resumes and preserves native Stop outcome', { timeout: 15_000 }, async t => {
@@ -88,6 +103,133 @@ test('Pi host streams with one dispatch per command, follows up, resumes and pre
   }
 });
 
+test('Pi accepts a follow-up as soon as the previous run visibly ends', async t => {
+  const f = await fixture(t);
+  const current = await f.open();
+  current.host.createConversation(scope, current.driver.installation);
+  await current.port.submit(command('immediate-first'));
+  const state = () => current.host.inspect(scope).snapshot.document.domain;
+  await until(() => state().currentRun?.kind === 'ended');
+  const previousRunId = state().currentRun.runId;
+  assert.equal((await current.port.submit(command('immediate-follow-up'))).receipt.state.kind, 'completed');
+  await until(() => state().currentRun?.kind === 'ended' && state().currentRun.runId !== previousRunId);
+  assert.equal(state().currentRun.outcome, 'completed');
+  assert.equal(f.requests.length, 2);
+  assert.equal(f.requests[1].messages.filter(message => message.role === 'user').length, 2);
+});
+
+test('a journal-less first failure does not poison native references or transcript ancestry after reopening', async t => {
+  const f = await fixture(t);
+  const first = await f.open();
+  first.host.createConversation(scope, first.driver.installation);
+  f.failBeforePrompt();
+  const send = command('journal-less-first');
+  const receipt = await first.port.submit(send);
+  assert.equal(receipt.receipt.state.kind, 'uncertain');
+  await until(() => first.host.inspect(scope).snapshot.document.domain.currentRun?.kind === 'ended');
+  const failedRunId = first.host.inspect(scope).snapshot.document.domain.currentRun.runId;
+  assert.deepEqual((await readdir(join(f.directory, 'pi'))).filter(file => file.endsWith('.jsonl')), []);
+  assert.equal(f.requests.length, 0);
+  await first.close();
+  const reopened = await f.open();
+  assert.deepEqual(await reopened.port.submit(send), receipt);
+  const next = await reopened.port.submit(command('journal-less-recovery'));
+  assert.equal(next.receipt.state.kind, 'completed');
+  const state = () => reopened.host.inspect(scope).snapshot.document.domain;
+  await until(() => state().currentRun?.kind === 'ended' && state().currentRun.runId !== failedRunId);
+  assert.equal(state().currentRun.outcome, 'completed');
+  assert.equal(f.requests.length, 1);
+  assert.deepEqual(await reopened.port.submit(send), receipt);
+  assert.equal(f.requests.length, 1);
+});
+
+for (const stage of ['stream', 'seal', 'terminal']) {
+  test(`Pi seals partial output and ends failed when ${stage} storage fails once`, async t => {
+    const f = await fixture(t);
+    const current = await f.open();
+    current.host.createConversation(scope, current.driver.installation);
+    f.hold();
+    if (stage === 'stream') f.failOutput(output => output.events.some(event => event.kind === 'message-updated' && event.role === 'assistant'));
+    await current.port.submit(command(`storage-${stage}`));
+    const state = () => current.host.inspect(scope).snapshot.document.domain;
+    if (stage !== 'stream') {
+      await until(() => state().messages.some(message => message.role === 'assistant' && !message.complete));
+      f.failOutput(output => output.events.some(event => stage === 'terminal' ? event.kind === 'run-ended'
+        : event.kind === 'message-updated' && event.role === 'assistant' && event.complete));
+      f.finish();
+    }
+    await until(() => state().currentRun?.kind === 'ended');
+    assert.equal(state().currentRun.outcome, 'failed');
+    assert.equal(state().messages.filter(message => message.role === 'assistant').at(-1).text, 'Hello from Pi');
+    assert.equal(state().messages.every(message => message.complete), true);
+    assert.equal(f.requests.length, 1);
+  });
+}
+
+test('Pi keeps the run active until native cleanup completes and shutdown waits for final output', async t => {
+  const { AgentSession } = await import('@earendil-works/pi-coding-agent');
+  const original = AgentSession.prototype.waitForIdle;
+  const cleanupEntered = Promise.withResolvers();
+  const cleanupReleased = Promise.withResolvers();
+  let idleCalls = 0;
+  t.mock.method(AgentSession.prototype, 'waitForIdle', async function (...args) {
+    await original.apply(this, args);
+    if (++idleCalls === 2) { cleanupEntered.resolve(); await cleanupReleased.promise; }
+  });
+  const f = await fixture(t);
+  const current = await f.open();
+  current.host.createConversation(scope, current.driver.installation);
+  await current.port.submit(command('pending-cleanup'));
+  await cleanupEntered.promise;
+  assert.equal(current.host.inspect(scope).snapshot.document.domain.currentRun.kind, 'running');
+  const closed = current.close();
+  cleanupReleased.resolve();
+  await closed;
+  const reopened = await f.open();
+  const state = reopened.host.inspect(scope).snapshot.document.domain;
+  assert.equal(state.currentRun.kind, 'ended');
+  assert.equal(state.currentRun.outcome, 'completed');
+  assert.equal(state.messages.every(message => message.complete), true);
+});
+
+test('Pi reports failed cleanup and reserves the conversation until restart', async t => {
+  const { AgentSession } = await import('@earendil-works/pi-coding-agent');
+  const original = AgentSession.prototype.dispose;
+  t.mock.method(AgentSession.prototype, 'dispose', function () {
+    original.call(this);
+    throw new Error('Native cleanup result unavailable');
+  });
+  const f = await fixture(t);
+  const current = await f.open();
+  current.host.createConversation(scope, current.driver.installation);
+  await current.port.submit(command('cleanup-failed'));
+  const state = () => current.host.inspect(scope).snapshot.document.domain;
+  await until(() => state().currentRun?.kind === 'ended');
+  assert.equal(state().currentRun.outcome, 'failed');
+  assert.match(state().messages.at(-1).text, /Pi session cleanup failed. Restart the host/);
+  assert.deepEqual(current.driver.capability(command('cleanup-follow-up')), {
+    kind: 'unsupported', reason: 'Pi session cleanup failed. Restart the host before continuing.',
+  });
+  assert.equal(f.requests.length, 1);
+  await assert.rejects(current.close(), /Pi session cleanup failed/);
+});
+
+test('Pi refuses to replace a missing journal that was already recorded', async t => {
+  const f = await fixture(t);
+  const first = await f.open();
+  first.host.createConversation(scope, first.driver.installation);
+  await first.port.submit(command('persisted-first'));
+  await until(() => first.host.inspect(scope).snapshot.document.domain.currentRun?.kind === 'ended');
+  await first.close();
+  const journals = (await readdir(join(f.directory, 'pi'))).filter(file => file.endsWith('.jsonl'));
+  assert.equal(journals.length, 1);
+  await rm(join(f.directory, 'pi', journals[0]));
+  const reopened = await f.open();
+  assert.equal((await reopened.port.submit(command('persisted-missing'))).receipt.state.kind, 'uncertain');
+  assert.equal(f.requests.length, 1);
+  assert.deepEqual((await readdir(join(f.directory, 'pi'))).filter(file => file.endsWith('.jsonl')), []);
+});
+
 test('Pi host closes active output before releasing SQLite ownership', async t => {
   const f = await fixture(t);
   const first = await f.open();
@@ -111,8 +253,7 @@ test('Pi releases idle sessions across more than 32 conversations and reopens ea
     current.host.createConversation(conversation, current.driver.installation);
     const send = command(`many-send-${index}`, { kind: 'send', text: `Question ${index}` }, conversation);
     assert.equal((await current.host.conversation(conversation).submit(send)).receipt.state.kind, 'completed');
-    await until(() => current.host.inspect(conversation).snapshot.document.domain.currentRun?.kind === 'ended' &&
-      current.driver.capability(command(`next-${index}`, { kind: 'send', text: 'Next' }, conversation)).kind === 'supported');
+    await until(() => current.host.inspect(conversation).snapshot.document.domain.currentRun?.kind === 'ended');
   }
   const first = { ...scope, conversationId: 'pi-many-0' };
   assert.equal((await current.host.conversation(first).submit(command('many-follow-up', { kind: 'send', text: 'Remember question zero' }, first))).receipt.state.kind, 'completed');

@@ -54,20 +54,26 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       closing = true;
       feeds?.dispose();
       const driverResults = await Promise.allSettled([Promise.resolve().then(() => driver?.close())]);
-      host?.close();
+      const driverFailed = driverResults.some(result => result.status === 'rejected');
       const deadline = setTimeout(() => http.closeAllConnections(), 2000);
       try {
         const results = [...driverResults, ...await Promise.allSettled([
           new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
-          control?.close(), host?.drained,
+          Promise.resolve().then(() => control?.close()),
+          Promise.resolve().then(() => {
+            // Failed native cleanup can leave writers that still need the host database.
+            if (driverFailed) return;
+            host?.close();
+            return host?.drained;
+          }),
         ])];
         const failure = results.find(result => result.status === 'rejected');
-        if (failure?.status === 'rejected') throw failure.reason;
+        if (failure?.status === 'rejected') throw new Error('Host shutdown failed', { cause: failure.reason });
       } finally {
         clearTimeout(deadline);
-        access?.close();
-        owner.close();
       }
+      access?.close();
+      owner.close();
     })();
     return closePromise;
   }
@@ -98,7 +104,11 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         host.append(scope, output);
       };
       driver = provider.kind === 'pi'
-        ? await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append })
+        ? await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append,
+          currentRunId(scope) {
+            if (!host) throw new Error('Host not ready');
+            return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
+          } })
         : createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version, append });
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,

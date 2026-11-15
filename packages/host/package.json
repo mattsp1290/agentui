@@ -37,6 +37,6 @@
     "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@agentui/switchboard-pi": "file:../../vendor/switchboard-64b170470a4201d8b70754e563f3d35b625951ff.tgz"
+    "@agentui/switchboard-pi": "file:../../vendor/switchboard-a5c4cab354a30ccf66179084882238d1d1c0f670.tgz"
   }
 }

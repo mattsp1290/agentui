@@ -20,7 +20,9 @@ native SDK types. AgentUI and Switchboard core keep strict checking.
 
 AgentUI owns pairing, authorization, durable command admission, exact-command
 retry behavior, transcript persistence, replay and crash recovery. It only
-reopens session references saved for its own conversations. The private
+reopens session references saved for its own conversations. A native reference
+is recorded only after its journal exists. A failure before persistence leaves
+the previous native binding intact. The private
 reference pairs the native session ID with an owned journal filename. Reopening
 must preserve both values. Missing or mismatched journals fail without creating
 a replacement session.
@@ -29,6 +31,9 @@ A completed send receipt records Pi SDK's `preflight-started` acknowledgement.
 It does not assert that the upstream model completed or accepted a network
 request. The transcript run ends separately from the native assistant outcome.
 Stop records its request before calling the SDK, then retains partial text.
+A visible completed run also confirms native cleanup, so an immediate follow-up
+can reopen the same journal. Failed cleanup keeps the writer reservation and
+asks for a host restart.
 A native completed result remains completed if Stop loses a completion race.
 Unconfirmed commands retain uncertainty and never replay automatically.
 

@@ -38,7 +38,9 @@ test('live OpenCode Go GLM 5.3 chat streams, remembers, reopens and stops throug
   const directory = await mkdtemp(join(tmpdir(), 'agentui-pi-live-'));
   const evidence = process.env.AGENTUI_PI_EVIDENCE_DIR;
   if (evidence) await mkdir(evidence, { recursive: true });
-  const report = { provider: 'opencode-go', model: 'glm-5.3', sdk: '1.5.2', checks: [] };
+  const artifact = JSON.parse(await readFile(new URL('../../apps/host/dist/artifact.json', import.meta.url), 'utf8'));
+  const report = { provider: 'opencode-go', model: 'glm-5.3', sdk: '1.5.2',
+    sourceRevision: artifact.sourceRevision, sourceDirty: artifact.sourceDirty, artifactId: artifact.artifactId, checks: [] };
   const root = fileURLToPath(new URL('../../', import.meta.url));
   let host;
   let browser;
