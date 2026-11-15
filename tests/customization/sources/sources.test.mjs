@@ -124,15 +124,36 @@ test('snapshot retains exact missing-lock and manager-pin diagnostics', async t 
   assert.deepEqual(await readdir(f.scratchParent), []);
 });
 
-test('dependency-free active roots still parse committed lock JSON eagerly', async t => {
+test('dependency-free snapshots and standalone source resolution ignore malformed lock JSON', async t => {
   const f = await fixture(t);
   const repo = await f.repository('eager-lock-json');
   await shared(repo);
   await write(repo.directory, 'package-lock.json', '{broken');
   const ref = reference(repo, repo.commit());
-  await assert.rejects(readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent }), { code: 'invalid-package' });
-  await assert.rejects(f.read(ref), { code: 'invalid-package' });
+  const snapshot = await readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent });
+  assert.equal(snapshot.customization.shared, './source.ts');
+  await snapshot.dispose();
+  const graph = await f.read(ref);
+  assert.equal(graph.root.customization.shared, './source.ts');
+  assert.deepEqual(graph.root.npm, { kind: 'absent' });
+  assert.equal(await readFile(join(graph.root.directory, 'package-lock.json'), 'utf8'), '{broken');
+  await graph.dispose();
   assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('dependencies and discovered workspace ownership still require valid lock JSON', async t => {
+  for (const variant of ['dependencies', 'workspace-root', 'workspace-member']) await t.test(variant, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('required-lock-json');
+    const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
+      ...(variant === 'dependencies' ? { dependencies: { value: '1.0.0' } } : { workspaces: ['packages/member'] }) };
+    await shared(repo, '', pkg);
+    if (variant !== 'dependencies') await shared(repo, 'packages/member', { name: 'member', version: '1.0.0' });
+    await write(repo.directory, 'package-lock.json', '{broken');
+    const ref = reference(repo, repo.commit(), variant === 'workspace-member' ? 'packages/member' : undefined);
+    await assert.rejects(f.read(ref), { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
 });
 
 test('actual npm workspace lock selects package metadata and preserves sibling import inputs', async t => {

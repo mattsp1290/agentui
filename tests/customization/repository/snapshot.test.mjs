@@ -135,6 +135,28 @@ test('dependency-free desktop template loads its committed source map without di
   await snapshot.dispose();
 });
 
+test('unneeded malformed lockfiles do not prevent defaults or dependency-free customization', async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.repo, 'shared.ts'), 'export const label = "Notes";\n');
+  await writeFile(join(f.repo, 'package-lock.json'), '{malformed lockfile');
+  for (const pkg of [
+    { dependencies: { unrelated: '1.0.0' } },
+    { dependencies: { unrelated: '1.0.0' }, agentui: {} },
+    { agentui: { shared: './shared.ts' } },
+  ]) {
+    await writeFile(join(f.repo, 'package.json'), JSON.stringify(pkg));
+    const snapshot = await f.read(f.commit());
+    assert.deepEqual(snapshot.customization, pkg.agentui?.shared ? { shared: './shared.ts', extensions: [] } : undefined);
+    assert.equal(await readFile(join(snapshot.directory, 'package-lock.json'), 'utf8'), '{malformed lockfile');
+    await snapshot.dispose();
+  }
+  await writeFile(join(f.repo, 'package.json'), JSON.stringify({
+    packageManager: 'npm@11.19.1', dependencies: { required: '1.0.0' }, agentui: { shared: './shared.ts' },
+  }));
+  await assert.rejects(f.read(f.commit()), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('invalid package, symlink and gitlink failures clean only their own snapshots', async t => {
   const f = await fixture(t);
   const valid = await f.read(f.commit());
