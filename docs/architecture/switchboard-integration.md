@@ -11,8 +11,10 @@ compatibility promise. Node `>=24.22.3 <25` and npm 11.19.1 are required.
 Switchboard owns adapter identity, registration and instance lifecycle contracts,
 capability states, native session references, bounded event observation and
 interaction continuation parsing. The host exposes only the core contracts used
-by its current consumers. It does not copy an adapter, parser or native agent loop.
-Clients and extensions depend on AgentUI contracts rather than the Node host.
+by its current consumers. The direct Codex MVP bridge currently owns native
+process and protocol handling in AgentUI. The target integration moves that work
+to a public Switchboard adapter. Clients and extensions depend on AgentUI
+contracts rather than the Node host.
 
 The installed consumer calls the upstream parser directly:
 
@@ -29,18 +31,18 @@ This illustrates parser correspondence only. An operational host must obtain
 `expected` from its authorized, server-owned pending state. The replying client
 cannot provide both the reply and the trusted expectation.
 
-A new facade or mirrored contracts package would add a second import path
-without hiding any implemented policy. An authority-aware facade can become useful
-when it owns the real installation lookup, authorization and durable pending state.
-Those systems are not implemented by this increment.
+The host now owns installation lookup, authorization, and durable pending state.
+Those policies surround the current direct Codex bridge. The installed
+Switchboard parser remains a correspondence-checking helper. It does not supply
+that host policy.
 
 ## Preserve both identity domains
 
 AgentUI's `RunIdentity` has one `RunAuthority`, including its `ProviderBinding`.
 That binding names a provider namespace, installed provider and opaque session.
 It does not contain Switchboard's engine, native version, account, authorized
-scope or native format. A future host-owned installation record must resolve
-those fields before constructing a Switchboard `SessionReference`.
+scope or native format. The current host-owned installation record supplies
+those fields when constructing a Switchboard `SessionReference`.
 Do not infer an account from an installation ID or treat a namespace as an engine.
 
 The native reference retains its envelope version and opaque session token.
@@ -70,7 +72,8 @@ AgentUI owns host authorization, installation routing, durable intent and receip
 pending-record ownership, event persistence, replay, uncertainty and retry policy.
 Observer disposal does not cancel authoritative work. Only a separately qualified
 native cancellation operation could establish a native cancellation result.
-No database, admission gate or durable dispatch implementation is added here.
+The current host has a SQLite store, an admission gate, and durable dispatch
+receipts. The pinned Switchboard package does not supply native cancellation.
 
 Crew remains a remote provider with its own execution and approval authority.
 Its transport, authentication and replay belong to the Crew extension.
@@ -88,12 +91,14 @@ A schema or projection does not prove that
 a native provider emits the corresponding event.
 
 There is no packaged Claude, Codex or Pi adapter in this artifact.
-Upstream has bounded source-spike Codex inspection evidence and a conditional
-app-server candidate. Its unknown-corrupt-session enumeration gap remains open.
-That evidence does not qualify a live AgentUI provider. The six live direct and
-LiteLLM combinations remain unqualified in the upstream protocol record.
-The upstream README has stale statements about AG-UI and exports. The pinned
-package exports and current protocol records define the library code described here.
+AgentUI now has a working direct Codex MVP bridge. Upstream's newer source selects
+Codex 0.169.0 and resolves the historical unknown-file omission selection blocker.
+That source is distinct from the pinned package and AgentUI's 0.167.2 contract.
+The [Codex dependency assessment](../integration/switchboard/codex.md) describes
+the bounded handoff to a public shared adapter and the saved-reference transition.
+Neither upstream selection nor the current bridge establishes broader live direct
+and LiteLLM qualification. The pinned package exports define the library code
+available from this artifact.
 
 Linux package checks and the [installed-consumer procedure](../../vendor/README.md#check-the-installed-consumer)
 prove artifact installation, public contract consumption and controlled continuation
