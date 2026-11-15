@@ -38,7 +38,7 @@ export interface CapturedTarget {
  * reconcile records uncertainty when lookup is unavailable and can settle later valid authoritative evidence.
  */
 export interface ProviderDriver<E> {
-  readonly source: 'recorded' | 'codex' | 'codex-sdk' | 'pi';
+  readonly source: 'recorded' | 'codex' | 'codex-sdk' | 'claude-sdk' | 'pi';
   readonly installation?: Installation;
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
   dispatch(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;

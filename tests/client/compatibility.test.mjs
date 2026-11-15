@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkCompatibility } from '@agentui/client';
-import { CODEX_SDK_RUNTIME, PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
+import { CLAUDE_SDK_RUNTIMES, CODEX_SDK_RUNTIME, PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 
 const nativeRuntime = { engine: 'recorded', version: '1.0.0', format: 'recorded-v1' };
 const client = { supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.2'], supportedNativeRuntimes: [nativeRuntime], expectedArtifactId: 'artifact-a' };
@@ -59,3 +59,16 @@ test('solo clients accept the exact Codex SDK subscription runtime and reject ch
       nativeRuntime: { ...sdkHost.nativeRuntime, ...change } }).kind, 'incompatible');
   }
 });
+
+for (const model of ['opus', 'sonnet']) {
+  test(`solo clients accept the exact Claude ${model} runtime and reject changed identities`, () => {
+    const claudeHost = { ...host, wireVersion: 1, extensionSdkVersion: '0.0.0', nativeRuntime: CLAUDE_SDK_RUNTIMES[model] };
+    assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, claudeHost), { kind: 'compatible' });
+    for (const change of [{ version: '0.3.324' }, { format: 'claude-sdk-v2' }, { engine: 'other' }]) {
+      const result = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...claudeHost,
+        nativeRuntime: { ...claudeHost.nativeRuntime, ...change } });
+      assert.equal(result.kind, 'incompatible');
+      assert.deepEqual(result.issues.map(issue => issue.dimension), ['native-runtime']);
+    }
+  });
+}
