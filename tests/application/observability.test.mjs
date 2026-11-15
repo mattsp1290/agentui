@@ -1,75 +1,17 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { createServer, request } from 'node:http';
+import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import test from 'node:test';
-import { directCodexEnvironment } from '../../apps/host/build/tsc/native-environment.js';
-
-const root = new URL('../../', import.meta.url);
-const baseEnvironment = directCodexEnvironment();
-
-async function exitWithin(child, milliseconds = 5000) {
-  let forced = false;
-  const deadline = setTimeout(() => { forced = true; child.process.kill('SIGKILL'); }, milliseconds);
-  try {
-    const result = await child.exited;
-    assert.equal(forced, false, `Host required SIGKILL. ${child.stderr}`);
-    assert.deepEqual(result, { code: 0, signal: null }, child.stderr);
-  } finally { clearTimeout(deadline); }
-}
-
-async function receiver(t, mode = 'ok') {
-  const received = [];
-  let first;
-  const firstRequest = new Promise(resolve => { first = resolve; });
-  const server = createServer((incoming, outgoing) => {
-    let body = '';
-    incoming.setEncoding('utf8').on('data', chunk => { body += chunk; });
-    incoming.once('end', () => {
-      const value = { path: incoming.url, headers: incoming.headers, body: JSON.parse(body) };
-      received.push(value);
-      first(value);
-      if (mode === 'blackhole') return;
-      outgoing.writeHead(mode === 'failure' ? 500 : 200, { 'content-type': 'application/json' });
-      outgoing.end(mode === 'failure' ? '{}' : '{"partialSuccess":{}}');
-    });
-  });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(async () => {
-    server.closeAllConnections();
-    await new Promise(resolve => server.close(resolve));
-  });
-  const endpoint = `http://127.0.0.1:${server.address().port}`;
-  return { endpoint, received, firstRequest };
-}
+import { assertBoundedRequestSpans, attributes, receiver } from './support/observability.mjs';
+import { browserRequest, control, exitWithin, hostRequest, launchProcess, pairBrowser, startup, within } from './support/host-process.mjs';
 
 async function fixture(t, environment = {}, direct = false) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-'));
-  const children = [];
-  const launch = (args, env = environment) => {
-    const process = spawn(globalThis.process.execPath, args, {
-      cwd: root, env: { ...baseEnvironment, ...env }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stderr = '';
-    process.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
-    const exited = new Promise(resolve => process.once('exit', (code, signal) => resolve({ code, signal })));
-    const child = { process, exited, get stderr() { return stderr; } };
-    children.push(child);
-    return child;
-  };
-  t.after(async () => {
-    await Promise.all(children.map(async child => {
-      if (child.process.exitCode !== null || child.process.signalCode !== null) return;
-      child.process.kill('SIGTERM');
-      const deadline = setTimeout(() => child.process.kill('SIGKILL'), 2000);
-      try { await child.exited; } finally { clearTimeout(deadline); }
-    }));
-    rmSync(directory, { recursive: true, force: true });
-  });
-  const cli = (args, env) => launch(['apps/host/dist/main.js', ...args, '--data-dir', directory], env);
+  const launch = (args, env = environment) => launchProcess(t, args, env);
+  const cliArgs = args => ['apps/host/dist/main.js', ...args, '--data-dir', directory];
+  const cli = (args, env) => launch(cliArgs(args), env);
   const host = direct ? launch(['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
     import { registerHooks } from 'node:module';
@@ -100,57 +42,15 @@ async function fixture(t, environment = {}, direct = false) {
       void closing.catch(() => { process.exitCode = 1; });
     });
   `, directory, direct === 'lifecycle' ? 'lifecycle' : 'disabled']) : cli(['browser-dev', '--port', '0']);
-  const lines = createInterface({ input: host.process.stdout });
-  const ready = new Promise((resolve, reject) => {
-    host.process.once('error', reject);
-    lines.once('line', line => {
-      try { resolve(JSON.parse(line)); } catch (error) { reject(error); }
-    });
-    void host.exited.then(result => reject(new Error(`Host exited before readiness ${JSON.stringify(result)} ${host.stderr}`)));
-  });
-  const deadline = setTimeout(() => host.process.kill('SIGKILL'), 8000);
-  let address;
-  try { address = await ready; } finally { clearTimeout(deadline); lines.close(); }
-  const control = async (op, env) => {
-    const child = cli([op], env);
-    let stdout = '';
-    child.process.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    await exitWithin(child);
-    const response = JSON.parse(stdout);
-    assert.equal(response.ok, true);
-    return response.value;
-  };
-  const call = (path, body, headers = {}, method = 'POST') => new Promise((resolve, reject) => {
-    const outgoing = request(`${address.origin}${path}`, { method, headers: { 'Content-Type': 'application/json', ...headers } }, incoming => {
-      let text = '';
-      incoming.setEncoding('utf8').on('data', chunk => { text += chunk; });
-      incoming.once('error', reject);
-      incoming.once('end', () => {
-        let body;
-        try { body = JSON.parse(text); } catch { body = text; }
-        resolve({ status: incoming.statusCode, headers: incoming.headers, body });
-      });
-    });
-    outgoing.once('error', reject);
-    outgoing.setTimeout(5000, () => outgoing.destroy(new Error('Host request deadline exceeded')));
-    outgoing.end(body === undefined ? undefined : typeof body === 'string' ? body : JSON.stringify(body));
-  });
-  const browser = (body, cookie = '', headers = {}) => call('/api/v1', body, {
-    Origin: address.origin, ...(cookie ? { Cookie: cookie } : {}), ...headers,
-  });
-  const pair = async () => {
-    const invitation = await control('invite');
-    const response = await browser({ op: 'pair', code: invitation.code });
-    assert.equal(response.status, 200, JSON.stringify(response.body));
-    const cookie = response.headers['set-cookie'][0].split(';')[0];
-    return { code: invitation.code, cookie };
-  };
-  return { ...address, host, control, call, browser, pair,
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const address = await startup(host);
+  assert.equal(address.kind, 'ready', host.stderr);
+  const call = (path, body, headers, method) => hostRequest(address.origin, path, body, headers, method);
+  const browser = (body, cookie, headers) => browserRequest(address.origin, body, cookie, headers);
+  return { ...address, host, call, browser,
+    control: (op, env = environment) => control(t, cliArgs([op]), env),
+    pair: () => pairBrowser(t, address.origin, cliArgs(['invite']), environment),
     stop: async () => { host.process.kill('SIGTERM'); await exitWithin(host); } };
-}
-
-function attributes(values = []) {
-  return Object.fromEntries(values.map(({ key, value }) => [key, value.stringValue ?? Number(value.intValue)]));
 }
 
 test('host OTLP export contains only bounded request facts and ignores incoming trace context and resource metadata', { timeout: 25_000 }, async t => {
@@ -198,36 +98,11 @@ test('host OTLP export contains only bounded request facts and ignores incoming 
   await f.call(`/?private=${canaries[3]}`, undefined, {}, 'GET');
   assert.equal((await f.call('/favicon.ico', undefined, { Host: 'wrong-host.invalid' }, 'GET')).status, 400);
   await f.stop();
-  assert.ok(collector.received.length > 0, 'SIGTERM flushes request spans to the receiver');
-  const spans = [];
-  for (const request of collector.received) {
-    assert.equal(request.path, '/v1/traces');
-    assert.match(request.headers['content-type'], /^application\/json/);
-    assert.equal(request.headers['x-collector-token'], 'collector token=value');
-    assert.equal(request.headers['x-general-token'], 'general token');
-    for (const resource of request.body.resourceSpans) {
-      assert.deepEqual(attributes(resource.resource.attributes), { 'service.name': 'agentui-observability-test' });
-      for (const scope of resource.scopeSpans) spans.push(...scope.spans);
-    }
-  }
-  assert.equal(spans.length, expected.length, 'static assets and control commands do not create request spans');
-  for (const span of spans) {
-    assert.equal(span.name, 'agentui.host.request');
-    assert.equal(span.kind, 2);
-    assert.ok(BigInt(span.endTimeUnixNano) > BigInt(span.startTimeUnixNano),
-      `span duration includes request handling ${span.startTimeUnixNano} -> ${span.endTimeUnixNano}`);
-    assert.ok(span.parentSpanId === undefined || span.parentSpanId === '', 'request spans are roots');
-    assert.deepEqual(span.events ?? [], []);
-    assert.deepEqual(span.links ?? [], []);
-    const values = attributes(span.attributes);
-    assert.deepEqual(Object.keys(values).sort(), ['agentui.credential_class', 'agentui.operation', 'agentui.outcome', 'http.response.status_code']);
-    assert.equal(span.status?.code ?? 0, values['agentui.outcome'] === 'ok' ? 0 : 2);
-    assert.ok(!span.status?.message);
-  }
-  const byValue = values => values.map(value => JSON.stringify(value, Object.keys(value).sort())).sort();
-  assert.deepEqual(byValue(spans.map(span => attributes(span.attributes))), byValue(expected));
-  const payload = JSON.stringify(collector.received.map(value => value.body));
-  for (const canary of canaries) assert.equal(payload.includes(canary), false, `Private value leaked ${canary}`);
+  assertBoundedRequestSpans(collector.received, {
+    serviceName: 'agentui-observability-test',
+    collectorHeaders: { 'x-collector-token': 'collector token=value', 'x-general-token': 'general token' },
+    expected, canaries,
+  });
 });
 
 test('signal-specific OTLP endpoint is used verbatim with the default service identity', { timeout: 15_000 }, async t => {
@@ -313,18 +188,18 @@ test('tracing stays disabled by default, by explicit opt out and for direct host
   }
 });
 
-for (const mode of ['failure', 'blackhole']) {
+for (const [mode, respond] of [
+  ['failure', (_incoming, outgoing) => { outgoing.writeHead(500, { 'content-type': 'application/json' }); outgoing.end('{}'); }],
+  ['blackhole', () => {}],
+]) {
   test(`a ${mode} OTLP receiver cannot fail requests or retain the host process`, { timeout: 20_000 }, async t => {
-    const collector = await receiver(t, mode);
+    const collector = await receiver(t, respond);
     const f = await fixture(t, { OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint });
     const paired = await f.pair();
     assert.equal((await f.browser({ op: 'metadata' }, paired.cookie)).status, 200);
-    const deadline = setTimeout(() => f.host.process.kill('SIGKILL'), 6000);
-    try {
-      await Promise.race([collector.firstRequest, f.host.exited.then(() => {
-        throw new Error(`Host exited before attempting export. ${f.host.stderr}`);
-      })]);
-    } finally { clearTimeout(deadline); }
+    await within(Promise.race([collector.firstRequest, f.host.exited.then(() => {
+      throw new Error(`Host exited before attempting export. ${f.host.stderr}`);
+    })]), 'First export', 6000, () => f.host.process.kill('SIGKILL'));
     assert.equal((await f.browser({ op: 'metadata' }, paired.cookie)).status, 200);
     await f.stop();
     assert.ok(collector.received.length > 0, 'the failing receiver was reached before shutdown');

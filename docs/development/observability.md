@@ -106,11 +106,11 @@ BIRBCREW_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
 OTEL_SERVICE_NAME=crew-worker
 ```
 
-Crew's signal-specific endpoint is a full URL. Crew also accepts `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` and then `OTEL_EXPORTER_OTLP_ENDPOINT`, appending `/v1/traces` only to the generic endpoint. At this revision, selecting an endpoint enables Crew export. AgentUI requires `OTEL_TRACES_EXPORTER=otlp` as well. Both exporters send HTTP JSON.
+Crew's endpoint is a full traces URL. Unlike AgentUI, selecting an endpoint enables Crew export without `OTEL_TRACES_EXPORTER=otlp`. Follow the [pinned Crew verification guide](https://github.com/mattsp1290/crew/blob/c7ed7b43008dc414485304f167834d6eb9bc2d53/docs/verification.md#typescript-history-replay-and-traces) for endpoint precedence, plaintext restrictions, collector headers, local JSONL traces, and shutdown limits.
 
-For a Datadog Agent with LLM Observability enabled, set `BIRBCREW_DATADOG_LLMOBS=true` in Crew. Keep `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` unset there. Crew rejects inherited collector headers in this mode. The Agent owns forwarding credentials. AgentUI's separate opt-in is `AGENTUI_DATADOG_LLMOBS=true`. Setting either flag does not configure the other process. A non-loopback plaintext Crew receiver also requires `BIRBCREW_OTLP_TRACES_ALLOW_HTTP=true`. Use the [pinned Crew verification guide](https://github.com/mattsp1290/crew/blob/c7ed7b43008dc414485304f167834d6eb9bc2d53/docs/verification.md#typescript-history-replay-and-traces) for its endpoint restrictions and shutdown limits.
+For a Datadog Agent with LLM Observability enabled, Crew's opt-in is `BIRBCREW_DATADOG_LLMOBS=true`. Keep `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` unset in Crew's environment. The Agent owns forwarding credentials. AgentUI's separate opt-in is `AGENTUI_DATADOG_LLMOBS=true`. Setting either flag does not configure the other process.
 
-Crew adds one metadata-only `invoke_agent <engine>` span under its operational `model.invoke` span for each actual native driver call. It does not record individual model requests, tool executions, or token usage on those agent spans. `BIRBCREW_TRACE_FILE` optionally retains local JSONL spans in a private worker file. Datadog conversion changes network metadata and leaves that file unchanged.
+Crew records metadata-only agent spans around actual native driver calls. Individual model requests, tool executions, and agent-span token usage remain outside that observation boundary.
 
 AgentUI does not forward incoming trace context to Crew or synthesize Crew agent spans from snapshots. AgentUI request traces and Crew invocation traces are separate. Crew's selected UUID correlations remain Crew's export policy. AgentUI continues to exclude host, conversation, and run identifiers. Neither transport acknowledgment nor a span proves command settlement or native termination.
 
