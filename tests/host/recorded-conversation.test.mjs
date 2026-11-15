@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdtempSync, rmSync, existsSync, readFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -34,7 +34,7 @@ function harness(t, progressMs = 15) {
     rmSync(directory, { recursive: true, force: true });
   });
   const open = () => { const host = openRecordedHost(options); hosts.push(host); return host; };
-  const entries = () => existsSync(options.backendPath) ? readFileSync(options.backendPath, 'utf8').trim().split('\n').map(JSON.parse) : [];
+  const entries = () => existsSync(options.backendPath) ? readFileSync(options.backendPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [];
   const watch = host => {
     const history = [], events = [];
     let document;
@@ -186,6 +186,7 @@ for (const [label, unit] of [['ASCII', 'x'], ['multibyte', '🙂'], ['escaped', 
 
 test('a killed recorded process recovers final evidence with the original command ID', { timeout: 10_000 }, async t => {
   const f = harness(t);
+  writeFileSync(f.options.backendPath, '');
   const source = `import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
     const host = openRecordedHost(${JSON.stringify({ ...f.options, progressMs: 60_000 })});
     host.createConversation(${JSON.stringify(scope)}, recordedInstallation);

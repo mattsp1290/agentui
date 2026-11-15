@@ -239,3 +239,14 @@ test('watch opening has a bounded deadline and failed cleanup cannot delay feed 
   assert.equal((await feed.ended).kind, 'failed');
   assert.equal(watch, 1);
 });
+
+test('HTTP status interpretation retains classified failures and refuses a non-OK success envelope', async () => {
+  for (const [status, value, kind] of [
+    [503, { ok: true, value: metadata }, 'unavailable'],
+    [403, { ok: false, error: { kind: 'forbidden', message: 'Denied' } }, 'forbidden'],
+    [401, { ok: true, value: metadata }, 'unauthorized'],
+  ]) {
+    const connection = createBrowserConnection({ fetch: async () => Response.json(value, { status }) });
+    await assert.rejects(connection.metadata(), error => error instanceof ServiceError && error.kind === kind);
+  }
+});

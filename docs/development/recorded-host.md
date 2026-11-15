@@ -48,7 +48,7 @@ Access records and conversations share the existing host database. The applicati
 
 ## Development boundary and build identity
 
-This listener binds to loopback and serves only the recorded backend. Browser credentials use an HttpOnly, SameSite Strict cookie, expire after one hour, and belong to the browser development credential class. Cookies do not isolate loopback ports. Use this entry for local recorded development; it is not the native credential transport or a remote host deployment. Pairing codes, cookies, and provider secrets do not belong in customization Git or URLs.
+This listener binds to loopback and serves only the recorded backend. Browser credentials use an HttpOnly, SameSite Strict cookie, expire after one hour, and belong to the browser development credential class. Cookies do not isolate loopback ports. Use this entry for local recorded development; it is not a packaged native adapter or a remote host deployment. Pairing codes, cookies, and provider secrets do not belong in customization Git or URLs.
 
 The absolute data-directory path plus `/control.sock` must fit within 103 UTF-8 bytes for the local control socket. Choose a shorter private directory if startup reports that limit.
 
@@ -61,3 +61,21 @@ Builds emit `artifact.json` for the executed host bundle and browser assets. The
 The browser build is in `apps/desktop/web-dist-browser`; Tauri packages its separate `web-dist` output. A running host serves its verified browser bytes from memory. Rebuilding does not change those served bytes. Restart the host to apply a new browser build.
 
 Run `npm run verify` for the repository gates. Application tests launch the actual bundled host and built desktop browser entry, covering independent drafts, progressive output, one decision winner, dropped replies, saved-view recovery, revocation, incompatible metadata, and host restart.
+
+## Native protocol prerequisite
+
+The same development listener accepts native-class requests only at literal `http://127.0.0.1:<port>`. Create a native invitation through the private control socket:
+
+```sh
+npm run host:invite-native -- --data-dir /absolute/private/agentui-host
+```
+
+The result contains the host ID and a 32-character, 192-bit invitation code. Codes expire after five minutes and work once. `POST /native/v1/pair` accepts exactly `{version:1,hostId,code}`. A wrong host ID does not consume the invitation. Successful pairing returns the private envelope `{ok:true,value:{hostId,principalId,secret}}`; it does not set a cookie. The credential expires after one hour.
+
+`POST /native/v1` accepts the existing closed service requests except `pair`, with exactly one `Authorization: Bearer <secret>` header. The `Bearer` scheme is case-sensitive. Both native routes require exactly `Content-Type: application/json` with no parameters, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Browser and native invitations and credentials cannot substitute for one another. Revocation uses the existing device command and wakes pending observations.
+
+The shared connection engine takes a `ServiceExecutor` that returns a fetch `Response`. The engine owns bounded JSON and UTF-8 decoding, HTTP status classification, envelope validation, and observation resynchronization. The engine serializes and bounds each request once, then passes its validated body to the browser or private test executor.
+
+The engine advances its credential generation after a successful pairing request. The browser's cookie update and that generation change are not atomic. The inherited window remains deferred until a production adapter defines coordinated credential ownership. The native test fixture enrolls before constructing the engine and holds one immutable credential; it does not exercise credential replacement.
+
+The application test uses a private in-memory credential in separate client processes and the same connection engine as the browser. It proves protocol pairing, observation, client-exit recovery, and one outcome for the original command ID. It is not a production JavaScript bearer adapter. Production credentials still require Rust or Swift ownership and protected storage. This prerequisite does not qualify native IPC, installed macOS or iOS apps, TLS, LAN access, or remote phone access. Loopback host IDs are enrollment checks, not cryptographic server authentication.

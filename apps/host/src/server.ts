@@ -11,12 +11,13 @@ import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from './access.js';
+import type { CredentialClass } from './access.js';
 import { openAccessDatabase } from './access-database.js';
 import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
 import { FeedRegistry } from './feed-registry.js';
-import { browserHandler } from './http-handler.js';
+import { serviceEndpoint } from './service-endpoint.js';
 import { startControl } from './control.js';
 import { recoverCodexConversations } from './codex-recovery.js';
 
@@ -93,10 +94,18 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const registry = new FeedRegistry();
     feeds = registry;
     const compatibility = codex ? { ...artifact.compatibility, nativeRuntime: CODEX_RUNTIME } : artifact.compatibility;
-    const api = createApi({ access, host, compatibility, feeds: registry, installation: codex?.installation ?? recordedInstallation,
-      credentialClass: 'browser-development', isClosing: () => closing });
-    const handler = browserHandler({ access, api, files: browser.files, isClosing: () => closing });
-    http.on('request', (request, response) => { void handler(request, response).catch(() => response.destroy()); });
+    const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
+      access, host, compatibility, feeds: registry, installation: codex?.installation ?? recordedInstallation,
+      isClosing: () => closing,
+    };
+    const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
+    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
+      files: browser.files, isClosing: apiOptions.isClosing });
+    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing });
+    http.on('request', (request, response) => {
+      const route = request.url?.startsWith('/native/') ? native : handler;
+      void route(request, response).catch(() => response.destroy());
+    });
     http.requestTimeout = 20_000;
     http.headersTimeout = 10_000;
     http.keepAliveTimeout = 5000;

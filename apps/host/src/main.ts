@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { startBrowserHost } from './server.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
 
-const COMMANDS: Readonly<Record<string, readonly string[]>> = { 'browser-dev': ['port'], codex: ['port', 'workspace'], invite: [], devices: ['after'], revoke: ['id'] };
+const COMMANDS: Readonly<Record<string, readonly string[]>> = { 'browser-dev': ['port'], codex: ['port', 'workspace'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'] };
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     'data-dir': { type: 'string' }, port: { type: 'string' }, id: { type: 'string' }, after: { type: 'string' },
@@ -13,7 +13,7 @@ async function main(): Promise<void> {
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
   const allowed = command && Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
-  if (extra.length || !command || !allowed) throw new Error('Use codex, browser-dev, invite, devices or revoke');
+  if (extra.length || !command || !allowed) throw new Error('Use codex, browser-dev, invite, invite-native, devices or revoke');
   for (const flag of Object.keys(values)) {
     if (flag !== 'data-dir' && !allowed.includes(flag)) throw new Error(`--${flag} is not valid for ${command}`);
   }
