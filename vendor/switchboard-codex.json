@@ -1,0 +1,19 @@
+{
+  "sourceRepository": "https://github.com/mattsp1290/switchboard",
+  "sourceRevision": "24dc70e6034346479b802184172665c6862a696c",
+  "sourceTree": "1829c42dab7ff61979ee4893f2f5311c45974937",
+  "artifact": "switchboard-24dc70e6034346479b802184172665c6862a696c.tgz",
+  "sha256": "6c3ca7c16e1f9a506b173502f1221f1d209b664e65528acf56c35f6088cf443a",
+  "packageName": "@mattsp1290/switchboard",
+  "installedAlias": "@agentui/switchboard-codex",
+  "entrypoint": "./codex",
+  "nativeSdk": "0.169.0",
+  "provider": "chatgpt-subscription",
+  "model": "gpt-6.1-sol",
+  "license": "MIT",
+  "toolchain": {
+    "node": "24.22.3",
+    "npm": "11.19.1"
+  },
+  "limits": "Bounded SDK chat with completed assistant message events, native thread continuation and Stop. No token deltas, interactive approvals, external discovery, LiteLLM or native extension qualification. Historical core and AG-UI pins remain separate."
+}

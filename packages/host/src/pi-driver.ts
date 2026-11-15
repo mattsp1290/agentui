@@ -9,6 +9,7 @@ import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { createPiRuntime } from '@agentui/switchboard-pi/pi';
 import type { PiEvent, PiSession, PiTerminal } from '@agentui/switchboard-pi/pi';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
+import { messageParts } from './transcript-parts.js';
 
 export interface PiDriverOptions {
   readonly cwd: string;
@@ -34,21 +35,6 @@ interface Turn {
 type Observation = NativeDispatchObservation<CommandResult<TranscriptEvent>>;
 const empty = (): HostOutput<TranscriptEvent> => ({ events: [], runs: [], decisions: [] });
 
-function parts(text: string): string[] {
-  const result: string[] = [];
-  let start = 0, offset = 0, bytes = 0;
-  for (const character of text) {
-    const cost = Buffer.byteLength(JSON.stringify(character)) - 2;
-    if (bytes + cost > 24_000) {
-      result.push(text.slice(start, offset));
-      start = offset; bytes = 0;
-    }
-    bytes += cost; offset += character.length;
-  }
-  result.push(text.slice(start));
-  return result;
-}
-
 export async function createPiDriver(options: PiDriverOptions): Promise<ProviderDriver<TranscriptEvent> & {
   readonly installation: Installation; close(): Promise<void>;
 }> {
@@ -70,7 +56,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
   }
   function render(turn: Turn, complete: boolean) {
     clearTimeout(turn.timer); turn.timer = undefined;
-    const text = parts(turn.text);
+    const text = messageParts(turn.text);
     for (let index = 0; index < Math.max(text.length, turn.rendered.length); index++) {
       const value = text[index] ?? '';
       const previous = turn.rendered[index];

@@ -12,9 +12,11 @@ interface RecoveryPolicy {
 export const PROVIDER_RECOVERY = {
   codex: { displayName: 'Codex', warningCode: 'AGENTUI_CODEX_RECOVERY_CAPACITY',
     continuationAdvice: 'Check any unconfirmed actions before retrying them.' },
+  'codex-sdk': { displayName: 'Codex', warningCode: 'AGENTUI_CODEX_SDK_RECOVERY_CAPACITY',
+    continuationAdvice: 'You can send another message to continue.' },
   pi: { displayName: 'Pi', warningCode: 'AGENTUI_PI_RECOVERY_CAPACITY',
     continuationAdvice: 'You can send another message to continue.' },
-} satisfies Record<'codex' | 'pi', RecoveryPolicy>;
+} satisfies Record<'codex' | 'codex-sdk' | 'pi', RecoveryPolicy>;
 
 export function recoverProviderConversations(
   host: LocalHost<TranscriptEvent, Transcript>, hostId: string, installation: Installation, policy: RecoveryPolicy,

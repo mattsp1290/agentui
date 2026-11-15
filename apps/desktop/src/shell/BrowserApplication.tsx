@@ -1,4 +1,4 @@
-import { PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
+import { CODEX_SDK_CHAT_LABEL, PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
 import { useState, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
 import { PairForm } from './PairForm.js';
@@ -13,8 +13,8 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const enabled = applicationEnabled(app);
   const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
-  const agent = runtime?.engine === 'codex' ? 'codex' : runtime?.engine === 'pi' ? 'pi' : runtime?.engine === 'agentui-recorded' ? 'recorded' : 'local';
-  const hostLabel = runtime === null ? 'Local agent' : agent === 'codex' ? `Codex · ${runtime.version}` : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded playback';
+  const agent = runtime?.engine === 'codex' ? 'codex' : runtime?.engine === 'codex-sdk' ? 'codex-sdk' : runtime?.engine === 'pi' ? 'pi' : runtime?.engine === 'agentui-recorded' ? 'recorded' : 'local';
+  const hostLabel = runtime === null ? 'Local agent' : agent === 'codex' ? `Codex · ${runtime.version}` : agent === 'codex-sdk' ? CODEX_SDK_CHAT_LABEL : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded playback';
   const conversation = app.active
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
@@ -64,7 +64,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       <h1>Settings</h1>
       <section className="settings-section"><h2>Connection</h2>
         <div className="application-status"><strong>{hostLabel}</strong><HostStatusLabel host={app.host} /></div>
-        <p>{agent === 'pi' ? 'The local host saves your conversations. Pi provides text chat without tools.' : 'The local host manages your saved conversations and approvals.'}</p>
+        <p>{agent === 'pi' ? 'The local host saves your conversations. Pi provides text chat without tools.' : agent === 'codex-sdk' ? 'The local host saves your conversations. Codex uses your ChatGPT subscription. Interactive approvals are unavailable in this mode.' : 'The local host manages your saved conversations and approvals.'}</p>
         <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void controller.reconnect()}>Reconnect</button>
       </section>
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
@@ -81,5 +81,5 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   </nav>;
   return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} onRestore={() => setSelectedView('chats')}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
-    buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded host'}>{children}</DesktopShell>;
+    buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : agent === 'codex-sdk' ? CODEX_SDK_CHAT_LABEL : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded host'}>{children}</DesktopShell>;
 }

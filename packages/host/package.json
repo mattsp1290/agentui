@@ -20,6 +20,10 @@
       "types": "./dist/pi-driver.d.ts",
       "import": "./dist/pi-driver.js"
     },
+    "./codex-sdk": {
+      "types": "./dist/codex-sdk-driver.d.ts",
+      "import": "./dist/codex-sdk-driver.js"
+    },
     "./customization": {
       "types": "./dist/customization/index.d.ts",
       "import": "./dist/customization/index.js"
@@ -42,6 +46,8 @@
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@agentui/switchboard-pi": "file:../../vendor/switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
-    "@agentui/sdk": "0.0.0"
+    "@agentui/sdk": "0.0.0",
+    "@agentui/switchboard-codex": "file:../../vendor/switchboard-24dc70e6034346479b802184172665c6862a696c.tgz",
+    "@openai/codex-sdk": "0.169.0"
   }
 }
