@@ -771,7 +771,7 @@ test('legacy absent creation accepts only an explicit selection and persists it 
   assert.deepEqual(f.selected, ['other', 'other']);
 });
 
-test('absent pending creation replaces a removed saved agent only after an explicit available choice', async t => {
+test('absent pending creation never replaces its saved agent with an explicit choice', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const pending = { scope, agentId: 'default' };
   f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
@@ -783,20 +783,24 @@ test('absent pending creation replaces a removed saved agent only after an expli
       f.captured.delete(scope.conversationId);
       throw new ServiceError('invalid', 'Choose a configured agent.');
     }
-    assert.deepEqual(f.views.get('original-view/host').pendingCreation, { scope, agentId: 'replacement' });
+    assert.fail('Recovery must not create with a replacement agent');
   };
   await f.app.recoverCreation();
   assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, pending);
   assert.equal(f.app.getSnapshot().active, null);
   await f.app.recoverCreation('replacement');
-  assert.deepEqual(f.selected, ['default', 'replacement']);
-  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
-  assert.equal(f.app.getSnapshot().active.agent.id, 'replacement');
+  assert.deepEqual(f.selected, ['default']);
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, pending);
+  assert.equal(f.app.getSnapshot().active, null);
+  assert.match(f.app.getSnapshot().error, /saved agent/);
+  await f.app.recoverCreation();
+  assert.deepEqual(f.selected, ['default', 'default']);
   assert.deepEqual(f.created, [scope, scope]);
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, pending);
 });
 
-test('invalid or unavailable recovery choices preserve legacy and captured pending intents', async t => {
-  for (const agentId of [null, 'gone', 'default']) {
+test('invalid or unavailable recovery choices preserve legacy pending intents', async t => {
+  for (const agentId of [null]) {
     const f = fixture(); t.after(() => f.app.dispose());
     const pending = { scope, agentId };
     f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
@@ -821,17 +825,25 @@ test('invalid or unavailable recovery choices preserve legacy and captured pendi
   }
 });
 
-test('an existing pending scope keeps its actual agent despite a different explicit recovery choice', async t => {
+test('a different host scope owner cannot replace a saved provider creation or its route and draft', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
-  f.views.set('original-view/host', { ...empty(), pendingCreation: { scope, agentId: 'default' } });
-  const original = { ...f.descriptor('original-agent'), availability: { kind: 'unavailable', reason: 'Agent removed' } };
-  f.behavior.agentLookup = async () => original;
+  const pending = { scope: { ...scope, conversationId: 'pending-provider' }, agentId: 'original-provider' };
+  const saved = { ...empty(), route: scope, pendingCreation: pending };
+  f.views.set('original-view/host', saved);
+  f.behavior.agentLookup = async () => f.descriptor('native-agent');
   await f.app.start();
-  await f.app.recoverCreation('other');
-  assert.deepEqual(f.selected, ['original-agent']);
-  assert.deepEqual(f.created, [scope]);
-  assert.equal(f.app.getSnapshot().active.agent.id, 'original-agent');
-  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
+  const active = f.app.getSnapshot().active;
+  await active.store.setDraft('Keep my draft');
+  for (const selected of [undefined, 'other']) {
+    await f.app.recoverCreation(selected);
+    assert.deepEqual(f.selected, []);
+    assert.deepEqual(f.created, []);
+    assert.deepEqual(f.app.getSnapshot().saved, saved);
+    assert.deepEqual(f.views.get('original-view/host'), saved);
+    assert.equal(f.app.getSnapshot().active, active);
+    assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Keep my draft');
+    assert.match(f.app.getSnapshot().error, /different agent/);
+  }
 });
 
 test('active descriptors override default controls and unavailable history stays readable', async t => {
@@ -891,6 +903,6 @@ test('legacy pending recovery keeps host-recorded provider identity despite a di
   await f.app.recoverCreation('other');
   assert.deepEqual(f.selected, ['original-provider']);
   assert.equal(f.app.getSnapshot().saved.pendingCreation.agentId, 'original-provider');
-  await f.app.recoverCreation('other');
+  await f.app.recoverCreation();
   assert.deepEqual(f.selected, ['original-provider', 'original-provider']);
 });

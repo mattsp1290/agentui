@@ -84,7 +84,7 @@ export function createApi(options: {
           return request.scope;
         }
         const selected = configured.find(entry => describe(entry.installation).id === request.agentId);
-        if (!selected) throw new ServiceError('invalid', 'Choose a configured agent.');
+        if (!selected) throw new ServiceError('create-rejected', 'This conversation was not created. Choose an available agent for a new conversation.');
         const descriptor = describe(selected.installation);
         if (descriptor.availability.kind !== 'ready') throw new ServiceError('unavailable', descriptor.availability.reason);
         host.createConversation(request.scope, selected.installation);

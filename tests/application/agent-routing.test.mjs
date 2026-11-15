@@ -98,7 +98,9 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await chooser.selectOption(sonnet.id);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
   let loseCreate = true, dropCreate = false, droppedScope;
+  const createRequests = [], recoveryResponses = [];
   await page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON().op === 'create') createRequests.push(route.request().postDataJSON());
     if (dropCreate && route.request().postDataJSON().op === 'create') {
       dropCreate = false; droppedScope = route.request().postDataJSON().scope; await route.abort();
     } else if (loseCreate && route.request().postDataJSON().op === 'create') {
@@ -108,7 +110,8 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
   await page.reload();
-  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(codex.id);
+  await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.composer-footer')?.textContent?.includes('Sonnet'));
   await page.getByRole('heading', { name: 'Plan review', exact: true }).waitFor();
@@ -166,13 +169,27 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const replay = await call({ op: 'submit', command: { version: 1, scope: scopeA, clientCommandId: 'same-id', body: { kind: 'send', text: 'hello' } } });
   assert.equal(replay.receipt.state.kind, 'completed');
   assert.deepEqual(calls, ['codex', 'sonnet', 'sonnet', 'codex']);
+  page.on('response', response => {
+    if (response.request().postDataJSON()?.op === 'create') recoveryResponses.push(response);
+  });
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
-  await page.getByRole('alert').filter({ hasText: 'Choose a configured agent.' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'This conversation was not created. Choose an available agent for a new conversation.' }).waitFor();
+  assert.equal(createRequests.at(-1).agentId, codex.id);
+  assert.deepEqual(createRequests.at(-1).scope, droppedScope);
+  assert.equal(recoveryResponses.at(-1).status(), 409);
+  assert.equal((await recoveryResponses.at(-1).json()).error.kind, 'create-rejected');
   assert.equal(host.installation(droppedScope), null);
-  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(sonnet.id);
-  await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
-  await page.waitForFunction(id => document.querySelector('.scope-label')?.textContent === id, droppedScope.conversationId);
-  assert.deepEqual(host.installation(droppedScope), b);
+  assert.equal(await page.locator('.creation-recovery').count(), 0);
+  await page.reload();
+  await chooser.selectOption(sonnet.id);
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.creation-recovery') === null && document.querySelector('.composer-footer')?.textContent?.includes('Sonnet'));
+  const newScope = createRequests.at(-1).scope;
+  assert.notDeepEqual(newScope, droppedScope);
+  assert.equal(createRequests.at(-1).agentId, sonnet.id);
+  assert.deepEqual(host.installation(newScope), b);
+  assert.equal(host.installation(droppedScope), null);
+  assert.deepEqual(calls, ['codex', 'sonnet', 'sonnet', 'codex']);
   await page.reload();
   await open('a');
   await page.getByText(/no longer configured.*Saved history/).waitFor();

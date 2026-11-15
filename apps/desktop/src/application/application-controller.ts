@@ -363,9 +363,15 @@ export function createApplicationController(deps: {
       if (!pending) return;
       const existing = await current(owner, owner.connection.conversationAgent(pending.scope));
       if (requireSaved(owner) !== view) throw new Error('The creation view changed.');
-      const agentId = existing?.id ?? selected ?? pending.agentId;
+      if (pending.agentId !== null && existing && existing.id !== pending.agentId) {
+        throw new Error('This conversation belongs to a different agent. The saved creation still needs confirmation.');
+      }
+      if (pending.agentId !== null && selected !== undefined && selected !== pending.agentId) {
+        throw new Error('Recovery must use the saved agent. The original creation still needs confirmation.');
+      }
+      const agentId = pending.agentId ?? existing?.id ?? selected ?? null;
       if (agentId === null) throw new Error('This older pending creation has no saved agent. Choose an agent explicitly to continue.');
-      if (!existing && selected !== undefined) {
+      if (pending.agentId === null && !existing && selected !== undefined) {
         const host = await current(owner, owner.connection.metadata());
         if (requireSaved(owner) !== view) throw new Error('The creation view changed.');
         const agent = host.agents.find(agent => agent.id === selected);

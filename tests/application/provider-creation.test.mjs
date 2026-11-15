@@ -123,6 +123,24 @@ const unavailable = promise => assert.rejects(promise, error => error.kind === '
   assert.equal(f.inspect(db => db.prepare('SELECT version FROM conversations WHERE conversation=?').get('remote').version), 2);
 });
 
+test('removed agent is a known negative only with no original provider operation or local conversation', async t => {
+  const a = extension({ create() { throw new Error('Reply lost'); } }), f = await fixture(t, [a]);
+  const agent = await selected(f), unknown = f.scope('unknown'), absent = f.scope('absent');
+  const native = f.scope('native'), metadata = await f.client.metadata();
+  await f.client.create(native, metadata.defaultAgentId);
+  await unavailable(f.client.create(unknown, agent.id));
+  const original = f.inspect(db => db.prepare('SELECT original,status FROM provider_creations').get());
+  await f.restart([]);
+  assert.equal(await f.client.conversationAgent(absent), null);
+  await assert.rejects(f.client.create(absent, agent.id), error => error.kind === 'create-rejected');
+  await unavailable(f.client.create(unknown, agent.id));
+  await assert.rejects(f.client.create(native, agent.id), error => error.kind === 'invalid');
+  assert.deepEqual(f.inspect(db => db.prepare('SELECT original,status FROM provider_creations').get()), original);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS count FROM conversations WHERE conversation=?').get('absent').count), 0);
+  assert.equal(a.calls.creates.length, 1);
+  assert.deepEqual(a.calls.lookups, []);
+});
+
 test('lost response and restart reconcile only the original immutable operation; concurrent recovery shares its lease', async t => {
   const a = extension({ create() { throw new Error(secret); } }), f = await fixture(t, [a]);
   const agent = await selected(f), scope = f.scope('lost');
