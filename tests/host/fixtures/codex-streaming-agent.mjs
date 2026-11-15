@@ -8,6 +8,26 @@ const notify = (method, params) => send({ method, params });
 const turns = new Map();
 let threadCount = 0, turnCount = 0, rejected = false;
 
+const commandItem = { id: 'tool', type: 'commandExecution', command: 'printf from-item', cwd: '/workspace/item' };
+const standardApproval = { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } };
+const scopedFirstApproval = { requestId: 'other-command-request', file: false, items: [commandItem], params: {} };
+const approvalScenarios = {
+  'item-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: {} },
+  'scoped-command-approval': { requestId: 'command-request', file: false, items: [], params: {} },
+  'file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange', changes: [
+    { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
+    { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
+  ] }], params: { grantRoot: '/workspace' } },
+  'malformed-file-approval': { requestId: '0', file: true,
+    items: [{ id: 'tool', type: 'fileChange', changes: [{ path: null, kind: null }] }], params: { grantRoot: '/workspace' } },
+  'pending-complete': standardApproval,
+  'pending-disconnect': standardApproval,
+  'expire-complete': standardApproval,
+  'expire-resolved': standardApproval,
+  'expire-disconnect': standardApproval,
+  'expire-close': standardApproval,
+};
+
 function finish(turn, status = 'completed') {
   clearInterval(turn.timer);
   notify('turn/completed', { threadId: turn.threadId, turn: { id: turn.id, status } });
@@ -31,7 +51,8 @@ createInterface({ input: process.stdin }).on('line', line => {
     return;
   }
   const reply = result => send({ id: message.id, result });
-  if (mode === `reject-${message.method}` && !rejected) {
+  const rejectFollowup = mode === 'reject-followup' && message.method === 'turn/start' && turnCount === 1;
+  if ((mode === `reject-${message.method}` || rejectFollowup) && !rejected) {
     rejected = true;
     send({ id: message.id, error: { code: -32000, message: 'Fixture denied this request' } });
     return;
@@ -47,22 +68,17 @@ createInterface({ input: process.stdin }).on('line', line => {
       if (mode === 'lost-start') { process.exit(0); return; }
       reply({ turn: { id: turn.id } });
       notify('turn/started', { threadId: turn.threadId, turn: { id: turn.id } });
+      const approval = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? scopedFirstApproval : approvalScenarios[mode];
       setTimeout(() => {
         if (mode === 'long' || mode === 'short-correction') {
           for (let offset = 0; offset < longText.length; offset += 80) {
             notify('item/agentMessage/delta', { threadId: turn.threadId, turnId: turn.id, itemId: 'answer', delta: longText.slice(offset, offset + 80) });
           }
-        } else if (mode.includes('approval') || mode.startsWith('pending-') || mode.startsWith('expire-')) {
-          turn.requestId = 0;
-          const file = mode === 'file-approval';
-          if (file) notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-            item: { id: 'tool', type: 'fileChange', changes: [
-              { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
-              { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
-            ] } });
-          send({ id: turn.requestId, method: file ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval',
-            params: { threadId: turn.threadId, turnId: turn.id, itemId: 'tool', reason: 'Fixture permission',
-              ...(file ? { grantRoot: '/workspace' } : { cwd: '/workspace/subdirectory', ...(mode === 'fallback-approval' ? {} : { command: 'printf hello' }) }) } });
+        } else if (approval) {
+          turn.requestId = approval.requestId;
+          for (const item of approval.items) notify('item/started', { threadId: turn.threadId, turnId: turn.id, item });
+          send({ id: turn.requestId, method: approval.file ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval',
+            params: { threadId: turn.threadId, turnId: turn.id, itemId: 'tool', reason: 'Fixture permission', ...approval.params } });
         } else {
           completedItem(turn, 'Hello');
           finish(turn);

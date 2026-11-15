@@ -7,6 +7,8 @@ import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversatio
 import { nonempty, object } from './codec.js';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
+import { approvalItem, approvalPrompt, bounded, rememberApprovalItem } from './codex-approval-display.js';
+import type { ApprovalDetails } from './codex-approval-display.js';
 
 export type CodexTranscriptEvent = TranscriptEvent;
 export interface CodexDriverOptions {
@@ -21,7 +23,7 @@ interface ActiveTurn {
   readonly threadId: string;
   readonly previousRunId: string | null;
   readonly messages: Map<string, string>;
-  readonly fileChanges: Map<string, string>;
+  readonly approvalDetails: Map<string, ApprovalDetails>;
   readonly rendered: Extract<TranscriptEvent, { kind: 'message-updated' }>[];
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -53,16 +55,6 @@ function messageParts(text: string): string[] {
   }
   parts.push(text.slice(start));
   return parts;
-}
-
-function bounded(text: string, limit = 8_000): string {
-  let end = 0, bytes = 0;
-  for (const character of text) {
-    bytes += Buffer.byteLength(JSON.stringify(character)) - 2;
-    if (bytes > limit) return `${text.slice(0, end)}\n[Further details omitted]`;
-    end += character.length;
-  }
-  return text;
 }
 
 export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
@@ -222,17 +214,8 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     } else if (method === 'item/started' || method === 'item/completed') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const item = object(params.item);
-      if (item.type === 'fileChange' && Array.isArray(item.changes)) {
-        const changes = item.changes.map(value => {
-          const change = object(value), kind = object(change.kind);
-          return { path: nonempty(change.path), kind: nonempty(kind.type),
-            movedTo: typeof kind.move_path === 'string' ? kind.move_path : null,
-            diff: typeof change.diff === 'string' ? change.diff : '' };
-        });
-        const paths = changes.map(change => `${change.path} (${change.kind})${change.movedTo ? ` → ${change.movedTo}` : ''}`).join('\n');
-        const patches = changes.map(change => `${change.path}\n${bounded(change.diff, 2_000)}`).join('\n\n');
-        turn.fileChanges.set(nonempty(item.id), `${bounded(paths, 4_000)}\n\n${bounded(patches, 4_000)}`);
-      }
+      const remembered = approvalItem(item);
+      if (remembered) rememberApprovalItem(turn.approvalDetails, remembered);
       if (method === 'item/completed' && item.type === 'agentMessage') {
         if (typeof item.text !== 'string') throw new Error('Invalid Codex message');
         message(turn, nonempty(item.id), item.text);
@@ -267,12 +250,10 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     const pendingId = randomUUID();
     const approval: Approval = { id, pendingId, turn, run: turn.run, waiter: null };
     approvals.set(canonicalJson(id), approval);
-    const reason = typeof params.reason === 'string' && params.reason ? `\n\n${bounded(params.reason, 2_000)}` : '';
-    const action = method === 'item/commandExecution/requestApproval'
-      ? `${typeof params.command === 'string' ? `Run: ${bounded(params.command)}` : 'Allow Codex to run a command?'}\nWorking directory: ${typeof params.cwd === 'string' ? bounded(params.cwd, 2_000) : cwd}`
-      : `Allow Codex to change files?\n${typeof params.grantRoot === 'string' ? `Write access requested under: ${bounded(params.grantRoot, 2_000)}` : `Workspace: ${cwd}`}\n\n${typeof params.itemId === 'string' ? turn.fileChanges.get(params.itemId) ?? 'Codex did not provide file details.' : 'Codex did not provide file details.'}`;
+    const details = typeof params.itemId === 'string' ? turn.approvalDetails.get(params.itemId) : undefined;
+    const kind = method === 'item/commandExecution/requestApproval' ? 'command' : 'file';
     publish(turn, [], [{ visible: { pendingId, runId: turn.run.identity.runId,
-      choices: ['accept', 'decline'], prompt: `${action}${reason}` },
+      choices: ['accept', 'decline'], prompt: approvalPrompt(kind, params, details, cwd) },
       continuation: { processId: rpc.processId, requestId: id, threadId: turn.threadId, turnId: turn.run.identity.runId },
     }]);
   }
@@ -306,7 +287,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), fileChanges: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
+      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);
@@ -316,18 +297,27 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       const nativeRun = run(turn, nonempty(object(result.turn).id));
       return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
     } catch (error) {
+      const rejection = error instanceof CodexRpcError
+        ? { reason: `Codex rejected this request: ${bounded(error.message, 1_000)}`, code: error.code } : null;
       if (turn) {
-        try { interrupted(turn, error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : 'Codex could not start this response. Check command recovery before trying again.'); }
+        try {
+          if (rejection && !turn.run) {
+            publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:assistant-rejection`,
+              revision: 1, role: 'assistant', complete: true, text: rejection.reason }]);
+          } else {
+            interrupted(turn, rejection?.reason ?? 'Codex could not start this response. Check command recovery before trying again.');
+          }
+        }
         catch { outputFailed(turn); }
         active.delete(turn.threadId);
       }
       busy.delete(key);
-      if (error instanceof CodexRpcError) return { kind: 'conclusive', evidence: {
+      if (!rejection) throw error;
+      return { kind: 'conclusive', evidence: {
         identity: target.identity, source: 'native-acknowledgement', nativeOperation: null,
         observation: { namespace: 'codex-app-server', schemaVersion: 2,
-          data: { processId: rpc.processId, command: command.body.kind, method, phase: 'native-request-rejected', code: error.code } },
-      }, result: { kind: 'rejected', reason: `Codex rejected this request: ${bounded(error.message, 1_000)}` } };
-      throw error;
+          data: { processId: rpc.processId, command: command.body.kind, method, phase: 'native-request-rejected', code: rejection.code } },
+      }, result: { kind: 'rejected', reason: rejection.reason } };
     }
   }
   return {

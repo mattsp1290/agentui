@@ -9,6 +9,7 @@ fi
 
 repo_root=$(CDPATH='' cd -P "$(dirname "$0")" && pwd)
 cd "$repo_root"
+node scripts/desktop-launch-args.mjs "$@"
 node_package="node@$(cat .node-version)"
 npm_package=$(node -p "require('./package.json').packageManager")
 export CARGO_TARGET_DIR="$repo_root/apps/desktop/src-tauri/target"

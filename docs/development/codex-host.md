@@ -39,4 +39,6 @@ Select **New conversation**, write a message, and select **Send**. The host runs
 
 Close the host with Ctrl+C. Restart with the same workspace, data directory, and port to reopen stored conversations. Pair again when browser access expires. Drafts stay in the browser, and the host stores conversation history and Codex session references in its private data directory.
 
+Before updating the native host, stop it and copy its entire private data directory to a separate backup location. The current build can open older message-only histories. Its first write to a conversation, including a new conversation or a rejected send, stores state that older builds cannot read. To roll back, restore the stopped-host backup and use its matching build. Keep the backup private because it contains conversation history and pairing data.
+
 To run the recorded demonstration, use the existing `browser-dev` command with a different data directory. The `codex` command fails with an installation instruction if Codex is missing or its version differs from 0.167.2.
