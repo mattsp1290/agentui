@@ -1,0 +1,18 @@
+{
+  "name": "personal-agentui",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@11.19.1",
+  "engines": { "node": ">=24.22.3 <25", "npm": "11.19.1" },
+  "agentui": {
+    "extension": {
+      "namespace": "personal",
+      "trust": "full",
+      "sdkVersion": "0.0.0",
+      "entries": [{ "kind": "desktop", "module": "./dist/desktop.js" }]
+    },
+    "sources": { "./dist/desktop.js": "./desktop/index.tsx" },
+    "shared": "./shared/prompts.ts"
+  }
+}
