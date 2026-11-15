@@ -91,8 +91,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </div>;
   const views = <>
     <div className="chat-view" hidden={selectedView !== 'chats'} inert={suspended}>{conversation}
-      {children === undefined && customization && customizationEnabled && <CustomizationModules customization={customization}
-        active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />}
+      {children === undefined && customizationEnabled && customization.map(item => <CustomizationModules key={item.manifest.namespace} customization={item}
+        active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />)}
     </div>
     <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>

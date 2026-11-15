@@ -686,7 +686,41 @@ test('committed custom artifact sends one exact prompt, retains drafts and resto
   assert.deepEqual(errors, []);
 });
 
-async function customRuntime(page, host, selection, breakDefault = false) {
+test('a prepared graph renders both hook modules and shares SDK generation state', { timeout: 90_000 }, async t => {
+  const first = repository(), second = repository();
+  t.after(() => Promise.all([rm(first.directory, { recursive: true, force: true }), rm(second.directory, { recursive: true, force: true })]));
+  const child = JSON.parse(await readFile(join(second.repo, 'package.json'), 'utf8'));
+  child.agentui.extension.namespace = 'second';
+  second.write('package.json', JSON.stringify(child));
+  second.write('desktop/index.tsx', `import React from 'react'; import {pinFrontendTools} from '@agentui/sdk/tools';
+    function View(){const [value] = React.useState('Second graph hook'); return <p>{value}</p>}
+    export default {kind:'desktop',sdkVersion:'0.1.0',async activate(){
+      while (!window.graphGeneration) await new Promise(resolve => setTimeout(resolve, 0));
+      const generation = await window.graphGeneration;
+      const run = {conversation:{hostId:'host',conversationId:'conversation'},runId:'run',authority:{kind:'agentui-host',hostId:'host',binding:{namespace:'fixture',installationId:'i',opaqueSessionId:'s'}}};
+      const pin = pinFrontendTools({generations:[generation],platform:'desktop',run,capabilities:undefined}); pin.release();
+      return {modules:[{id:'module',label:'Second',component:View}],dispose(){window.secondDisposed = true}};
+    }};`);
+  const childCommit = second.commit();
+  const parent = JSON.parse(await readFile(join(first.repo, 'package.json'), 'utf8'));
+  parent.agentui.extensions = [{ repository: second.repo, commit: childCommit }];
+  first.write('package.json', JSON.stringify(parent));
+  first.write('desktop/index.tsx', `import React from 'react'; import {createFrontendToolGeneration} from '@agentui/sdk/tools';
+    function View(){const [value] = React.useState('First graph hook'); return <p>{value}</p>}
+    window.graphGeneration = createFrontendToolGeneration({namespace:'fixture',generation:'one',platform:'desktop',activate(){return {dispose(){}}},accept(value){return value}}).then(value=>value.generation);
+    export default {kind:'desktop',sdkVersion:'0.1.0',activate(){return {modules:[{id:'module',label:'First',component:View}],dispose(){window.firstDisposed = true}}}};`);
+  buildCustom(first);
+  const host = await fixture(t, join(first.directory, 'browser')), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  await page.getByText('First graph hook').waitFor();
+  await page.getByText('Second graph hook').waitFor();
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await wait(() => page.evaluate(() => window.firstDisposed && window.secondDisposed), 'both graph disposals');
+});
+
+async function customRuntime(page, host, selection, breakDefault = false, extra = '') {
   const bundled = await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
     import {BrowserApplication} from './apps/desktop/src/shell/BrowserApplication.tsx';
     createRoot(document.getElementById('root')).render(<BrowserApplication />);`, resolveDir: root, loader: 'jsx' },
@@ -698,13 +732,30 @@ async function customRuntime(page, host, selection, breakDefault = false) {
           `\nexport function ConversationView(props) { if (window.failDefault) throw new Error('Default view failed'); return createElement(HealthyConversationView, props); }`, loader: 'tsx' }));
       plugin.onLoad({ filter: /customization-selection\.ts$/ }, () => ({ contents: `import * as React from 'react';
         const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.1.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
-        export default { manifest, ${selection} };`, loader: 'tsx' }));
+        export default [{ manifest, ${selection} }${extra}];`, loader: 'tsx' }));
     } }] });
   await page.route('**/custom.html', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script src="/custom.js"></script>' }));
   await page.route('**/custom.js', route => route.fulfill({ contentType: 'text/javascript', body: Buffer.from(bundled.outputFiles.find(file => file.path.endsWith('.js')).contents) }));
   await page.goto(`${host.origin}/custom.html`);
   if (!breakDefault) await connected(page);
 }
+
+test('a failed customization leaves its hook-using sibling active and restore disposes it', { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  const failure = "load: async () => { throw new Error('First failed'); }";
+  const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, load: async () => ({ default: {
+    kind: 'desktop', sdkVersion: '0.1.0', activate() { return { modules: [{ id: 'same', label: 'Sibling',
+      component() { const [value] = React.useState('Sibling hook works'); return <p>{value}</p>; } }],
+      dispose() { window.siblingDisposals = (window.siblingDisposals || 0) + 1; } }; } } }) }`;
+  await customRuntime(page, host, failure, false, sibling);
+  await page.getByRole('alert').filter({ hasText: 'Custom tools could not load.' }).waitFor();
+  await page.getByText('Sibling hook works').waitFor();
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await wait(() => page.evaluate(() => window.siblingDisposals === 1), 'sibling disposal');
+});
 
 for (const [label, body, disposed] of [
   ['import', "load: async () => { throw new Error('Import failed'); }", 0],

@@ -1,6 +1,6 @@
 # Committed customization sources
 
-The source API retrieves committed inputs. An internal preparation helper installs their locked dependencies into disposable copies. The [local desktop builder](../../templates/customization/README.md) supports a narrower input set.
+The source API retrieves committed inputs. An internal preparation helper installs their locked dependencies into disposable copies. The [desktop builder](../../templates/customization/README.md) uses prepared graphs to build and browser-qualify the complete application.
 
 The Node host resolves the committed package and its pinned external sources through its dedicated entry point.
 
@@ -63,7 +63,7 @@ The graph API checks the npm manager and v3 lock header once before decoding ent
 
 ## Prepared sources
 
-`scripts/prepare-customization-sources.mjs` exports the internal `prepareCustomizationSources({ reference, scratchParent })` helper used by the [server artifact builder](server-artifacts.md). The helper has no separate production command or public host export. Its complete return value is `{ root, dispose }`. The caller uses `root.directory` for the selected package and calls `dispose()` when finished.
+`scripts/prepare-customization-sources.mjs` exports the internal `prepareCustomizationSources({ reference, scratchParent })` helper used by the [server artifact builder](server-artifacts.md) and [desktop builder](../../templates/customization/README.md). The helper has no separate production command or public host export. Its complete return value is `{ root, dispose }`. The caller uses `root.directory` for the selected package and calls `dispose()` when finished.
 
 Preparation resolves the source graph itself and copies every recorded committed file into new private storage. It verifies file hashes and executable flags before copying and after installation. Every package `repositoryDirectory`, selected-package `directory`, and locked `npm.directory` points into those copies. The npm `path` remains repository-relative and unchanged. Ordered extension edges and shared package objects retain their graph structure. Identities, manifests, source mappings, and file inventories still describe the original committed inputs. Installed files do not become committed provenance.
 
