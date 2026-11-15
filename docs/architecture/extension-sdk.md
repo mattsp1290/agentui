@@ -21,6 +21,8 @@ It checks manifest compatibility before import and requires a regular file benea
 Symlinks that escape that directory are rejected. The imported default export must pass the SDK entry check.
 Use immutable revision directories. Node caches each module URL, so changing bytes at an existing path does not select a new revision.
 Importing full-trust code can itself execute code. The extension owns cleanup of import effects and failed partial activation.
+The host provides no cleanup callback for import effects.
+Start timers, listeners, and connections in `activate` so `dispose` can release them.
 
 A server entry implements `ServerExtensionEntry`.
 Its context supplies `providers.add(id, provider, presentation)`, a generic method preserving the concrete `BackendProvider<Model, Installation>` type.
@@ -89,6 +91,8 @@ This ordering prevents overlap between activation-owned listeners, with an unava
 Close during replacement prevents publication of the new generation and disposes every acquired valid lifetime once.
 
 A load, authorization, activation, or discovery failure permits an explicit replacement only after successful cleanup.
+A `load` failure caused by the entry module throwing during import stays cached for that path.
+Recover by replacing with a new immutable revision directory, or restart the host.
 The owner does not automatically retry extension callbacks or restore the old generation.
 Any cleanup failure is permanent for that host and reports `recovery: 'restart'`.
 Further replacements remain refused and repeated shutdown remains rejected without calling disposers again.

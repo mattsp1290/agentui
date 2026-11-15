@@ -83,6 +83,7 @@ export function createServerExtensions() {
       }
     } catch {
       const cleanup = await retire(change);
+      if (!cleanup && state !== change) return { kind: 'unavailable' };
       return fail(change, cleanup ?? { kind: 'failed', failure, recovery: 'replace' });
     }
     const cleanup = await retire(change);
@@ -118,12 +119,14 @@ export function createServerExtensions() {
     if (closing) return closing;
     const previous = state;
     state = { kind: 'closing' };
+    const retirement = Promise.allSettled(previous.kind === 'active' || previous.kind === 'changing'
+      ? [previous.generation?.registry.close()] : []);
     closing = Promise.resolve().then(async () => {
-      if (previous.kind === 'active') await previous.generation.registry.close();
       if (previous.kind === 'changing') {
         const result = await previous.settled;
         if (result.kind === 'failed' && result.recovery === 'restart') throw new Error('Provider cleanup failed');
       }
+      if ((await retirement).some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
       if (previous.kind === 'failed' && previous.recovery === 'restart') throw new Error('Provider cleanup failed');
       state = { kind: 'closed' };
     }).catch(() => {

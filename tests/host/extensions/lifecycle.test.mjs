@@ -46,6 +46,7 @@ test('real host defers credential-backed discovery, imports only on retry, and d
     assert.deepEqual(host.extensionStatus(), { kind: 'empty' });
     assert.deepEqual(await host.discoverProviders(), []);
     assert.equal(listeners.active, 0); assert.equal(next.calls.dispose, 1);
+    await assert.rejects(next.context.credentials.use({ credential: next.credential, service }, async () => secret), /credential use refused/);
     listeners.emitter.emit('update'); assert.deepEqual(listeners.deliveries, ['old', 'next']);
     assert.equal(old.calls.commands + next.calls.commands, 0);
   } finally { finish.resolve(); await host.close(); }
@@ -90,6 +91,48 @@ for (const phase of ['dispose', 'import', 'activate', 'discover']) {
     assert.equal(next.calls.activate, ['dispose', 'import'].includes(phase) ? 0 : 1);
     assert.equal(next.calls.dispose, next.calls.activate); assert.equal(listeners.active, 0); assert.equal(listeners.maximum, 1);
     ownDirectory(configured.directory).close();
+  });
+}
+
+for (const cleanupFails of [false, true]) {
+  test(`shutdown freezes a blocked candidate before discovery settles with ${cleanupFails ? 'failed' : 'successful'} cleanup`, { timeout: 5000 }, async t => {
+    const entered = Promise.withResolvers(), finish = Promise.withResolvers(), configured = options(t);
+    const old = entry(t, { label: 'old' });
+    const next = entry(t, { label: 'next', async discover() { entered.resolve(); await finish.promise; },
+      ...(cleanupFails ? { dispose() { throw new Error(secret); } } : {}) });
+    const host = await startBrowserHost({ ...configured, providerExtensions: [old.value] });
+    const replacing = host.replaceProviderExtensions([next.value]); await entered.promise;
+    const closing = host.close(); assert.equal(host.close(), closing);
+    const closed = closing.then(() => null, error => error);
+    let actionCalls = 0;
+    try {
+      await turn();
+      assert.deepEqual(host.extensionStatus(), { kind: 'closing' });
+      await assert.rejects(next.context.credentials.use({ credential: next.credential, service }, async () => {
+        actionCalls++; return secret;
+      }), /credential use refused/);
+      assert.equal(actionCalls, 0);
+      assert.equal(next.calls.close, 0); assert.equal(next.calls.dispose, 0);
+    } finally {
+      finish.resolve(); await Promise.allSettled([replacing, closed]);
+    }
+    assert.deepEqual(await replacing, cleanupFails ? failed('cleanup', 'restart') : { kind: 'unavailable' });
+    assert.equal(old.calls.close, 1); assert.equal(old.calls.dispose, 1);
+    assert.equal(next.calls.close, 1); assert.equal(next.calls.dispose, 1);
+    if (cleanupFails) {
+      const error = await closed;
+      assert.equal(error.message, 'Host shutdown failed'); assert.equal(error.cause.message, 'Provider cleanup failed');
+      assert.doesNotMatch(JSON.stringify(error), /PRIVATE_EXTENSION/);
+      assert.deepEqual(host.extensionStatus(), failed('cleanup', 'restart'));
+      assert.deepEqual(await host.replaceProviderExtensions([]), failed('cleanup', 'restart'));
+      await assert.rejects(host.close(), /Host shutdown failed/);
+      assert.equal(next.calls.close, 1); assert.equal(next.calls.dispose, 1);
+      assert.throws(() => ownDirectory(configured.directory), /Another host owns/);
+    } else {
+      assert.equal(await closed, null);
+      assert.deepEqual(host.extensionStatus(), { kind: 'closed' });
+      ownDirectory(configured.directory).close();
+    }
   });
 }
 
