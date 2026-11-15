@@ -20,9 +20,12 @@ Path checking validates syntax. The future loader must check filesystem containm
 The caller has already imported the entry. Importing full-trust code can itself execute code.
 
 A server entry implements `ServerExtensionEntry`.
-Its context supplies `providers.add(id, provider)`, a generic method preserving the concrete `BackendProvider<Model, Installation>` type.
+Its context supplies `providers.add(id, provider, presentation)`, a generic method preserving the concrete `BackendProvider<Model, Installation>` type.
 A provider-only entry requires no React import or UI bootstrap.
-The existing [provider contract](provider-contracts.md) stays independent of UI activation.
+The [provider contract](provider-contracts.md) stays independent of UI activation.
+The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
+SDK compatibility is now `0.1.0`: authors must supply a presentation and hosts must supply the credential capability.
+Workspace package versions remain `0.0.0`; service wire version 2 and transcript projection version 2 are unchanged.
 
 A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`.
 Its activation returns modules and a required `dispose` function, either directly or through a promise.
@@ -33,7 +36,10 @@ For UI activation, check the lifetime first and retain it for cleanup before val
 Behaviour checks accept class instances, accessors, and callable objects with the required fields.
 They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
-These contracts do not implement an activation manager or recovery after failed activation.
+The host accepts already imported server entries through `startBrowserHost({ providerExtensions })`.
+It stages all registrations before connecting, rejects duplicate contributions or full instances, and closes registration when activation settles.
+Failed activation disposes earlier valid lifetimes; an entry that throws before returning a valid lifetime owns its partial activation cleanup.
+Filesystem loading, replacement generations, and recovery remain separate work.
 
 ## Contribute conversation views and actions
 
@@ -125,7 +131,7 @@ Duplicate local names and duplicate selected namespaces are rejected.
 Platform belongs to the activation generation, not individual tools.
 A mixed desktop and iOS generation list is intentionally filtered to the pin's platform.
 The `ag-ui` metadata key is reserved.
-Provider instance namespaces such as `example.crew` are a separate identity and may contain dots.
+Contributed provider instance namespaces must match their validated extension manifest namespace, such as `example-crew`.
 
 Parameters use a bounded JSON copy and an object-root inline draft-07 JSON Schema.
 Schema-position `$ref`, `definitions`, `$id`, unknown keywords, nested or non-draft-07 `$schema`, and unsupported formats are rejected.

@@ -2,7 +2,8 @@
 
 `@agentui/sdk` exports the version 1 backend provider contract.
 The declarations describe provider integrations without Node or DOM types.
-There is no provider registry, transport, credential resolver, or lifecycle runtime in this unit.
+The host now activates imported server extensions, authorizes connections, discovers a private catalog, and drains them on shutdown.
+Creation, submission, observation, chooser integration, filesystem loading, and generation replacement are not yet wired for contributed providers.
 The host's recorded Switchboard driver remains a separate integration.
 
 ## API reference
@@ -14,7 +15,7 @@ The host's recorded Switchboard driver remains a separate integration.
 | `Json` | Canonical JSON-compatible value type re-exported from `@agentui/contracts`. |
 | `BackendProvider<M, I>` | Connects one model and installation identity. Returns a `ConnectedProvider` or an explicit failure. |
 | `ProviderInstance<I>` | Namespace, literal installation identity, generation, and provider protocol version. |
-| `CredentialHandle<I>` | Host-scoped opaque handle tied to an instance. Contains no secret bytes. `null` permits credential-free connections. |
+| `CredentialHandle<I>` | Host-scoped opaque handle tied to an instance. Contains no secret bytes. `null` requires an explicit operator-configured unauthenticated installation. |
 | `ProviderRef<I, K>` | Instance-scoped opaque ID with a semantic role. Discovery returns agents, never native conversation history. |
 | `CreationIntent<I>` | Immutable host operation ID, allocated `ConversationScope`, and selected agent. |
 | `ProviderConversation<I>` | AgentUI-created provenance with captured creation intent and canonical `RunAuthority` whose binding has installation identity `I`. Its authority owns the session binding. |
@@ -39,9 +40,51 @@ Derive request and result types with `Parameters` and `ReturnType`, such as `Par
 `uncertain` lacks conclusive evidence of acceptance or outcome. Both remain unresolved and cannot authorize replay.
 A confirmed command effect records acceptance for execution or completion. Acceptance does not mean terminal execution.
 
-## Runtime obligations
+## Authorized connection and discovery
 
-These are requirements for future provider implementations and host integration. SDK declarations do not enforce them.
+`ProviderPresentation<M,I>` supplies the typed instance, four decoders (`decodeRequest`, `decodeCursor`, `decodeState`, `decodeEvent`), request conversion, transcript snapshots, and `apply(previous, event, refs)` returning the next state and transcript events.
+`PresentationRefs<I>.run` translates a conversation-bound provider run to a public `RunIdentity`.
+Presentation callbacks are public contracts for subsequent durable integration; this connection slice validates their presence but does not render provider conversations.
+The generic binding retains each concrete model and installation inside a closure; the heterogeneous registry stores only normalized discovery and close operations.
+
+```ts
+activate(context: ServerExtensionContext) {
+  context.providers.add('service', makeBackend(context.credentials), presentation);
+  return { dispose: releaseResources };
+}
+const running = await startBrowserHost({
+  directory, assetsDirectory,
+  providerExtensions: [{ manifest, entry, installations: [{
+    id: 'service', instance: presentation.instance, service: 'https://service.example',
+    authentication: { kind: 'secret', revision: 'operator-revision-1', resolve: readOperatorSecret },
+  }] }],
+});
+const catalog = await running.discoverProviders(); // Server-only; no client chooser yet.
+await running.close();
+```
+
+Startup configuration explicitly supplies each contribution's full instance, canonical HTTP(S) service origin and secret revision/resolver, or `authentication: { kind: 'unauthenticated' }`.
+Origins contain no path, query, fragment, username or password; adapters own routes within that origin.
+`service_provider_credentials` stores only opaque grant metadata in the existing access database: host, namespace, contribution, installation, generation, protocol, service, revision and revocation.
+The authority borrows that connection and never closes it. Device pairing and native credentials remain independent.
+Restart requires matching operator provisioning; handles from missing or revised provisioning are refused, and revoked handles are never reassigned or revived.
+The app-side authority supports explicit grant revocation; there is no provisioning or revocation UI in this slice.
+
+`credentials.use({ credential, service }, action)` checks the current activation and complete grant binding before resolving the secret, before invoking the callback, and after it settles.
+Connect and discovery likewise check authority around awaited calls.
+Provider failures use fixed safe messages rather than provider exception text. Model values and presentation output must be bounded, secret-free JSON.
+Discovery validates full instance and reference identity, capabilities, bounded JSON, nonblank names/IDs and duplicates before returning a copied private catalog.
+IDs may collide across installations; catalog identity includes the full instance and contribution.
+Repeated discovery reuses one connection; overlapping discovery shares its pending call.
+Configured extensions are required in this slice: any activation, connection or discovery failure retires the entire collection. Startup then fails; a later failure makes subsequent provider discovery unavailable.
+Unsupported, offline, authentication and version failures all become the same sanitized discovery failure here. Per-provider availability/status and chooser behavior remain downstream work.
+
+Closing or failure freezes admission and credential use, drains admitted calls, closes acquired or late-arriving connections once, then disposes extension lifetimes before access storage closes.
+There is no hard timeout guarantee for uncooperative full-trust code. Full-trust extensions can leak secrets or perform their own effects; this capability is an authorization boundary for cooperating adapters, not a secret sandbox.
+
+## Remaining durable integration obligations
+
+These are requirements for future creation, command and observation integration. SDK declarations do not enforce them.
 
 The host authorizes the scope and persists creation intent before creation.
 It persists the confirmed binding and the exact command before dispatch.
@@ -102,7 +145,7 @@ Feed termination resolves `ended` with its reason and last acknowledged cursor, 
 An already-started callback may finish, but cannot advance the terminated feed's cursor. An already-ended feed retains its original end reason and cursor.
 Closing a connection closes each open feed. Closing a feed or connection releases local resources and never cancels execution.
 
-Credential resolution, credential storage, disable and replacement admission rules, persisted decoding, and version migration remain host work.
+Replacement admission rules, persisted model decoding, and provider conversation migration remain host work.
 Credentials stay outside client projections. The authority determines who owns execution and approvals.
 Local receipts and provider observations do not transfer remote execution authority to AgentUI.
 
@@ -115,4 +158,4 @@ Compiler cases reject crossed references, incompatible requests, unsafe widening
 They also consume confirmed reconciliation values, route saved operations by kind, and reject crossed reconciliation families and result types.
 The Crew fixture constructs confirmed creation and reconciliation results without casts inside a generic per-installation factory.
 An isolated consumer compiles that same fixture and checks the packed SDK declarations, public runtime export, and private import restrictions.
-These checks qualify the contract shape. They do not qualify a live provider, durable host enforcement, or reconnect behavior.
+The connection tests additionally exercise real host startup, SQLite grants, controlled read-only HTTP discovery, revocation and drain. They do not qualify durable provider commands, a production service, or reconnect behavior.

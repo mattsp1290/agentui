@@ -6,7 +6,7 @@ import { ThemeScope } from '@agentui/ui-primitives/desktop';
 import { EXTENSION_SDK_VERSION, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
 import { validateConversationModules, validateUiExtensionContributions } from '@agentui/sdk/react';
 import { callableEntry, createNotesFixture, manifest, ServerEntry, textTool, UiEntry } from './fixture.ts';
-import { crew } from '../providers/contracts/crew.ts';
+import { crew, crewPresentation } from '../providers/contracts/crew.ts';
 
 const entry = { kind: 'desktop', sdkVersion: EXTENSION_SDK_VERSION, activate() {} };
 const module = { id: 'notes', label: 'Notes', component: () => null };
@@ -43,12 +43,12 @@ test('provider-free nested module activates, renders changing activity and prese
 test('server provider and frontend tool registration preserve concrete contributions', async () => {
   const providers = [];
   const server = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION,
-    async activate({ providers }) { providers.add('crew', crew); return { async dispose() {} }; } };
+    async activate({ providers }) { providers.add('crew', crew, crewPresentation); return { async dispose() {} }; } };
   const metadata = parseExtensionManifest({ ...manifest, entries: [{ kind: 'server', module: './server.js' }] });
   assert.equal(checkExtensionEntrypoint(metadata, 'server', server).kind, 'compatible');
-  const lifetime = await server.activate({ namespace: metadata.namespace, providers: { add(id, provider) { providers.push({ id, provider }); } } });
+  const lifetime = await server.activate({ namespace: metadata.namespace, credentials: { async use() { throw new Error('Unexpected credential use'); } }, providers: { add(id, provider, presentation) { providers.push({ id, provider, presentation }); } } });
   validateExtensionLifetime(lifetime);
-  assert.deepEqual(providers, [{ id: 'crew', provider: crew }]);
+  assert.deepEqual(providers, [{ id: 'crew', provider: crew, presentation: crewPresentation }]);
   const tools = [];
   const context = { namespace: 'notes', frontendTools: { add(tool) { tools.push(tool); } } };
   context.frontendTools.add(textTool);

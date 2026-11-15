@@ -1,10 +1,11 @@
+import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCustomizationPackage, repositoryLocation, npmLockPackages, manifestMatchesLockEntry } from '../../../packages/host/dist/customization/contract.js';
 
 const oid = 'a'.repeat(40);
 const files = new Set(['desktop.tsx', 'shared.ts']);
-const manifest = { namespace: 'personal', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
+const manifest = { namespace: 'personal', trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
 const local = { extension: manifest, sources: { './dist/desktop.js': './desktop.tsx' } };
 const parse = agentui => parseCustomizationPackage({ agentui }, files);
 

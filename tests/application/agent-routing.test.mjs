@@ -8,7 +8,7 @@ import { chromium } from 'playwright';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { readArtifactBytes } from '../../apps/host/build/tsc/artifact.js';
 import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
-import { CODEX_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
+import { EXTENSION_SDK_VERSION, CODEX_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
 import { parseServiceRequest, parseServiceResponse } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { openLocalHost, createRecordedDriver } from '@agentui/host';
@@ -37,7 +37,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const paired = access.pair(access.invite('browser-development'), 'browser-development');
   const { principal } = paired;
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
-    compatibility: { wireVersion: 2, extensionSdkVersion: '0.0.0', nativeRuntime: CODEX_RUNTIME,
+    compatibility: { wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   let api = createApi({ ...options, host, installation: a, agents: [
     { installation: a, name: 'Project A', availability: { kind: 'ready' } }, { installation: b, availability: { kind: 'ready' } },

@@ -9,7 +9,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, openLocalHost } from '@agentui/host';
+import { createCodexDriver, createProviderRegistry, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
@@ -29,6 +29,9 @@ import { providerInstallation } from './agent-config.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { describeAgent } from './agents.js';
 import type { InstalledAgent } from './agents.js';
+import type { ExtensionManifest, ServerExtensionEntry } from '@agentui/sdk';
+import { createProviderAuthority } from './provider-credentials.js';
+import type { ProviderInstallation } from './provider-credentials.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -37,6 +40,8 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
+  readonly providerExtensions?: readonly { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry;
+    readonly installations: readonly ProviderInstallation[] }[];
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -64,6 +69,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
+  let providers: ReturnType<typeof createProviderRegistry> | undefined;
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
@@ -72,7 +78,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     closePromise ??= (async () => {
       closing = true;
       feeds?.dispose();
-      const driverResults = await Promise.allSettled(drivers.map(driver => Promise.resolve().then(() => driver.close())));
+      const driverResults = await Promise.allSettled([
+        Promise.resolve().then(() => providers?.close()),
+        ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
+      ]);
       const driverFailed = driverResults.some(result => result.status === 'rejected');
       const deadline = setTimeout(() => http.closeAllConnections(), 2000);
       try {
@@ -99,7 +108,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   try {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
-    access = new Access(openAccessDatabase(join(owner.directory, 'host.sqlite')));
+    const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
+    access = new Access(accessDatabase);
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
@@ -159,6 +169,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
+    providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
+      manifest: extension.manifest, entry: extension.entry,
+      authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
+    })));
+    await providers.activate();
+    await providers.discover();
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
@@ -201,7 +217,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing);
-    return { origin, hostId: access.hostId, close };
+    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover };
   } catch (error) {
     await close();
     throw error;

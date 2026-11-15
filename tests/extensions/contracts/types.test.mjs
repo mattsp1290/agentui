@@ -21,6 +21,7 @@ export const action: ModuleAction = { id: 'cancel', label: 'Stop', run: ({ comma
     ["export const bad: ModuleAction = { id: 'x', label: 'X', async run() {} };", /not assignable/u],
     ["ui.frontendTools.add<{ count: number }>(textTool);", /not assignable/u],
     ["export const bad: FrontendToolContribution<{ text: string }> = { ...textTool, async execute() { return 3; } };", /not assignable/u],
+    ["ui.credentials;", /Property 'credentials' does not exist/u],
     ["ui.providers;", /Property 'providers' does not exist/u],
     ["export const bad: ExtensionManifest = { ...manifest, entries: [] };", /not assignable/u],
     ["export const bad: ConversationModuleProps = { conversation: { hostId: 'h', conversationId: 'c' } };", /missing the following properties/u],
@@ -33,15 +34,15 @@ test('server-only registration accepts concrete existing providers without widen
 export const server = {
   kind: 'server', sdkVersion: SDK.EXTENSION_SDK_VERSION,
   async activate(context: SDK.ServerExtensionContext) {
-    context.providers.add('crew', crew);
-    context.providers.add<CrewModel, 'crew-personal'>('crew-again', crew);
+    context.providers.add('crew', crew, crewPresentation);
+    context.providers.add<CrewModel, 'crew-personal'>('crew-again', crew, crewPresentation);
     return { async dispose() {} };
   },
 } satisfies SDK.ServerExtensionEntry;
 `,
   cases: [
     ['', null],
-    ["export function bad(context: SDK.ServerExtensionContext) { context.providers.add<SDK.ProviderModel, string>('crew', crew); }", /not assignable/u],
+    ["export function bad(context: SDK.ServerExtensionContext) { context.providers.add<SDK.ProviderModel, string>('crew', crew, crewPresentation); }", /not assignable/u],
     ["export const bad: SDK.ServerExtensionEntry = { ...server, async activate() {} };", /not assignable/u],
     ["export function bad(context: SDK.ServerExtensionContext) { context.frontendTools; }", /Property 'frontendTools' does not exist/u],
     ['void document;', /Cannot find name 'document'/u], ['void process;', /Cannot find name 'process'/u],

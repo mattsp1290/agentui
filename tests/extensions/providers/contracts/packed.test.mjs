@@ -29,6 +29,13 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     const prefix = sources.map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
     await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix, cases: [
       ["export const constructed: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew; export const dynamic: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');", null],
+      ["export function activate(context: SDK.ServerExtensionContext) { context.providers.add('crew', crew, crewPresentation); context.providers.add('local', local, localPresentation); const dynamic = createCrewFixture<string>({ namespace: 'dynamic', installationId: 'runtime', generation: '1', protocolVersion: '1' }); context.providers.add('dynamic', dynamic.crew, dynamic.crewPresentation); }", null],
+      ["export const refs: SDK.PresentationRefs<'crew-personal'> = { run(ref) { return { conversation: ref.binding.creation.scope, authority: ref.binding.authority, runId: ref.ref.opaqueId }; } }; export const applied = crewPresentation.apply({ messages: ['previous'] }, { kind: 'message', text: 'next' }, refs);", null],
+      ["export const invalid: SDK.ProviderPresentation<CrewModel | LocalModel, 'crew-personal'> = crewPresentation;", /not assignable/u],
+      ["export const invalid: SDK.ProviderPresentation<CrewModel, string> = crewPresentation;", /not assignable/u],
+      ["export const invalid: SDK.ProviderPresentation<Omit<CrewModel, 'cursor'> & { cursor: SDK.Json }, 'crew-personal'> = crewPresentation;", /not assignable/u],
+      ["export function bad(context: SDK.ServerExtensionContext) { context.providers.add('mixed', crew, localPresentation); }", /not assignable/u],
+      ["crewPresentation.apply({ messages: [] }, { append: 'wrong model' }, { run(ref) { return { conversation: ref.binding.creation.scope, authority: ref.binding.authority, runId: ref.ref.opaqueId }; } });", /'append' does not exist/u],
       ['void process;', /Cannot find name 'process'/u],
       ['void document;', /Cannot find name 'document'/u],
       ["export type { ProviderModel } from '@agentui/sdk/providers';", /Cannot find module/u],

@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { parseServiceResponse } from '@agentui/contracts/service';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from '../../apps/host/build/tsc/access.js';
@@ -18,7 +18,7 @@ test('saved history search scans past empty pages and searches only current tran
   const feeds = new FeedRegistry();
   t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); rmSync(directory, { recursive: true, force: true }); });
   const api = createApi({ access, host, feeds, credentialClass: 'browser-development', isClosing: () => false,
-    compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0', nativeRuntime: RECORDED_RUNTIME,
+    compatibility: { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } });
   const principal = access.pair(access.invite('browser-development'), 'browser-development').principal;
   const scopes = Array.from({ length: 105 }, (_, index) => ({ hostId: access.hostId, conversationId: `chat-${String(index).padStart(3, '0')}` }));

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@agentui/contracts/service';
-import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
@@ -31,7 +31,7 @@ function fixture() {
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: '0.0.0',
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
