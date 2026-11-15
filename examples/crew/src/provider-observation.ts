@@ -12,6 +12,8 @@ const messagesFrame = z.object({ messages: z.array(z.object({ id: z.string(), ro
   content: z.string().optional(), toolCalls: z.array(toolSchema).max(128).optional(), subagentRunId: z.string().optional() })).max(2048) });
 const textFrame = z.object({ messageId: z.string(), delta: z.string().optional(), role: z.string().optional(),
   subagentRunId: z.string().optional() });
+const workItemArguments = z.strictObject({ operation_id: z.uuid() });
+const questionArguments = z.strictObject({});
 export function observation(binding: ProviderConversation<string>, memberId: string,
   use: <T>(action: (client: CrewClient, token: string) => Promise<T>) => Promise<T>, baseUrl: string,
   previous: CrewCursor | null) {
@@ -31,10 +33,25 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   function snapshot(nextCursor = cursor): ProviderSnapshot<CrewModel, string> {
     const cards = [...remote?.pendingApprovals ?? [], ...remote?.pendingQuestions ?? []];
     return { binding, projectionVersion: 1, cursor: { binding, kind: 'provider-cursor', opaque: cursorSchema.parse(nextCursor) },
-      state: stateSchema.parse(state), decisions: cards.map(card => ({ ref: reference(binding, 'decision', approvalKey(card)),
-        run: reference(binding, 'run', card.requestId), prompt: `${card.summary}\n${tools.get(card.approvalId)?.arguments ?? 'Action details unavailable. Deny or wait for a fresh snapshot.'}`,
-        choices: [...card.choices, ...card.standingChoices ?? []].filter(choice => tools.has(card.approvalId) || choice === 'deny').map(choice => ({
-          ref: reference(binding, 'choice', JSON.stringify([approvalKey(card), choice])), label: choiceLabels[choice] })) })) };
+      state: stateSchema.parse(state), decisions: cards.flatMap(card => {
+        const tool = tools.get(card.approvalId);
+        let complete = false;
+        if (tool && tool.name === card.toolName) {
+          try {
+            const args: unknown = JSON.parse(tool.arguments);
+            complete = card.toolName === 'choose_next_step' ? questionArguments.safeParse(args).success
+              : card.toolName === 'record_work_item' && card.argumentsComplete === true &&
+                workItemArguments.safeParse(args).data?.operation_id === card.requestId;
+          } catch { /* Incomplete tool arguments cannot authorize a choice. */ }
+        }
+        const choices = card.choices.filter(choice => choice === 'deny' || complete &&
+          (card.toolName === 'record_work_item' ? choice === 'approve' : choice === 'inspect' || choice === 'test'));
+        if (!choices.length) return [];
+        const details = complete ? tool?.arguments : 'Action details are incomplete. Crew may have redacted the proposed note. Only Deny is available.';
+        return [{ ref: reference(binding, 'decision', approvalKey(card)), run: reference(binding, 'run', card.requestId),
+          prompt: `${card.summary}\n${details}`, choices: choices.map(choice => ({
+            ref: reference(binding, 'choice', JSON.stringify([approvalKey(card), choice])), label: choiceLabels[choice] })) }];
+      }) };
   }
   const enqueue = (action: () => Promise<void>) => {
     const task = tail.then(action);
@@ -62,12 +79,14 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     if (event.type === 'RUN_ERROR') throw new Error('Crew observation failed');
     if (event.type === 'STATE_DELTA') throw new Error('Crew state requires a fresh snapshot');
     if (event.type === 'MESSAGES_SNAPSHOT') {
-      const messages = messagesFrame.parse(event).messages.filter(m => !m.subagentRunId && (m.role === 'user' || m.role === 'assistant'));
+      const publicMessages = messagesFrame.parse(event).messages;
+      tools.clear();
+      for (const message of publicMessages) for (const tool of message.toolCalls ?? []) tools.set(tool.id, tool.function);
+      const messages = publicMessages.filter(m => !m.subagentRunId && (m.role === 'user' || m.role === 'assistant'));
       state = { ...state, messages: messages.map(m => ({ messageId: m.id, role: m.role === 'user' ? 'user' : 'assistant',
         text: m.content ?? '', revision: 1, complete: true })) };
       const requests = messages.filter(m => m.role === 'user').map(m => z.uuid().parse(m.id));
       cursor = { ...cursor, requests: [...new Set([...cursor.requests, ...requests])] };
-      for (const message of messages) for (const tool of message.toolCalls ?? []) tools.set(tool.id, tool.function);
       sawMessages = true;
     } else if (event.type === 'STATE_SNAPSHOT') {
       const next = remoteSchema.parse(z.object({ snapshot: z.unknown() }).parse(event).snapshot);

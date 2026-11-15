@@ -84,8 +84,8 @@ test('Crew public entry creates, observes actual SSE text, approves, stops and r
   const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(conversationId);
   await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
   const card = { conversationId, memberId, requestId, invocationId: requestId, approvalId: randomUUID(), version: 1,
-    summary: 'Record one work item', choices: ['approve', 'deny'] };
-  conversation.messages.push({ id: 'tool-message', role: 'assistant', content: '', toolCalls: [{ id: card.approvalId, type: 'function', function: { name: 'record_work_item', arguments: JSON.stringify({ text: 'Harmless owned fixture' }) } }] });
+    toolName: 'record_work_item', argumentsComplete: true, summary: 'Record one work item', choices: ['approve', 'deny'] };
+  conversation.messages.push({ id: 'tool-message', role: 'assistant', content: '', toolCalls: [{ id: card.approvalId, type: 'function', function: { name: 'record_work_item', arguments: JSON.stringify({ operation_id: requestId }) } }] });
   conversation.state.pendingApprovals = [card]; remote.emit(conversationId);
   await until(() => saved(f).decisions.length === 1);
   const decision = JSON.parse(saved(f).decisions[0].data);
@@ -224,4 +224,108 @@ for (const terminal of ['completed', 'failed', 'cancelled']) test(`Crew ${termin
   assert.equal(submissions.length, 2);
   assert.notEqual(submissions[0].input.requestId, submissions[1].input.requestId);
   assert.equal(submissions[0].path, submissions[1].path);
+});
+
+function pendingCall(conversation, requestId, { question = false, child = false, proof = true } = {}) {
+  const toolName = question ? 'choose_next_step' : 'record_work_item';
+  const card = { conversationId: conversation.state.conversationId, memberId, requestId, invocationId: randomUUID(),
+    approvalId: randomUUID(), version: 1, policyVersion: 1, toolName,
+    summary: question ? 'Choose the next step' : 'Record one work item',
+    choices: question ? ['inspect', 'test'] : ['approve', 'deny'],
+    ...(!question && { standingChoices: ['allow_conversation', 'allow_always'] }),
+    ...(proof !== undefined && { argumentsComplete: proof }) };
+  conversation.messages.push({ id: `${card.approvalId}/call`, role: 'assistant', content: child ? 'Child transcript stays hidden' : '',
+    ...(child && { subagentRunId: randomUUID() }), toolCalls: [{ id: card.approvalId, type: 'function',
+      function: { name: toolName, arguments: JSON.stringify(question ? {} : { operation_id: requestId }) } }] });
+  conversation.state[question ? 'pendingQuestions' : 'pendingApprovals'] = [card];
+  return card;
+}
+
+for (const question of [false, true]) test(`Crew reopened child ${question ? 'question' : 'approval'} keeps exact usable choices without child transcript`, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId, { question, child: true, proof: question ? undefined : true });
+  if (question) delete card.argumentsComplete;
+  remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const before = JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch;
+  await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== before);
+  const current = saved(f), decision = JSON.parse(current.decisions[0].data);
+  assert.deepEqual(decision.choices.map(choice => choice.label), question ? ['Inspect', 'Test'] : ['Approve once', 'Deny']);
+  assert.equal(decision.visible.reserved, undefined);
+  assert(!JSON.stringify(JSON.parse(current.conversation.document).domain.messages).includes('Child transcript stays hidden'));
+  assert(decision.choices.length > 0);
+  assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'child-choice',
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'accepted');
+  const submitted = remote.calls.find(call => call.path.endsWith('/human')).input;
+  for (const field of ['requestId', 'invocationId', 'approvalId', 'version']) assert.equal(submitted[field], card[field]);
+  assert.equal(submitted.choice, question ? 'inspect' : 'approve');
+});
+
+for (const variant of ['redacted', 'false-proof', 'unknown-tool', 'wrong-name', 'wrong-operation', 'missing-tool', 'complete']) {
+  test(`Crew public protected card ${variant} requires proof and matching complete arguments and never offers standing grants`, async t => {
+    const remote = await service(t), { backend, binding } = await direct(remote);
+    t.after(() => backend.close());
+    const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+    conversation.messages.push({ id: requestId, role: 'user', content: 'Controlled pending request' });
+    const card = pendingCall(conversation, requestId);
+    if (variant === 'redacted') delete card.argumentsComplete;
+    if (variant === 'false-proof') card.argumentsComplete = false;
+    if (variant === 'unknown-tool') delete card.toolName;
+    const call = conversation.messages.at(-1).toolCalls[0];
+    if (variant === 'wrong-name') call.function.name = 'choose_next_step';
+    if (variant === 'wrong-operation') call.function.arguments = JSON.stringify({ operation_id: randomUUID() });
+    if (variant === 'missing-tool') delete conversation.messages.at(-1).toolCalls;
+    const baseline = await backend.snapshot(binding);
+    assert.equal(baseline.kind, 'available');
+    const decision = baseline.snapshot.decisions[0];
+    assert.deepEqual(decision.choices.map(choice => choice.label), variant === 'complete' ? ['Approve once', 'Deny'] : ['Deny']);
+    if (variant !== 'complete') assert.match(decision.prompt, /details.*incomplete.*redacted.*note/is);
+    else assert.match(decision.prompt, new RegExp(requestId));
+    assert.equal(Object.hasOwn(JSON.parse(call.function.arguments), 'note'), false);
+  });
+}
+
+test('Crew question without tool context waits for usable choices without creating an empty decision', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  pendingCall(conversation, requestId, { question: true });
+  const message = conversation.messages.pop();
+  remote.emit(receipt.conversationId);
+  const before = JSON.parse(saved(f).checkpoint.data).cursor.opaque.sequence;
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.sequence > before);
+  assert.equal(saved(f).decisions.length, 0);
+  conversation.messages.push(message); remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  assert.deepEqual(JSON.parse(saved(f).decisions[0].data).choices.map(choice => choice.label), ['Inspect', 'Test']);
+});
+
+test('Crew lost decision remains uncertain after card omission and original-only GET on SQLite reopen', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId); remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const decision = JSON.parse(saved(f).decisions[0].data);
+  remote.setLost(true);
+  assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'lost-decision',
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'uncertain');
+  const original = saved(f).commands.find(command => command.id === 'lost-decision');
+  conversation.state.pendingApprovals = []; remote.emit(receipt.conversationId);
+  const before = remote.calls.length;
+  await f.restart([remote.extension()]);
+  assert(remote.calls.slice(before).every(call => call.method === 'GET' || call.path.endsWith('/events')));
+  await until(() => remote.streams.size === 1);
+  const recoveryStart = remote.calls.length;
+  assert.equal((await f.client.reconcile(scope, 'lost-decision')).state.kind, 'uncertain');
+  assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET'));
+  assert(remote.calls.slice(before).some(call => call.path.endsWith(requestId)));
+  const after = saved(f), retained = after.commands.find(command => command.id === original.id);
+  assert.equal(retained.target, original.target);
+  assert.equal(after.decisions[0].status, 'reserved');
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
+  assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.approvalId, card.approvalId);
 });

@@ -5,6 +5,7 @@ const id = z.string().min(1).max(512);
 export const choiceSchema = z.enum(['approve', 'deny', 'inspect', 'test', 'allow_conversation', 'allow_always']);
 export const approvalSchema = z.object({ conversationId: z.uuid(), memberId: z.uuid(), requestId: z.uuid(),
   invocationId: z.uuid(), approvalId: z.uuid(), version: z.int(), summary: z.string().max(2048),
+  toolName: id.optional(), argumentsComplete: z.boolean().optional(),
   choices: z.array(choiceSchema).max(6), standingChoices: z.array(choiceSchema).max(2).optional() });
 export const remoteSchema = z.object({ conversationId: z.uuid(), memberId: z.uuid(), phase: z.string(),
   pendingApprovals: z.array(approvalSchema).max(32), pendingQuestions: z.array(approvalSchema).max(32).optional() });
