@@ -1,5 +1,5 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { isAbsolute, join, resolve } from 'node:path';
 import { commitId, containedPath, CustomizationError, repositoryLocation, type CustomizationSource, type GitExtensionReference } from './contract.js';
 import { selectPackage, type NpmInputs } from './packages.js';
@@ -45,7 +45,7 @@ export async function resolveCustomizationSources(input: {
     const commit = commitId(reference.commit);
     const repository = repositoryLocation(reference.repository);
     const location = repository.startsWith('file://') ? resolve(fileURLToPath(repository)) : isAbsolute(repository) || !repository.includes(':') ? resolve(cwd, repository) : repository;
-    const transport = repository.startsWith('file://') ? repository : location;
+    const transport = isAbsolute(location) ? pathToFileURL(location).href : repository;
     const subdirectory = reference.subdirectory === undefined ? '' : containedPath(reference.subdirectory);
     const address = JSON.stringify([location, commit]);
     let tree = repositories.get(address);

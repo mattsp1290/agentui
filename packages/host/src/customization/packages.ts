@@ -14,6 +14,7 @@ export type NpmInputs = { readonly kind: 'absent' } | {
   readonly workspaces: readonly SourceFile[];
   readonly localInputs: readonly SourceFile[];
 };
+interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
 
 function localPath(base: string, value: string): string {
   if (!value || value.startsWith('/') || /[\\:]/u.test(value) || [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || value.split('/').some(part => part.toLowerCase() === '.git')) {
@@ -131,6 +132,9 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
       throw new Error('Ambiguous npm ownership');
     }
     const owner = owners[0] ?? { path: subdirectory, members: workspacePaths(subdirectory, selected) };
+    if ([owner.path, subdirectory].some(path => inventory.has(posix.join(path, 'npm-shrinkwrap.json')))) {
+      throw new CustomizationError('invalid-package', 'Committed npm-shrinkwrap.json is unsupported in the selected npm context.');
+    }
     const members = new Set(owner.members);
     const workspaceKeys = new Set(owner.members.map(path => posix.relative(owner.path, path)));
     const root = await manifest(owner.path);
@@ -148,7 +152,7 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
     for (const path of owner.members) packages.push({ path, pkg: await manifest(path) });
     const needsLock = owner.members.length > 0 || packages.some(({ pkg }) => dependencyGroups.some(key => pkg[key] !== undefined && Object.keys(record(pkg[key])).length > 0));
     if (!needsLock) return { directory: join(tree.directory, subdirectory), customization, npm: { kind: 'absent' } satisfies NpmInputs };
-    if (!lockfile) throw new Error('Missing lockfile');
+    if (!lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
     const entries = record(record(lock).packages);
     const lockEntries = Object.entries(entries);
     if (lockEntries.length > 10_000) throw new CustomizationError('resource-limit', 'Customization source lock entry limit exceeded.');
@@ -172,7 +176,7 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
     };
     for (const { path, pkg } of packages) {
       check();
-      if (pkg.packageManager !== undefined && pkg.packageManager !== root.packageManager) throw new Error('Conflicting npm pin');
+      if (pkg.packageManager !== undefined && pkg.packageManager !== root.packageManager) throw new CustomizationError('invalid-package', 'Conflicting npm package manager pin.');
       validateNpmManifest(pkg, { lock, packagePath: posix.relative(owner.path, path), packageManager: root.packageManager });
     }
     const lockedDependency = (path: string, name: string, peer: boolean): unknown => {
@@ -186,16 +190,22 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
         if (search === '.') search = '';
       }
     };
-    const validateDeclarations = (path: string, pkg: Record<string, unknown>, groups: readonly string[]) => {
+    const declarationContext = (lookupPath: string, entry: Record<string, unknown>): DeclarationContext => {
+      const sourceDirectory = entry.link === true && typeof entry.resolved === 'string' ? localPath(owner.path, entry.resolved)
+        : typeof entry.resolved === 'string' && entry.resolved.startsWith('file:') ? posix.dirname(localPath(owner.path, entry.resolved.slice(5)))
+        : localPath(owner.path, lookupPath || '.');
+      return { lookupPath, sourceDirectory: sourceDirectory === '.' ? '' : sourceDirectory };
+    };
+    const validateDeclarations = (context: DeclarationContext, pkg: Record<string, unknown>, groups: readonly string[]) => {
       for (const group of groups) {
         const values = pkg[group] === undefined ? {} : record(pkg[group]);
         for (const [name, spec] of Object.entries(values)) {
           check();
           if (typeof spec !== 'string') throw new Error('Invalid dependency');
-          const found = lockedDependency(path, name, group === 'peerDependencies');
+          const found = lockedDependency(context.lookupPath, name, group === 'peerDependencies');
           const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
           const optional = group === 'peerDependencies' && meta[name] !== undefined && record(meta[name]).optional === true;
-          const localTarget = spec.startsWith('file:') ? localPath(localPath(owner.path, path || '.'), spec.slice(5)) : undefined;
+          const localTarget = spec.startsWith('file:') ? localPath(context.sourceDirectory, spec.slice(5)) : undefined;
           if (localTarget !== undefined) capture(localTarget);
           else if (/[:/]/u.test(spec) && !spec.startsWith('npm:') && !safeRemote(spec)) throw new Error('Unsupported dependency source');
           if (found === undefined) {
@@ -203,8 +213,10 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
             throw new Error('Missing locked dependency');
           }
           const entry = record(found);
-          if (localTarget !== undefined && (typeof entry.resolved !== 'string' ||
-            localPath(owner.path, entry.link === true ? entry.resolved : entry.resolved.startsWith('file:') ? entry.resolved.slice(5) : ':') !== localTarget)) throw new Error('Local lock target disagrees');
+          if (localTarget !== undefined) {
+            if (typeof entry.resolved !== 'string' || (entry.link !== true && !entry.resolved.startsWith('file:'))) throw new CustomizationError('invalid-package', 'Local lock target has an incompatible source kind.');
+            if (localPath(owner.path, entry.link === true ? entry.resolved : entry.resolved.slice(5)) !== localTarget) throw new CustomizationError('invalid-package', 'Local lock target disagrees with its declaration.');
+          }
           if (safeRemote(spec) && (entry.resolved !== spec || !integrity(entry.integrity))) throw new Error('Unpinned remote tarball');
         }
       }
@@ -214,6 +226,7 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
       if (path.startsWith('../') || (path && !path.split('/').includes('node_modules') && !workspaceKeys.has(path))) throw new Error('Separate npm contexts are unsupported');
       if (path) localPath(owner.path, path);
       const entry = record(value);
+      if (entry.hasShrinkwrap !== undefined && entry.hasShrinkwrap !== false) throw new CustomizationError('invalid-package', 'Nested npm shrinkwrap contexts are unsupported.');
       if (entry.link === true) {
         if (typeof entry.resolved !== 'string') throw new Error('Invalid local link');
         const target = localPath(owner.path, entry.resolved);
@@ -224,13 +237,13 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
         if (typeof entry.resolved === 'string' && entry.resolved.startsWith('file:')) capture(localPath(owner.path, entry.resolved.slice(5)));
         else if (!safeRemote(entry.resolved) || !integrity(entry.integrity)) throw new Error('Unsupported locked source');
       }
-      validateDeclarations(path, entry, ['dependencies', 'optionalDependencies', 'peerDependencies']);
+      validateDeclarations(declarationContext(path, entry), entry, ['dependencies', 'optionalDependencies', 'peerDependencies']);
       if (entry.resolved !== undefined && (typeof entry.resolved !== 'string' ||
         (entry.link !== true && !entry.resolved.startsWith('file:') && !safeRemote(entry.resolved)))) throw new Error('Invalid resolved source');
     }
     for (const { path, pkg } of packages) {
       check();
-      validateDeclarations(posix.relative(owner.path, path), pkg, dependencyGroups);
+      validateDeclarations({ lookupPath: posix.relative(owner.path, path), sourceDirectory: path }, pkg, dependencyGroups);
     }
     const rootFile = inventory.get(manifestPath(owner.path));
     if (!rootFile) throw new Error('Missing npm root');

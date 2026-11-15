@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join, relative } from 'node:path';
+import { basename, dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { CustomizationError, readCustomizationSnapshot, resolveCustomizationSources } from '@agentui/host/customization';
@@ -174,7 +174,7 @@ test('failure in final descendant cleans acquired sources and keeps an unrelated
 });
 
 test('lock drift, missing entries, malformed entries and unsupported npm sources reject as a unit', async t => {
-  for (const variant of ['drift', 'missing', 'malformed', 'transitive', 'git', 'credentials', 'unpinned']) {
+  for (const variant of ['drift', 'missing', 'malformed', 'transitive', 'git', 'credentials', 'unpinned', 'nested-shrinkwrap']) {
     const f = await fixture(t);
     const repo = await f.repository(variant);
     const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } };
@@ -186,6 +186,7 @@ test('lock drift, missing entries, malformed entries and unsupported npm sources
     if (variant === 'git') { pkg.dependencies.value = 'github:owner/repository'; lock.packages[''].dependencies = pkg.dependencies; }
     if (variant === 'credentials') lock.packages['node_modules/value'].resolved = 'https://user:SECRET@example.invalid/value.tgz';
     if (variant === 'unpinned') delete lock.packages['node_modules/value'].integrity;
+    if (variant === 'nested-shrinkwrap') lock.packages['node_modules/value'].hasShrinkwrap = true;
     await shared(repo, '', pkg);
     await write(repo.directory, 'package-lock.json', lock);
     await assert.rejects(f.read(reference(repo, repo.commit())), error => error instanceof CustomizationError && error.code === 'invalid-package' && !error.message.includes('SECRET'));
@@ -551,4 +552,141 @@ test('root and workspace peer contexts can use their own node_modules', async t 
     await result.dispose();
     assert.deepEqual(await readdir(f.scratchParent), []);
   });
+});
+
+test('real sibling tarballs use the archive source directory and independent npm lock pins', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('sibling-tarballs');
+  await shared(repo, '', { name: 'tarballs', version: '1.0.0', packageManager: manager, dependencies: { a: 'file:vendor/a.tgz' } });
+  for (const name of ['a', 'b']) {
+    await mkdir(join(repo.directory, 'vendor'), { recursive: true });
+    await writeFile(join(repo.directory, `vendor/${name}.tgz`), await readFile(new URL(`./fixtures/${name}.tgz`, import.meta.url)));
+  }
+  const lockBytes = await readFile(new URL('./fixtures/npm-sibling-tarball-lock.json', import.meta.url), 'utf8');
+  const lock = JSON.parse(lockBytes);
+  await write(repo.directory, 'package-lock.json', lockBytes);
+  const result = await f.read(reference(repo, repo.commit()));
+  assert.equal(result.root.npm.lockfile.sha256, digest(lockBytes));
+  assert.deepEqual(result.root.npm.localInputs.map(file => file.path), ['vendor/a.tgz', 'vendor/b.tgz']);
+  for (const file of result.root.npm.localInputs) {
+    const bytes = await readFile(join(result.root.npm.directory, file.path));
+    assert.equal(file.sha256, digest(bytes));
+    assert.equal(lock.packages[`node_modules/${basename(file.path, '.tgz')}`].integrity, 'sha512-' + createHash('sha512').update(bytes).digest('base64'));
+  }
+  await result.dispose();
+  for (const [spec, code] of [['file:../vendor/a.tgz', 'invalid-package'], ['file:../../outside.tgz', 'path']]) {
+    lock.packages['node_modules/a'].dependencies.b = spec;
+    await write(repo.directory, 'package-lock.json', lock);
+    await assert.rejects(f.read(reference(repo, repo.commit())), { code });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  }
+});
+
+test('relative root and child references work in a spaced invocation cwd through the public API', async t => {
+  const f = await fixture(t);
+  const invocation = join(f.root, 'invocation with spaces');
+  await mkdir(invocation);
+  const child = await f.repository('invocation with spaces/spaced-child');
+  await shared(child);
+  const childCommit = child.commit();
+  const root = await f.repository('invocation with spaces/spaced-root');
+  await shared(root, '', { agentui: { extensions: [{ repository: './spaced-child', commit: childCommit }] } });
+  const input = { reference: { repository: './spaced-root', commit: root.commit() }, scratchParent: f.scratchParent };
+  const output = execFileSync(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import { readFile, readdir } from 'node:fs/promises';
+    import { join } from 'node:path';
+    const { readCustomizationSnapshot, resolveCustomizationSources } = await import(${JSON.stringify(import.meta.resolve('@agentui/host/customization'))});
+    const input = ${JSON.stringify(input)};
+    const snapshot = await readCustomizationSnapshot({ ...input.reference, scratchParent: input.scratchParent });
+    assert.equal(snapshot.customization.shared, './source.ts');
+    await snapshot.dispose();
+    const result = await resolveCustomizationSources(input);
+    try {
+      assert.equal(result.root.extensions[0].commit, ${JSON.stringify(childCommit)});
+      assert.equal(await readFile(join(result.root.extensions[0].directory, 'source.ts'), 'utf8'), 'export const value = 1;\\n');
+    } finally { await result.dispose(); }
+    assert.deepEqual(await readdir(input.scratchParent), []);
+    console.log('relative root and child retained committed bytes and disposed');
+  `], { cwd: invocation, encoding: 'utf8' });
+  assert.match(output, /relative root and child retained committed bytes and disposed/);
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('selected and owning npm shrinkwrap files fail closed despite a valid package lock', async t => {
+  for (const variant of ['standalone', 'owner', 'selected']) await t.test(variant, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository(variant);
+    const workspace = variant !== 'standalone';
+    const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
+      ...(workspace ? { workspaces: ['packages/foo'] } : { dependencies: { value: '1.0.0' } }) };
+    const entries = workspace ? { 'packages/foo': { name: 'foo', version: '1.0.0' }, 'node_modules/foo': { link: true, resolved: 'packages/foo' } } : { 'node_modules/value': registry };
+    await write(repo.directory, 'package.json', pkg);
+    await shared(repo, workspace ? 'packages/foo' : '', workspace ? { name: 'foo', version: '1.0.0' } : pkg);
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+    const shrinkwrap = lockFor(pkg, { 'node_modules/unsafe': { version: '1.0.0', resolved: 'git+ssh://example.invalid/unsafe' } });
+    await write(repo.directory, variant === 'selected' ? 'packages/foo/npm-shrinkwrap.json' : 'npm-shrinkwrap.json', shrinkwrap);
+    await assert.rejects(f.read(reference(repo, repo.commit(), workspace ? 'packages/foo' : undefined)), { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('missing npm locks retain a fixed useful credential-free diagnostic', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('missing-lock');
+  await shared(repo, '', { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } });
+  await assert.rejects(f.read(reference(repo, repo.commit())), error => {
+    assert.equal(error instanceof CustomizationError, true);
+    assert.equal(error.code, 'invalid-package');
+    assert.match(error.message, /lockfile/);
+    assert.equal('cause' in error || 'stderr' in error, false);
+    return true;
+  });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('workspace canonical links remain mandatory when the member lock entry has an explicit name', async t => {
+  for (const variant of ['missing', 'target', 'not-link']) await t.test(variant, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository(variant);
+    const pkg = { name: 'root', version: '1.0.0', packageManager: manager, workspaces: ['packages/foo'] };
+    await write(repo.directory, 'package.json', pkg);
+    await shared(repo, 'packages/foo', { name: 'foo', version: '1.0.0' });
+    const entries = { 'packages/foo': { name: 'foo', version: '1.0.0' } };
+    if (variant !== 'missing') entries['node_modules/foo'] = variant === 'target' ? { link: true, resolved: 'packages/other' } : { ...registry };
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+    await assert.rejects(f.read(reference(repo, repo.commit(), 'packages/foo')), { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('local declarations disagreeing with a registry lock target report invalid-package', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('wrong-source-kind');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: 'file:vendor/value.tgz' } };
+  await shared(repo, '', pkg);
+  await write(repo.directory, 'vendor/value.tgz', 'local-bytes');
+  await write(repo.directory, 'package-lock.json', lockFor(pkg, { 'node_modules/value': registry }));
+  await assert.rejects(f.read(reference(repo, repo.commit())), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('Git failures after the graph deadline report a fixed resource-limit and remove owned storage', async t => {
+  const { readCommittedRepository } = await import('../../../packages/host/dist/customization/repository.js');
+  const f = await fixture(t);
+  const binaries = join(f.root, 'bin');
+  await mkdir(binaries);
+  await writeFile(join(binaries, 'git'), '#!/bin/sh\n/bin/sleep 2\necho HOST_CREDENTIAL_SECRET >&2\nexit 1\n', { mode: 0o700 });
+  const prior = process.env.PATH;
+  try {
+    process.env.PATH = `${binaries}:${prior}`;
+    await assert.rejects(readCommittedRepository({ repository: '.', commit: 'a'.repeat(40), scratchParent: f.scratchParent,
+      allowance: { files: 1, bytes: 1, deadline: Date.now() + 1000 } }), error => {
+      assert.equal(error.code, 'resource-limit');
+      assert.equal(error.message.includes('HOST_CREDENTIAL_SECRET'), false);
+      assert.equal('cause' in error || 'stderr' in error, false);
+      return true;
+    });
+  } finally { process.env.PATH = prior; }
+  assert.deepEqual(await readdir(f.scratchParent), []);
 });

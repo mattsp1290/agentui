@@ -28,6 +28,7 @@ async function git(args: string[], cwd: string, env: NodeJS.ProcessEnv, fetching
     return stdout;
   } catch (error) {
     if (error instanceof CustomizationError) throw error;
+    if (Date.now() >= deadline) throw new CustomizationError('resource-limit', 'Customization source deadline exceeded.');
     // Git diagnostics can contain repository credentials. Only retain a fixed classification.
     const stderr = error && typeof error === 'object' && 'stderr' in error && Buffer.isBuffer(error.stderr) ? error.stderr.toString('utf8') : '';
     if (fetching && /not our ref|couldn't find remote ref|unadvertised object/iu.test(stderr)) {
