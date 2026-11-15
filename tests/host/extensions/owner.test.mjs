@@ -44,7 +44,7 @@ for (const cleanupFails of [false, true]) {
       await turn();
       assert.equal(settled, false);
       assert.deepEqual(owner.status(), { kind: 'closing' });
-      assert.equal(authorityCloses, 1); assert.equal(fixture.calls.close, 0); assert.equal(fixture.calls.dispose, 0);
+      assert.equal(authorityCloses, 1); assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 0);
     } finally { gate.resolve(); await Promise.allSettled([outer, nested]); }
     const error = await result;
     assert.equal(authorityCloses, 1); assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 1);

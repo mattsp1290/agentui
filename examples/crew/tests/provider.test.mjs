@@ -138,11 +138,11 @@ async function direct(remote) {
   return { backend, binding: created.value };
 }
 
-test('host shutdown drains a Crew baseline observer before observation admission', { timeout: 5000 }, async t => {
+for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
   const remote = await service(t), extension = remote.extension();
   const activate = extension.value.entry.activate;
   const baseline = Promise.withResolvers(), release = Promise.withResolvers();
-  let credentialUses = 0, observations = 0, closed = false;
+  let credentialUses = 0, observations = 0, closed = false, failDiscovery = false;
   let cleanup;
   extension.value.entry = { ...extension.value.entry, activate(context) {
     return activate({ ...context,
@@ -159,6 +159,7 @@ test('host shutdown drains a Crew baseline observer before observation admission
           const backend = connection.backend;
           cleanup = () => backend.close();
           return { ...connection, backend: { ...backend,
+            discover() { if (failDiscovery) throw new Error('Discovery unavailable'); return backend.discover(); },
             async snapshot(binding) {
               const result = await backend.snapshot(binding);
               assert.equal(result.kind, 'available');
@@ -177,11 +178,18 @@ test('host shutdown drains a Crew baseline observer before observation admission
     await baseline.promise;
     assert.equal(remote.streams.size, 1);
     assert.equal(credentialUses, 1);
+    let discovery;
+    if (trigger === 'discovery failure') {
+      failDiscovery = true;
+      discovery = assert.rejects(f.running.discoverProviders(), /Provider discovery failed/);
+      await new Promise(resolve => setImmediate(resolve));
+    }
     const closing = f.running.close().then(() => { closed = true; });
     release.resolve();
     await creating;
     await until(() => closed);
     await closing;
+    await discovery;
     assert.equal(observations, 0);
     assert.equal(credentialUses, 0);
     await until(() => remote.streams.size === 0);
