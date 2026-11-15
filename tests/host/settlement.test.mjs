@@ -2,9 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { settlement, isQuarantined } from '../../packages/host/dist/settlement.js';
 
-const evidence = nativeOperation => ({ identity: { hostOperationId: 'operation', target: { kind: 'new-session', binding: {} } },
-  source: 'native-acknowledgement', nativeOperation,
-  observation: { namespace: 'recorded', schemaVersion: 1, data: null } });
+const evidence = operation => ({ correlation: 'captured-operation', operation,
+  source: { kind: 'test-evidence', value: 'original' } });
 const native = { namespace: 'recorded', id: 'native' };
 const unknown = { kind: 'outcome-unknown' };
 const absent = { kind: 'not-dispatched', reason: 'aborted' };
@@ -35,11 +34,11 @@ for (const [name, previous, incoming, quarantined, expected] of [
 
 test('settlement preserves known native identity and rejects a competing native operation', () => {
   const known = { ...accepted, evidence: evidence(native) };
-  assert.deepEqual(settlement(known, conclusive, { quarantined: false }).observed.evidence.nativeOperation, native);
+  assert.deepEqual(settlement(known, conclusive, { quarantined: false }).observed.evidence.operation, native);
   assert.equal(settlement(known, { ...conclusive, evidence: evidence({ ...native, id: 'other' }) }, { quarantined: false }).kind, 'conflict');
   const enriched = settlement(conclusive, { ...conclusive, evidence: evidence(native) }, { quarantined: false });
   assert.equal(enriched.kind, 'record-evidence');
-  assert.deepEqual(enriched.observed.evidence.nativeOperation, native);
+  assert.deepEqual(enriched.observed.evidence.operation, native);
 });
 
 test('quarantine retry keeps the captured terminal fact and requires a quarantine reason', () => {
@@ -57,8 +56,22 @@ test('quarantined terminal application retains the terminal result while learnin
     assert.equal(result.kind, 'apply');
     assert.equal(result.observed.kind, 'conclusive');
     assert.deepEqual(result.observed.result, conclusive.result);
-    assert.deepEqual(result.observed.evidence.nativeOperation, native);
+    assert.deepEqual(result.observed.evidence.operation, native);
   }
   const changed = { ...conclusive, evidence: evidence(native), result: { kind: 'rejected', reason: 'changed' } };
   assert.equal(settlement(conclusive, changed, { quarantined: true }).kind, 'conflict');
+});
+
+test('settlement rejects evidence for another captured command even with the same execution id', () => {
+  const foreign = { ...accepted, evidence: { ...evidence(native), correlation: 'another-command' } };
+  assert.deepEqual(settlement(accepted, foreign, { quarantined: false }), { kind: 'conflict', reason: 'command identity' });
+});
+
+test('settlement retains source evidence while carrying forward the known execution id', () => {
+  const source = { kind: 'test-evidence', value: 'authoritative lookup' };
+  const incoming = { ...conclusive, evidence: { ...conclusive.evidence, source } };
+  const result = settlement({ ...accepted, evidence: evidence(native) }, incoming, { quarantined: false });
+  assert.equal(result.observed.evidence.source, source);
+  assert.equal(result.observed.evidence.correlation, accepted.evidence.correlation);
+  assert.deepEqual(result.observed.evidence.operation, native);
 });

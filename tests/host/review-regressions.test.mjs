@@ -36,7 +36,7 @@ test('repeated output quarantine retains newly learned native identity', async t
   const store = new SqliteStore(f.path, projection, budgets());
   try {
     assert.throws(() => store.settle(scope, 'id', { kind: 'conclusive',
-      evidence: evidence(target, { ...native, id: 'competing-operation' }), result }), /Conflicting native operation/);
+      evidence: evidence(target, { ...native, id: 'competing-operation' }), result }), /Conflicting execution operation/);
   } finally { store.close(); }
   assert.deepEqual(await host.conversation(scope).receipt('id'), quarantined);
 });

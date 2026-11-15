@@ -2,7 +2,8 @@ import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSyn
 import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
-import { nonempty, object, output, parseEvidence } from './codec.js';
+import { nonempty, object } from './codec.js';
+import { output, parseEvidence } from './native-execution.js';
 import type { CapturedTarget, CommandResult, Installation, ProviderDriver } from './durable-model.js';
 
 export interface RecordedDriverOptions<E> {
