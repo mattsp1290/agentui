@@ -1,0 +1,12 @@
+{
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "version": "1.0.0",
+      "name": "notes"
+    }
+  },
+  "name": "notes",
+  "version": "1.0.0"
+}

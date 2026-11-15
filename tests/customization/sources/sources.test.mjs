@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
-import { CustomizationError, resolveCustomizationSources } from '@agentui/host/customization';
+import { CustomizationError, readCustomizationSnapshot, resolveCustomizationSources } from '@agentui/host/customization';
 
 const manager = 'npm@11.19.1';
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -304,40 +304,39 @@ test('selected workspace links retain sibling inputs without activating sibling 
   await assert.rejects(f.read(reference(repo, repo.commit(), 'packages/foo')), { code: 'invalid-package' });
 });
 
-test('contained local directories outside workspaces require exact manifest and transitive lock agreement', async t => {
+test('actual npm outside-link lock and fabricated parent pins reject separate installation contexts', async t => {
   const f = await fixture(t);
   const repo = await f.repository('local-directory');
   const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: 'file:../local' } };
-  const local = { name: 'value', version: '2.0.0', dependencies: { transitive: '1.0.0' } };
   await shared(repo, 'extension', pkg);
-  await write(repo.directory, 'local/package.json', local);
-  await write(repo.directory, 'local/data', 'local-input');
-  const lock = lockFor(pkg, {
-    '../local': { version: local.version, dependencies: local.dependencies },
-    'node_modules/value': { resolved: '../local', link: true },
-    'node_modules/transitive': registry,
-  });
-  await write(repo.directory, 'extension/package-lock.json', lock);
-  const result = await f.read(reference(repo, repo.commit(), 'extension'));
-  assert.equal(result.root.npm.localInputs.some(file => file.path === 'local/data'), true);
-  assert.equal(result.root.npm.workspaces.length, 0);
-  await result.dispose();
-  for (const variant of ['version', 'declarations', 'transitive']) {
-    await write(repo.directory, 'local/package.json', { ...local,
-      ...(variant === 'version' ? { version: '3.0.0' } : {}),
-      ...(variant === 'declarations' ? { dependencies: { transitive: '2.0.0' } } : {}) });
-    if (variant === 'transitive') delete lock.packages['node_modules/transitive'];
+  await write(repo.directory, 'local/package.json', { name: 'value', version: '2.0.0', dependencies: { transitive: 'file:../transitive' } });
+  await write(repo.directory, 'transitive/package.json', { name: 'transitive', version: '1.0.0' });
+  const lock = JSON.parse(await readFile(new URL('./npm-outside-link-lock.json', import.meta.url), 'utf8'));
+  for (const variant of ['actual', 'parent-pin', 'target-pin']) {
+    if (variant === 'parent-pin') lock.packages['node_modules/transitive'] = registry;
+    if (variant === 'target-pin') lock.packages['../local/node_modules/transitive'] = registry;
     await write(repo.directory, 'extension/package-lock.json', lock);
     await assert.rejects(f.read(reference(repo, repo.commit(), 'extension')), { code: 'invalid-package' });
     assert.deepEqual(await readdir(f.scratchParent), []);
   }
 });
 
+test('non-workspace directory links reject even when dependency-free or inside the npm root', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('non-workspace');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: 'file:local' } };
+  await shared(repo, '', pkg);
+  await write(repo.directory, 'local/package.json', { name: 'value', version: '2.0.0' });
+  await write(repo.directory, 'package-lock.json', lockFor(pkg, { local: { name: 'value', version: '2.0.0' }, 'node_modules/value': { resolved: 'local', link: true } }));
+  await assert.rejects(f.read(reference(repo, repo.commit())), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('root no-op metadata preserves defaults despite unrelated npm workspace configuration', async t => {
   const f = await fixture(t);
   const repo = await f.repository('no-op');
   for (const agentui of [undefined, {}, { extensions: [] }]) {
-    await write(repo.directory, 'package.json', { workspaces: ['unsupported/**'], dependencies: { unrelated: '1' }, agentui });
+    await write(repo.directory, 'package.json', { workspaces: ['unsupported/**'], dependencies: 'unused malformed metadata', agentui });
     const result = await f.read(reference(repo, repo.commit()));
     assert.equal(result.root.customization, undefined);
     assert.deepEqual(result.root.npm, { kind: 'absent' });
@@ -374,4 +373,182 @@ test('inherited SSH access retrieves committed bytes and retains no credential o
     }
   }
   assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+
+test('required transitive peers require a pinned npm peer location and optional peers may be absent', async t => {
+  for (const variant of ['missing', 'nested-only', 'pinned', 'optional', 'unsafe-source', 'unpinned-peer', 'scoped-nested-only', 'scoped-pinned']) {
+    await t.test(variant, async t => {
+      const f = await fixture(t);
+      const repo = await f.repository(variant);
+      const name = variant.startsWith('scoped') ? '@scope/value' : 'value';
+      const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { [name]: '1.0.0' } };
+      const entry = { ...registry, peerDependencies: { peer: variant === 'unsafe-source' ? 'git+ssh://example.invalid/peer' : '^1' } };
+      if (variant === 'optional') entry.peerDependenciesMeta = { peer: { optional: true } };
+      const entries = { [`node_modules/${name}`]: entry };
+      if (variant.endsWith('nested-only')) entries[`node_modules/${name}/node_modules/peer`] = registry;
+      if (['pinned', 'unsafe-source', 'unpinned-peer', 'scoped-pinned'].includes(variant)) entries['node_modules/peer'] = { ...registry };
+      if (variant === 'unpinned-peer') delete entries['node_modules/peer'].integrity;
+      await shared(repo, '', pkg);
+      await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+      const ref = reference(repo, repo.commit());
+      if (['pinned', 'optional', 'scoped-pinned'].includes(variant)) {
+        const result = await f.read(ref);
+        assert.equal(result.root.npm.kind, 'locked');
+        await result.dispose();
+      } else await assert.rejects(f.read(ref), { code: 'invalid-package' });
+      assert.deepEqual(await readdir(f.scratchParent), []);
+    });
+  }
+});
+
+test('dependency-free actual npm lock preserves file identity without requiring a manager pin', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('empty-lock');
+  await shared(repo, '', { name: 'notes', version: '1.0.0' });
+  const lock = await readFile(new URL('./npm-empty-lock.json', import.meta.url), 'utf8');
+  await write(repo.directory, 'package-lock.json', lock);
+  const ref = reference(repo, repo.commit());
+  const snapshot = await readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent });
+  assert.equal(snapshot.customization.shared, './source.ts');
+  await snapshot.dispose();
+  const result = await f.read(ref);
+  assert.deepEqual(result.root.npm, { kind: 'absent' });
+  assert.equal(result.root.inputs.files.find(file => file.path === 'package-lock.json').sha256, digest(lock));
+  await result.dispose();
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('workspace patterns, lock entries and declarations have fixed analysis caps', async t => {
+  for (const variant of ['patterns', 'duplicates', 'entries', 'declarations']) {
+    await t.test(variant, async t => {
+      const f = await fixture(t);
+      const repo = await f.repository(variant);
+      const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } };
+      if (variant === 'patterns') pkg.workspaces = Array.from({ length: 257 }, (_, index) => `none${index}/*`);
+      if (variant === 'duplicates') pkg.workspaces = ['none/*', 'none/*'];
+      const entries = { 'node_modules/value': { ...registry } };
+      if (variant === 'entries') for (let index = 0; index < 10000; index++) entries[`node_modules/p${index}`] = registry;
+      if (variant === 'declarations') entries['node_modules/value'].peerDependencies = Object.fromEntries(Array.from({ length: 50001 }, (_, index) => [`p${index}`, '1']));
+      await shared(repo, '', pkg);
+      await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+      await assert.rejects(f.read(reference(repo, repo.commit())), { code: variant === 'duplicates' ? 'invalid-package' : 'resource-limit' });
+      assert.deepEqual(await readdir(f.scratchParent), []);
+    });
+  }
+});
+
+test('package-analysis deadline applies inside workspace and lock loops over a real snapshot', async t => {
+  const { readCommittedRepository } = await import('../../../packages/host/dist/customization/repository.js');
+  const { selectPackage } = await import('../../../packages/host/dist/customization/packages.js');
+  for (const variant of ['workspace', 'lock']) await t.test(variant, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('deadline');
+    const pkg = { name: 'notes', version: '1.0.0', packageManager: manager };
+    if (variant === 'workspace') pkg.workspaces = Array.from({ length: 100 }, (_, index) => `none${index}/*`);
+    else pkg.dependencies = { value: '1' };
+    await shared(repo, '', pkg);
+    if (variant === 'lock') await write(repo.directory, 'package-lock.json', lockFor(pkg, Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`node_modules/p${index}`, registry]))));
+    const tree = await readCommittedRepository({ ...reference(repo, repo.commit()), scratchParent: f.scratchParent });
+    try {
+      let checks = 0;
+      const allowance = { get deadline() { return ++checks < 40 ? Infinity : 0; } };
+      await assert.rejects(selectPackage(tree, '', allowance), { code: 'resource-limit' });
+      assert.ok(checks >= 40);
+    } finally { await tree.dispose(); }
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('absolute path aliases deduplicate before acquisition and encoded file URLs keep transport spelling', async t => {
+  const f = await fixture(t);
+  await t.test('encoded file URL', async () => {
+    const leaf = await f.repository('leaf with spaces');
+    await shared(leaf);
+    const fileRef = { repository: pathToFileURL(leaf.directory).href, commit: leaf.commit() };
+    const encoded = await f.read(fileRef);
+    assert.equal(await readFile(join(encoded.root.directory, 'source.ts'), 'utf8'), 'export const value = 1;\n');
+    await encoded.dispose();
+  });
+  await t.test('absolute aliases', async () => {
+    const child = await f.repository('aliases-child');
+    await shared(child);
+    const commit = child.commit();
+    const root = await f.repository('aliases-root');
+    await shared(root, '', { agentui: { extensions: [child.directory, `${child.directory}/`, `${child.directory}/../aliases-child`, pathToFileURL(child.directory).href].map(repository => ({ repository, commit })) } });
+    const result = await f.read(reference(root, root.commit()));
+    assert.ok(result.root.extensions.every(child => child === result.root.extensions[0]));
+    assert.equal((await readdir(dirname(dirname(result.root.directory)))).length, 2);
+    await result.dispose();
+  });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('trusted remote parents authorize committed local descendants with inherited host Git access', async t => {
+  const f = await fixture(t);
+  const leaf = await f.repository('local-child');
+  await shared(leaf);
+  const child = { repository: relative(process.cwd(), leaf.directory), commit: leaf.commit() };
+  const parent = await f.repository('remote-parent');
+  await shared(parent, '', { agentui: { extensions: [child] } });
+  const commit = parent.commit();
+  const helper = join(f.root, 'remote-helper');
+  await writeFile(helper, '#!/bin/sh\n[ "$AGENTUI_TEST_CREDENTIAL" = "HOST_CREDENTIAL_SECRET" ] || exit 1\nexec git-upload-pack "$AGENTUI_TEST_REPOSITORY"\n', { mode: 0o700 });
+  const prior = { ...process.env };
+  try {
+    Object.assign(process.env, { GIT_SSH_COMMAND: helper, AGENTUI_TEST_CREDENTIAL: 'HOST_CREDENTIAL_SECRET', AGENTUI_TEST_REPOSITORY: parent.directory });
+    const result = await f.read({ repository: 'ssh://git@example.invalid/parent', commit });
+    assert.equal(result.root.extensions[0].commit, child.commit);
+    assert.equal(await readFile(join(result.root.extensions[0].directory, 'source.ts'), 'utf8'), 'export const value = 1;\n');
+    await result.dispose();
+  } finally {
+    for (const key of ['GIT_SSH_COMMAND', 'AGENTUI_TEST_CREDENTIAL', 'AGENTUI_TEST_REPOSITORY']) {
+      if (prior[key] === undefined) delete process.env[key];
+      else process.env[key] = prior[key];
+    }
+  }
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+
+test('outside-link dependencies never fall back to the sibling extension node_modules', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('sibling-npm-root');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: 'file:../local' } };
+  await shared(repo, 'extension', pkg);
+  await write(repo.directory, 'local/package.json', { name: 'value', version: '2.0.0', dependencies: { transitive: '1.0.0' } });
+  await write(repo.directory, 'extension/package-lock.json', lockFor(pkg, {
+    '../local': { version: '2.0.0', dependencies: { transitive: '1.0.0' } },
+    'node_modules/value': { resolved: '../local', link: true },
+    'node_modules/transitive': registry,
+  }));
+  await assert.rejects(f.read(reference(repo, repo.commit(), 'extension')), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('root and workspace peer contexts can use their own node_modules', async t => {
+  for (const variant of ['root', 'workspace-nested', 'workspace-root']) await t.test(variant, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository(variant);
+    const pkg = { name: 'notes', version: '1.0.0', packageManager: manager };
+    const entries = {};
+    let subdirectory;
+    if (variant === 'root') {
+      pkg.peerDependencies = { peer: '1' };
+      await shared(repo, '', pkg);
+    } else {
+      pkg.workspaces = ['packages/value'];
+      await write(repo.directory, 'package.json', pkg);
+      await shared(repo, 'packages/value', { name: 'value', version: '1.0.0', peerDependencies: { peer: '1' } });
+      entries['packages/value'] = { version: '1.0.0', peerDependencies: { peer: '1' } };
+      entries['node_modules/value'] = { resolved: 'packages/value', link: true };
+      subdirectory = 'packages/value';
+    }
+    entries[variant === 'workspace-nested' ? 'packages/value/node_modules/peer' : 'node_modules/peer'] = registry;
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+    const result = await f.read(reference(repo, repo.commit(), subdirectory));
+    assert.equal(result.root.npm.kind, 'locked');
+    await result.dispose();
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
 });

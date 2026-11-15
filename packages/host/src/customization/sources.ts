@@ -19,6 +19,11 @@ export interface ResolvedCustomizationSources {
   readonly root: ResolvedCustomizationPackage;
   dispose(): Promise<void>;
 }
+/**
+ * The caller must trust the pinned root and all committed descendant sources before resolving.
+ * Resolution authorizes every descendant location transitively with the same host Git access and credentials.
+ * Relative local locations at every depth resolve against the captured invocation directory.
+ */
 export async function resolveCustomizationSources(input: {
   readonly reference: GitExtensionReference;
   readonly scratchParent: string;
@@ -39,13 +44,14 @@ export async function resolveCustomizationSources(input: {
     if (depth > 32 || Date.now() >= allowance.deadline) throw new CustomizationError('resource-limit', 'Customization source traversal limit exceeded.');
     const commit = commitId(reference.commit);
     const repository = repositoryLocation(reference.repository);
-    const location = repository.startsWith('file://') ? fileURLToPath(repository) : repository.includes(':') || isAbsolute(repository) ? repository : resolve(cwd, repository);
+    const location = repository.startsWith('file://') ? resolve(fileURLToPath(repository)) : isAbsolute(repository) || !repository.includes(':') ? resolve(cwd, repository) : repository;
+    const transport = repository.startsWith('file://') ? repository : location;
     const subdirectory = reference.subdirectory === undefined ? '' : containedPath(reference.subdirectory);
     const address = JSON.stringify([location, commit]);
     let tree = repositories.get(address);
     if (!tree) {
       if (++acquisitions > 16) throw new CustomizationError('resource-limit', 'Customization source repository limit exceeded.');
-      tree = await readCommittedRepository({ repository: location, commit, scratchParent: owner, allowance });
+      tree = await readCommittedRepository({ repository: transport, commit, scratchParent: owner, allowance });
       repositories.set(address, tree);
     }
     const key = JSON.stringify([address, subdirectory]);
@@ -55,7 +61,7 @@ export async function resolveCustomizationSources(input: {
     if (previous) return previous;
     if (++nodes > 64) throw new CustomizationError('resource-limit', 'Customization source package limit exceeded.');
     active.add(packageIdentity);
-    const selected = await selectPackage(tree, subdirectory);
+    const selected = await selectPackage(tree, subdirectory, allowance);
     if (Date.now() >= allowance.deadline) throw new CustomizationError('resource-limit', 'Customization source deadline exceeded.');
     if (external && !selected.customization) throw new CustomizationError('invalid-package', 'External sources require committed customization metadata.');
     const extensions: ResolvedCustomizationPackage[] = [];
