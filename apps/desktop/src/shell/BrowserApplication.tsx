@@ -44,7 +44,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     </div>}
     {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
       {app.catalog.items.map((scope, index) => <button key={scope.conversationId} disabled={!enabled}
-        title={scope.conversationId} aria-label={`Open conversation ${scope.conversationId}`}
+        title={scope.conversationId} aria-label={`Conversation ${index + 1} · Open conversation ${scope.conversationId}`}
         aria-current={scope.conversationId === app.active?.scope.conversationId ? 'page' : undefined}
         onClick={() => void controller.open(scope)}>Conversation {index + 1}</button>)}
       {app.catalog.after !== null && <button disabled={!enabled} onClick={() => void controller.moreConversations()}>More conversations</button>}

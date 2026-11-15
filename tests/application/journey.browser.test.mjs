@@ -144,7 +144,7 @@ test('built browser app pairs two views, streams, races approval and recovers or
   await connected(alice);
   const conversation = await alice.locator('.scope-label').textContent();
   await bob.getByRole('button', { name: 'Reconnect', exact: true }).click();
-  await bob.getByRole('button', { name: `Open conversation ${conversation}`, exact: true }).click();
+  await bob.getByRole('button', { name: new RegExp(`Open conversation ${conversation}$`) }).click();
   await connected(bob);
   await draft(alice, 'First recorded message');
   await draft(bob, 'Bob keeps this draft');
@@ -176,6 +176,13 @@ test('built browser app pairs two views, streams, races approval and recovers or
   });
   assert.ok(approvalLayout.second > approvalLayout.first, 'approval commands retain separate visible lines');
   assert.equal(approvalLayout.fits, true, 'long approval paths fit within the card');
+  await alice.setViewportSize({ width: 360, height: 480 });
+  await alice.getByRole('button', { name: 'Send', exact: true }).scrollIntoViewIfNeeded();
+  const composerBounds = await alice.locator('.composer button').boundingBox();
+  const mainBounds = await alice.locator('main').boundingBox();
+  assert.ok(composerBounds.y + composerBounds.height <= mainBounds.y + mainBounds.height,
+    'composer remains reachable with an approval at minimum window size');
+  await alice.setViewportSize({ width: 1280, height: 720 });
   assert.deepEqual(revisions.slice(0, 3), [1, 2, 3]);
   await Promise.all([alice.getByRole('button', { name: 'approve', exact: true }).click(), bob.getByRole('button', { name: 'decline', exact: true }).click()]);
   await wait(async () => (await host.entries()).length === 2, 'one decision winner');
@@ -268,7 +275,7 @@ test('duplicate tabs acquire separate writable views and uncertain creation is e
   const duplicate = await popupPromise;
   await duplicate.getByRole('button', { name: 'New recorded conversation' }).waitFor();
   await wait(async () => await duplicate.evaluate(() => sessionStorage.getItem('agentui.viewId')) !== viewId, 'exclusive duplicate view');
-  await duplicate.getByRole('button', { name: `Open conversation ${originalScope.conversationId}`, exact: true }).click();
+  await duplicate.getByRole('button', { name: new RegExp(`Open conversation ${originalScope.conversationId}$`) }).click();
   await connected(duplicate);
   assert.equal(await duplicate.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), '');
   await draft(duplicate, 'Duplicate tab draft');
@@ -398,7 +405,7 @@ test('browser catalog reads every page and opens a conversation beyond the first
   await wait(async () => await catalog.getByRole('button').count() === 101, 'first bounded catalog page');
   await catalog.getByRole('button', { name: 'More conversations', exact: true }).click();
   await wait(async () => await catalog.getByRole('button').count() === 105, 'complete paginated catalog');
-  await catalog.getByRole('button', { name: 'Open conversation catalog-104', exact: true }).click();
+  await catalog.getByRole('button', { name: /Open conversation catalog-104$/ }).click();
   await connected(page);
   assert.equal(await page.locator('.scope-label').textContent(), 'catalog-104');
 });
