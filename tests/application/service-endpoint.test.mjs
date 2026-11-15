@@ -7,7 +7,7 @@ import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import { openRecordedHost } from '@agentui/host/recorded';
 import { Access } from '../../apps/host/build/tsc/access.js';
@@ -22,7 +22,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
     const host = openRecordedHost({ path: join(directory, 'host.sqlite'), backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId });
     const feeds = new FeedRegistry(), paired = access.pair(access.invite(credentialClass), credentialClass);
-    const compatibility = { wireVersion: 1, extensionSdkVersion: '0.0.0', nativeRuntime: RECORDED_RUNTIME,
+    const compatibility = { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
     let closing = false;
     const options = { access, api: createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => closing }), isClosing: () => closing };

@@ -1,6 +1,7 @@
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import { nonempty, record } from '@agentui/contracts/decode';
 import type { BackendProvider, ProviderModel } from './providers.js';
+import type { ProviderPresentation, ServerProviderCredentials } from './provider-presentation.js';
 
 export { EXTENSION_SDK_VERSION };
 export type ExtensionEntryKind = 'server' | 'desktop' | 'ios';
@@ -22,11 +23,12 @@ export interface ExtensionLifetime {
   dispose(): void | Promise<void>;
 }
 export interface ProviderContributions {
-  add<M extends ProviderModel, I extends string>(id: string, provider: BackendProvider<M, I>): void;
+  add<M extends ProviderModel, I extends string>(id: string, provider: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void;
 }
 export interface ServerExtensionContext {
   readonly namespace: string;
   readonly providers: ProviderContributions;
+  readonly credentials: ServerProviderCredentials;
 }
 export interface ServerExtensionEntry {
   readonly kind: 'server';

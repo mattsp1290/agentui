@@ -7,7 +7,7 @@ export type CrewModel = {
   event: { kind: 'message'; text: string };
 };
 export const crewInstance: SDK.ProviderInstance<'crew-personal'> = {
-  namespace: 'example.crew', installationId: 'crew-personal', generation: '1', protocolVersion: 'crew-v2',
+  namespace: 'example-crew', installationId: 'crew-personal', generation: '1', protocolVersion: 'crew-v2',
 };
 export function createCrewFixture<I extends string>(crewInstance: SDK.ProviderInstance<I>): {
   crewCredential: SDK.CredentialHandle<I>;
@@ -21,6 +21,7 @@ export function createCrewFixture<I extends string>(crewInstance: SDK.ProviderIn
   crewSend: SDK.ProviderCommand<CrewModel, I>;
   crewBackend: SDK.ConnectedProvider<CrewModel, I>;
   crew: SDK.BackendProvider<CrewModel, I>;
+  crewPresentation: SDK.ProviderPresentation<CrewModel, I>;
 } {
   const crewCredential: SDK.CredentialHandle<I> = {
     kind: 'credential-handle', instance: crewInstance, hostId: 'host', opaqueHandle: 'vault-entry',
@@ -86,13 +87,35 @@ export function createCrewFixture<I extends string>(crewInstance: SDK.ProviderIn
     apiVersion: SDK.backendProviderContractVersion,
     async connect() { return { kind: 'connected', backend: crewBackend }; },
   };
-  return { crewCredential, crewAgent, crewCreation, crewBinding, crewRun, crewDecision, crewChoice, crewCursor, crewSend, crewBackend, crew };
+  const crewPresentation: SDK.ProviderPresentation<CrewModel, I> = {
+    instance: crewInstance,
+    decodeRequest(value) {
+      if (!value || typeof value !== 'object' || !('member' in value) || typeof value.member !== 'string' || !('text' in value) || typeof value.text !== 'string') throw new Error('Invalid request');
+      return { member: value.member, text: value.text };
+    },
+    decodeCursor(value) {
+      if (!value || typeof value !== 'object' || !('checkpoint' in value) || typeof value.checkpoint !== 'string' || !('stream' in value) || typeof value.stream !== 'number') throw new Error('Invalid cursor');
+      return { checkpoint: value.checkpoint, stream: value.stream };
+    },
+    decodeState(value) {
+      if (!value || typeof value !== 'object' || !('messages' in value) || !Array.isArray(value.messages) || !value.messages.every((item: unknown): item is string => typeof item === 'string')) throw new Error('Invalid state');
+      return { messages: value.messages };
+    },
+    decodeEvent(value) {
+      if (!value || typeof value !== 'object' || !('kind' in value) || value.kind !== 'message' || !('text' in value) || typeof value.text !== 'string') throw new Error('Invalid event');
+      return { kind: 'message', text: value.text };
+    },
+    request(text) { return { member: 'research', text }; },
+    snapshot(state) { return { currentRun: null, messages: state.messages.map((text, index) => ({ messageId: String(index), revision: 1, role: 'assistant', text, complete: true })) }; },
+    apply(previous, event) { return { state: { messages: [...previous.messages, event.text] }, events: [] }; },
+  };
+  return { crewPresentation, crewCredential, crewAgent, crewCreation, crewBinding, crewRun, crewDecision, crewChoice, crewCursor, crewSend, crewBackend, crew };
 }
-export const { crewCredential, crewAgent, crewCreation, crewBinding, crewRun, crewDecision, crewChoice, crewCursor, crewSend, crewBackend, crew } = createCrewFixture(crewInstance);
+export const { crewPresentation, crewCredential, crewAgent, crewCreation, crewBinding, crewRun, crewDecision, crewChoice, crewCursor, crewSend, crewBackend, crew } = createCrewFixture(crewInstance);
 
 export function crewForRuntimeInstallation(installationId: string) {
   const instance: SDK.ProviderInstance<string> = {
-    namespace: 'example.crew', installationId, generation: '1', protocolVersion: 'crew-v2',
+    namespace: 'example-crew', installationId, generation: '1', protocolVersion: 'crew-v2',
   };
   return createCrewFixture(instance).crew;
 }

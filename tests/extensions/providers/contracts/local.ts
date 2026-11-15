@@ -7,7 +7,7 @@ export type LocalModel = {
   event: { append: string };
 };
 export const localInstance: SDK.ProviderInstance<'native-work'> = {
-  namespace: 'example.local', installationId: 'native-work', generation: '3', protocolVersion: 'local-v1',
+  namespace: 'example-local', installationId: 'native-work', generation: '3', protocolVersion: 'local-v1',
 };
 export const localCredential: SDK.CredentialHandle<'native-work'> = {
   kind: 'credential-handle', instance: localInstance, hostId: 'host', opaqueHandle: 'local-vault-entry',
@@ -64,4 +64,31 @@ export const localBackend: SDK.ConnectedProvider<LocalModel, 'native-work'> = {
 export const local: SDK.BackendProvider<LocalModel, 'native-work'> = {
   apiVersion: SDK.backendProviderContractVersion,
   async connect() { return { kind: 'connected', backend: localBackend }; },
+};
+
+export const localPresentation: SDK.ProviderPresentation<LocalModel, 'native-work'> = {
+  instance: localInstance,
+  decodeRequest(value) {
+    if (!value || typeof value !== 'object' || !('input' in value) || !Array.isArray(value.input)) throw new Error('Invalid request');
+    const input: LocalModel['request']['input'] = value.input.map((item: unknown) => {
+      if (!item || typeof item !== 'object' || !('role' in item) || item.role !== 'user' || !('content' in item) || typeof item.content !== 'string') throw new Error('Invalid input');
+      return { role: 'user', content: item.content };
+    });
+    return { input };
+  },
+  decodeCursor(value) {
+    if (!Array.isArray(value) || value.length !== 2 || typeof value[0] !== 'number' || typeof value[1] !== 'number') throw new Error('Invalid cursor');
+    return [value[0], value[1]];
+  },
+  decodeState(value) {
+    if (!value || typeof value !== 'object' || !('transcript' in value) || typeof value.transcript !== 'string') throw new Error('Invalid state');
+    return { transcript: value.transcript };
+  },
+  decodeEvent(value) {
+    if (!value || typeof value !== 'object' || !('append' in value) || typeof value.append !== 'string') throw new Error('Invalid event');
+    return { append: value.append };
+  },
+  request(text) { return { input: [{ role: 'user', content: text }] }; },
+  snapshot(state) { return { currentRun: null, messages: [{ messageId: 'transcript', revision: 1, role: 'assistant', text: state.transcript, complete: true }] }; },
+  apply(previous, event) { return { state: { transcript: previous.transcript + event.append }, events: [] }; },
 };

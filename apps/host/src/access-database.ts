@@ -13,9 +13,16 @@ export function openAccessDatabase(path: string): AccessDatabase {
       CREATE TABLE IF NOT EXISTS service_identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), host TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS service_devices (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
         credential_class TEXT NOT NULL CHECK(credential_class IN ('browser-development','native')), expires INTEGER NOT NULL,
-        policy TEXT NOT NULL CHECK(policy='owner'), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)));`);
+        policy TEXT NOT NULL CHECK(policy='owner'), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)));
+      CREATE TABLE IF NOT EXISTS service_provider_credentials (handle TEXT PRIMARY KEY, host TEXT NOT NULL,
+        namespace TEXT NOT NULL, contribution TEXT NOT NULL, installation TEXT NOT NULL, generation TEXT NOT NULL,
+        protocol TEXT NOT NULL, service TEXT NOT NULL, revision TEXT NOT NULL, revoked INTEGER NOT NULL CHECK(revoked IN (0,1)),
+        UNIQUE(host,namespace,contribution,installation,generation,protocol,service,revision));`);
     if (database.prepare('SELECT version FROM service_schema WHERE singleton=1').get()?.version !== 1 ||
       !database.prepare('PRAGMA table_info(service_devices)').all().some(row => row.name === 'credential_class')) throw new Error('Unsupported host access schema');
+    const providerColumns = database.prepare('PRAGMA table_info(service_provider_credentials)').all();
+    if (['handle', 'host', 'namespace', 'contribution', 'installation', 'generation', 'protocol', 'service', 'revision', 'revoked']
+      .some(name => !providerColumns.some(row => row.name === name))) throw new Error('Unsupported provider credential schema');
     database.prepare('INSERT OR IGNORE INTO service_identity(singleton,host) VALUES(1,?)').run(randomUUID());
     const host = database.prepare('SELECT host FROM service_identity WHERE singleton=1').get()?.host;
     if (typeof host !== 'string' || !host) throw new Error('Invalid persisted host identity');

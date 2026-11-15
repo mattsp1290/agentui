@@ -6,6 +6,8 @@ export type {
 export type { ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
 
 export const hostRuntime = 'node';
+export { createProviderRegistry, providerIdentity } from './providers.js';
+export type { ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider } from './providers.js';
 export { openLocalHost } from './local-host.js';
 export type { LocalHost, LocalHostOptions } from './local-host.js';
 export { createRecordedDriver } from './recorded-driver.js';

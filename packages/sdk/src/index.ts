@@ -8,6 +8,7 @@ export type {
 } from './extensions.js';
 
 export { backendProviderContractVersion } from './providers.js';
+export type { ProviderPresentation, PresentationRefs, ServerProviderCredentials } from './provider-presentation.js';
 export type {
   ProviderModel, ProviderInstance, ProviderRef, CredentialHandle, CreationIntent, ProviderConversation,
   ConversationRef, ProviderCursor, ProviderCommand, ProviderOperation, ProviderUnsupported, ProviderCapability,

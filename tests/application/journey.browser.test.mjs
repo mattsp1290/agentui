@@ -696,7 +696,7 @@ async function customRuntime(page, host, selection, breakDefault = false) {
           (await readFile(join(root, 'apps/desktop/src/application/ConversationView.tsx'), 'utf8')).replace('export function ConversationView(', 'function HealthyConversationView(') +
           `\nexport function ConversationView(props) { if (window.failDefault) throw new Error('Default view failed'); return createElement(HealthyConversationView, props); }`, loader: 'tsx' }));
       plugin.onLoad({ filter: /customization-selection\.ts$/ }, () => ({ contents: `import * as React from 'react';
-        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
+        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.1.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
         export default { manifest, ${selection} };`, loader: 'tsx' }));
     } }] });
   await page.route('**/custom.html', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script src="/custom.js"></script>' }));
@@ -707,11 +707,11 @@ async function customRuntime(page, host, selection, breakDefault = false) {
 
 for (const [label, body, disposed] of [
   ['import', "load: async () => { throw new Error('Import failed'); }", 0],
-  ['activation', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { throw new Error('Activation failed'); } } })", 0],
+  ['activation', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() { throw new Error('Activation failed'); } } })", 0],
   ['compatibility', "load: async () => ({ default: { kind: 'desktop', sdkVersion: 'bad', activate() {} } })", 0],
-  ['invalid contributions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: null }; } } })", 1],
-  ['unsupported actions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { return null; }, actions: [] }] }; } } })", 1],
-  ['render', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { throw new Error('Render failed'); } }] }; } } })", 1],
+  ['invalid contributions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: null }; } } })", 1],
+  ['unsupported actions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { return null; }, actions: [] }] }; } } })", 1],
+  ['render', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { throw new Error('Render failed'); } }] }; } } })", 1],
 ]) test(`custom ${label} failure stays local and disposes its lifetime`, { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
@@ -732,7 +732,7 @@ test('restoring during activation disposes a late lifetime once and catches clea
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() {
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() {
     return new Promise(resolve => { window.finishActivation = () => resolve({ modules: [], dispose() { window.disposals = (window.disposals || 0) + 1; return Promise.reject(new Error('Cleanup rejected')); } }); });
   } } })`);
   await wait(() => page.evaluate(() => typeof window.finishActivation === 'function'), 'pending activation');
@@ -753,7 +753,7 @@ test('activation survives navigation and healthy restore disposes once while kee
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   const first = await page.locator('.scope-label').textContent();
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() {
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate() {
     window.activations = (window.activations || 0) + 1;
     return { modules: [{ id: 'working', label: 'Working', component({ conversation }) {
       const [count, setCount] = React.useState(0);

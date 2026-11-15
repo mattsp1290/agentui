@@ -1,3 +1,4 @@
+import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
@@ -202,7 +203,7 @@ test('file URL retrieval preserves shared and external-only inputs', async t => 
 
 test('committed missing sources and disagreeing lockfiles fail before returning a snapshot', async t => {
   const f = await fixture(t);
-  const extension = { namespace: 'personal', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
+  const extension = { namespace: 'personal', trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
   const pkg = { name: 'notes', version: '1.0.0', packageManager: 'npm@11.19.1', agentui: { extension, sources: { './dist/desktop.js': './missing.ts' } } };
   await writeFile(join(f.repo, 'package.json'), JSON.stringify(pkg));
   await assert.rejects(f.read(f.commit()), { code: 'invalid-package' });
