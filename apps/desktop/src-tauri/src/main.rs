@@ -56,7 +56,10 @@ async fn native_access(
 }
 
 fn local_host_url() -> Result<Option<tauri::Url>, Box<dyn std::error::Error>> {
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    parse_host_args(&std::env::args().skip(1).collect::<Vec<_>>())
+}
+
+fn parse_host_args(args: &[String]) -> Result<Option<tauri::Url>, Box<dyn std::error::Error>> {
     if args.is_empty() {
         return Ok(None);
     }
@@ -118,6 +121,32 @@ fn main() {
 
 #[cfg(test)]
 mod tests {
+    #[derive(serde::Deserialize)]
+    struct HostUrlCase {
+        args: Vec<String>,
+        accepted: bool,
+        normalized: Option<String>,
+    }
+
+    #[test]
+    fn host_url_acceptance_matches_launcher_cases() {
+        let cases: Vec<HostUrlCase> = serde_json::from_str(include_str!(
+            "../../../../tests/desktop/host-url-cases.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let result = super::parse_host_args(&case.args);
+            assert_eq!(result.is_ok(), case.accepted, "args: {:?}", case.args);
+            if case.accepted {
+                let url = result.unwrap();
+                assert_eq!(
+                    url.as_ref().map(|value| value.as_str()),
+                    case.normalized.as_deref()
+                );
+            }
+        }
+    }
+
     #[test]
     fn only_the_bundled_main_document_qualifies_for_native_admission() {
         for value in [
