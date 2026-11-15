@@ -35,8 +35,21 @@ if (resume !== -1 && (!existsSync(join(directory, 'native-thread')) || readFileS
 emit({ type: 'thread.started', thread_id: threadId });
 emit({ type: 'turn.started' });
 if (text === 'wait-without-output') await new Promise(() => { setInterval(() => {}, 1000); });
-const response = resume === -1 ? 'First SDK reply' : 'Resumed SDK reply';
+const response = text === 'multipart-output' ? 'a'.repeat(24_000) + 'b'.repeat(24_000) + 'c'.repeat(2000)
+  : resume === -1 ? 'First SDK reply' : 'Resumed SDK reply';
 emit({ type: 'item.completed', item: { id: 'message-1', type: 'agent_message', text: response } });
+if (text === 'multipart-output') {
+  await new Promise(resolve => {
+    const timer = setInterval(() => {
+      if (!existsSync(join(directory, 'next-output'))) return;
+      clearInterval(timer);
+      resolve();
+    }, 10);
+  });
+  emit({ type: 'item.completed', item: { id: 'message-1', type: 'agent_message',
+    text: 'd'.repeat(24_000) + 'e'.repeat(24_000) + 'f'.repeat(2000) } });
+  await new Promise(() => { setInterval(() => {}, 1000); });
+}
 if (text === 'hold-after-output') {
   await new Promise(resolve => {
     const timer = setInterval(() => {

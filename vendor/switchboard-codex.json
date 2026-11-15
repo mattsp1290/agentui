@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "24dc70e6034346479b802184172665c6862a696c",
-  "sourceTree": "1829c42dab7ff61979ee4893f2f5311c45974937",
-  "artifact": "switchboard-24dc70e6034346479b802184172665c6862a696c.tgz",
-  "sha256": "6c3ca7c16e1f9a506b173502f1221f1d209b664e65528acf56c35f6088cf443a",
+  "sourceRevision": "a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c",
+  "sourceTree": "544efb557b2dedffe7eedd6d6e4246fec825ab85",
+  "artifact": "switchboard-a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c.tgz",
+  "sha256": "7b194cde7656aca2496185ea80bd08eeca3d543dfe84f40c01ade8db42776efa",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-codex",
   "entrypoint": "./codex",

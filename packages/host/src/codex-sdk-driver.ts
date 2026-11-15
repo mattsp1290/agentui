@@ -9,7 +9,7 @@ import { createCodexRuntime } from '@agentui/switchboard-codex/codex';
 import type { CodexEvent, CodexTerminal, CodexTurn } from '@agentui/switchboard-codex/codex';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { budgets } from './durable-model.js';
-import { messageParts } from './transcript-parts.js';
+import { createTranscriptWriter } from './transcript-writer.js';
 
 export interface CodexSdkDriverOptions {
   readonly cwd: string;
@@ -24,9 +24,8 @@ interface Turn {
   readonly native: CodexTurn;
   readonly run: NativeRun;
   readonly messages: Map<string, string>;
-  readonly rendered: { text: string; complete: boolean; revision: number }[];
+  readonly transcript: ReturnType<typeof createTranscriptWriter>;
   phase: 'admitting' | 'running' | 'ending' | 'ended';
-  revision: number;
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   storageFailed: boolean;
@@ -62,30 +61,12 @@ export function createCodexSdkDriver(options: CodexSdkDriverOptions): ProviderDr
   }
   function render(turn: Turn, complete: boolean) {
     clearTimeout(turn.timer); turn.timer = undefined;
-    if (turn.messages.size === 0 && turn.rendered.length === 0) return;
-    const text = messageParts([...turn.messages.values()].join('\n\n'));
-    for (let index = 0; index < Math.max(text.length, turn.rendered.length); index++) {
-      const value = text[index] ?? '';
-      const previous = turn.rendered[index];
-      if (previous?.complete || !complete && previous?.text === value) continue;
-      const revision = ++turn.revision;
-      publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
-        revision, role: 'assistant', text: value, complete }]);
-      turn.rendered[index] = { text: value, complete, revision };
-    }
+    if (turn.messages.size === 0) return;
+    turn.transcript.write([...turn.messages.values()].join('\n\n'), complete);
   }
   function sealSaved(turn: Turn) {
-    for (const [index, previous] of turn.rendered.entries()) {
-      if (previous.complete) continue;
-      const revision = previous.revision + 1;
-      try {
-        publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
-          revision, role: 'assistant', text: previous.text, complete: true }]);
-        turn.rendered[index] = { ...previous, revision, complete: true };
-        turn.revision = Math.max(turn.revision, revision);
-      } catch {
-        process.emitWarning('Could not finish stored Codex output. Start a new conversation.', { code: 'AGENTUI_CODEX_SDK_STORAGE' });
-      }
+    if (!turn.transcript.sealSaved()) {
+      process.emitWarning('Could not finish stored Codex output. Start a new conversation.', { code: 'AGENTUI_CODEX_SDK_STORAGE' });
     }
   }
   function outputFailed(turn: Turn) {
@@ -193,8 +174,10 @@ export function createCodexSdkDriver(options: CodexSdkDriverOptions): ProviderDr
             authority: { kind: 'agentui-host', hostId: command.scope.hostId,
               binding: { namespace: 'codex-sdk-session', installationId: installation.installationId, opaqueSessionId: native.threadId } } },
             reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque: native.threadId } };
-          turn = { scope: command.scope, native, run, messages: new Map(), rendered: [], phase: 'admitting',
-            revision: 0, timer: undefined, stopCommandId: null, storageFailed: false };
+          turn = { scope: command.scope, native, run, messages: new Map(),
+            transcript: createTranscriptWriter({ messageIdPrefix: `${runId}:assistant`,
+              publish: events => options.append(command.scope, { ...empty(), events }) }),
+            phase: 'admitting', timer: undefined, stopCommandId: null, storageFailed: false };
           options.append(command.scope, { events: [
             userMessage(command.body.text, target.identity.hostOperationId),
             { kind: 'run-started', runId, previousRunId: options.currentRunId(command.scope) },

@@ -163,6 +163,30 @@ test('storage failure at native admission publishes no phantom response or conti
   assert.equal((await f.calls())[1].args.includes('resume'), false);
 });
 
+test('a later multipart storage failure seals each last saved SDK part with stable IDs across reopen', { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const session = f.open();
+  session.host.createConversation(scope, session.driver.installation);
+  await session.port.submit(command('sdk-multipart-storage', { kind: 'send', text: 'multipart-output' }));
+  const assistant = () => session.state().messages.filter(message => message.role === 'assistant');
+  await until(() => assistant().length === 3);
+  const saved = assistant();
+  assert.deepEqual(saved.map(message => message.text), ['a'.repeat(24_000), 'b'.repeat(24_000), 'c'.repeat(2000)]);
+  f.failOutput(output => output.events.some(event => event.kind === 'message-updated' &&
+    event.messageId === saved[1].messageId && event.text.startsWith('e')), Number.POSITIVE_INFINITY);
+  await writeFile(join(f.directory, 'next-output'), '');
+  await until(() => session.state().currentRun.kind === 'ended');
+  assert.equal(session.state().currentRun.outcome, 'failed');
+  const sealed = assistant();
+  assert.deepEqual(sealed.map(message => message.messageId), saved.map(message => message.messageId));
+  assert.deepEqual(sealed.map(message => message.text), ['d'.repeat(24_000), saved[1].text, saved[2].text]);
+  assert(sealed.every((message, index) => message.complete && message.revision > saved[index].revision));
+  await session.close();
+  const reopened = f.open();
+  assert.deepEqual(reopened.state().messages.filter(message => message.role === 'assistant'), sealed);
+  assert.equal(reopened.state().currentRun.outcome, 'failed');
+});
+
 test('a failed Stop request write does not poison a later explicit Stop', { timeout: 10_000 }, async t => {
   const f = await fixture(t);
   const session = f.open();

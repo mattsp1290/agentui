@@ -1,20 +1,12 @@
-import { CODEX_SDK_CHAT_LABEL, PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
 import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
+import { AGENT_PRESENTATION } from './agent-presentation.js';
 
 type DraftEditor =
   | { readonly kind: 'saved' | 'saving'; readonly text: string }
   | { readonly kind: 'failed'; readonly text: string; readonly message: string };
-
-const AGENT_PRESENTATION = {
-  codex: { assistant: 'Codex', placeholder: 'Write to Codex…', footer: 'Local Codex · Approvals required for changes' },
-  'codex-sdk': { assistant: 'Codex', placeholder: 'Write to Codex…', footer: `${CODEX_SDK_CHAT_LABEL} · Read-only · No interactive approvals` },
-  pi: { assistant: 'Pi', placeholder: 'Write to Pi…', footer: `${PI_CHAT_LABEL} · Chat only · No tools` },
-  recorded: { assistant: 'Recorded assistant', placeholder: 'Write to the recorded assistant…', footer: 'Recorded playback · No live model' },
-  local: { assistant: 'Assistant', placeholder: 'Write a message…', footer: 'Local agent' },
-};
 
 export function ConversationStatus({ active }: { readonly active: OpenConversation }) {
   const view = useConversation(active.store);
@@ -45,7 +37,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     }
   }
   const connected = enabled && view.connection.kind === 'connected';
-  const live = agent === 'codex' || agent === 'codex-sdk' || agent === 'pi';
+  const live = presentation.live;
   const run = live ? view.document.domain.currentRun : null;
   const responding = live && (Boolean(run && run.kind !== 'ended') ||
     (!run && view.document.domain.messages.some(message => message.role === 'assistant' && !message.complete)));
