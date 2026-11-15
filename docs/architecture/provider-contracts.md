@@ -78,7 +78,7 @@ Discovery validates full instance and reference identity, capabilities, bounded 
 IDs may collide across installations; catalog identity includes the full instance and contribution.
 Repeated discovery reuses one connection; overlapping discovery shares its pending call.
 Configured extensions are required in this slice: any activation, connection or discovery failure retires the entire collection. Startup then fails; a later failure makes subsequent provider discovery unavailable.
-Unsupported, offline, authentication and version failures all become the same sanitized discovery failure here. Per-provider operational status remains downstream work. Discovered agents appear in the existing chooser with no messaging commands advertised.
+Unsupported, offline, authentication and version failures all become the same sanitized discovery failure here. Per-provider operational status remains downstream work. Discovered agents appear in the existing chooser. Send is advertised only when the provider supports both send and reconciliation. Cancel and approval remain unavailable.
 
 Closing or failure freezes admission and credential use, drains admitted calls, closes acquired or late-arriving connections once, then disposes extension lifetimes before access storage closes.
 There is no hard timeout guarantee for uncooperative full-trust code. Full-trust extensions can leak secrets or perform their own effects; this capability is an authorization boundary for cooperating adapters, not a secret sandbox.
@@ -103,11 +103,26 @@ Authoritative rejection or fresh known nonacceptance returns `create-rejected` w
 Only the matching create response and current view may release that pending client record; the host retains the original terminal record.
 Lookup refusal or failure never establishes nonacceptance of the original creation and never erases admitted processing evidence.
 `conversation-agent` resolves the original selected agent even before a public conversation exists.
-Confirmed history remains readable when its provider is unconfigured, while provider messaging stays disabled.
+Confirmed history and existing receipts remain readable when their provider is unconfigured.
 
-## Remaining command and observation obligations
+## Durable send
 
-Creation follows the rules below. Command and observation integration remains future work; SDK declarations do not enforce it.
+The authenticated submit route captures provider sends in the existing command ledger after exact-ID retry detection.
+The stored target contains the original installation, configured authority, credential handle, confirmed binding and translated request.
+Translation runs once for a new admitted command. Admission bounds the translated target and commits it with the pending receipt before submission.
+Retries return the saved receipt. Explicit reconciliation decodes the original request without translation and calls only `reconcileCommand`.
+A changed decoder, credential or generation cannot replace the original operation.
+
+Pending and accepted evidence survives weaker lookup outcomes. A changed run reference conflicts with the original acceptance.
+Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
+These effects contain no transcript output and do not establish a terminal run outcome.
+Provider observation and streaming remain unimplemented. Cancel needs the accepted scoped run mapping, while approval also needs observation-owned decision and choice mappings.
+The send integration keeps wire version 3, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+It does not qualify a complete provider conversation or upgrade an existing Mac installation.
+
+## Command and observation obligations
+
+Creation and send follow the rules below. Cancel, approval and observation integration remain future work; SDK declarations alone do not enforce these rules.
 
 The host authorizes the scope and persists creation intent before creation.
 It persists the confirmed binding and the exact command before dispatch.
