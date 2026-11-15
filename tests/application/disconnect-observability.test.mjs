@@ -4,6 +4,7 @@ import { createServer, request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { assertPrivateValuesAbsent, assertRequestSpan, attributes, receiver } from './support/observability.mjs';
 import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createHostObservability } from '../../apps/host/build/tsc/observability.js';
@@ -15,28 +16,15 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-function attributes(values = []) {
-  return Object.fromEntries(values.map(({ key, value }) => [key, value.stringValue ?? Number(value.intValue)]));
-}
-
 async function fixture(t, credentialClass, api) {
-  const exports = [];
-  const collector = createServer((incoming, outgoing) => {
-    let body = '';
-    incoming.setEncoding('utf8').on('data', chunk => { body += chunk; });
-    incoming.once('end', () => {
-      exports.push({ path: incoming.url, body: JSON.parse(body) });
-      outgoing.writeHead(200, { 'content-type': 'application/json' });
-      outgoing.end('{"partialSuccess":{}}');
-    });
-  });
-  await new Promise(resolve => collector.listen(0, '127.0.0.1', resolve));
+  const collector = await receiver(t);
+  const exports = collector.received;
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-disconnect-'));
   const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
   const invitation = access.invite(credentialClass);
   const paired = access.pair(invitation, credentialClass);
   const observability = createHostObservability({ kind: 'otlp',
-    endpoint: `http://127.0.0.1:${collector.address().port}/v1/traces`, headers: {},
+    endpoint: `${collector.endpoint}/v1/traces`, headers: {},
     serviceName: 'agentui-host', datadogLlmObservability: false });
   const handler = serviceEndpoint({ credentialClass, access, api, observability,
     isClosing: () => false, ...(credentialClass === 'browser-development' ? { files: new Map() } : {}) });
@@ -56,8 +44,6 @@ async function fixture(t, credentialClass, api) {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await observability.close();
-    collector.closeAllConnections();
-    await new Promise(resolve => collector.close(resolve));
     access.close();
     rmSync(directory, { recursive: true, force: true });
   });
@@ -83,17 +69,8 @@ async function fixture(t, credentialClass, api) {
 }
 
 function checkSpan(span, expected, privateValues, exports) {
-  assert.equal(span.name, 'agentui.host.request');
-  assert.equal(span.kind, 2);
-  assert.ok(BigInt(span.endTimeUnixNano) > BigInt(span.startTimeUnixNano));
-  assert.ok(span.parentSpanId === undefined || span.parentSpanId === '');
-  assert.deepEqual(span.events ?? [], []);
-  assert.deepEqual(span.links ?? [], []);
-  assert.deepEqual(attributes(span.attributes), expected);
-  assert.equal(span.status?.code ?? 0, expected['agentui.outcome'] === 'ok' ? 0 : 2);
-  assert.ok(!span.status?.message);
-  const payload = JSON.stringify(exports);
-  for (const value of privateValues) assert.equal(payload.includes(value), false, `Private value leaked ${value}`);
+  assertRequestSpan(span, expected);
+  assertPrivateValuesAbsent(exports, privateValues);
 }
 
 test('a browser body disconnect exports invalid admission without inventing an HTTP response status', { timeout: 15_000 }, async t => {

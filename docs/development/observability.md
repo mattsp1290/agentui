@@ -93,4 +93,33 @@ node --test tests/application/*observability.test.mjs tests/application/telemetr
 
 The tests inspect actual OTLP JSON sent by the bundled host. They check content exclusions, disabled mode, receiver failures, and Switchboard GenAI spans from a controlled native fixture. They do not attest to receipt in a live Datadog account.
 
+## Configure the Crew worker
+
+The [public Crew launcher](../../examples/crew/README.md#trace-the-host-and-crew-worker) uses the same host configuration described above. Its request spans cover AgentUI admission and dispatch. They do not measure remote Crew inference. The optional native agents configured in that host retain their normal observed agent spans.
+
+Crew owns tracing around actual native driver calls. The following worker settings describe [Crew PR 81](https://github.com/mattsp1290/crew/pull/81) at revision `c7ed7b43008dc414485304f167834d6eb9bc2d53`. GitHub reported that PR open when this integration was prepared on November 15, 2026. Confirm the installed Crew revision before using these settings. This AgentUI change does not upgrade or deploy Crew.
+
+Set these variables in the Crew member worker's environment, separately from the AgentUI launcher:
+
+```sh
+BIRBCREW_OTLP_TRACES_ENDPOINT=http://127.0.0.1:4318/v1/traces
+OTEL_SERVICE_NAME=crew-worker
+```
+
+Crew's endpoint is a full traces URL. Unlike AgentUI, selecting an endpoint enables Crew export without `OTEL_TRACES_EXPORTER=otlp`. Follow the [pinned Crew verification guide](https://github.com/mattsp1290/crew/blob/c7ed7b43008dc414485304f167834d6eb9bc2d53/docs/verification.md#typescript-history-replay-and-traces) for endpoint precedence, plaintext restrictions, collector headers, local JSONL traces, and shutdown limits.
+
+For a Datadog Agent with LLM Observability enabled, Crew's opt-in is `BIRBCREW_DATADOG_LLMOBS=true`. Keep `OTEL_EXPORTER_OTLP_HEADERS` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` unset in Crew's environment. The Agent owns forwarding credentials. AgentUI's separate opt-in is `AGENTUI_DATADOG_LLMOBS=true`. Setting either flag does not configure the other process.
+
+Crew records metadata-only agent spans around actual native driver calls. Individual model requests, tool executions, and agent-span token usage remain outside that observation boundary.
+
+AgentUI does not forward incoming trace context to Crew or synthesize Crew agent spans from snapshots. AgentUI request traces and Crew invocation traces are separate. Crew's selected UUID correlations remain Crew's export policy. AgentUI continues to exclude host, conversation, and run identifiers. Neither transport acknowledgment nor a span proves command settlement or native termination.
+
+To verify this launcher boundary after building, run:
+
+```sh
+node --test examples/crew/tests/launcher-observability.test.mjs
+```
+
+This local test exercises the actual launcher against controlled Crew and OTLP HTTP servers. Live Crew invocation export and Datadog ingestion or conversion require checks against the installed worker and backend. Inspect both service names and verify an actual Crew agent span in the backend. AgentUI's live Datadog qualification remains tracked in `agentui-pkbs`.
+
 See [OpenTelemetry JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/) for SDK concepts.

@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
 import { startBrowserHost } from '../../apps/host/build/tsc/server.js';
 import { readAgentConfiguration } from '../../apps/host/build/tsc/agent-config.js';
+import { readObservabilityConfiguration } from '../../apps/host/build/tsc/observability.js';
 import { crewProvider } from './dist/provider.js';
 
 const config = z.strictObject({ service: z.url(), memberId: z.uuid(), installationId: z.string().min(1),
@@ -13,6 +14,7 @@ const config = z.strictObject({ service: z.url(), memberId: z.uuid(), installati
 const instance = { namespace: 'crew', installationId: config.installationId, generation: config.generation, protocolVersion: '1' };
 const extension = crewProvider({ service: config.service, memberId: config.memberId, instance });
 const running = await startBrowserHost({ directory: resolve(config.directory), port: config.port,
+  observability: readObservabilityConfiguration(process.env),
   assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)),
   hostArtifactDirectory: fileURLToPath(new URL('../../apps/host/dist/', import.meta.url)),
   ...(config.nativeConfig ? { configuration: readAgentConfiguration(resolve(config.nativeConfig)) } : {}),

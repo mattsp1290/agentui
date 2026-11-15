@@ -1,19 +1,17 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
-import { createServer, request } from 'node:http';
+import { request } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { createInterface } from 'node:readline';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { createAgentObservations } from '../../apps/host/build/tsc/agent-observations.js';
 import { readObservabilityConfiguration } from '../../apps/host/build/tsc/observability.js';
-import { directCodexEnvironment } from '../../apps/host/build/tsc/native-environment.js';
+import { attributes, receiver } from './support/observability.mjs';
+import { exitWithin, launchProcess, startup } from './support/host-process.mjs';
 
-const root = new URL('../../', import.meta.url);
 const hostRequire = createRequire(new URL('../../apps/host/package.json', import.meta.url));
 const { InMemorySpanExporter, SimpleSpanProcessor, TracerProvider } = await import(hostRequire.resolve('@opentelemetry/sdk-trace'));
 const upstreamScope = { name: '@mattsp1290/switchboard', version: '0.0.0' };
@@ -140,23 +138,9 @@ async function until(predicate) {
   assert.fail('Timed out waiting for persisted native run');
 }
 
-function attributes(values = []) {
-  return Object.fromEntries(values.map(({ key, value }) => [key, value.stringValue ?? value.boolValue ?? Number(value.intValue)]));
-}
-
 test('bundled host exports upstream GenAI spans for persisted native runs with no private content', { timeout: 25_000 }, async t => {
-  const received = [];
-  const receiver = createServer((incoming, outgoing) => {
-    let body = '';
-    incoming.setEncoding('utf8').on('data', chunk => { body += chunk; });
-    incoming.once('end', () => {
-      received.push({ path: incoming.url, headers: incoming.headers, body: JSON.parse(body) });
-      outgoing.writeHead(200, { 'content-type': 'application/json' });
-      outgoing.end('{"partialSuccess":{}}');
-    });
-  });
-  await new Promise(resolve => receiver.listen(0, '127.0.0.1', resolve));
-  t.after(async () => { receiver.closeAllConnections(); await new Promise(resolve => receiver.close(resolve)); });
+  const collector = await receiver(t);
+  const received = collector.received;
   const directory = mkdtempSync(join(tmpdir(), 'agentui-genai-private-'));
   const workspace = join(directory, 'private-workspace-dc13a5');
   const bin = join(directory, 'bin'), data = join(directory, 'data'), log = join(directory, 'native-rpc.jsonl');
@@ -177,48 +161,21 @@ else {
   await import(pathToFileURL(${JSON.stringify(fixture)}).href);
 }
 `, { mode: 0o700 });
-  const children = [];
-  const environment = directCodexEnvironment();
-  const launch = args => {
-    const child = spawn(process.execPath, ['apps/host/dist/main.js', ...args, '--data-dir', data], {
-      cwd: root, env: { ...environment, PATH: `${bin}:${process.env.PATH ?? ''}`,
-        OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${receiver.address().port}`,
-        OTEL_EXPORTER_OTLP_HEADERS: 'x-host-general-token=private-host-general-credential',
-        OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-host-trace-token=private-host-trace-credential',
-        OTEL_RESOURCE_ATTRIBUTES: 'private.resource=private-host-resource',
-        OPENAI_API_KEY: 'private-native-provider-credential',
-        AGENTUI_DATADOG_LLMOBS: 'true' }, stdio: ['ignore', 'pipe', 'pipe'],
-    });
-    let stdout = '', stderr = '';
-    child.stdout.setEncoding('utf8').on('data', value => { stdout += value; });
-    child.stderr.setEncoding('utf8').on('data', value => { stderr += value; });
-    const exited = new Promise((resolve, reject) => {
-      child.once('error', reject);
-      child.once('exit', (code, signal) => resolve({ code, signal }));
-    });
-    const result = { child, exited, get stdout() { return stdout; }, get stderr() { return stderr; } };
-    children.push(result);
-    return result;
-  };
-  const stop = async process => {
-    if (process.child.exitCode !== null || process.child.signalCode !== null) return;
-    process.child.kill('SIGTERM');
-    const timer = setTimeout(() => process.child.kill('SIGKILL'), 3000);
-    try { await process.exited; } finally { clearTimeout(timer); }
-  };
-  t.after(async () => {
-    await Promise.all(children.map(stop));
-    rmSync(directory, { recursive: true, force: true });
+  const launch = args => launchProcess(t, ['apps/host/dist/main.js', ...args, '--data-dir', data], {
+    PATH: `${bin}:${process.env.PATH ?? ''}`,
+    OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint,
+    OTEL_EXPORTER_OTLP_HEADERS: 'x-host-general-token=private-host-general-credential',
+    OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-host-trace-token=private-host-trace-credential',
+    OTEL_RESOURCE_ATTRIBUTES: 'private.resource=private-host-resource',
+    OPENAI_API_KEY: 'private-native-provider-credential',
+    AGENTUI_DATADOG_LLMOBS: 'true',
   });
   const host = launch(['codex', '--port', '0', '--workspace', workspace]);
-  const lines = createInterface({ input: host.child.stdout });
-  const ready = await Promise.race([
-    new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))),
-    host.exited.then(() => { throw new Error(`Host failed to start ${host.stderr}`); }),
-  ]);
-  lines.close();
+  t.after(() => rmSync(directory, { recursive: true, force: true }));
+  const ready = await startup(host);
+  assert.equal(ready.kind, 'ready', host.stderr);
   const invitation = launch(['invite-native']);
-  assert.deepEqual(await invitation.exited, { code: 0, signal: null }, invitation.stderr);
+  await exitWithin(invitation);
   const code = JSON.parse(invitation.stdout).value.code;
   const call = (path, body, secret) => new Promise((resolve, reject) => {
     const outgoing = request(`${ready.origin}${path}`, { method: 'POST', headers: {
@@ -265,8 +222,8 @@ else {
     clientCommandId: 'private-command-cancel', body: { kind: 'cancel', runId: second } } });
   await until(() => events().some(event => event.kind === 'run-ended' && event.runId === second && event.outcome === 'interrupted'));
   const third = await send('private-command-third');
-  await stop(host);
-  assert.deepEqual(await host.exited, { code: 0, signal: null }, host.stderr);
+  host.process.kill('SIGTERM');
+  await exitWithin(host);
   const genai = [];
   for (const batch of received) {
     assert.equal(batch.path, '/v1/traces');
