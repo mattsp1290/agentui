@@ -78,3 +78,78 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await message.inputValue(), 'Copy this text before reloading');
   assert.equal(await send.isDisabled(), true);
 });
+
+test('Stop follows the persisted run, guards rapid clicks, preserves drafts and retains recovery after a lost reply', async t => {
+  const bundle = await build({ stdin: { contents: `import React from 'react';
+    import { createRoot } from 'react-dom/client';
+    import { flushSync } from 'react-dom';
+    import { ConversationView } from './apps/desktop/src/application/ConversationView.tsx';
+    const scope = { hostId: 'host', conversationId: 'original' };
+    let view = { submitting: [], draft: 'Follow-up draft', outbox: [], connection: { kind: 'connected' }, cursor: 1,
+      document: { domain: { messages: [], currentRun: { kind: 'running', runId: 'exact-native-run' } }, decisions: {}, receipts: {} } };
+    const listeners = new Set();
+    function update(next) { view = next; for (const listener of listeners) listener(); }
+    globalThis.cancellations = [];
+    globalThis.retries = [];
+    globalThis.operations = [];
+    const store = { getSnapshot: () => view, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
+      async setDraft(value) { update({ ...view, draft: value }); },
+      async cancel(runId) {
+        globalThis.cancellations.push({ scope, runId });
+        update({ ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'saved-stop-id', body: { kind: 'cancel', runId } }, draftRevision: null }] });
+        throw new Error('Reply lost');
+      }, async retry(id) { globalThis.retries.push(id); return { kind: 'rejected', reason: 'Unknown result' }; } };
+    let active = { scope, store };
+    const actions = { async submit(operation) { await new Promise(resolve => globalThis.operations.push(async () => { try { await operation(); } catch {} resolve(); })); }, async reconcile() {} };
+    let root;
+    const render = () => flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={true} storageFailure="" agent="codex" />));
+    globalThis.remount = () => { if (root) flushSync(() => root.unmount()); root = createRoot(document.getElementById('root')); render(); };
+    globalThis.acknowledgeStop = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { ...view.document.domain, currentRun: { kind: 'stopping', runId: 'exact-native-run', clientCommandId: 'saved-stop-id' } } } }));
+    globalThis.finish = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { messages: [{ messageId: 'partial', revision: 1, role: 'assistant', text: 'Kept partial output', complete: true }], currentRun: { kind: 'ended', runId: 'exact-native-run', outcome: 'interrupted' } } } }));
+    globalThis.switchConversation = () => { active = { scope: { ...scope, conversationId: 'other' }, store: { ...store, async cancel(runId) { throw new Error('Wrong conversation targeted'); } } }; render(); };
+    globalThis.remount();`, resolveDir: root, loader: 'jsx' },
+    bundle: true, write: false, format: 'iife', jsx: 'automatic',
+    define: { 'process.env.NODE_ENV': '"production"' } });
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  await page.setContent('<!doctype html><div id="root"></div>');
+  await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  const send = page.getByRole('button', { name: 'Send', exact: true });
+  assert.equal(await send.isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).isEnabled(), true);
+  await page.evaluate(() => globalThis.remount());
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).isEnabled(), true);
+  await page.evaluate(() => {
+    const button = [...document.querySelectorAll('button')].find(button => button.textContent === 'Stop');
+    button.click(); button.click();
+  });
+  assert.equal(await page.evaluate(() => globalThis.operations.length), 1);
+  assert.equal(await page.getByRole('button', { name: 'Stopping…', exact: true }).isDisabled(), true);
+  const editor = page.getByRole('textbox', { name: 'Message', exact: true });
+  await editor.fill('Keep this follow-up');
+  await page.evaluate(async () => { globalThis.switchConversation(); await globalThis.operations.shift()(); });
+  assert.deepEqual(await page.evaluate(() => globalThis.cancellations), [
+    { scope: { hostId: 'host', conversationId: 'original' }, runId: 'exact-native-run' },
+  ]);
+  await page.evaluate(() => globalThis.remount());
+  assert.equal(await page.getByRole('button', { name: 'Stopping…', exact: true }).isDisabled(), true);
+  assert.equal(await send.isDisabled(), true);
+  assert.equal(await editor.inputValue(), 'Keep this follow-up');
+  const recovery = page.getByRole('region', { name: 'Command recovery', exact: true });
+  assert.match(await recovery.textContent(), /saved-stop-id/);
+  await recovery.getByRole('button', { name: 'Retry original command', exact: true }).click();
+  await page.evaluate(async () => globalThis.operations.shift()());
+  assert.deepEqual(await page.evaluate(() => globalThis.retries), ['saved-stop-id']);
+  await page.evaluate(() => globalThis.acknowledgeStop());
+  assert.equal(await recovery.count(), 0);
+  assert.equal(await send.isDisabled(), true);
+  await page.evaluate(() => globalThis.remount());
+  assert.equal(await page.getByRole('button', { name: 'Stopping…', exact: true }).isDisabled(), true);
+  assert.equal(await send.isDisabled(), true);
+  await page.evaluate(() => globalThis.finish());
+  assert.equal(await page.getByRole('button', { name: /Stop/ }).count(), 0);
+  assert.equal(await send.isEnabled(), true);
+  assert.equal(await editor.inputValue(), 'Keep this follow-up');
+  assert.match(await page.getByLabel('Messages').textContent(), /Kept partial output/);
+});

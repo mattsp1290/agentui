@@ -76,6 +76,8 @@ test('one failed append seals stored parts and interrupts only its turn', async 
   await f.port.submit(command('first'));
   await until(() => rejected && f.messages().some(message => /could not store/.test(message.text)));
   assert.ok(f.messages().every(message => message.complete));
+  assert.equal(f.document().domain.currentRun.kind, 'ended');
+  assert.equal(f.document().domain.currentRun.outcome, 'failed');
   const second = await f.host.conversation(other).submit(command('second', { kind: 'send', text: 'hello' }, other));
   assert.equal(second.receipt.state.kind, 'completed');
   await until(() => f.messages(other).some(message => message.text === 'Hello' && message.complete));

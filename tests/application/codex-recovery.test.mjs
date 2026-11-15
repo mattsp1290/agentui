@@ -138,34 +138,44 @@ test('restart pages all conversations and preserves histories with a different w
   assert.deepEqual(f.dispatches, []);
 });
 
-test('a full default snapshot still finishes the old stream and allows startup without a notice', async t => {
-  const f = fixture(t), original = f.open();
-  original.createConversation(scope, installation);
-  for (let index = 0; index < 63; index++) {
-    original.append(scope, { ...empty(), events: [message(`complete-${index}`, 'x'.repeat(63_000), true)] });
-  }
-  const before = original.inspect(scope).snapshot;
-  const last = { messageId: 'partial', revision: 1, role: 'assistant', text: '', complete: false };
-  const withLast = { ...before, cursor: Number.MAX_SAFE_INTEGER, document: { ...before.document,
-    domain: { messages: [...before.document.domain.messages, last] } } };
-  last.text = 'x'.repeat(HOST_DEFAULT_SNAPSHOT_BYTES - Buffer.byteLength(canonicalJson(withLast)) - 10);
-  original.append(scope, { ...empty(), events: [{ kind: 'message-updated', ...last }] });
-  original.close();
-  await original.drained;
-  const reopened = f.open(), warnings = [];
-  t.mock.method(process, 'emitWarning', (warning, options) => { warnings.push({ warning, options }); });
-  assert.doesNotThrow(() => recoverCodexConversations(reopened, scope.hostId, installation));
-  const recovered = reopened.inspect(scope).snapshot;
-  assert.deepEqual(recovered.document.domain.messages.at(-1), { ...last, revision: 2, complete: true });
-  assert.equal(recovered.document.domain.messages.length, 64);
-  assert.equal(warnings.length, 1);
-  assert.equal(warnings[0].options.code, 'AGENTUI_CODEX_RECOVERY_CAPACITY');
-  recoverCodexConversations(reopened, scope.hostId, installation);
-  assert.equal(warnings.length, 1);
-  const fresh = { ...scope, conversationId: 'fresh' };
-  reopened.createConversation(fresh, installation);
-  assert.equal((await reopened.conversation(fresh).submit(command('fresh-send', undefined, fresh))).receipt.state.kind, 'completed');
-});
+for (const activeRun of [false, true]) {
+  test(`a full default snapshot ${activeRun ? 'with an active run ' : ''}still finishes the old stream and allows startup without a notice`, async t => {
+    const f = fixture(t), original = f.open();
+    original.createConversation(scope, installation);
+    if (activeRun) original.append(scope, { ...empty(), events: [
+      { kind: 'run-started', runId: 'full-run', previousRunId: null },
+    ] });
+    const fresh = { ...scope, conversationId: 'fresh' };
+    original.createConversation(fresh, installation);
+    original.append(fresh, { ...empty(), events: [message('other-partial', 'Recover this conversation too')] });
+    for (let index = 0; index < 63; index++) {
+      original.append(scope, { ...empty(), events: [message(`complete-${index}`, 'x'.repeat(63_000), true)] });
+    }
+    const before = original.inspect(scope).snapshot;
+    const last = { messageId: 'partial', revision: 1, role: 'assistant', text: '', complete: false };
+    const withLast = { ...before, cursor: Number.MAX_SAFE_INTEGER, document: { ...before.document,
+      domain: { ...before.document.domain, messages: [...before.document.domain.messages, last] } } };
+    last.text = 'x'.repeat(HOST_DEFAULT_SNAPSHOT_BYTES - Buffer.byteLength(canonicalJson(withLast)) - 10);
+    original.append(scope, { ...empty(), events: [{ kind: 'message-updated', ...last }] });
+    original.close();
+    await original.drained;
+    const reopened = f.open(), warnings = [];
+    t.mock.method(process, 'emitWarning', (warning, options) => { warnings.push({ warning, options }); });
+    assert.doesNotThrow(() => recoverCodexConversations(reopened, scope.hostId, installation));
+    const recovered = reopened.inspect(scope).snapshot;
+    assert.deepEqual(recovered.document.domain.messages.at(-1), { ...last, revision: 2, complete: true });
+    assert.equal(recovered.document.domain.messages.length, 64);
+    assert.equal(warnings.length, 1);
+    assert.equal(warnings[0].options.code, 'AGENTUI_CODEX_RECOVERY_CAPACITY');
+    assert.deepEqual(recovered.document.domain.currentRun, activeRun ? { kind: 'running', runId: 'full-run' } : null);
+    const other = reopened.inspect(fresh).snapshot.document.domain.messages;
+    assert.equal(other[0].complete, true);
+    assert.match(other[1].text, /connection was interrupted/);
+    recoverCodexConversations(reopened, scope.hostId, installation);
+    assert.equal(warnings.length, activeRun ? 2 : 1);
+    assert.equal((await reopened.conversation(fresh).submit(command('fresh-send', undefined, fresh))).receipt.state.kind, 'completed');
+  });
+}
 
 test('restart propagates corrupt stored transcript errors', async t => {
   const f = fixture(t), original = f.open();
@@ -180,4 +190,48 @@ test('restart propagates corrupt stored transcript errors', async t => {
   } finally { db.close(); }
   const reopened = f.open();
   assert.throws(() => recoverCodexConversations(reopened, scope.hostId, installation), /Invalid|Expected|Unexpected|Missing/);
+});
+
+for (const kind of ['running', 'stopping']) {
+  test(`restart ends a ${kind} run before any response text`, async t => {
+    const f = fixture(t), original = f.open();
+    original.createConversation(scope, installation);
+    const runId = 'silent-run';
+    original.append(scope, { ...empty(), events: [
+      { kind: 'run-started', runId, previousRunId: null },
+      ...(kind === 'stopping' ? [{ kind: 'run-stop-requested', runId, clientCommandId: 'old-stop' }] : []),
+    ] });
+    original.close();
+    await original.drained;
+    const reopened = f.open();
+    recoverCodexConversations(reopened, scope.hostId, installation);
+    const recovered = reopened.inspect(scope).snapshot;
+    assert.deepEqual(recovered.document.domain.currentRun, { kind: 'ended', runId, outcome: 'connection-lost' });
+    assert.match(recovered.document.domain.messages[0].text, /connection was interrupted/);
+    recoverCodexConversations(reopened, scope.hostId, installation);
+    assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
+    assert.deepEqual(f.dispatches, []);
+  });
+}
+
+test('restart accepts an existing message-only SQLite snapshot at projection version one', async t => {
+  const f = fixture(t), original = f.open();
+  original.createConversation(scope, installation);
+  original.close();
+  await original.drained;
+  const db = new DatabaseSync(f.path);
+  try {
+    db.prepare('UPDATE conversations SET document=?').run(JSON.stringify({
+      domain: { messages: [{ messageId: 'legacy', revision: 1, role: 'assistant', text: 'Old partial', complete: false }] },
+      receipts: {}, decisions: {},
+    }));
+  } finally { db.close(); }
+  const reopened = f.open();
+  recoverCodexConversations(reopened, scope.hostId, installation);
+  const recovered = reopened.inspect(scope).snapshot;
+  assert.equal(recovered.projectionVersion, 1);
+  assert.equal(recovered.document.domain.currentRun, null);
+  assert.deepEqual(recovered.document.domain.messages[0], {
+    messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,
+  });
 });

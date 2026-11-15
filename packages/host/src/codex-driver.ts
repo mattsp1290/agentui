@@ -3,18 +3,12 @@ import { resolve } from 'node:path';
 import type { ClientCommand, ConversationScope } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { canonicalJson } from '@agentui/contracts';
+import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversation';
 import { nonempty, object } from './codec.js';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
 
-export interface CodexTranscriptEvent {
-  readonly kind: 'message-updated';
-  readonly messageId: string;
-  readonly revision: number;
-  readonly role: 'user' | 'assistant';
-  readonly text: string;
-  readonly complete: boolean;
-}
+export type CodexTranscriptEvent = TranscriptEvent;
 export interface CodexDriverOptions {
   readonly cwd: string;
   readonly version: string;
@@ -25,9 +19,11 @@ export interface CodexDriverOptions {
 interface ActiveTurn {
   readonly scope: ConversationScope;
   readonly threadId: string;
+  readonly previousRunId: string | null;
   readonly messages: Map<string, string>;
   readonly fileChanges: Map<string, string>;
-  readonly rendered: CodexTranscriptEvent[];
+  readonly rendered: Extract<TranscriptEvent, { kind: 'message-updated' }>[];
+  stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   revision: number;
   complete: boolean;
@@ -110,7 +106,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     if (closing) return;
     options.append(turn.scope, { events, runs, decisions });
   }
-  function renderMessage(turn: ActiveTurn, newRun = false) {
+  function renderMessage(turn: ActiveTurn) {
     clearTimeout(turn.timer); turn.timer = undefined;
     if (!turn.run) return;
     const parts = messageParts([...turn.messages.values()].join('\n\n'));
@@ -119,10 +115,10 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       const text = parts[index] ?? '';
       const previous = turn.rendered[index];
       if (previous?.text === text && previous.complete === turn.complete) continue;
-      const event: CodexTranscriptEvent = { kind: 'message-updated',
+      const event: Extract<TranscriptEvent, { kind: 'message-updated' }> = { kind: 'message-updated',
         messageId: `${turn.threadId}:${turn.run.identity.runId}:assistant${index === 0 ? '' : `:${index}`}`,
         role: 'assistant', text, revision: ++turn.revision, complete: turn.complete };
-      publish(turn, [event], [], newRun && index === 0 ? [turn.run] : []);
+      publish(turn, [event]);
       turn.rendered[index] = event;
     }
   }
@@ -150,6 +146,10 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     turn.messages.set(`status:${randomUUID()}`, text);
     turn.complete = true;
     renderMessage(turn);
+    endRun(turn, 'connection-lost');
+  }
+  function endRun(turn: ActiveTurn, outcome: RunOutcome) {
+    if (turn.run) publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome }]);
   }
   function status(turn: ActiveTurn, text: string) {
     message(turn, `status:${randomUUID()}`, text);
@@ -164,6 +164,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       const event = { ...previous, revision: ++turn.revision, complete: true };
       try { publish(turn, [event]); turn.rendered[index] = event; } catch { /* Try the remaining stored parts. */ }
     }
+    try { endRun(turn, 'failed'); } catch { /* Restart recovery closes an unstorable run. */ }
     try {
       publish(turn, [{ kind: 'message-updated', messageId: `codex-storage:${randomUUID()}`,
         revision: 1, role: 'assistant', complete: true,
@@ -191,7 +192,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     if (turn.run && turn.run.identity.runId !== turnId) throw new Error('Unexpected Codex turn');
     if (!turn.run) {
       turn.run = value;
-      renderMessage(turn, true);
+      publish(turn, [{ kind: 'run-started', runId: turnId, previousRunId: turn.previousRunId }], [], [value]);
     }
     return value;
   }
@@ -210,7 +211,9 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     const turn = active.get(nonempty(params.threadId));
     if (!turn) return;
     if (method === 'turn/started') {
-      run(turn, nonempty(object(params.turn).id));
+      const turnId = nonempty(object(params.turn).id);
+      if (turn.complete || turn.previousRunId === turnId || (turn.run && turn.run.identity.runId !== turnId)) return;
+      run(turn, turnId);
     } else if (method === 'item/agentMessage/delta') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const id = nonempty(params.itemId);
@@ -243,6 +246,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       expireApprovals(turn);
       turn.complete = true;
       renderMessage(turn);
+      endRun(turn, completed.status === 'interrupted' ? 'interrupted' : completed.status === 'failed' ? 'failed' : 'completed');
       active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
     } else if (method === 'error' && params.willRetry !== true) {
       status(turn, 'Codex reported an error while responding.');
@@ -302,7 +306,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, messages: new Map(), fileChanges: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false };
+      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), fileChanges: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);
@@ -330,6 +334,12 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     source: 'codex', installation,
     capability(command) {
       if (closing || disconnected) return { kind: 'unsupported', reason: 'Codex is disconnected. Restart the host to connect again.' };
+      if (command.body.kind === 'cancel') {
+        const runId = command.body.runId;
+        const turn = [...active.values()].find(value => value.run?.identity.runId === runId && scopeKey(value.scope) === scopeKey(command.scope));
+        if (!turn || turn.complete) return { kind: 'unsupported', reason: 'Codex turn is no longer active' };
+        if (turn.stopCommandId) return { kind: 'unsupported', reason: 'Codex is already stopping this response.' };
+      }
       if (command.body.kind === 'send' && busy.has(scopeKey(command.scope))) return { kind: 'unsupported', reason: 'Codex is still responding. Wait for it to finish.' };
       return { kind: 'supported' };
     },
@@ -360,9 +370,26 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
           if (!target.run) throw new Error('Cancel target is missing');
           const threadId = target.run.reference.opaque;
           const turn = active.get(threadId);
-          if (!turn || turn.run?.identity.runId !== command.body.runId) throw new Error('Codex turn is no longer active');
-          try { renderMessage(turn); } catch { outputFailed(turn); }
-          await rpc.request('turn/interrupt', { threadId, turnId: command.body.runId });
+          if (!turn || turn.complete || turn.run?.identity.runId !== command.body.runId ||
+            target.run.identity.runId !== command.body.runId || scopeKey(turn.scope) !== scopeKey(command.scope)) {
+            throw new Error('Codex turn is no longer active');
+          }
+          if (turn.stopCommandId) throw new Error('Codex is already stopping this response.');
+          turn.stopCommandId = command.clientCommandId;
+          try {
+            publish(turn, [{ kind: 'run-stop-requested', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
+          } catch (error) { turn.stopCommandId = null; throw error; }
+          try {
+            await rpc.request('turn/interrupt', { threadId, turnId: command.body.runId });
+          } catch (error) {
+            if (!(error instanceof CodexRpcError)) throw error;
+            if (!turn.complete) {
+              publish(turn, [{ kind: 'run-stop-rejected', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
+              turn.stopCommandId = null;
+            }
+            return { ...acknowledged(command, target, empty(), command.body.runId),
+              result: { kind: 'rejected', reason: `Codex could not stop this response: ${bounded(error.message, 1_000)}` } };
+          }
           return acknowledged(command, target, empty(), command.body.runId);
         }
       }

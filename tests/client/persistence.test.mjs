@@ -224,3 +224,28 @@ test('failed retry storage check prevents submission and retains the durable ide
   assert.deepEqual(drafts.value, before);
   assert.deepEqual(store.getSnapshot().outbox, before.outbox);
 });
+
+test('a lost Stop reply keeps its exact run and command ID after recreation without changing the draft', async () => {
+  const first = fixture();
+  await first.store.setDraft('My next question');
+  first.port.submit = async command => {
+    first.port.submitted.push(structuredClone(command));
+    throw new Error('Stop reply lost');
+  };
+  await assert.rejects(first.store.cancel('native-turn-id'), /Stop reply lost/);
+  const saved = first.port.submitted[0];
+  assert.deepEqual(saved.body, { kind: 'cancel', runId: 'native-turn-id' });
+  const second = fixture({ drafts: storage(first.drafts.value) });
+  await second.store.ready;
+  assert.deepEqual(second.port.submitted, []);
+  assert.equal(second.store.getSnapshot().draft, 'My next question');
+  assert.deepEqual(second.store.getSnapshot().outbox[0].command, saved);
+  second.port.submit = async command => {
+    second.port.submitted.push(structuredClone(command));
+    return { kind: 'receipt', receipt: receipt(command, 'uncertain') };
+  };
+  await second.store.retry(saved.clientCommandId);
+  assert.deepEqual(second.port.submitted, [saved]);
+  assert.deepEqual(second.store.getSnapshot().outbox[0].command, saved);
+  assert.equal(second.store.getSnapshot().draft, 'My next question');
+});
