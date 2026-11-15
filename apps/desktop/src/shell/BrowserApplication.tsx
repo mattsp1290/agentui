@@ -16,10 +16,21 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const { controller, snapshot: app } = useApplication();
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
+  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
+  const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
+  const pendingScope = app.saved.pendingCreation?.scope;
+  const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
+  const recoveryAgent = recoveryChoice?.scopeKey === pendingScopeKey ? recoveryChoice.agentId : undefined;
   const enabled = applicationEnabled(app);
+  const metadata = 'metadata' in app.host ? app.host.metadata : null;
+  const choices = metadata?.agents ?? [];
+  const selected = choices.find(agent => agent.id === selectedAgent) ?? choices.find(agent => agent.id === metadata?.defaultAgentId);
+  const options = choices.map(agent => <option key={agent.id} value={agent.id} disabled={agent.availability.kind !== 'ready'}>
+    {agent.label}{agent.availability.kind !== 'ready' ? ' · Unavailable' : ''}
+  </option>);
   const searchConnection = app.host.kind === 'ready' && !app.storageFailure
     ? JSON.stringify([app.host.metadata.hostId, app.host.metadata.principalId]) : null;
-  const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
+  const runtime = app.active?.agent.runtime ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
   const { agent, presentation } = agentPresentation(runtime);
   const conversation = app.active
     ? <ConversationView
@@ -42,10 +53,15 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.host.kind === 'unpaired' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
-        <button disabled={!enabled || app.saved.pendingCreation !== null} onClick={() => void controller.create()}>{agent === 'recorded' ? 'New recorded conversation' : 'New conversation'}</button>
+        <label className="agent-choice">Agent for new chat<select aria-label="Agent for new chat" disabled={!enabled || app.saved.pendingCreation !== null} value={selected?.id ?? ''} onChange={event => setSelectedAgent(event.target.value)}>{options}</select></label>
+        <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected?.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
       </div>
-      {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.conversationId} needs confirmation. Recovery uses the saved conversation ID.</p>
-        <button disabled={!enabled} onClick={() => void controller.recoverCreation()}>Recover creation</button>
+      {selected?.availability.kind === 'unavailable' && <p role="note">{selected.availability.reason}</p>}
+      {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
+        <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
+          <option value="">Check the saved chat first</option>{options}
+        </select></label>
+        <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
       </div>}
       <ConversationSearch controller={controller} connectionKey={searchConnection} enabled={enabled} active={app.active?.scope ?? null}>
       {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">

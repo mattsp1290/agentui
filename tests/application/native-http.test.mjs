@@ -1,3 +1,6 @@
+import { describeAgent } from '../../apps/host/build/tsc/agents.js';
+import { recordedInstallation } from '@agentui/host/recorded';
+const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, watch } from 'node:fs';
@@ -110,17 +113,17 @@ test('native loopback routes reject ambiguous credentials, class substitution an
   const scope = { hostId: f.hostId, conversationId: 'native-boundary' };
   for (const body of [
     { op: 'pair', code: invitation.code }, { op: 'metadata', secret: 'rejected' },
-    { op: 'create', scope: { ...scope, extra: true } },
+    { op: 'create', agentId: recordedAgentId, scope: { ...scope, extra: true } },
     { op: 'submit', command: { version: 1, scope, clientCommandId: 'invalid', body: { kind: 'send', text: 'hello', extra: true } } },
     `${' '.repeat(410_000)}{"op":"metadata"}`, '{',
   ]) denied(await f.call('/native/v1', body, auth));
   denied(await f.call('/native/v1?secret=not-reflected', { op: 'metadata' }, auth));
-  denied(await f.call('/native/v1', { op: 'create', scope: { ...scope, hostId: 'wrong' } }, auth), 403);
+  denied(await f.call('/native/v1', { op: 'create', agentId: recordedAgentId, scope: { ...scope, hostId: 'wrong' } }, auth), 403);
   assert.equal((await f.call('/native/v1', { op: 'metadata' }, auth)).body.value.principalId, device.principalId);
   const devices = await f.control('devices');
   const expires = devices.find(value => value.id === device.principalId).expires;
   assert.ok(expires > Date.now() + 3_500_000 && expires <= Date.now() + 3_600_000);
-  assert.equal((await f.call('/native/v1', { op: 'create', scope }, auth)).status, 200);
+  assert.equal((await f.call('/native/v1', { op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
   const { feedId } = (await f.call('/native/v1', { op: 'watch', scope, after: null, projectionVersion: 1 }, auth)).body.value;
   denied(await f.call('/api/v1', { op: 'pull', feedId, ack: null }, { Origin: f.origin, Cookie: cookie }));
   const page = (await f.call('/native/v1', { op: 'pull', feedId, ack: null }, auth)).body.value;

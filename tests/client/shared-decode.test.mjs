@@ -7,7 +7,7 @@ import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdenti
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 const payload = () => manifestPayload({ schemaVersion: 1, platform: 'browser-development', sourceRevision: 'a'.repeat(64),
-  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: 1, extensionSdkVersion: '0.0.0',
+  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: 2, extensionSdkVersion: '0.0.0',
   nativeRuntime: BROWSER_RUNTIME, artifactRuntime: BROWSER_RUNTIME, lockSha256: 'c'.repeat(64),
   assets: [{ path: 'browser.html', sha256: 'd'.repeat(64) }],
 });

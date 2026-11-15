@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { realpathSync } from 'node:fs';
-import { PI_RUNTIME } from '@agentui/contracts/compatibility';
+import { piInstallation } from './native-installations.js';
 import { identifier, record } from '@agentui/contracts/decode';
 import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand, ConversationScope } from '@agentui/contracts';
@@ -37,13 +36,10 @@ const empty = (): HostOutput<TranscriptEvent> => ({ events: [], runs: [], decisi
 export async function createPiDriver(options: PiDriverOptions): Promise<ProviderDriver<TranscriptEvent> & {
   readonly installation: Installation; close(): Promise<void>;
 }> {
-  const cwd = realpathSync(options.cwd);
+  const installation = piInstallation(options.cwd);
+  const cwd = installation.binding.authorizedScope;
   const runtime = await createPiRuntime({ cwd, sessionDirectory: options.sessionDirectory,
     apiKey: options.apiKey, provider: 'opencode-go', model: 'glm-5.3' });
-  const installation: Installation = { installationId: 'pi-opencode-go-glm-5-3-v1', binding: {
-    engine: PI_RUNTIME.engine, nativeVersion: PI_RUNTIME.version, account: 'opencode-go:glm-5.3',
-    authorizedScope: cwd, nativeFormat: PI_RUNTIME.format,
-  } };
   const active = new Map<string, Turn>();
   const busy = new Set<string>();
   const cleanupFailed = new Set<string>();

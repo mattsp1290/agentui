@@ -17,7 +17,7 @@ test('repeated output quarantine retains newly learned native identity', async t
   const native = { namespace: 'recorded', id: 'confirmed-operation' };
   const result = completed({ ...empty(), events: [{ nonsense: 'invalid output' }] });
   let target;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_command, captured) => {
       target = captured; entered.resolve(); await release.promise;
       return { kind: 'conclusive', evidence: evidence(target, native), result };
@@ -44,7 +44,7 @@ test('repeated output quarantine retains newly learned native identity', async t
 test('a failed lookup returns a receipt settled by another connection during the wait', async t => {
   const f = fixture(t), entered = deferred(), release = deferred();
   let target;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_command, captured) => { target = captured; return { kind: 'accepted', evidence: evidence(target) }; },
     lookup: async () => { entered.resolve(); await release.promise; throw new Error('lookup disconnected'); },
   };
@@ -75,7 +75,7 @@ for (const initialKnown of [false, true]) {
   test(`native id can be ${initialKnown ? 'omitted by lookup' : 'discovered by lookup'}`, async t => {
     const f = fixture(t); let target;
     const native = { namespace: 'recorded', id: 'native-id' };
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
       dispatch: async (_command, captured) => { target = captured; return { kind: 'accepted', evidence: evidence(target, initialKnown ? native : null) }; },
       lookup: async () => ({ kind: 'conclusive', evidence: evidence(target, initialKnown ? null : native, 'authoritative-native-lookup'), result: completed(note('once')) }),
     };
@@ -90,7 +90,7 @@ for (const initialKnown of [false, true]) {
   test(`late original result merges native id with ${initialKnown ? 'known' : 'unknown'} lookup id`, async t => {
     const f = fixture(t), entered = deferred(), release = deferred(); let target;
     const native = { namespace: 'recorded', id: 'native-id' };
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
       dispatch: async (_command, captured) => { target = captured; entered.resolve(); await release.promise;
         return { kind: 'conclusive', evidence: evidence(target, initialKnown ? null : native), result: completed(note('once')) }; },
       lookup: async () => ({ kind: 'conclusive', evidence: evidence(target, initialKnown ? native : null, 'authoritative-native-lookup'), result: completed(note('once')) }),
@@ -106,7 +106,7 @@ for (const initialKnown of [false, true]) {
 for (const lookup of [undefined, async () => { throw new Error('offline'); }]) {
   test(`live reconciliation stays pending until dispatch reports uncertainty with ${lookup ? 'failing' : 'absent'} lookup`, async t => {
     const f = fixture(t), entered = deferred(), release = deferred();
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }), lookup,
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }), lookup,
       dispatch: async () => { entered.resolve(); await release.promise; return { kind: 'outcome-unknown' }; },
     };
     const host = f.open({ driver }); host.createConversation(scope, installed);
@@ -125,7 +125,7 @@ for (const lookup of [undefined, async () => { throw new Error('offline'); }]) {
 test('invalid provider output is quarantined with evidence and can apply after projection repair', async t => {
   const f = fixture(t); let entries = 0, repaired = false;
   const original = { nonsense: 'unrecognized' };
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_command, target) => { entries++; return { kind: 'conclusive', evidence: evidence(target), result: completed({ ...empty(), events: [original] }) }; },
   };
   const host = f.open({ driver, projection: { ...projection, decodeEvent: value => repaired ? { kind: 'note-added', text: value.nonsense } : projection.decodeEvent(value) } });
@@ -218,7 +218,7 @@ test('synchronous subscriber bursts preserve the first admitted watcher', async 
 test('a faulty non-JSON driver result remains single-attempt and can journal uncertainty', async t => {
   const f = fixture(t); let entries = 0;
   const cycle = {}; cycle.self = cycle;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_command, target) => { entries++; return { kind: 'conclusive', evidence: evidence(target), result: completed({ ...empty(), events: [cycle] }) }; },
   };
   const host = f.open({ driver }); host.createConversation(scope, installed);
@@ -238,7 +238,7 @@ test('snapshot capacity admits the exact reserved envelope size and rejects one 
     document: { domain: [], receipts: { boundary: admitted }, decisions: {} } })) + 128;
   for (const snapshotBytes of [boundary - 1, boundary]) {
     const f = fixture(t); let entries = 0;
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
       dispatch: async (_command, target) => { entries++; return { kind: 'conclusive', evidence: evidence(target), result: completed(note('x'.repeat(5000))) }; },
     };
     const host = f.open({ driver, budgets: { snapshotBytes } }); host.createConversation(scope, installed);
@@ -256,7 +256,7 @@ test('snapshot capacity admits the exact reserved envelope size and rejects one 
 
 test('terminal projection retention preserves historical receipt lookup after reopening', async t => {
   const f = fixture(t);
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_command, target) => ({ kind: 'conclusive', evidence: evidence(target), result: completed(empty()) }),
   };
   const host = f.open({ driver }); host.createConversation(scope, installed);
@@ -279,7 +279,7 @@ test('timer budgets reject values that Node would clamp to one millisecond', t =
 for (const action of ['submit', 'reconcile']) {
   test(`closing the host allows in-flight ${action} evidence to settle before closing storage`, async t => {
     const f = fixture(t), entered = deferred(), release = deferred();
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
       dispatch: async (_command, target) => {
         if (action !== 'submit') return { kind: 'outcome-unknown' };
         entered.resolve(); await release.promise;

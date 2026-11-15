@@ -21,7 +21,7 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const store = { getSnapshot: () => view, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
       setDraft: value => new Promise((resolve, reject) => globalThis.edits.push({ value, reject,
         resolve() { view = { ...view, draft: value }; for (const listener of listeners) listener(); resolve(); } })) };
-    const active = { scope, store };
+    const active = { scope, store, agent: { commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } } };
     globalThis.checked = [];
     let storageFailure = '';
     const actions = { reconcile: async id => globalThis.checked.push(id) };
@@ -100,14 +100,14 @@ test(`${agent} Stop follows the persisted run, guards rapid clicks, preserves dr
         update({ ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'saved-stop-id', body: { kind: 'cancel', runId } }, draftRevision: null }] });
         throw new Error('Reply lost');
       }, async retry(id) { globalThis.retries.push(id); return { kind: 'rejected', reason: 'Unknown result' }; } };
-    let active = { scope, store };
+    let active = { scope, store, agent: { commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } } };
     const actions = { async submit(operation) { await new Promise(resolve => globalThis.operations.push(async () => { try { await operation(); } catch {} resolve(); })); }, async reconcile() {} };
     let root;
     const render = () => flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={true} storageFailure="" agent=${JSON.stringify(agent)} />));
     globalThis.remount = () => { if (root) flushSync(() => root.unmount()); root = createRoot(document.getElementById('root')); render(); };
     globalThis.acknowledgeStop = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { ...view.document.domain, currentRun: { kind: 'stopping', runId: 'exact-native-run', clientCommandId: 'saved-stop-id' } } } }));
     globalThis.finish = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { messages: [{ messageId: 'partial', revision: 1, role: 'assistant', text: 'Kept partial output', complete: true }], currentRun: { kind: 'ended', runId: 'exact-native-run', outcome: 'interrupted' } } } }));
-    globalThis.switchConversation = () => { active = { scope: { ...scope, conversationId: 'other' }, store: { ...store, async cancel(runId) { throw new Error('Wrong conversation targeted'); } } }; render(); };
+    globalThis.switchConversation = () => { active = { ...active, scope: { ...scope, conversationId: 'other' }, store: { ...store, async cancel(runId) { throw new Error('Wrong conversation targeted'); } } }; render(); };
     globalThis.remount();`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' } });

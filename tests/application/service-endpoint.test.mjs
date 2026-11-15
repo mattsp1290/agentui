@@ -1,3 +1,6 @@
+import { describeAgent } from '../../apps/host/build/tsc/agents.js';
+import { recordedInstallation } from '@agentui/host/recorded';
+const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -58,7 +61,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     assert.deepEqual(await call({ op: 'metadata', extra: diagnostic }), {
       status: 400, body: { ok: false, error: { kind: 'invalid', message: 'Invalid host request' } },
     });
-    assert.equal((await call({ op: 'create', scope: { hostId: 'another-host', conversationId: 'forbidden' } })).status, 403);
+    assert.equal((await call({ op: 'create', agentId: recordedAgentId, scope: { hostId: 'another-host', conversationId: 'forbidden' } })).status, 403);
     closing = true;
     assert.deepEqual(await call({ op: 'metadata' }), {
       status: 503, body: { ok: false, error: { kind: 'unavailable', message: 'Host is shutting down' } },

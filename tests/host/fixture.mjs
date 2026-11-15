@@ -33,7 +33,7 @@ export const command = (id, body = { kind: 'send', text: 'hello' }, conversation
 export function fixture(t, overrides = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'agentui-host-'));
   const path = join(dir, 'host.sqlite'), backendPath = join(dir, 'recorded.jsonl');
-  const driver = createRecordedDriver({ backendPath, decodeEvent: projection.decodeEvent, resolve: async cmd => completed(note(cmd.body.kind)), ...overrides });
+  const driver = createRecordedDriver({ installation: installed, backendPath, decodeEvent: projection.decodeEvent, resolve: async cmd => completed(note(cmd.body.kind)), ...overrides });
   const hosts = [];
   const open = options => {
     const host = openLocalHost({ path, projection, driver, authorize: () => true, ...options });

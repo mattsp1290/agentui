@@ -35,7 +35,7 @@ const metadata = await connection.metadata();
 assert.equal(metadata.hostId, input.hostId);
 assert.equal(metadata.principalId, credential.principalId);
 const scope = { hostId: input.hostId, conversationId: 'native-process-lifetime' };
-await connection.create(scope);
+await connection.create(scope, metadata.defaultAgentId);
 const port = connection.conversation(scope);
 let feed;
 const snapshot = new Promise(resolve => {

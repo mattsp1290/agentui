@@ -117,7 +117,7 @@ if (args.length === 1 && args[0] === '--version') {
     assert.equal(metadata.status, 200);
     assert.deepEqual(metadata.body.value.compatibility.nativeRuntime, CODEX_RUNTIME, client.conversationId);
     const scope = { hostId: ready.hostId, conversationId: client.conversationId };
-    const created = await call(client.path, { op: 'create', scope }, client.headers);
+    const created = await call(client.path, { op: 'create', scope, agentId: metadata.body.value.defaultAgentId }, client.headers);
     assert.equal(created.status, 200);
     assert.deepEqual(created.body, { ok: true, value: scope });
   }

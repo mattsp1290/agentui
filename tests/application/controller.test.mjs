@@ -1,16 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@agentui/contracts/service';
-import { CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
-const empty = () => ({ version: 1, route: null, pendingCreation: null });
+const empty = () => ({ version: 2, route: null, pendingCreation: null });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture() {
-  const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
+  const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { runtime: RECORDED_RUNTIME, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -28,13 +28,15 @@ function fixture() {
     leases.push(owner);
     return owner;
   }
+  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: '0.0.0',
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
-    async create(value) { created.push(value); await behavior.create(); return value; },
+    async create(value, agentId) { created.push(value); selected.push(agentId); captured.set(value.conversationId, descriptor(agentId)); await behavior.create(); return value; },
+    async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
@@ -44,7 +46,7 @@ function fixture() {
   };
   const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
     ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => lease(id, failure) }, createId: () => `id-${++nextId}` });
-  return { app, views, drafts, leases, created, submitted, cursors, unauthorized, feeds, behavior,
+  return { app, views, drafts, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
 
@@ -86,11 +88,11 @@ test('creation recovery persists and reuses the original identity before sending
   const f = fixture(); t.after(() => f.app.dispose());
   await f.app.start();
   f.behavior.create = async () => {
-    assert.deepEqual(f.views.get('original-view/host').pendingCreation, f.created.at(-1));
+    assert.deepEqual(f.views.get('original-view/host').pendingCreation, { scope: f.created.at(-1), agentId: f.selected.at(-1) });
     throw new Error('Create reply lost');
   };
   await f.app.create();
-  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, { hostId: 'host', conversationId: 'id-1' });
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, { scope: { hostId: 'host', conversationId: 'id-1' }, agentId: 'default' });
   await f.app.create();
   assert.equal(f.created.length, 1);
   f.behavior.create = async () => {};
@@ -229,7 +231,7 @@ test('a disposed startup releases its late storage lease and ignores old connect
 test('failed reopening refuses view mutations and reconnect preserves creation recovery', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const original = { ...empty(), route: scope };
-  const restored = { ...empty(), pendingCreation: { hostId: 'host', conversationId: 'pending-restored' } };
+  const restored = { ...empty(), pendingCreation: { scope: { hostId: 'host', conversationId: 'pending-restored' }, agentId: 'default' } };
   f.views.set('original-view/host', original);
   f.views.set('restored-view/host', restored);
   f.behavior.listing = async () => ({ ids: ['restored-view'], unreadable: 1, after: 'next-page' });
@@ -255,15 +257,15 @@ test('failed reopening refuses view mutations and reconnect preserves creation r
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
   assert.deepEqual(f.app.getSnapshot().saved, restored);
   await f.app.recoverCreation();
-  assert.deepEqual(f.created, [restored.pendingCreation]);
+  assert.deepEqual(f.created, [restored.pendingCreation.scope]);
   assert.equal(f.app.getSnapshot().active.viewId, 'restored-view');
-  assert.deepEqual(f.app.getSnapshot().active.scope, restored.pendingCreation);
+  assert.deepEqual(f.app.getSnapshot().active.scope, restored.pendingCreation.scope);
   assert.equal(f.views.get('restored-view/host').pendingCreation, null);
 });
 
 test('a host change without an active conversation replaces the loaded recovery record', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
-  const original = { ...empty(), pendingCreation: scope };
+  const original = { ...empty(), pendingCreation: { scope, agentId: 'default' } };
   f.views.set('original-view/host', original);
   f.behavior.listing = async () => ({ ids: ['old-host-view'], unreadable: 1, after: 'old-page' });
   await f.app.start();
@@ -559,7 +561,7 @@ for (const blocked of ['disconnected', 'feed-ended', 'storage', 'revoked', 'inco
   });
 }
 
-for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME]) {
+for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES.sonnet, PI_RUNTIME]) {
   for (const state of ['running', 'stopping', 'incomplete']) {
     test(`SDK ${runtime.engine} ${state} response blocks send while approval and cancel stay usable`, async t => {
       const f = await openCommands(t, runtime);
@@ -602,5 +604,140 @@ test('SDK send refuses missing and non-string text without submitting the compos
   assert.deepEqual([...f.drafts], records);
   assert.equal(f.target.store.getSnapshot().draft, 'Private unfinished draft');
   assert.deepEqual(f.target.store.getSnapshot().outbox, []);
+  assert.equal(f.submitted.length, 0);
+});
+
+test('lost selected creation survives reload and changed default without choosing a new agent', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  f.behavior.create = async () => { throw new Error('Create reply lost'); };
+  await f.app.create('other');
+  const pending = f.app.getSnapshot().saved.pendingCreation;
+  assert.equal(pending.agentId, 'other');
+  f.app.dispose();
+  f.behavior.defaultId = 'new-default';
+  f.behavior.create = async () => {};
+  await f.app.start();
+  await f.app.recoverCreation();
+  assert.deepEqual(f.selected, ['other', 'other']);
+  assert.deepEqual(f.created, [pending.scope, pending.scope]);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'other');
+});
+
+test('legacy pending creation queries the saved scope and never silently selects the default', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), pendingCreation: { scope, agentId: null } });
+  let lookedUp;
+  f.behavior.agentLookup = async value => { lookedUp = value; return null; };
+  await f.app.start();
+  await f.app.recoverCreation();
+  assert.deepEqual(lookedUp, scope);
+  assert.equal(f.created.length, 0);
+  assert.equal(f.app.getSnapshot().saved.pendingCreation.agentId, null);
+  assert.match(f.app.getSnapshot().error, /Choose an agent explicitly/);
+  f.behavior.agentLookup = async () => f.descriptor('original-agent', CODEX_RUNTIME);
+  await f.app.recoverCreation();
+  assert.deepEqual(f.selected, ['original-agent']);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'original-agent');
+});
+
+test('legacy absent creation accepts only an explicit selection and persists it before request', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), pendingCreation: { scope, agentId: null } });
+  f.behavior.agentLookup = async () => null;
+  f.behavior.create = async () => {
+    assert.deepEqual(f.views.get('original-view/host').pendingCreation, { scope, agentId: 'other' });
+    throw new Error('Reply lost again');
+  };
+  await f.app.start();
+  await f.app.recoverCreation('other');
+  assert.deepEqual(f.selected, ['other']);
+  f.behavior.defaultId = 'replacement';
+  await f.app.recoverCreation();
+  assert.deepEqual(f.selected, ['other', 'other']);
+});
+
+test('absent pending creation replaces a removed saved agent only after an explicit available choice', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const pending = { scope, agentId: 'default' };
+  f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
+  f.behavior.agentLookup = async value => f.captured.get(value.conversationId) ?? null;
+  await f.app.start();
+  f.behavior.defaultId = 'replacement';
+  f.behavior.create = async () => {
+    if (f.selected.at(-1) === 'default') {
+      f.captured.delete(scope.conversationId);
+      throw new ServiceError('invalid', 'Choose a configured agent.');
+    }
+    assert.deepEqual(f.views.get('original-view/host').pendingCreation, { scope, agentId: 'replacement' });
+  };
+  await f.app.recoverCreation();
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, pending);
+  assert.equal(f.app.getSnapshot().active, null);
+  await f.app.recoverCreation('replacement');
+  assert.deepEqual(f.selected, ['default', 'replacement']);
+  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'replacement');
+  assert.deepEqual(f.created, [scope, scope]);
+});
+
+test('invalid or unavailable recovery choices preserve legacy and captured pending intents', async t => {
+  for (const agentId of [null, 'gone', 'default']) {
+    const f = fixture(); t.after(() => f.app.dispose());
+    const pending = { scope, agentId };
+    f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
+    f.behavior.agentLookup = async value => f.captured.get(value.conversationId) ?? null;
+    await f.app.start();
+    f.behavior.agents = [f.descriptor('other'), { ...f.descriptor(), availability: { kind: 'unavailable', reason: 'Agent offline' } }];
+    f.behavior.create = async () => {
+      if (f.selected.at(-1) !== 'other') {
+        f.captured.delete(scope.conversationId);
+        throw new ServiceError('unavailable', 'Choose an available agent.');
+      }
+    };
+    for (const selected of ['unknown', 'default']) {
+      await f.app.recoverCreation(selected);
+      assert.deepEqual(f.views.get('original-view/host').pendingCreation, pending);
+      assert.deepEqual(f.created, []);
+      assert.match(f.app.getSnapshot().error, /available agent/);
+    }
+    await f.app.recoverCreation('other');
+    assert.equal(f.app.getSnapshot().active.agent.id, 'other');
+    assert.deepEqual(f.created, [scope]);
+  }
+});
+
+test('an existing pending scope keeps its actual agent despite a different explicit recovery choice', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), pendingCreation: { scope, agentId: 'default' } });
+  const original = { ...f.descriptor('original-agent'), availability: { kind: 'unavailable', reason: 'Agent removed' } };
+  f.behavior.agentLookup = async () => original;
+  await f.app.start();
+  await f.app.recoverCreation('other');
+  assert.deepEqual(f.selected, ['original-agent']);
+  assert.deepEqual(f.created, [scope]);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'original-agent');
+  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
+});
+
+test('active descriptors override default controls and unavailable history stays readable', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.behavior.runtime = { engine: 'unsupported-default', version: '99', format: 'unknown' };
+  f.behavior.agentLookup = async () => ({ ...f.descriptor('sdk', CODEX_SDK_RUNTIME), commands: ['send', 'cancel'] });
+  await f.app.start(); await deliver(f);
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  let target = f.app.getSnapshot().active;
+  assert.deepEqual(target.agent.runtime, CODEX_SDK_RUNTIME);
+  await assert.rejects(f.app.conversationActions(target).commands.approve('decision', 'yes'), /does not support/);
+  f.behavior.agentLookup = async () => ({ ...f.descriptor('sdk', CODEX_SDK_RUNTIME), availability: { kind: 'unavailable', reason: 'Agent removed' } });
+  await f.app.reconnect(); await deliver(f, { messages: [{ messageId: 'saved', revision: 1, role: 'assistant', text: 'Saved response', complete: true }], currentRun: null });
+  target = f.app.getSnapshot().active;
+  assert.equal(target.store.getSnapshot().document.domain.messages[0].text, 'Saved response');
+  await assert.rejects(f.app.conversationActions(target).commands.send('hello'), /Agent removed/);
+  let effects = 0;
+  await f.app.conversationActions(target).submit(async () => { effects++; });
+  await f.app.conversationActions(target).reconcile('old-command');
+  assert.equal(effects, 0);
   assert.equal(f.submitted.length, 0);
 });

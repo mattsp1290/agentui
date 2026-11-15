@@ -7,7 +7,8 @@ import { parseServiceRequest, parseServiceResponse, parseServicePull, SERVICE_MA
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 1, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
-const metadata = { hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
+const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, commands: ['send'], availability: { kind: 'ready' } };
+const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
   extensionSdkVersion: '1', nativeRuntime: { engine: 'engine', version: '1', format: '1' },
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } } };
 const reply = value => Response.json({ ok: true, value });
@@ -21,7 +22,7 @@ const command = { version: 1, scope, clientCommandId: 'command', body: { kind: '
 
 test('canonical service schema rejects unknown operations, fields, and out of range inputs', () => {
   assert.deepEqual(parseServiceRequest({ op: 'submit', command }), { op: 'submit', command });
-  for (const input of [ { op: 'unknown' }, { op: 'metadata', code: 'extra' }, { op: 'pair', code: '' },
+  for (const input of [ { op: 'create', scope }, { op: 'unknown' }, { op: 'metadata', code: 'extra' }, { op: 'pair', code: '' },
     { op: 'catalog', after: null, limit: 101 }, { op: 'catalog', after: null, limit: 0 },
     { op: 'watch', scope, after: -1, projectionVersion: 1 }, { op: 'pull', feedId: 'feed', ack: 0.5 },
     { op: 'submit', command: { ...command, body: { kind: 'send', text: 'x'.repeat(64_001) } } } ]) {

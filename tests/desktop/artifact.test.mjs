@@ -42,7 +42,7 @@ test('actual CLI hashes built files, excludes its manifest, and records applied 
   const first = f.build();
   assert.deepEqual(first.sourceDirty, { kind: 'clean' });
   assert.equal(first.sourceRevision, f.git('rev-parse', 'HEAD'));
-  assert.equal(first.wireVersion, 1);
+  assert.equal(first.wireVersion, 2);
   assert.equal(first.extensionSdkVersion, '0.0.0');
   assert.deepEqual(first.nativeRuntime, { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
   assert.deepEqual(first.artifactRuntime, { engine: 'node', version: process.versions.node, format: 'esm' });

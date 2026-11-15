@@ -1,3 +1,6 @@
+import { describeAgent } from '../../apps/host/build/tsc/agents.js';
+import { recordedInstallation } from '@agentui/host/recorded';
+const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, request } from 'node:http';
@@ -105,7 +108,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const f = await fixture(t, credentialClass);
     const { principal, secret } = f.enroll(), auth = f.auth(secret);
     const scope = { hostId: f.access.hostId, conversationId: 'revoked-admitted-pull' };
-    assert.equal((await f.send({ op: 'create', scope }, auth)).status, 200);
+    assert.equal((await f.send({ op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
     const { value: { feedId } } = await (await f.send({ op: 'watch', scope, after: null, projectionVersion: 1 }, auth)).json();
     const { value: page } = await (await f.send({ op: 'pull', feedId, ack: null }, auth)).json();
     const started = f.nextGate(2);

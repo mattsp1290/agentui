@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { resolve } from 'node:path';
+import { codexInstallation } from './native-installations.js';
 import type { ClientCommand, ConversationScope } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { canonicalJson } from '@agentui/contracts';
@@ -46,11 +46,8 @@ const scopeKey = (scope: ConversationScope) => canonicalJson(scope);
 export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
   readonly installation: Installation; close(): void;
 } {
-  const cwd = resolve(options.cwd);
-  const installation: Installation = { installationId: 'codex-local-v1', binding: {
-    engine: 'codex', nativeVersion: nonempty(options.version), account: 'local', authorizedScope: cwd,
-    nativeFormat: 'codex-app-server-v2',
-  } };
+  const installation = codexInstallation(options.cwd, options.version);
+  const cwd = installation.binding.authorizedScope;
   const active = new Map<string, ActiveTurn>();
   const busy = new Set<string>();
   const loaded = new Set<string>();

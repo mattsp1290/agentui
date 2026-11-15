@@ -73,7 +73,7 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
         detail: error instanceof Error ? error.message : 'Unknown progress failure' });
     }
   };
-  const recorded = createRecordedDriver<TranscriptEvent>({ backendPath: options.backendPath,
+  const recorded = createRecordedDriver<TranscriptEvent>({ installation: recordedInstallation, backendPath: options.backendPath,
     decodeEvent: transcriptProjection.decodeEvent,
     resolve: async (command, target) => finalResult(command, target),
     async afterAcceptance(command, target) {

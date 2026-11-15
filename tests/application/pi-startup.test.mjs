@@ -45,7 +45,7 @@ for (const [args, expected] of [
   [['pi'], /Provide --workspace/],
   [['pi', '--workspace', '/fixture', '--port', 'invalid'], /Invalid listener port/],
   [['pi', '--workspace', '/fixture', '--id', 'invalid'], /--id is not valid for pi/],
-  [['pi', '--workspace', '/fixture', 'extra'], /Use codex, pi, browser-dev/],
+  [['pi', '--workspace', '/fixture', 'extra'], /Use serve, codex, pi, browser-dev/],
 ]) {
   test(`Pi rejects invalid command arguments ${args.join(' ')}`, async t => {
     const directory = mkdtempSync(join(tmpdir(), 'agentui-pi-args-'));
@@ -122,7 +122,7 @@ test('Pi startup advertises one runtime to browser and native clients and labels
     assert.deepEqual(metadata.body.value.compatibility.nativeRuntime, runtime);
     assert.doesNotMatch(JSON.stringify(metadata.body), new RegExp(`${token}|OPENCODE_GO_API_KEY`));
     const scope = { hostId: ready.hostId, conversationId: client.conversationId };
-    assert.deepEqual((await call(client.path, { op: 'create', scope }, client.headers)).body, { ok: true, value: scope });
+    assert.deepEqual((await call(client.path, { op: 'create', scope, agentId: metadata.body.value.defaultAgentId }, client.headers)).body, { ok: true, value: scope });
   }
   const database = new DatabaseSync(join(data, 'host.sqlite'), { readOnly: true });
   try {

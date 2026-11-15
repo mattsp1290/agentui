@@ -21,7 +21,7 @@ for (const [name, pendingId, choiceId, runId, action] of [
 ]) {
   test(`public client acts on persisted ${name} identifiers after SQLite reopen`, async t => {
     const f = fixture(t), dispatched = [];
-    const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+    const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
       dispatch: async (cmd, target) => {
         dispatched.push(structuredClone({ command: cmd, target }));
         return { kind: 'conclusive', evidence: evidence(target), result: completed(empty()) };
@@ -67,7 +67,7 @@ test('accepted long approval retains its original reservation and target through
   decision.visible.choices = [choiceId];
   let captured, dispatches = 0, lookups = 0;
   const approval = command('original', { kind: 'approve', pendingId, choiceId });
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (cmd, target) => {
       assert.deepEqual(cmd, approval);
       captured = structuredClone(target);
@@ -136,7 +136,7 @@ test('provider targets remain nonempty strings and local identifiers retain the 
 test('long target command exceeding maxCommandBytes is rejected before persistence, reservation or dispatch', async t => {
   const f = fixture(t);
   let dispatches = 0;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async () => { dispatches++; throw new Error('Unexpected dispatch'); } };
   const host = f.open({ driver, budgets: { maxCommandBytes: 200 } });
   host.createConversation(scope, installed);

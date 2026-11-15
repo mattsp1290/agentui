@@ -30,7 +30,7 @@ test('Switchboard native entry sees committed intent on another SQLite connectio
 test('accepted evidence survives unknown lookups, deduplicates repeated acceptance and completes exactly once', async t => {
   const f = fixture(t);
   let lookup = 'outcome-unknown', target;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_cmd, captured) => { target = captured; return { kind: 'accepted', evidence: evidence(target) }; },
     lookup: async () => lookup === 'outcome-unknown' ? { kind: lookup }
       : lookup === 'accepted' ? { kind: lookup, evidence: evidence(target, 'authoritative-native-lookup') }
@@ -54,7 +54,7 @@ test('accepted evidence survives unknown lookups, deduplicates repeated acceptan
 test('recovery can resolve while original call is blocked without duplicating its later result', async t => {
   const f = fixture(t), entered = deferred(), release = deferred();
   let target;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_cmd, captured) => { target = captured; entered.resolve(); await release.promise;
       return { kind: 'conclusive', evidence: evidence(target), result: completed(note('once')) }; },
     lookup: async () => ({ kind: 'conclusive', evidence: evidence(target, 'authoritative-native-lookup'), result: completed(note('once')) }),
@@ -72,7 +72,7 @@ test('recovery can resolve while original call is blocked without duplicating it
 test('absent or unsupported lookup cannot free an uncertain approval or dispatch again', async t => {
   const f = fixture(t);
   let entries = 0;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async () => { entries++; return { kind: 'outcome-unknown' }; } };
   const a = f.open({ driver });
   a.createConversation(scope, installed);
@@ -106,7 +106,7 @@ test('authorization precedes reads, unsupported cancel rejects, and settlement f
 test('conflicting late conclusive evidence preserves the prior committed result', async t => {
   const f = fixture(t), entered = deferred(), release = deferred();
   let target;
-  const driver = { source: 'recorded', capability: () => ({ kind: 'supported' }),
+  const driver = { source: 'recorded', installation: installed, capability: () => ({ kind: 'supported' }),
     dispatch: async (_cmd, captured) => { target = captured; entered.resolve(); await release.promise;
       return { kind: 'conclusive', evidence: evidence(target), result: completed(note('late-conflict')) }; },
     lookup: async () => ({ kind: 'conclusive', evidence: evidence(target, 'authoritative-native-lookup'), result: completed(note('authoritative-result')) }),
