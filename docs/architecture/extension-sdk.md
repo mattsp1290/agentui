@@ -63,24 +63,16 @@ Theme and platform controls remain direct imports from `@agentui/theme/react` an
 The UI context exposes `frontendTools.add(tool)`. Each contribution supplies a protocol tool definition, a decoder from `unknown`, and an async handler returning a string. The handler receives the pinned conversation scope. Import the runtime from `@agentui/sdk/tools` when implementing an activation owner:
 
 ```ts
-let contributions: unknown;
-const generation = await createFrontendToolGeneration({
-  namespace: 'notes', generation: 'activation-1', platform: 'desktop',
+const { generation, contributions } = await createFrontendToolGeneration({
+  namespace: manifest.namespace, generation: 'activation-1', platform: 'desktop',
+  accept: validateUiExtensionContributions,
   async activate(frontendTools) {
-    const result = await entry.activate({ namespace: 'notes', frontendTools });
-    contributions = result;
-    return result;
+    return entry.activate({ namespace: manifest.namespace, frontendTools });
   },
 });
-try {
-  validateUiExtensionContributions(contributions);
-} catch (error) {
-  await generation.retire();
-  throw error;
-}
 const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run, capabilities });
 try {
-  const outcome = await pin.invoke('notes__text_length', { text: 'hello' });
+  const outcome = await pin.invoke(`${manifest.namespace}__text_length`, { text: 'hello' });
 } finally {
   pin.release();
 }
@@ -88,13 +80,13 @@ await generation.retire();
 ```
 
 Use `contributions.modules` to render validated modules and handle the returned tool outcome.
-If activation throws before returning a lifetime, the callback owns cleanup of any partial activation. Perform later validation after generation construction so retirement owns cleanup. The activation owner retains the generation and retires it when replaced or when later module validation fails. Retirement immediately excludes new pins. Existing pins and calls remain usable until released or settled. Disposal runs once after all pins and calls drain; its failure rejects every retirement caller. Always observe the promise returned by `retire()`.
+If activation throws or returns a value without a callable disposer, the callback owns cleanup of any partial activation. Otherwise, creation disposes a rejected contribution and preserves both validation and disposal errors. The activation owner retains the generation and retires it when replaced. Contributions are cooperative full-trust objects. The owner must call `generation.retire()` for cleanup instead of calling the contribution disposer directly. Pass only live generations to a pin, and remove a generation from the active list when retiring it. The generation label is captured for diagnostics and durable correlation; uniqueness is not enforced. Retirement immediately excludes new pins. Existing pins and calls remain usable until released or settled. Disposal runs once after all pins and calls drain; its failure rejects every retirement caller. Always observe the promise returned by `retire()`.
 
 Release every pin on every run outcome, including cancellation and failure. A handler must not await retirement of its own generation, since retirement waits for that handler. A handler that never settles retains its resources and leaves retirement pending. A pin snapshots the run and definitions. It exposes definitions only when `tools.clientProvided` is true and `tools.supported` is not false. Released pins refuse calls. Handler errors reject and are never retried. A loader must match tool calls to the correct pin; `RunIdentity` does not contain an AG-UI thread ID.
 
-Tool names combine the manifest namespace, two underscores, and a local name matching `[A-Za-z][A-Za-z0-9_-]*`. The combined name is limited to 64 characters. Duplicate local names and duplicate selected namespaces are rejected. Platform belongs to the activation generation, not individual tools.
+Tool names combine the manifest namespace, two underscores, and a local name matching `[A-Za-z][A-Za-z0-9_-]*`. The combined name is limited to 64 characters. Duplicate local names and duplicate selected namespaces are rejected. Platform belongs to the activation generation, not individual tools. The `ag-ui` metadata key is reserved.
 
-Parameters use a bounded JSON copy and an object-root draft-07 JSON Schema. The supported keywords are draft-07 validation, applicator, and annotation keywords. Unknown keywords, `$id`, nested or non-draft-07 `$schema`, unknown formats, external or unresolved references, and recursive references are rejected. References must be local JSON pointers resolved by the validator to object-schema positions. A `$ref` node may carry only annotations alongside the reference. Literal boolean schemas remain valid in schema positions. Annotation values such as `default`, `enum`, `const`, and `examples` are data. Arguments are copied, validated, then decoded without coercion or defaults. Extensions are fully trusted; schema regular expressions can consume excessive time on hostile input.
+Parameters use a bounded JSON copy and an object-root draft-07 JSON Schema. The supported keywords are draft-07 validation, applicator, and annotation keywords. Unknown keywords, `$id`, nested or non-draft-07 `$schema`, unknown formats, external or unresolved references, and recursive references are rejected. References must be local JSON pointers resolved by the validator to object-schema positions. A `$ref` node may carry only annotations alongside the reference. Literal boolean schemas remain valid in schema positions. Annotation values such as `default`, `enum`, `const`, and `examples` are data. Supported formats are asserted and regular expressions use Unicode mode. Arguments are parsed values, not streamed text. They are copied, validated, then decoded without coercion or defaults. Extensions are fully trusted; schema regular expressions can consume excessive time on hostile input.
 
 The validator uses `@cfworker/json-schema` 4.1.6 and the [official draft-07 meta-schema](https://json-schema.org/draft-07/schema). The source meta-schema is 4,979 bytes with SHA-256 `692e1d165e47afcb5f11b2ce1c639635ffa834035d6ecb6bcf3087481dae8404`. The tools subpath owns this dependency; root and React runtime imports do not load it. A browser test exercises the bundle under the desktop CSP. React Native's global `URL` cannot set `hash` or resolve fragment references, which the validator requires. iOS needs a standards-compliant `URL` before registering tools. WKWebView and native Hermes have not been qualified.
 

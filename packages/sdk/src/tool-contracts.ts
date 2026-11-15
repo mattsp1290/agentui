@@ -12,6 +12,7 @@ export interface FrontendToolContribution<Input> {
 export interface FrontendToolContributions { add<Input>(tool: FrontendToolContribution<Input>): void }
 export interface FrontendToolGeneration {
   readonly namespace: string;
+  /** Captured diagnostic and durable correlation label; uniqueness is not enforced. */
   readonly generation: string;
   readonly platform: FrontendPlatform;
   retire(): Promise<void>;
@@ -25,11 +26,17 @@ export interface FrontendToolPin {
 export type FrontendToolOutcome =
   | { readonly kind: 'completed'; readonly output: string }
   | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'invalid-arguments' | 'decode-failed' };
-export interface FrontendToolGenerationOptions {
+export type Accepted<A> = A extends (value: unknown) => asserts value is infer L ? L : never;
+export interface FrontendToolActivation<L> {
+  readonly generation: FrontendToolGeneration;
+  readonly contributions: L;
+}
+export interface FrontendToolGenerationOptions<A extends (value: unknown) => void> {
   readonly namespace: string;
   readonly generation: string;
   readonly platform: FrontendPlatform;
-  activate(tools: FrontendToolContributions): ExtensionLifetime | Promise<ExtensionLifetime>;
+  activate(tools: FrontendToolContributions): unknown;
+  readonly accept: A & (Accepted<A> extends ExtensionLifetime ? unknown : never);
 }
 export interface FrontendToolPinOptions {
   readonly generations: readonly FrontendToolGeneration[];
