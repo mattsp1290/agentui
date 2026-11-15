@@ -149,7 +149,7 @@ test('bundled host exports upstream GenAI spans for persisted native runs with n
     let body = '';
     incoming.setEncoding('utf8').on('data', chunk => { body += chunk; });
     incoming.once('end', () => {
-      received.push({ path: incoming.url, body: JSON.parse(body) });
+      received.push({ path: incoming.url, headers: incoming.headers, body: JSON.parse(body) });
       outgoing.writeHead(200, { 'content-type': 'application/json' });
       outgoing.end('{"partialSuccess":{}}');
     });
@@ -159,11 +159,17 @@ test('bundled host exports upstream GenAI spans for persisted native runs with n
   const directory = mkdtempSync(join(tmpdir(), 'agentui-genai-private-'));
   const workspace = join(directory, 'private-workspace-dc13a5');
   const bin = join(directory, 'bin'), data = join(directory, 'data'), log = join(directory, 'native-rpc.jsonl');
+  const environmentLog = join(directory, 'native-environment.jsonl');
   mkdirSync(workspace); mkdirSync(bin);
   const fixture = join(directory, 'codex-fixture.mjs');
   copyFileSync(new URL('../host/fixtures/codex-agent.mjs', import.meta.url), fixture);
   writeFileSync(join(bin, 'codex'), `#!${process.execPath}
+import { appendFileSync } from 'node:fs';
 import { pathToFileURL } from 'node:url';
+appendFileSync(${JSON.stringify(environmentLog)}, JSON.stringify({ invocation: process.argv[2],
+  telemetryKeys: Object.keys(process.env).filter(key => key.startsWith('OTEL_') || key === 'AGENTUI_DATADOG_LLMOBS'),
+  providerCredentialPresent: process.env.OPENAI_API_KEY === 'private-native-provider-credential',
+  pathPresent: process.env.PATH?.includes(${JSON.stringify(bin)}) === true }) + '\\n');
 if (process.argv[2] === '--version') process.stdout.write(${JSON.stringify(`codex-cli ${CODEX_RUNTIME.version}\n`)});
 else {
   process.argv = [process.execPath, ${JSON.stringify(fixture)}, ${JSON.stringify(log)}];
@@ -176,6 +182,10 @@ else {
     const child = spawn(process.execPath, ['apps/host/dist/main.js', ...args, '--data-dir', data], {
       cwd: root, env: { ...environment, PATH: `${bin}:${process.env.PATH ?? ''}`,
         OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: `http://127.0.0.1:${receiver.address().port}`,
+        OTEL_EXPORTER_OTLP_HEADERS: 'x-host-general-token=private-host-general-credential',
+        OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-host-trace-token=private-host-trace-credential',
+        OTEL_RESOURCE_ATTRIBUTES: 'private.resource=private-host-resource',
+        OPENAI_API_KEY: 'private-native-provider-credential',
         AGENTUI_DATADOG_LLMOBS: 'true' }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     let stdout = '', stderr = '';
@@ -259,6 +269,8 @@ else {
   const genai = [];
   for (const batch of received) {
     assert.equal(batch.path, '/v1/traces');
+    assert.equal(batch.headers['x-host-general-token'], 'private-host-general-credential');
+    assert.equal(batch.headers['x-host-trace-token'], 'private-host-trace-credential');
     for (const resource of batch.body.resourceSpans) {
       assert.deepEqual(attributes(resource.resource.attributes), { 'service.name': 'agentui-host', dd_llmobs_enabled: true });
       for (const group of resource.scopeSpans) {
@@ -286,9 +298,18 @@ else {
   assert.equal(new Set(genai.map(span => span.traceId)).size, 3, 'each persisted native run has its own root trace');
   const rpc = existsSync(log) ? readFileSync(log, 'utf8').trim().split('\n').map(JSON.parse) : [];
   assert.ok(rpc.some(message => message.method === 'turn/start'), 'the bundled host exercised the native fixture');
-  const payload = JSON.stringify(received);
+  const nativeEnvironments = readFileSync(environmentLog, 'utf8').trim().split('\n').map(JSON.parse);
+  assert.ok(nativeEnvironments.some(value => value.invocation === '--version'), 'the compatibility probe ran');
+  assert.ok(nativeEnvironments.some(value => value.invocation === 'app-server'), 'the native agent process ran');
+  for (const environment of nativeEnvironments) {
+    assert.deepEqual(environment.telemetryKeys, [], `${environment.invocation} inherited host telemetry configuration`);
+    assert.equal(environment.providerCredentialPresent, true, 'native provider credentials remain available');
+    assert.equal(environment.pathPresent, true, 'native executable lookup remains available');
+  }
+  const payload = JSON.stringify(received.map(batch => batch.body));
   for (const value of [directory, workspace, prompt, ready.hostId, conversation.conversationId, code,
-    credentials.secret, credentials.principalId, first, second, third, 'fixture-thread', 'Hello from the fixture.']) {
+    credentials.secret, credentials.principalId, first, second, third, 'fixture-thread', 'Hello from the fixture.',
+    'private-host-general-credential', 'private-host-trace-credential', 'private-native-provider-credential', 'private-host-resource']) {
     assert.equal(payload.includes(value), false, `Private native value leaked ${value}`);
   }
 });

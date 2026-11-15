@@ -1,13 +1,12 @@
-import { Agent as HttpAgent, validateHeaderName, validateHeaderValue } from 'node:http';
-import { Agent as HttpsAgent } from 'node:https';
+import { validateHeaderName, validateHeaderValue } from 'node:http';
 import { ROOT_CONTEXT, SpanKind, SpanStatusCode } from '@opentelemetry/api';
-import { OTLPTraceExporter } from '@opentelemetry/exporter-trace-otlp-http';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { AlwaysOnSampler, BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import type { ServiceFailureKind, ServiceRequest } from '@agentui/contracts/service';
 import type { CredentialClass } from './access.js';
 import { FAILURE_STATUS } from './errors.js';
 import { createAgentObservations } from './agent-observations.js';
+import { createOtlpExporter } from './otlp-exporter.js';
 
 export type ObservabilityConfiguration =
   | { readonly kind: 'disabled' }
@@ -64,9 +63,7 @@ export function readObservabilityConfiguration(env: NodeJS.ProcessEnv): Observab
 
 export function createHostObservability(configuration: ObservabilityConfiguration): HostObservability {
   if (configuration.kind === 'disabled') return { record() {}, recordRun() {}, async close() {} };
-  const http = new HttpAgent({ keepAlive: false }), https = new HttpsAgent({ keepAlive: false });
-  const exporter = new OTLPTraceExporter({ url: configuration.endpoint, headers: configuration.headers,
-    timeoutMillis: 500, concurrencyLimit: 1, httpAgentOptions: async protocol => protocol === 'http:' ? http : https });
+  const exporter = createOtlpExporter(configuration);
   const provider = new TracerProvider({
     resource: resourceFromAttributes({ 'service.name': configuration.serviceName,
       ...(configuration.datadogLlmObservability ? { dd_llmobs_enabled: true } : {}) }),
@@ -92,7 +89,7 @@ export function createHostObservability(configuration: ObservabilityConfiguratio
       closed = true;
       agents.close();
       closePromise ??= new Promise<void>(resolve => {
-        const finish = () => { http.destroy(); https.destroy(); resolve(); };
+        const finish = () => { void exporter.shutdown(); resolve(); };
         const timer = setTimeout(finish, 1000);
         void provider.shutdown().catch(() => {}).finally(() => { clearTimeout(timer); finish(); });
       });

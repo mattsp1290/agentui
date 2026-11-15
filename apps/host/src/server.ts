@@ -9,7 +9,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, createProviderRegistry, openLocalHost } from '@agentui/host';
+import { createCodexDriver, createProviderRegistry, nativeProcessEnvironment, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
@@ -160,7 +160,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
             case 'codex': {
               let version: string;
               try {
-                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096 });
+                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096, env: nativeProcessEnvironment() });
                 version = result.stdout.trim();
               } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);

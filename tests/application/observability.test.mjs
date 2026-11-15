@@ -8,7 +8,8 @@ import { createInterface } from 'node:readline';
 import test from 'node:test';
 
 const root = new URL('../../', import.meta.url);
-const baseEnvironment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('OTEL_')));
+const baseEnvironment = Object.fromEntries(Object.entries(process.env)
+  .filter(([key]) => !key.startsWith('OTEL_') && key !== 'AGENTUI_DATADOG_LLMOBS'));
 
 async function exitWithin(child, milliseconds = 5000) {
   let forced = false;

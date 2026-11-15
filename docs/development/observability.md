@@ -47,6 +47,8 @@ These variables apply only when starting the host. Control commands such as `inv
 
 Endpoint URLs cannot contain credentials, query strings, or fragments. Invalid configuration fails startup with a generic diagnostic that omits the supplied value. Keep Collector credentials in host environment variables. Use HTTPS when sending them across a network.
 
+The CLI reads telemetry environment settings once. The exporter sends only the endpoint and headers in that parsed configuration. Programmatic host options do not inherit ambient collector headers. The direct Codex version probe and app-server process receive an environment with host `OTEL_*` settings and `AGENTUI_DATADOG_LLMOBS` removed.
+
 The host supplies its own resource and sampler. It does not read `OTEL_RESOURCE_ATTRIBUTES`, detect process or machine attributes, or configure sampling from environment variables. No Datadog-specific host variables are required. Configure environment and version tags in your Collector or Agent.
 
 ## Inspect span fields
@@ -76,7 +78,7 @@ Scope and native run IDs identify observations only inside the host's bounded ma
 
 The host owns a separate tracer provider for each running host. It does not register a global provider or patch HTTP, provider clients, or filesystem access. This slice does not export logs, metrics, client spans, or control-socket operations.
 
-Export runs in the background. The queue holds at most 128 spans and batches at most 32. Under pressure, spans may be dropped. Exports have a 500 ms timeout, batch processing has a 750 ms timeout, and telemetry shutdown waits at most one second before destroying its connections. Export failure does not change a service response or host shutdown result. Traces are diagnostic evidence rather than durable receipts.
+Export runs in the background using OpenTelemetry's JSON serializer. The queue holds at most 128 spans and batches at most 32. Under pressure, spans may be dropped. Each HTTP attempt has an absolute 500 ms deadline and does not retry or follow redirects. Batch processing has a 750 ms timeout. Shutdown allows the bounded queued batches to export concurrently and waits at most one second before destroying telemetry connections. Export failure does not change a service response or host shutdown result. Traces are diagnostic evidence rather than durable receipts.
 
 ## Verify the local export path
 

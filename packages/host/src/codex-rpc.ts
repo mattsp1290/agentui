@@ -1,6 +1,7 @@
 import { spawn } from 'node:child_process';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
+import { nativeProcessEnvironment } from './process-environment.js';
 import { StringDecoder } from 'node:string_decoder';
 
 export interface CodexRpcOptions {
@@ -70,7 +71,7 @@ export class CodexRpc {
 
   constructor(private readonly options: CodexRpcOptions) {
     this.child = spawn(options.executable ?? 'codex', options.args ?? ['app-server', '--stdio'], {
-      cwd: options.cwd, stdio: 'pipe', shell: false,
+      cwd: options.cwd, stdio: 'pipe', shell: false, env: nativeProcessEnvironment(),
     });
     this.child.stderr.resume();
     this.child.stderr.on('error', () => this.fail(new Error('Codex stderr stream failed')));
