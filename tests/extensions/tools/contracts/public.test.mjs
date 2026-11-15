@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { build } from 'esbuild';
@@ -38,6 +38,14 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
       const dest = join(dir, 'node_modules', pack.name);
       await mkdir(dest, { recursive: true });
       run('tar', ['-xzf', join(dir, pack.filename), '-C', dest, '--strip-components=1'], dir);
+    }
+    const names = new Set(packs.map(pack => pack.name));
+    for (const pack of packs) {
+      const manifest = JSON.parse(await readFile(join(dir, 'node_modules', pack.name, 'package.json'), 'utf8'));
+      for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+        assert.ok(names.has(dependency), `${pack.name} needs ${dependency}`);
+      }
+      if (pack.name === '@agentui/sdk') assert.equal(manifest.dependencies['@cfworker/json-schema'], '4.1.6');
     }
     await writeFile(join(dir, 'package.json'), '{"type":"module"}');
     await writeFile(

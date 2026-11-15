@@ -224,8 +224,8 @@ export const draft7 = {
     "if": {
       "$ref": "#"
     },
-    // oxlint-disable-next-line unicorn/no-thenable -- Draft-07 schema keyword.
-    ["then"]: {
+    // oxlint-disable-next-line unicorn/no-thenable -- Draft-07 requires this keyword as schema data.
+    "then": {
       "$ref": "#"
     },
     "else": {

@@ -11,7 +11,11 @@ const { generation } = await createFrontendToolGeneration({
       definition: {
         name: 'x',
         description: 'x',
-        parameters: { type: 'object', properties: { v: { type: 'string' } }, required: ['v'] },
+        parameters: {
+          type: 'object',
+          definitions: { word: { type: 'string', pattern: '^\\p{L}+$', format: 'regex' } },
+          properties: { v: { $ref: '#/definitions/word' } }, required: ['v'],
+        },
       },
       decodeInput(value) {
         return value.v;
@@ -45,6 +49,7 @@ try {
 }
 document.body.textContent = JSON.stringify({
   outcome: await pin.invoke('demo__x', { v: 'ok' }),
+  invalid: await pin.invoke('demo__x', { v: '1' }),
   blocked,
 });
 pin.release();

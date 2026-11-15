@@ -1,26 +1,32 @@
 import { Validator, dereference, schemaKeyword, schemaArrayKeyword, schemaMapKeyword, type Schema as LibrarySchema } from '@cfworker/json-schema';
 import { draft7 } from './draft-07.js';
-import { copyToolJson as copy } from './tool-json.js';
+import { copyJson } from '@agentui/contracts';
 type Schema = boolean | LibrarySchema;
 let meta: Validator | undefined;
 function metaValidator(): Validator {
-  try { return meta ??= new Validator(draft7, '7', false); }
+  try { return meta ??= new Validator(draft7, '7'); }
   catch (cause) { throw new Error('Tool schema validation requires a standards-compliant URL implementation', { cause }); }
 }
-const keywords = new Set('$schema $ref $comment title description default examples readOnly writeOnly type enum const multipleOf maximum exclusiveMaximum minimum exclusiveMinimum maxLength minLength pattern items additionalItems maxItems minItems uniqueItems contains maxProperties minProperties required properties patternProperties additionalProperties dependencies propertyNames definitions allOf anyOf oneOf not if then else format contentMediaType contentEncoding'.split(' '));
+const keywords = new Set([
+  '$schema', '$ref', '$comment',
+  'type', 'enum', 'const', 'multipleOf', 'maximum', 'exclusiveMaximum', 'minimum', 'exclusiveMinimum',
+  'maxLength', 'minLength', 'pattern', 'maxItems', 'minItems', 'uniqueItems', 'maxProperties', 'minProperties', 'required',
+  'items', 'additionalItems', 'contains', 'properties', 'patternProperties', 'additionalProperties', 'dependencies',
+  'propertyNames', 'definitions', 'allOf', 'anyOf', 'oneOf', 'not', 'if', 'then', 'else',
+  'title', 'description', 'default', 'examples', 'readOnly', 'writeOnly', 'format', 'contentMediaType', 'contentEncoding',
+]);
 const formats = new Set('date time date-time uri uri-reference uri-template email hostname ipv4 ipv6 regex json-pointer relative-json-pointer'.split(' '));
 const refKeys = new Set('$ref $comment title description default examples readOnly writeOnly'.split(' '));
 export function compileParameters(input: unknown): (value: unknown) => boolean {
-  const parameters = copy(input === undefined ? {} : input);
+  // cfworker adds hidden reference metadata, so it must own a mutable copy of the wire schema.
+  const parameters = copyJson(input === undefined ? {} : input);
   const root = (typeof parameters === 'object' && parameters !== null && !Array.isArray(parameters) && Object.keys(parameters).length === 0 ? { type: 'object' } : parameters) as Schema;
   if (typeof root !== 'object' || root === null || root.type !== 'object') throw new Error('Tool parameters must have object type');
   if (!metaValidator().validate(root).valid) throw new Error('Invalid draft-07 schema');
   const edges = new Map<object, Schema[]>();
-  const refs: [object, string][] = [];
+  const refs: LibrarySchema[] = [];
   function walk(schema: Schema, isRoot = false): void {
     if (typeof schema === 'boolean') return;
-    if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Invalid schema node');
-    if (edges.has(schema)) return;
     if ('$ref' in schema && Object.keys(schema).some(key => !refKeys.has(key))) throw new Error('Schema references cannot have sibling assertions');
     const children: Schema[] = [];
     edges.set(schema, children);
@@ -30,7 +36,7 @@ export function compileParameters(input: unknown): (value: unknown) => boolean {
       if (key === 'format' && (typeof value !== 'string' || !formats.has(value))) throw new Error('Unsupported schema format');
       if (key === '$ref') {
         if (typeof value !== 'string' || !(value === '#' || value.startsWith('#/'))) throw new Error('Only local schema references are supported');
-        refs.push([schema, value]);
+        refs.push(schema);
       }
       if (Array.isArray(value) && schemaArrayKeyword[key]) children.push(...value as Schema[]);
       else if (schemaMapKeyword[key]) children.push(...Object.values(value as Record<string, Schema>));
@@ -41,9 +47,13 @@ export function compileParameters(input: unknown): (value: unknown) => boolean {
   }
   walk(root, true);
   const lookup = dereference(root);
-  for (const [node] of refs) {
-    const absolute = (node as LibrarySchema).__absolute_ref__;
-    const target = typeof absolute === 'string' ? lookup[absolute] : undefined;
+  const base = root.__absolute_uri__;
+  for (const node of refs) {
+    // cfworker writes this hidden lookup key; dependencies named id can incorrectly change its base.
+    const absolute = node.__absolute_ref__;
+    const local = typeof absolute === 'string' && typeof base === 'string' &&
+      (absolute === base || absolute.startsWith(`${base}#`));
+    const target = local ? lookup[absolute] : undefined;
     if (target === undefined || typeof target === 'boolean' || !edges.has(target)) throw new Error('Unresolved schema reference');
     edges.get(node)!.push(target as Schema);
   }
@@ -57,6 +67,6 @@ export function compileParameters(input: unknown): (value: unknown) => boolean {
     visiting.delete(node); visited.add(node);
   }
   visit(root);
-  const validator = new Validator(root, '7', false);
+  const validator = new Validator(root, '7');
   return value => validator.validate(value).valid;
 }

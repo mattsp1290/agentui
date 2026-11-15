@@ -41,6 +41,11 @@ function entryKind(value: unknown): ExtensionEntryKind {
   if (value !== 'server' && value !== 'desktop' && value !== 'ios') throw new Error('Invalid extension entry kind');
   return value;
 }
+export function frontendPlatform(value: unknown): Exclude<ExtensionEntryKind, 'server'> {
+  const kind = entryKind(value);
+  if (kind === 'server') throw new Error('Invalid frontend platform');
+  return kind;
+}
 function text(value: unknown): string {
   const result = nonempty(value);
   if (!result.trim()) throw new Error('Expected nonblank string');

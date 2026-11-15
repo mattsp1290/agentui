@@ -74,6 +74,7 @@ test('pins hold retired generations and active calls until they drain', async ()
   const call = p.invoke('demo__x', {});
   const retired = a.retire();
   assert.equal(retired, a.retire());
+  assert.throws(() => pin([a]), /Invalid or retired/u);
   p.release();
   p.release();
   assert.deepEqual(await p.invoke('demo__x', {}), { kind: 'refused', code: 'released' });
@@ -149,9 +150,10 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
     },
   });
   tool.definition.name = 'changed';
-  run.conversation.conversationId = 'snapshot';
-  const p = pin([g]);
-  run.conversation.conversationId = 'later';
+  const localRun = structuredClone(run);
+  localRun.conversation.conversationId = 'snapshot';
+  const p = pin([g], { run: localRun });
+  localRun.conversation.conversationId = 'later';
   assert.equal(p.run.conversation.conversationId, 'snapshot');
   assert.equal(p.definitions[0].name, 'demo__x');
   assert.equal((await p.invoke('demo__x', { value: '!' })).output, 'ok!');
@@ -170,6 +172,17 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
 
 test('invalid schemas poison registration and clean up', async (t) => {
   const cases = [
+    ['empty id dependency collides with the root URI', { type: 'object', dependencies: { id: [] } }, /duplicate|Duplicate/u],
+    [
+      'dependency named id rebases references',
+      { type: 'object', dependencies: { id: ['x'], a: { properties: { y: { $ref: '#/b' } } }, b: { type: 'string' } } },
+      /Unresolved schema reference/u,
+    ],
+    [
+      'dependency named id with an otherwise valid local reference is unsupported',
+      { type: 'object', definitions: { s: { type: 'string' } }, dependencies: { id: ['kind'], kind: { properties: { x: { $ref: '#/definitions/s' } } } } },
+      /Unresolved schema reference/u,
+    ],
     [
       'invalid schema',
       { type: 'object', properties: { x: { minimum: 'no' } } },
@@ -862,4 +875,76 @@ test('JSON snapshots preserve data without invoking hidden serialization hooks',
     snapshot.release();
     await generation.retire();
   }
+});
+
+
+test('generation constructors cannot forge handles or expose lifecycle helpers', async () => {
+  const g = await make();
+  assert.equal(g.constructor.acquire, undefined);
+  assert.equal(g.constructor.release, undefined);
+  assert.equal(g.constructor.live, undefined);
+  assert.throws(() => new g.constructor({ namespace: 'invalid namespace' }, () => {}, []), /Illegal constructor/u);
+  assert.throws(() => new g.constructor(Symbol('Generation'), g, () => {}, []), /Illegal constructor/u);
+  const p = pin([g]);
+  assert.equal((await p.invoke('demo__text_length', { text: 'safe' })).output, '4');
+  p.release();
+  await g.retire();
+});
+
+test('registration error precedes acceptance failure and still disposes', async () => {
+  let disposed = 0;
+  let accepted = 0;
+  await assert.rejects(make({
+    activate(tools) {
+      try {
+        tools.add({ definition: { name: 'x', description: 'x', parameters: { type: 'object', future: true } },
+          decodeInput: value => value, async execute() { return ''; } });
+      } catch {}
+      return { dispose() { disposed++; } };
+    },
+    accept() { accepted++; throw new Error('accept failed'); },
+  }), /Unsupported schema keyword/u);
+  assert.equal(disposed, 1);
+  assert.equal(accepted, 0);
+});
+
+test('property dependency named id works without references', async () => {
+  const g = await make({
+    activate(tools) {
+      tools.add({ definition: { name: 'x', description: 'x', parameters: {
+        type: 'object', properties: { id: { type: 'string' } }, dependencies: { id: ['name'] },
+      } }, decodeInput: value => value, async execute() { return 'ok'; } });
+      return { dispose() {} };
+    },
+  });
+  const p = pin([g]);
+  assert.equal((await p.invoke('demo__x', { id: 'x' })).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { id: 'x', name: 'name' })).output, 'ok');
+  p.release();
+  await g.retire();
+});
+
+test('tool handlers require functions at registration', async () => {
+  for (const field of ['decodeInput', 'execute']) {
+    await assert.rejects(make({ activate(tools) {
+      tools.add({ definition: { name: 'x', description: 'x' }, decodeInput: value => value,
+        async execute() { return ''; }, [field]: 'invalid' });
+    } }), /Tool requires decodeInput and execute functions/u);
+  }
+});
+
+test('tool definition fields share one JSON budget after optional undefined normalization', async () => {
+  await assert.rejects(make({ activate(tools) {
+    tools.add({ definition: { name: 'x', description: 'a'.repeat(8_000_000), metadata: { text: 'b'.repeat(8_000_000) } },
+      decodeInput: value => value, async execute() { return ''; } });
+  } }), /JSON exceeds size limit/u);
+  const g = await make({ activate(tools) {
+    tools.add({ definition: { name: 'x', description: '', parameters: undefined, metadata: undefined },
+      decodeInput: value => value, async execute() { return ''; } });
+    return { dispose() {} };
+  } });
+  const p = pin([g]);
+  assert.deepEqual(p.definitions, [{ name: 'demo__x', description: '' }]);
+  p.release();
+  await g.retire();
 });

@@ -37,6 +37,7 @@ test('bundled tools run under the desktop CSP', async () => {
     await page.waitForFunction(() => document.body.textContent.includes('completed'));
     assert.deepEqual(JSON.parse(await page.locator('body').textContent()), {
       outcome: { kind: 'completed', output: 'ok' },
+      invalid: { kind: 'refused', code: 'invalid-arguments' },
       blocked: true,
     });
   } finally {

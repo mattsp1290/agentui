@@ -26,7 +26,7 @@ export interface FrontendToolPin {
 export type FrontendToolOutcome =
   | { readonly kind: 'completed'; readonly output: string }
   | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'invalid-arguments' | 'decode-failed' };
-export type Accepted<A> = A extends (value: unknown) => asserts value is infer L ? L : never;
+export type AcceptedContributions<A> = A extends (value: unknown) => asserts value is infer L ? L : never;
 export interface FrontendToolActivation<L> {
   readonly generation: FrontendToolGeneration;
   readonly contributions: L;
@@ -36,7 +36,7 @@ export interface FrontendToolGenerationOptions<A extends (value: unknown) => voi
   readonly generation: string;
   readonly platform: FrontendPlatform;
   activate(tools: FrontendToolContributions): unknown;
-  readonly accept: A & (Accepted<A> extends ExtensionLifetime ? unknown : never);
+  readonly accept: A & (AcceptedContributions<A> extends ExtensionLifetime ? unknown : never);
 }
 export interface FrontendToolPinOptions {
   readonly generations: readonly FrontendToolGeneration[];
