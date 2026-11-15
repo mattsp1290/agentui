@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import type { RunAuthority } from '@agentui/contracts';
 import { canonicalJson } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import { providerIdentity } from '@agentui/host';
@@ -10,6 +11,7 @@ export interface ProviderInstallation {
   readonly id: string;
   readonly instance: ProviderIdentity;
   readonly service: string;
+  readonly expectedAuthority: RunAuthority['kind'];
   readonly authentication: { readonly kind: 'unauthenticated' } | {
     readonly kind: 'secret'; readonly revision: string; readonly resolve: () => Promise<string>;
   };
@@ -31,12 +33,12 @@ function nonblank(value: string): string {
 export function createProviderAuthority(state: AccessDatabase, namespace: string, installations: readonly ProviderInstallation[]): ProviderAuthority & { revoke(handle: string): void } {
   const configured = new Map(installations.map(installation => {
     const instance = providerIdentity(installation.instance);
-    if (instance.namespace !== namespace) throw new Error('Provider authorization refused');
+    if (!['agentui-host', 'remote-provider'].includes(installation.expectedAuthority) || instance.namespace !== namespace) throw new Error('Provider authorization refused');
     const authentication: ProviderInstallation['authentication'] = installation.authentication.kind === 'secret'
       ? { kind: 'secret', revision: nonblank(installation.authentication.revision), resolve: installation.authentication.resolve }
       : { kind: 'unauthenticated' };
     if (installation.authentication.kind !== 'secret' && installation.authentication.kind !== 'unauthenticated') throw new Error('Provider authorization refused');
-    return [nonblank(installation.id), { instance, service: origin(installation.service), authentication }];
+    return [nonblank(installation.id), { instance, service: origin(installation.service), authentication, expectedAuthority: installation.expectedAuthority }];
   }));
   if (configured.size !== installations.length) throw new Error('Provider authorization refused');
   const pending = new Set<Promise<unknown>>(), admitted = new Map<string, string>();
@@ -87,7 +89,7 @@ export function createProviderAuthority(state: AccessDatabase, namespace: string
       }
       const captured = credential;
       authorize(id, instance, captured);
-      return { credential, assertAuthorized: () => authorize(id, instance, captured) };
+      return { credential, expectedAuthority: installation.expectedAuthority, assertAuthorized: () => authorize(id, instance, captured) };
     },
     credentials: {
       use<I extends string, T>(request: { readonly credential: CredentialHandle<I>; readonly service: string }, action: (secret: string) => Promise<T>): Promise<T> {

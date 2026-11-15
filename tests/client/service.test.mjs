@@ -282,3 +282,12 @@ test('HTTP status interpretation retains classified failures and refuses a non-O
     await assert.rejects(connection.metadata(), error => error instanceof ServiceError && error.kind === kind);
   }
 });
+
+test('provider descriptors have a strict independent shape and retain native descriptor bytes', () => {
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', commands: [], availability: { kind: 'ready' } };
+  const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
+  assert.deepEqual(parse(provider), provider);
+  assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
+  for (const invalid of [{ ...provider, runtime: agent.runtime }, { ...provider, kind: 'remote' },
+    { ...provider, namespace: '' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
+});

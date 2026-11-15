@@ -80,6 +80,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
         throw error;
       }
       if (response.status === 401) throw new ServiceError('unauthorized', result.ok ? 'Pair this device with the host' : result.error.message);
+      if (!result.ok && result.error.kind === 'create-rejected' && response.status !== 409) throw new ServiceProtocolError('Invalid creation refusal status');
       if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
       return result.value;

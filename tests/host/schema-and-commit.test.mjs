@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import { budgets } from '../../packages/host/dist/durable-model.js';
 import { fixture, scope, installed, projection, note } from './fixture.mjs';
 
@@ -51,10 +52,37 @@ test('store notifies only successful write commits after other connections can o
 });
 
 
-test('opening incomplete version two refuses a missing receipt table without mutation', t => {
+test('opening incomplete version two refuses before adding provider creation metadata', t => {
   const f = fixture(t), host = f.open(); host.close();
-  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_receipts'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
+  assert.deepEqual(readFileSync(f.path), before);
+});
+
+for (const [failure, mutate, options, message] of [
+  ['corrupt JSON', "UPDATE conversations SET document='invalid json'", {}, /Corrupt stored JSON/],
+  ['projection mismatch', 'UPDATE conversations SET version=99', {}, /Incompatible projection/],
+  ['budget mismatch', '', { budgets: { maxEventBytes: budgets().maxEventBytes + 1 } }, /Incompatible persistent host budgets/],
+]) {
+  test(`pre-feature version two ${failure} refuses without adding provider metadata or changing file bytes`, t => {
+    const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
+    const db = new DatabaseSync(f.path); db.exec(`DROP TABLE provider_creations; ${mutate}`); db.close();
+    const before = readFileSync(f.path);
+    assert.throws(() => f.open(options), message);
+    const reader = new DatabaseSync(f.path);
+    try { assert.equal(reader.prepare("SELECT name FROM sqlite_schema WHERE name='provider_creations'").get(), undefined); }
+    finally { reader.close(); }
+    assert.deepEqual(readFileSync(f.path), before);
+  });
+}
+
+test('corrupt existing provider metadata refuses before migrating a legacy transcript', t => {
+  const f = fixture(t), host = f.open({ projection: transcriptProjection }); host.createConversation(scope, installed); host.close();
+  const db = new DatabaseSync(f.path);
+  db.exec("UPDATE conversations SET version=1; INSERT INTO provider_creations VALUES ('host-a','bad','invalid json','reserved',NULL)");
+  db.close();
+  const before = readFileSync(f.path);
+  assert.throws(() => f.open({ projection: transcriptProjection }), /Corrupt creation metadata/);
   assert.deepEqual(readFileSync(f.path), before);
 });

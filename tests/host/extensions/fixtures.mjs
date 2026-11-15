@@ -36,8 +36,19 @@ export function entry(t, { label = 'entry', listeners = listenerLog(), ...hooks 
   t.after(() => { fixtures.delete(directory); rmSync(directory, { recursive: true, force: true }); });
   const instance = { namespace: 'example-crew', installationId: 'crew-personal', generation: label, protocolVersion: 'crew-v2' };
   const { crewBackend, crew, crewPresentation } = createCrewFixture(instance);
-  const calls = { import: 0, activate: 0, connect: 0, discover: 0, close: 0, dispose: 0, commands: 0, resolve: 0 };
+  const calls = { import: 0, activate: 0, connect: 0, discover: 0, close: 0, dispose: 0, commands: 0, resolve: 0, creates: [], lookups: [] };
   const fixture = { calls, hooks, listeners, context: null, credential: null, label };
+  fixture.confirmed = operation => ({ kind: 'confirmed', value: { kind: 'agentui-created', creation: operation,
+    authority: { kind: 'remote-provider', binding: { namespace: instance.namespace,
+      installationId: instance.installationId, opaqueSessionId: `${label}-session` } } }, evidence: { operationId: operation.operationId } });
+  async function creation(kind, operation) {
+    calls.commands++; calls[kind === 'create' ? 'creates' : 'lookups'].push(structuredClone(operation));
+    assert.ok(hooks[kind], `unexpected remote ${kind}`);
+    return fixture.context.credentials.use({ credential: fixture.credential, service }, async value => {
+      assert.equal(value, secret);
+      return hooks[kind](operation, fixture);
+    });
+  }
   const connected = { ...crewBackend,
     async discover() {
       calls.discover++;
@@ -48,9 +59,9 @@ export function entry(t, { label = 'entry', listeners = listenerLog(), ...hooks 
       });
     },
     async close() { calls.close++; listeners.events.push(`${label}:close`); await hooks.close?.(fixture); },
-    async create() { calls.commands++; assert.fail('unexpected remote create'); },
+    create(operation) { return creation('create', operation); },
     async submit() { calls.commands++; assert.fail('unexpected remote command'); },
-    async reconcileCreation() { calls.commands++; assert.fail('unexpected remote reconcile'); },
+    reconcileCreation(operation) { return creation('lookup', operation); },
     async reconcileCommand() { calls.commands++; assert.fail('unexpected remote reconcile'); },
     observe() { calls.commands++; assert.fail('unexpected remote observe'); },
   };
@@ -81,7 +92,7 @@ export function entry(t, { label = 'entry', listeners = listenerLog(), ...hooks 
   writeFileSync(join(directory, 'server.mjs'), module);
   const manifest = { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION,
     entries: [{ kind: 'server', module: './server.mjs' }] };
-  const installations = [{ id: 'service', instance, service, authentication: { kind: 'secret', revision: 'first',
+  const installations = [{ id: 'service', instance, service, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: 'first',
     async resolve() { calls.resolve++; return secret; } } }];
   fixture.value = { kind: 'installed', directory, manifest, installations };
   fixture.importedValue = { manifest, entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate: fixture.activate }, installations };

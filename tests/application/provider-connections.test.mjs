@@ -53,7 +53,7 @@ function extension({ backend = crewBackend, provider = crew, presentation = crew
   } };
   return { calls, connected, get context() { return context; }, get credential() { return credential; }, value: {
     manifest: { namespace: presentation.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
-    entry, installations: [{ id: 'service', instance: presentation.instance, service, authentication }],
+    entry, installations: [{ id: 'service', instance: presentation.instance, service, authentication, expectedAuthority: 'remote-provider' }],
   } };
 }
 function revoke(directory) {

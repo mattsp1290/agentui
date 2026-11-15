@@ -73,19 +73,19 @@ It returns `{ kind: 'ready', extensions }` to transfer authorities to the regist
 If preparation cleanup fails, it returns `{ kind: 'failed', failure: 'cleanup', recovery: 'restart' }`.
 
 `extensionStatus()` reports `empty`, `active`, `changing`, `failed`, `closing`, or `closed`.
-An active status includes a generation number and the number of admitted discovery requests.
+An active status includes a generation number and the number of admitted discovery, creation, and creation lookup operations.
 Replacement outcomes are:
 
 - `replaced` includes the new generation number, or `null` for an empty selection.
-- `deferred` with reason `active-work` leaves healthy admitted discovery and later discovery on the original generation.
+- `deferred` with reason `active-work` leaves healthy admitted work and later operations on the original generation.
   It does not import the candidate, prepare authorities, revoke credentials, or dispose the original generation.
 - `deferred` with reason `changing` refuses a competing change while an accepted change or failure cleanup is pending.
 - `failed` reports a fixed failure category and recovery action.
 - `unavailable` refuses replacement during or after shutdown.
 
 A deferred request is not queued or remembered. Retry with the latest desired selection after work settles.
-Continuous discovery can postpone replacement indefinitely.
-An accepted idle replacement stops discovery admission before any asynchronous work.
+Continuous admitted work can postpone replacement indefinitely.
+An accepted idle replacement stops discovery and creation admission before any asynchronous work.
 It awaits complete old disposal before importing or activating the next generation.
 This ordering prevents overlap between activation-owned listeners, with an unavailable interval between generations.
 Close during replacement prevents publication of the new generation and disposes every acquired valid lifetime once.
@@ -100,17 +100,19 @@ The application retains its storage and directory ownership after failed cleanup
 Recovery requires a process restart, with the failing extension disabled or repaired as needed.
 
 Shutdown retains the existing immediate authorization freeze.
-Unlike normal deferred replacement, `close()` revokes credential admission immediately and discards late discovery results.
+Unlike normal deferred replacement, `close()` revokes credential admission immediately and discards late discovery results. Entered creation effects retain uncertain outcomes for later lookup.
 It waits for admitted work before closing connections and disposing lifetimes.
 An independent discovery failure can also start registry cleanup and revoke concurrent work.
-The successful-result guarantee applies to healthy discovery across deferred replacement, not to shutdown or independent provider failure.
-Independent credential callbacks and extension background work are not counted as admitted discovery.
+The successful-result guarantee applies to healthy discovery, creation, and creation lookup across deferred replacement, not to shutdown or independent provider failure.
+Independent credential callbacks and extension background work are not counted as admitted provider operations.
 They keep the registry's existing close behavior.
 Cooperative code that never settles can leave replacement or shutdown pending indefinitely.
 
-This owner does not dispatch provider commands, own provider observation feeds, or deliver frontend tools.
+The owner admits provider creation and original-operation lookup. It does not dispatch provider conversation commands, own provider observation feeds, or deliver frontend tools.
+Each API request reads the active catalog. Retired, changing, disabled, and failed generations expose no choices.
+Creation recovery retains the original installation, credential, and operation identity across replacement.
 UI refresh does not invoke server replacement.
-The remaining `agentui-ksx0` work must connect actual provider dispatch and feed lifetimes, then prove a slow delivered frontend tool survives a UI update.
+The remaining `agentui-ksx0` work must connect provider conversation dispatch and feed lifetimes, then prove a slow delivered frontend tool survives a UI update.
 Activation listener tests do not establish provider-feed or frontend-tool ownership.
 
 ## Contribute conversation views and actions
