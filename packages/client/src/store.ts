@@ -109,7 +109,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       requireCompatible();
       const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? { kind: 'send', text: local.draft } }));
       if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
-      const created = immutable({ command, draftRevision: command.body.kind === 'send' ? local.draftRevision : null });
+      const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
       await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
       publish();
       return created;
@@ -128,7 +128,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         publish();
       });
     },
-    send: () => submit(null),
+    send: text => submit(text === undefined ? null : { kind: 'send', text }),
     approve: (pendingId, choiceId) => submit({ kind: 'approve', pendingId, choiceId }),
     cancel: runId => submit({ kind: 'cancel', runId }),
     async retry(clientCommandId) {
