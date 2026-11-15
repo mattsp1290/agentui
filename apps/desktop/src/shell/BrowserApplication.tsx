@@ -1,3 +1,4 @@
+import { PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
 import { useState, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
 import { PairForm } from './PairForm.js';
@@ -13,7 +14,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const enabled = applicationEnabled(app);
   const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
   const agent = runtime?.engine === 'codex' ? 'codex' : runtime?.engine === 'pi' ? 'pi' : runtime?.engine === 'agentui-recorded' ? 'recorded' : 'local';
-  const hostLabel = runtime === null ? 'Local agent' : agent === 'codex' ? `Codex · ${runtime.version}` : agent === 'pi' ? 'Pi · GLM 5.3 · OpenCode Go' : 'Browser development · Recorded playback';
+  const hostLabel = runtime === null ? 'Local agent' : agent === 'codex' ? `Codex · ${runtime.version}` : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded playback';
   const conversation = app.active
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
@@ -80,5 +81,5 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   </nav>;
   return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} onRestore={() => setSelectedView('chats')}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
-    buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : agent === 'pi' ? 'Pi · GLM 5.3 · OpenCode Go' : 'Browser development · Recorded host'}>{children}</DesktopShell>;
+    buildLabel={runtime === null ? 'Local host' : agent === 'codex' ? 'Local Codex host' : agent === 'pi' ? PI_CHAT_LABEL : 'Browser development · Recorded host'}>{children}</DesktopShell>;
 }

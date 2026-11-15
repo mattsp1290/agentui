@@ -37,7 +37,7 @@ test('deployment and applied artifact mismatches remain distinct findings', () =
 
 test('solo clients accept the exact Pi SDK chat runtime and reject other versions or formats', () => {
   const piHost = { ...host, wireVersion: 1, extensionSdkVersion: '0.0.0',
-    nativeRuntime: { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-v1' } };
+    nativeRuntime: { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' } };
   assert.deepEqual(PI_RUNTIME, piHost.nativeRuntime);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, piHost), { kind: 'compatible' });
   for (const change of [{ version: '1.5.3' }, { format: 'pi-sdk-chat-v2' }, { engine: 'other' }]) {

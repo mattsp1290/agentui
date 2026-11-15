@@ -133,7 +133,10 @@ test('live OpenCode Go GLM 5.3 chat streams, remembers, reopens and stops throug
   assert(partial.length > 5, 'Stop preserves streamed partial output');
   assert(!partial.includes('10000'), 'The requested long response was interrupted');
   report.checks.push('Stop retained partial text and blocked overlapping send');
-  if (evidence) await page.screenshot({ path: join(evidence, 'pi-stopped.png'), fullPage: true });
+  if (evidence) {
+    await assistants.nth(3).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: join(evidence, 'pi-stopped.png'), fullPage: true });
+  }
   await host.close();
   host = undefined;
   const db = new DatabaseSync(join(directory, 'host.sqlite'));

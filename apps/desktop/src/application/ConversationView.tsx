@@ -1,3 +1,4 @@
+import { PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
 import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
@@ -9,7 +10,7 @@ type DraftEditor =
 
 const AGENT_PRESENTATION = {
   codex: { assistant: 'Codex', placeholder: 'Write to Codex…', footer: 'Local Codex · Approvals required for changes' },
-  pi: { assistant: 'Pi', placeholder: 'Write to Pi…', footer: 'Pi · GLM 5.3 · OpenCode Go · Chat only · No tools' },
+  pi: { assistant: 'Pi', placeholder: 'Write to Pi…', footer: `${PI_CHAT_LABEL} · Chat only · No tools` },
   recorded: { assistant: 'Recorded assistant', placeholder: 'Write to the recorded assistant…', footer: 'Recorded playback · No live model' },
   local: { assistant: 'Assistant', placeholder: 'Write a message…', footer: 'Local agent' },
 };

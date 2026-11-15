@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { realpathSync } from 'node:fs';
+import { PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { identifier, record } from '@agentui/contracts/decode';
 import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand, ConversationScope } from '@agentui/contracts';
@@ -52,10 +53,9 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
   const runtime = await createPiRuntime({ cwd, sessionDirectory: options.sessionDirectory,
     apiKey: options.apiKey, provider: 'opencode-go', model: 'glm-5.3' });
   const installation: Installation = { installationId: 'pi-opencode-go-glm-5-3-v1', binding: {
-    engine: 'pi', nativeVersion: '1.5.2', account: 'opencode-go:glm-5.3',
-    authorizedScope: cwd, nativeFormat: 'pi-sdk-chat-v1',
+    engine: PI_RUNTIME.engine, nativeVersion: PI_RUNTIME.version, account: 'opencode-go:glm-5.3',
+    authorizedScope: cwd, nativeFormat: PI_RUNTIME.format,
   } };
-  const sessions = new Map<string, PiSession>();
   const active = new Map<string, Turn>();
   const busy = new Set<string>();
   let closing = false;
@@ -86,8 +86,12 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
         publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome }]);
       }
     } finally {
-      active.delete(canonicalJson(turn.scope));
-      busy.delete(canonicalJson(turn.scope));
+      void turn.session.close().then(() => {
+        active.delete(canonicalJson(turn.scope));
+        busy.delete(canonicalJson(turn.scope));
+      }, () => {
+        process.emitWarning('Pi session cleanup failed. Restart the host before continuing.', { code: 'AGENTUI_PI_CLEANUP' });
+      });
     }
   }
   function outputFailed(turn: Turn) {
@@ -117,13 +121,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
         data: { sessionId: session.id, command: command.body.kind, phase } },
     }, result: { kind: 'completed', output: empty() } };
   }
-  async function sessionFor(scope: ConversationScope, target: CapturedTarget): Promise<PiSession> {
-    const key = canonicalJson(scope);
-    const existing = sessions.get(key);
-    if (existing) {
-      if (target.run && canonicalJson({ id: existing.id, file: existing.sessionFile }) !== target.run.reference.opaque) throw new Error('Pi session reference changed');
-      return existing;
-    }
+  async function sessionFor(target: CapturedTarget): Promise<PiSession> {
     const saved = target.run ? record(JSON.parse(target.run.reference.opaque), ['id', 'file']) : null;
     const expectedId = saved ? identifier(saved.id) : null;
     const session = await runtime.open(saved ? { sessionFile: identifier(saved.file) } : {});
@@ -131,7 +129,6 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
       await session.close();
       throw new Error('Pi session identity changed');
     }
-    sessions.set(key, session);
     return session;
   }
   return {
@@ -140,6 +137,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
       if (closing) return { kind: 'unsupported', reason: 'Pi is disconnected. Restart the host to connect again.' };
       if (command.body.kind === 'approve') return { kind: 'unsupported', reason: 'This Pi chat has no tools or approvals.' };
       const key = canonicalJson(command.scope);
+      if (command.body.kind === 'send' && busy.size >= 32) return { kind: 'unsupported', reason: 'Pi is responding in too many conversations. Wait for a response to finish.' };
       if (command.body.kind === 'send' && busy.has(key)) return { kind: 'unsupported', reason: 'Pi is still responding. Wait for it to finish.' };
       if (command.body.kind === 'cancel') {
         const turn = active.get(key);
@@ -156,7 +154,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
         busy.add(key);
         let turn: Turn | undefined;
         try {
-          const session = await sessionFor(command.scope, target);
+          const session = await sessionFor(target);
           if (closing) throw new Error('Pi is closing');
           const runId = randomUUID();
           const opaque = canonicalJson({ id: session.id, file: session.sessionFile });
@@ -184,7 +182,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
           if (turn) {
             try { finish(turn, { kind: 'ended', outcome: 'failed' }); } catch { outputFailed(turn); }
           }
-          busy.delete(key);
+          if (!turn) busy.delete(key);
           throw new Error('Pi could not start this response. Check command recovery before trying again.');
         }
       }

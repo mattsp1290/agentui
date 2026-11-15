@@ -107,7 +107,7 @@ test('Pi startup advertises one runtime to browser and native clients and labels
     outgoing.setTimeout(5000, () => outgoing.destroy(new Error('Pi host request timed out')));
     outgoing.end(JSON.stringify(body));
   });
-  const runtime = { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-v1' };
+  const runtime = { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' };
   const browserPair = await call('/api/v1', { op: 'pair', code: (await invite('invite')).code }, { Origin: ready.origin });
   assert.equal(browserPair.status, 200);
   const cookie = browserPair.headers['set-cookie'][0].split(';')[0];
@@ -130,7 +130,7 @@ test('Pi startup advertises one runtime to browser and native clients and labels
     assert.equal(rows.length, 2);
     for (const row of rows) {
       assert.deepEqual(JSON.parse(row.installation), { installationId: 'pi-opencode-go-glm-5-3-v1', binding: {
-        engine: 'pi', nativeVersion: '1.5.2', nativeFormat: 'pi-sdk-chat-v1',
+        engine: 'pi', nativeVersion: '1.5.2', nativeFormat: 'pi-sdk-chat-opencode-go-glm-5.3-v1',
         account: 'opencode-go:glm-5.3', authorizedScope: realpathSync(directory),
       } });
       assert.doesNotMatch(row.installation, new RegExp(token));

@@ -15,6 +15,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./pi": {
+      "types": "./dist/pi-driver.d.ts",
+      "import": "./dist/pi-driver.js"
     }
   },
   "files": [
@@ -33,6 +37,6 @@
     "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
     "@earendil-works/pi-ai": "1.5.2",
     "@earendil-works/pi-coding-agent": "1.5.2",
-    "@agentui/switchboard-pi": "file:../../vendor/switchboard-81d737853a126bc6939f54dc5b87e1400ca88acc.tgz"
+    "@agentui/switchboard-pi": "file:../../vendor/switchboard-64b170470a4201d8b70754e563f3d35b625951ff.tgz"
   }
 }

@@ -1,8 +1,8 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "81d737853a126bc6939f54dc5b87e1400ca88acc",
-  "artifact": "switchboard-81d737853a126bc6939f54dc5b87e1400ca88acc.tgz",
-  "sha256": "58a74b2f30a5f73a7b5c01eecda811f88ab1a1232cd63334c1e5cf1b3dbb8d6c",
+  "sourceRevision": "64b170470a4201d8b70754e563f3d35b625951ff",
+  "artifact": "switchboard-64b170470a4201d8b70754e563f3d35b625951ff.tgz",
+  "sha256": "ea41e3cfbae21dc785ed37f19e750a57985ea8e4cdd928f4cd441324bff92f32",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-pi",
   "entrypoint": "./pi",

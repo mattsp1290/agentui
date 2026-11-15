@@ -44,3 +44,11 @@ Select **New conversation**, write a message, and select **Send**. Replies strea
 Close the host with Ctrl+C. Restart with the same workspace, data directory, port, and environment variable to continue saved conversations. After an unexpected stop, the host marks unfinished output as interrupted. Drafts stay in the browser. The host stores conversation history and Pi session files under its private data directory, with Pi sessions in `pi-sessions`. The API key stays in host memory and is excluded from app metadata and saved conversations.
 
 Use separate data directories for Pi, Codex, and recorded demonstrations. Keep the host data directory private because its conversation history contains your messages and replies.
+
+Run the opt-in integration test with the same environment variable already exported.
+It starts a disposable bundled host and browser, sends real subscription requests,
+checks follow-up and restart memory, then interrupts a streamed response.
+
+```sh
+AGENTUI_PI_LIVE=1 node --test tests/application/pi-live.test.mjs
+```

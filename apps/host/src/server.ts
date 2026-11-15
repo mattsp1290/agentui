@@ -7,8 +7,9 @@ import { promisify } from 'node:util';
 import { CODEX_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, createPiDriver, openLocalHost } from '@agentui/host';
+import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
+import type { createPiDriver } from '@agentui/host/pi';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from './access.js';
 import type { CredentialClass } from './access.js';
@@ -19,7 +20,7 @@ import { createApi } from './api.js';
 import { FeedRegistry } from './feed-registry.js';
 import { serviceEndpoint } from './service-endpoint.js';
 import { startControl } from './control.js';
-import { recoverCodexConversations } from './codex-recovery.js';
+import { recoverProviderConversations, PROVIDER_RECOVERY } from './provider-recovery.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -35,7 +36,7 @@ function piApiKey(): string {
   if (!apiKey?.trim()) {
     throw new Error('Set OPENCODE_GO_API_KEY in the host environment before starting Pi.');
   }
-  return apiKey;
+  return apiKey.trim();
 }
 export async function startBrowserHost(options: BrowserHostOptions) {
   const provider = options.provider?.kind === 'pi' ? { ...options.provider, apiKey: piApiKey() } : options.provider;
@@ -97,12 +98,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         host.append(scope, output);
       };
       driver = provider.kind === 'pi'
-        ? await createPiDriver({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append })
+        ? await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append })
         : createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version, append });
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
         driver, authorize: scope => scope.hostId === hostId });
-      recoverCodexConversations(host, hostId, driver.installation, provider.kind === 'codex' ? 'Codex' : 'Pi');
+      recoverProviderConversations(host, hostId, driver.installation, PROVIDER_RECOVERY[provider.kind]);
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });

@@ -3,7 +3,8 @@ import { mkdtemp, readFile, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { createPiDriver, openLocalHost } from '@agentui/host';
+import { openLocalHost } from '@agentui/host';
+import { createPiDriver } from '@agentui/host/pi';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { command, scope, until } from './fixture.mjs';
 
@@ -100,4 +101,38 @@ test('Pi host closes active output before releasing SQLite ownership', async t =
   assert.equal(document.currentRun.kind, 'ended');
   assert.equal(document.currentRun.outcome, 'connection-lost');
   assert.equal(document.messages.every(message => message.complete), true);
+});
+
+test('Pi releases idle sessions across more than 32 conversations and reopens earlier history', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  const current = await f.open();
+  for (let index = 0; index < 36; index++) {
+    const conversation = { ...scope, conversationId: `pi-many-${index}` };
+    current.host.createConversation(conversation, current.driver.installation);
+    const send = command(`many-send-${index}`, { kind: 'send', text: `Question ${index}` }, conversation);
+    assert.equal((await current.host.conversation(conversation).submit(send)).receipt.state.kind, 'completed');
+    await until(() => current.host.inspect(conversation).snapshot.document.domain.currentRun?.kind === 'ended' &&
+      current.driver.capability(command(`next-${index}`, { kind: 'send', text: 'Next' }, conversation)).kind === 'supported');
+  }
+  const first = { ...scope, conversationId: 'pi-many-0' };
+  assert.equal((await current.host.conversation(first).submit(command('many-follow-up', { kind: 'send', text: 'Remember question zero' }, first))).receipt.state.kind, 'completed');
+  await until(() => current.host.inspect(first).snapshot.document.domain.currentRun?.kind === 'ended');
+  assert.equal(f.requests.length, 37);
+  assert.equal(f.requests.at(-1).messages.filter(message => message.role === 'user').length, 2);
+});
+
+test('the host core imports without evaluating the Pi SDK', async () => {
+  const { spawnSync } = await import('node:child_process');
+  const result = spawnSync(process.execPath, ['--input-type=module', '-e', `
+    import assert from 'node:assert/strict';
+    import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, next) {
+      assert(!specifier.startsWith('@earendil-works/'), 'Core must not load native Pi dependencies');
+      assert(!specifier.startsWith('@agentui/switchboard-pi'), 'Core must not load Pi adapter');
+      return next(specifier, context);
+    } });
+    const core = await import('@agentui/host');
+    assert.equal(typeof core.openLocalHost, 'function');
+  `], { cwd: new URL('../../', import.meta.url), encoding: 'utf8' });
+  assert.equal(result.status, 0, result.stderr);
 });
