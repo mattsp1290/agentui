@@ -1,6 +1,6 @@
 # Committed customization sources
 
-The source API retrieves committed inputs. The [local desktop builder](../../templates/customization/README.md) supports a narrower input set.
+The source API retrieves committed inputs. An internal preparation helper installs their locked dependencies into disposable copies. The [local desktop builder](../../templates/customization/README.md) supports a narrower input set.
 
 The Node host resolves the committed package and its pinned external sources through its dedicated entry point.
 
@@ -41,7 +41,7 @@ Use Node 24.22.3 or newer within Node 24 and npm 11.19.1. If you add actual npm 
 
 Required dependencies and peers must have pinned lock targets. Optional peers may be absent. Registry and remote tarball entries require SHA-256, SHA-384, or SHA-512 integrity pins. SHA-1 integrity and bundled entries without their own source and integrity pins are unsupported. Git npm sources and `link:` declarations are unsupported.
 
-Contained committed `file:` tarballs and links to declared members of the selected npm workspace retain their files. Home-directory shorthand in npm file payloads is unsupported. Any exact `~` path segment is rejected before normalization, including `file:~/b.tgz`, `file:./~/b.tgz`, and `file:vendor/../~/b.tgz`. Literal segments such as `~name` remain supported. A local tarball's relative `file:` declarations use the directory containing its committed source archive. Dependency lookup still uses its installed lock path. Other local directory links and lock keys outside the selected npm root are unsupported. A local link can require a separate npm installation context whose transitive pins are absent from the parent lock, even when npm accepts that lock. Use a supported workspace layout or a contained tarball instead. The resolver never installs packages or runs scripts. The builder owns installation, host ABI provisioning, and any additional npm qualification.
+Contained committed `file:` tarballs and links to declared members of the selected npm workspace retain their files. Home-directory shorthand in npm file payloads is unsupported. Any exact `~` path segment is rejected before normalization, including `file:~/b.tgz`, `file:./~/b.tgz`, and `file:vendor/../~/b.tgz`. Literal segments such as `~name` remain supported. A local tarball's relative `file:` declarations use the directory containing its committed source archive. Dependency lookup still uses its installed lock path. Other local directory links and lock keys outside the selected npm root are unsupported. A local link can require a separate npm installation context whose transitive pins are absent from the parent lock, even when npm accepts that lock. Use a supported workspace layout or a contained tarball instead. The resolver never installs packages or runs scripts. The preparation helper owns installation. Host ABI provisioning and further dependency qualification belong to later build work.
 
 ## Repository snapshots
 
@@ -60,3 +60,19 @@ One resolution owns private storage for its complete graph. Concurrent calls hav
 The existing `readCustomizationSnapshot` operation remains available for a single root snapshot with unresolved external references. Its npm validation compares only the root manifest with the root lock entry. It permits 20000 files, 256 MiB, and 256 external references in root metadata. Dispose each successful snapshot or resolved graph when its consumer finishes.
 
 The graph API checks the npm manager and v3 lock header once before decoding entries. When both the header and entries are invalid, the header error takes precedence.
+
+## Prepared sources
+
+`scripts/prepare-customization-sources.mjs` exports the internal `prepareCustomizationSources({ reference, scratchParent })` helper for future build scripts. It has no production command or public host export. Its complete return value is `{ root, dispose }`. The caller uses `root.directory` for the selected package and calls `dispose()` when finished.
+
+Preparation resolves the source graph itself and copies every recorded committed file into new private storage. It verifies file hashes and executable flags before copying and after installation. Every package `directory` and locked `npm.directory` points into those copies. Ordered extension edges and shared package objects retain their graph structure. Identities, manifests, source mappings, and file inventories still describe the original committed inputs. Installed files do not become committed provenance.
+
+Each repository acquisition gets one copy, preserving sibling imports. Each owning npm directory gets one installation, including when selected workspace members have different npm identities. Independent preparations never share writable copies. A committed `node_modules` path anywhere in a repository fails preparation. Dirty working files and untracked installations do not affect the result.
+
+For locked dependencies, the helper uses the running supported Node 24 executable and its adjacent npm CLI. npm must report exactly `11.19.1`. `npm ci` includes development, optional, and peer dependencies and disables lifecycle scripts for roots, workspaces, and dependencies. Audit, funding, and update checks are disabled. The helper never rewrites author manifests or locks and never injects host ABI packages.
+
+Committed `.npmrc` files remain in the inventory. Preparation temporarily removes copied `.npmrc` files during installation, then restores their exact bytes and executable flags. npm uses private HOME, cache, temporary files, and empty user and global configuration files. An allowlisted environment excludes inherited npm settings, credentials, proxies, `NODE_OPTIONS`, and `NODE_PATH`. The child executable search path starts with the running Node directory. This prevents ambient machine configuration from changing an ordinary install. It does not provide a sandbox or inherit private registry authentication.
+
+Preparation permits ten minutes overall. npm version detection permits ten seconds, and each installation permits two minutes within that deadline. Each subprocess captures at most 1 MiB per output stream. Public errors use fixed diagnostics without npm output or credential-bearing paths. Preparation failures remove the complete owned tree. Explicit disposal is idempotent and preserves caller-owned siblings and other successful preparations. Resolver snapshots are disposed before preparation returns.
+
+Prepared sources are inputs for a later compiler. Preparation does not bundle code, load runtime entrypoints, verify native dependency usability, supply the host ABI, publish artifacts, select versions, or activate extensions. A package that requires lifecycle scripts may install successfully and still fail compilation or execution later.
