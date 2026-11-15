@@ -11,14 +11,15 @@ const targets = {
   'browser-development': { directory: 'apps/desktop/web-dist-browser', nativeRuntime: BROWSER_RUNTIME },
 };
 const platform = process.argv[2];
-if (process.argv.length !== 3 || !Object.hasOwn(targets, platform)) {
-  throw new Error('Usage: node scripts/artifact-manifest.mjs <host|browser-development>');
+if (!Object.hasOwn(targets, platform) || !(process.argv.length === 3 ||
+    (process.argv.length === 5 && process.argv[3] === '--directory' && process.argv[4]))) {
+  throw new Error('Usage: node scripts/artifact-manifest.mjs <host|browser-development> [--directory PATH]');
 }
 const git = (...args) => execFileSync('git', args, { encoding: 'utf8' }).trimEnd();
 const root = git('rev-parse', '--show-toplevel');
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const target = targets[platform];
-const directory = resolve(root, target.directory);
+const directory = resolve(root, process.argv[4] ?? target.directory);
 
 function assetsAt(path) {
   return readdirSync(path, { withFileTypes: true }).flatMap(entry => {

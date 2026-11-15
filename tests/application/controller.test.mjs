@@ -1,15 +1,16 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@agentui/contracts/service';
+import { CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const empty = () => ({ version: 1, route: null, pendingCreation: null });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture() {
-  const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [];
+  const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { runtime: RECORDED_RUNTIME, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -30,7 +31,7 @@ function fixture() {
   const connection = {
     pair: code => behavior.pair(code),
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
-      nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
+      nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value) { created.push(value); await behavior.create(); return value; },
@@ -38,11 +39,11 @@ function fixture() {
     conversation(selected) { return { scope: selected,
       async submit(command) { submitted.push(command); return behavior.submit(command); },
       async receipt() { return null; },
-      watch() { return { ended: new Promise(() => {}), close() { feedCloses++; } }; } }; },
+      watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
   };
   const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
     ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => lease(id, failure) }, createId: () => `id-${++nextId}` });
-  return { app, views, drafts, leases, created, submitted, cursors, unauthorized, behavior,
+  return { app, views, drafts, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
 
@@ -416,4 +417,155 @@ test('a native rejected receipt is explained to the user without repeating the r
   assert.match(f.app.getSnapshot().error, /Codex requires login/);
   assert.equal(f.submitted.length, 1);
   assert.equal(f.app.getSnapshot().busy, false);
+});
+
+async function openCommands(t, runtime = RECORDED_RUNTIME) {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.runtime = runtime;
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  await deliver(f);
+  const target = f.app.getSnapshot().active;
+  return { ...f, target, actions: f.app.conversationActions(target) };
+}
+async function deliver(f, domain = { messages: [], currentRun: null }) {
+  const feed = f.feeds.at(-1);
+  await feed.receive({ kind: 'snapshot', snapshot: { scope: feed.scope, projectionVersion: 1,
+    cursor: (f.app.getSnapshot().active.store.getSnapshot().cursor ?? -1) + 1,
+    document: { domain, decisions: {}, receipts: {} } } });
+  assert.equal(f.app.getSnapshot().active.store.getSnapshot().connection.kind, 'connected');
+}
+function resultFor(command, state) {
+  return { kind: 'receipt', receipt: { scope: command.scope, clientCommandId: command.clientCommandId,
+    hostOperationId: 'operation', sequence: 1, state } };
+}
+
+for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted', 'completed', 'pending', 'not-dispatched']) {
+  test(`SDK commands return actual ${outcome} outcome and retain the composer draft`, async t => {
+    const f = await openCommands(t);
+    await f.target.store.setDraft('review prompt');
+    let expected;
+    f.behavior.submit = async command => {
+      expected = outcome === 'admission-rejected' ? { kind: 'rejected', reason: 'Admission refused' }
+        : resultFor(command, ['rejected', 'uncertain', 'not-dispatched'].includes(outcome) ? { kind: outcome, reason: 'Host reason' } : { kind: outcome });
+      return expected;
+    };
+    assert.deepEqual(await f.actions.commands.send('review prompt'), expected);
+    assert.deepEqual(f.submitted[0].body, { kind: 'send', text: 'review prompt' });
+    assert.equal(f.target.store.getSnapshot().draft, 'review prompt');
+    assert.equal(f.app.getSnapshot().error, outcome === 'admission-rejected' ? 'Admission refused' : outcome === 'rejected' ? 'Host reason' : '');
+    assert.equal(f.app.getSnapshot().busy, false);
+  });
+}
+
+for (const unauthorized of [false, true]) {
+  test(`SDK rejects ${unauthorized ? 'authorization' : 'transport'} failures while the UI submission stays caught`, async t => {
+    for (const sdk of [true, false]) {
+      const f = await openCommands(t);
+      const failure = unauthorized ? new ServiceError('unauthorized', 'Access denied') : new Error('Transport lost');
+      f.behavior.submit = async () => { throw failure; };
+      if (sdk) await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
+      else { await f.target.store.setDraft('prompt'); await f.actions.submit(() => f.target.store.send()); }
+      assert.match(f.app.getSnapshot().error, unauthorized ? /previous access may have been revoked/ : /Transport lost/);
+      assert.equal(f.app.getSnapshot().busy, false);
+      assert.equal(f.submitted.length, 1);
+      assert.equal(f.target.store.getSnapshot().outbox.length, 1);
+      if (unauthorized) assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+    }
+  });
+}
+
+test('SDK busy refusal does not persist another command or release the running operation', async t => {
+  const f = await openCommands(t), entered = deferred(), reply = deferred();
+  f.behavior.submit = async command => { entered.resolve(); await reply.promise; return resultFor(command, { kind: 'accepted' }); };
+  const sending = f.actions.commands.send('first');
+  await entered.promise;
+  await assert.rejects(f.actions.commands.send('second'), /operation is in progress/);
+  assert.equal(f.app.getSnapshot().busy, true);
+  assert.equal(f.submitted.length, 1);
+  assert.equal(f.target.store.getSnapshot().outbox.length, 1);
+  reply.resolve(); await sending;
+  assert.equal(f.app.getSnapshot().busy, false);
+});
+
+for (const replacement of ['conversation', 'view', 'session']) {
+  test(`SDK captured commands refuse a replacement ${replacement} before storage or dispatch`, async t => {
+    const f = await openCommands(t);
+    if (replacement === 'conversation') await f.app.open({ ...scope, conversationId: 'other' });
+    if (replacement === 'view') { f.views.set('restored-view/host', { ...empty(), route: scope }); await f.app.reopenView('restored-view'); }
+    if (replacement === 'session') { f.app.dispose(); await f.app.start(); }
+    const replacementState = f.app.getSnapshot();
+    const records = structuredClone([...f.drafts]);
+    for (const invoke of [() => f.actions.commands.send('old'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
+      await assert.rejects(invoke());
+    }
+    assert.deepEqual([...f.drafts], records);
+    assert.equal(f.submitted.length, 0);
+    assert.equal(f.target.store.getSnapshot().outbox.length, 0);
+    if (replacement === 'session') assert.strictEqual(f.app.getSnapshot(), replacementState);
+  });
+}
+
+for (const blocked of ['disconnected', 'feed-ended', 'storage', 'revoked', 'incompatible']) {
+  test(`SDK ${blocked} refusal persists and sends nothing`, async t => {
+    const f = await openCommands(t);
+    if (blocked === 'disconnected') f.target.store.disconnect();
+    if (blocked === 'feed-ended') { f.feeds.at(-1).finish({ kind: 'failed', reason: 'Lost feed' }); await Promise.resolve(); }
+    if (blocked === 'storage') f.leases[0].failure(new Error('Storage unavailable'));
+    if (blocked === 'revoked') f.unauthorized[0]();
+    if (blocked === 'incompatible') { f.behavior.runtime = { engine: 'unknown', version: '1', format: 'unknown' }; await f.app.reconnect(); }
+    const records = structuredClone([...f.drafts]);
+    for (const invoke of [() => f.actions.commands.send('blocked'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
+      await assert.rejects(invoke());
+    }
+    assert.deepEqual([...f.drafts], records);
+    assert.equal(f.submitted.length, 0);
+    assert.equal(f.app.getSnapshot().busy, false);
+  });
+}
+
+for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME]) {
+  for (const state of ['running', 'stopping', 'incomplete']) {
+    test(`SDK ${runtime.engine} ${state} response blocks send while approval and cancel stay usable`, async t => {
+      const f = await openCommands(t, runtime);
+      const currentRun = state === 'incomplete' ? null : state === 'running' ? { kind: 'running', runId: 'run' }
+        : { kind: 'stopping', runId: 'run', clientCommandId: 'cancel-id' };
+      await deliver(f, { currentRun, messages: state === 'incomplete' ? [{ messageId: 'partial', revision: 1, role: 'assistant', text: 'partial', complete: false }] : [] });
+      f.behavior.submit = async command => resultFor(command, { kind: 'accepted' });
+      await assert.rejects(f.actions.commands.send('wait'), /current response/);
+      assert.equal(f.drafts.size, 0);
+      await f.actions.commands.approve('pending', 'accept');
+      await f.actions.commands.cancel('run');
+      assert.deepEqual(f.submitted.map(command => command.body), [
+        { kind: 'approve', pendingId: 'pending', choiceId: 'accept' }, { kind: 'cancel', runId: 'run' },
+      ]);
+      await deliver(f, { currentRun: { kind: 'ended', runId: 'run', outcome: 'completed' }, messages: [] });
+      await f.actions.commands.send('next');
+      assert.deepEqual(f.submitted.at(-1).body, { kind: 'send', text: 'next' });
+    });
+  }
+}
+
+test('UI recovery can retry a retained command while disconnected', async t => {
+  const f = await openCommands(t);
+  await assert.rejects(f.actions.commands.send('retained'), /Reply lost/);
+  const [entry] = f.target.store.getSnapshot().outbox;
+  f.target.store.disconnect();
+  f.behavior.submit = async command => resultFor(command, { kind: 'accepted' });
+  await f.actions.submit(() => f.target.store.retry(entry.command.clientCommandId));
+  assert.deepEqual(f.submitted, [entry.command, entry.command]);
+  assert.deepEqual(f.target.store.getSnapshot().outbox, []);
+});
+
+
+test('SDK send refuses missing and non-string text without submitting the composer draft', async t => {
+  const f = await openCommands(t);
+  await f.target.store.setDraft('Private unfinished draft');
+  const records = structuredClone([...f.drafts]);
+  await assert.rejects(f.actions.commands.send(), /explicit message/);
+  for (const text of [undefined, null, 42, {}, '']) await assert.rejects(f.actions.commands.send(text));
+  assert.deepEqual([...f.drafts], records);
+  assert.equal(f.target.store.getSnapshot().draft, 'Private unfinished draft');
+  assert.deepEqual(f.target.store.getSnapshot().outbox, []);
+  assert.equal(f.submitted.length, 0);
 });
