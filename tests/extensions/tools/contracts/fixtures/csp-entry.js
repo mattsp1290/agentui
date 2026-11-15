@@ -47,8 +47,8 @@ try {
   blocked = true;
 }
 document.body.textContent = JSON.stringify({
-  outcome: await pin.invoke('demo__x', { v: 'ok' }),
-  invalid: await pin.invoke('demo__x', { v: '1' }),
+  outcome: await pin.invoke('demo__x', { v: 'ok' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''),
+  invalid: await pin.invoke('demo__x', { v: '1' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''),
   blocked,
 });
 pin.release();

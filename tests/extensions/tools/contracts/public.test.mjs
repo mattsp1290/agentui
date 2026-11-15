@@ -58,7 +58,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
         "import { createFrontendToolGeneration, pinFrontendTools, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\n",
       cases: [
         [
-          "const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t; declare const g: import('@agentui/sdk/tools').FrontendToolGeneration; declare const run: import('@agentui/contracts').RunIdentity; const p = pinFrontendTools({ generations: [g], platform: 'ios', run, capabilities: { tools: { clientProvided: true } } }); const o: Promise<FrontendToolOutcome> = p.invoke('a__b', {}); void o;",
+          "const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t; declare const g: import('@agentui/sdk/tools').FrontendToolGeneration; declare const run: import('@agentui/contracts').RunIdentity; const p = pinFrontendTools({ generations: [g], platform: 'ios', run, capabilities: { tools: { clientProvided: true } } }); const o: Promise<FrontendToolOutcome> = p.invoke('a__b', {}, 'activation'); void o;",
           null,
         ],
         [
@@ -90,6 +90,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           /not assignable/u,
         ],
         ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.definitions[0].name = 'changed';", /read-only property/u],
+        ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.invoke('demo__x', {});", /Expected 3 arguments/u],
         ['void document;', /Cannot find name 'document'/u],
       ],
     });
@@ -118,8 +119,8 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
               run: { conversation: { hostId: 'h', conversationId: 'c' }, runId: 'r',
                 authority: { kind: 'remote-provider', binding: { namespace: 'n', installationId: 'i', opaqueSessionId: 's' } } },
               capabilities: { tools: { clientProvided: true } } });
-            assert.deepEqual(await pin.invoke('demo__x', { email: 'a@example.com' }), { kind: 'completed', output: 'a@example.com' });
-            assert.deepEqual(await pin.invoke('demo__x', { email: 'invalid' }), { kind: 'refused', code: 'invalid-arguments' });
+            assert.deepEqual(await pin.invoke('demo__x', { email: 'a@example.com' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'completed', output: 'a@example.com' });
+            assert.deepEqual(await pin.invoke('demo__x', { email: 'invalid' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'refused', code: 'invalid-arguments' });
           } finally {
             pin?.release();
             await generation.retire();
