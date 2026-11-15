@@ -48,7 +48,7 @@ function registerTool<Input>(namespace: string, tool: FrontendToolContribution<I
   } });
 }
 interface Lifetime {
-  readonly identity: Pick<FrontendToolGeneration, 'namespace' | 'generation' | 'platform'>;
+  readonly identity: Pick<FrontendToolGeneration, 'namespace' | 'generation' | 'platform' | 'activationId'>;
   tools: readonly Registered[];
   dispose: (() => Promise<void>) | undefined;
   refs: number;
@@ -108,7 +108,7 @@ export async function createFrontendToolGeneration<L extends ExtensionLifetime>(
     dispose = async () => { await method.call(lifetime); };
     if (failure) throw failure.error;
     const contributions = await accept(lifetime);
-    return { generation: generationHandle({ namespace, generation, platform }, dispose, registered), contributions };
+    return { generation: generationHandle({ namespace, generation, platform, activationId: globalThis.crypto.randomUUID() }, dispose, registered), contributions };
   } catch (error) {
     if (dispose) {
       try { await dispose(); }
@@ -146,11 +146,13 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
     for (const tool of state.tools) entries.set(tool.definition.name, { tool, state });
   }
   const definitions = Object.freeze([...entries.values()].map(entry => entry.tool.definition));
-  return { run, definitions,
-    async invoke(name, args): Promise<FrontendToolOutcome> {
+  const bindings = Object.freeze([...entries].map(([name, entry]) => Object.freeze({ name, activationId: entry.state.identity.activationId })));
+  return { run, definitions, bindings,
+    async invoke(name, args, activationId): Promise<FrontendToolOutcome> {
       if (!held) return refused('released');
       const entry = entries.get(name);
       if (!entry) return refused('unknown-tool');
+      if (activationId !== entry.state.identity.activationId) return refused('activation-mismatch');
       hold(entry.state);
       try { return await entry.tool.call(args, run.conversation); }
       finally { drop(entry.state); }
