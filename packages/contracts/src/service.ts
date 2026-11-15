@@ -1,6 +1,7 @@
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility } from './compatibility.js';
+import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Receipt, SubmitResult } from './durable.js';
@@ -39,10 +40,14 @@ export type ServicePull =
   | { readonly kind: 'page'; readonly page: number; readonly item: unknown }
   | { readonly kind: 'heartbeat' }
   | { readonly kind: 'ended'; readonly end: FeedEnd };
+export interface ConversationCatalogEntry {
+  readonly scope: ConversationScope;
+  readonly preview: string | null;
+}
 export interface ServiceValueMap {
   readonly pair: null;
   readonly metadata: ServiceMetadata;
-  readonly catalog: readonly ConversationScope[];
+  readonly catalog: readonly ConversationCatalogEntry[];
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -60,7 +65,7 @@ export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
 export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
-  catalog(after?: string | null, limit?: number): Promise<readonly ConversationScope[]>;
+  catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
   create(scope: ConversationScope): Promise<ConversationScope>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
@@ -155,7 +160,14 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
   },
   catalog(value) {
     if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
-    return value.map(parseScope);
+    return value.map(value => {
+      const entry = record(value, ['scope', 'preview']);
+      if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
+        entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
+        throw new Error('Invalid conversation preview');
+      }
+      return { scope: parseScope(entry.scope), preview: entry.preview };
+    });
   },
   create: parseScope,
   submit(value) {

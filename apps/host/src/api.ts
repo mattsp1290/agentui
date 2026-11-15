@@ -1,5 +1,6 @@
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
+import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { Installation, LocalHost } from '@agentui/host';
@@ -26,7 +27,9 @@ export function createApi(options: {
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
     switch (request.op) {
       case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility } satisfies ServiceValueMap['metadata'];
-      case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit) satisfies ServiceValueMap['catalog'];
+      case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
+        scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
+      })) satisfies ServiceValueMap['catalog'];
       case 'create': host.createConversation(request.scope, options.installation ?? recordedInstallation); return request.scope satisfies ServiceValueMap['create'];
       case 'submit': return host.conversation(request.command.scope).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
       case 'receipt': return host.conversation(request.scope).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;

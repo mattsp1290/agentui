@@ -4,9 +4,9 @@ import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
-import { transcriptProjection } from '@agentui/contracts/conversation';
+import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { ConversationCatalogEntry, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
@@ -21,7 +21,7 @@ export interface OpenConversation {
 }
 export interface ApplicationSnapshot {
   readonly host: HostState;
-  readonly catalog: Page<ConversationScope>;
+  readonly catalog: Page<ConversationCatalogEntry>;
   readonly saved: SavedView;
   readonly savedViews: Page<string>;
   readonly savedViewNotice: string;
@@ -79,9 +79,15 @@ export function createApplicationController(deps: {
   let state = initialSnapshot();
   let session: Session | null = null;
   const listeners = new Set<() => void>();
+  let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved'>>): void {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW });
     for (const listener of listeners) listener();
+  }
+  function disconnectActive(): void {
+    unsubscribeActive?.();
+    unsubscribeActive = null;
+    state.active?.store.disconnect();
   }
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
@@ -136,22 +142,31 @@ export function createApplicationController(deps: {
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
     if (state.active && sameScope(state.active.scope, scope)) { await current(owner, state.active.store.connect()); return; }
-    state.active?.store.disconnect();
+    disconnectActive();
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
     const store = createConversationStore({ scope, port: owner.connection.conversation(scope), projection: transcriptProjection,
       drafts: storage.drafts(failed), createCommandId: deps.createId });
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
     publish({ active: { scope, store, viewId: storage.viewId } });
+    unsubscribeActive = store.subscribe(() => {
+      if (session !== owner || state.active?.store !== store) return;
+      const snapshot = store.getSnapshot();
+      if (snapshot.connection.kind !== 'connected') return;
+      const preview = conversationPreview(snapshot.document.domain);
+      const existing = state.catalog.items.find(entry => sameScope(entry.scope, scope));
+      if (existing && existing.preview !== preview) publish({ catalog: { ...state.catalog,
+        items: state.catalog.items.map(entry => entry === existing ? { scope: entry.scope, preview } : entry) } });
+    });
     await current(owner, store.connect());
   }
   async function readCatalog(owner: Session, hostId: string, after: string | null = null): Promise<void> {
     const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE));
-    if (items.some(scope => scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
-    const next = items.length === SERVICE_CATALOG_PAGE ? items.at(-1)?.conversationId ?? null : null;
+    if (items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
+    const next = items.length === SERVICE_CATALOG_PAGE ? items.at(-1)?.scope.conversationId ?? null : null;
     if (next !== null && next === after) throw new Error('Catalog did not advance.');
-    const loaded = new Map((after === null ? [] : state.catalog.items).map(scope => [JSON.stringify([scope.hostId, scope.conversationId]), scope]));
-    for (const scope of items) loaded.set(JSON.stringify([scope.hostId, scope.conversationId]), scope);
+    const loaded = new Map((after === null ? [] : state.catalog.items).map(entry => [JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry]));
+    for (const entry of items) loaded.set(JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry);
     publish({ catalog: { items: [...loaded.values()], after: next } });
   }
   async function readSavedViews(owner: Session, hostId: string, after: string | null = null): Promise<void> {
@@ -170,7 +185,7 @@ export function createApplicationController(deps: {
       const metadata = await current(owner, owner.connection.metadata());
       const previous = owner.view;
       if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
-        state.active?.store.disconnect();
+        disconnectActive();
         owner.view = { storage, saved: null };
         publish(DETACHED_VIEW);
       }
@@ -203,7 +218,7 @@ export function createApplicationController(deps: {
   async function completeCreation(owner: Session, scope: ConversationScope): Promise<void> {
     await current(owner, owner.connection.create(scope));
     await save(owner, { version: 1, route: scope, pendingCreation: null });
-    publish({ catalog: { ...state.catalog, items: [scope, ...state.catalog.items.filter(item => !sameScope(item, scope))] } });
+    publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
     await install(owner, scope);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {
@@ -229,7 +244,7 @@ export function createApplicationController(deps: {
     dispose() {
       const owner = session;
       session = null;
-      state.active?.store.disconnect();
+      disconnectActive();
       owner?.view?.storage.close();
     },
     pair: code => run(async owner => {
@@ -242,7 +257,7 @@ export function createApplicationController(deps: {
     reopenView: viewId => run(async owner => {
       requireHost(owner);
       const next = await acquire(owner, viewId);
-      state.active?.store.disconnect();
+      disconnectActive();
       owner.view?.storage.close();
       owner.view = { storage: next, saved: null };
       publish(DETACHED_VIEW);

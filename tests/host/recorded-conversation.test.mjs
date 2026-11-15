@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, foldDocument } from '@agentui/contracts';
-import { parseTranscript, parseTranscriptEvent, transcriptProjection } from '@agentui/contracts/conversation';
+import { conversationPreview, parseTranscript, parseTranscriptEvent, transcriptProjection } from '@agentui/contracts/conversation';
 import { createConversationStore } from '@agentui/client';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 
@@ -59,6 +59,19 @@ function harness(t, progressMs = 15) {
   };
   return { options, open, entries, watch, client };
 }
+
+test('conversation previews use the first user message and keep text readable and bounded', () => {
+  const message = (role, text, messageId) => ({ messageId, role, text, revision: 1, complete: true });
+  const transcript = { currentRun: null, messages: [message('assistant', 'Welcome', 'assistant'),
+    message('user', '  Plan a garden\nwith herbs\tand tomatoes  ', 'first'), message('user', 'Later prompt', 'second')] };
+  assert.equal(conversationPreview(transcript), 'Plan a garden with herbs and tomatoes');
+  assert.equal(conversationPreview({ ...transcript, messages: [] }), null);
+  assert.equal(conversationPreview({ ...transcript, messages: [message('user', ' \n\t ', 'blank')] }), null);
+  assert.equal(conversationPreview({ ...transcript, messages: [message('user', 'x'.repeat(1000), 'long')] }), `${'x'.repeat(79)}…`);
+  const unicode = conversationPreview({ ...transcript, messages: [message('user', `${'x'.repeat(78)}😀tail`, 'unicode')] });
+  assert.equal(unicode, `${'x'.repeat(78)}…`);
+  assert.equal(unicode.isWellFormed(), true);
+});
 
 test('transcript decoding preserves order and rejects identity changes and conflicting revisions', () => {
   const first = transcriptProjection.apply(transcriptProjection.initial(), event(1, 'Started'));

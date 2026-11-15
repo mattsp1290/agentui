@@ -32,7 +32,7 @@ function fixture() {
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', compatibility: { wireVersion: 1, extensionSdkVersion: '0.0.0',
       nativeRuntime: { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' },
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
-    async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : []); },
+    async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value) { created.push(value); await behavior.create(); return value; },
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
@@ -321,12 +321,12 @@ test('confirmed creation preserves expanded catalog pages and later paging does 
   const cursor = f.app.getSnapshot().catalog.after;
   await f.app.create();
   assert.equal(f.app.getSnapshot().catalog.items.length, 201);
-  assert.equal(f.app.getSnapshot().catalog.items[0].conversationId, f.created[0].conversationId);
+  assert.equal(f.app.getSnapshot().catalog.items[0].scope.conversationId, f.created[0].conversationId);
   assert.equal(f.app.getSnapshot().catalog.after, cursor);
   assert.deepEqual(f.cursors, [null, 'c-099']);
   await f.app.moreConversations();
   assert.equal(f.app.getSnapshot().catalog.items.length, 211);
-  assert.equal(f.app.getSnapshot().catalog.items.filter(scope => scope.conversationId === f.created[0].conversationId).length, 1);
+  assert.equal(f.app.getSnapshot().catalog.items.filter(entry => entry.scope.conversationId === f.created[0].conversationId).length, 1);
   assert.equal(f.app.getSnapshot().catalog.after, null);
 });
 

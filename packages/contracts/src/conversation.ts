@@ -8,6 +8,12 @@ export interface TranscriptMessage {
   readonly text: string;
   readonly complete: boolean;
 }
+export const CONVERSATION_PREVIEW_LENGTH = 80;
+export function conversationPreview(transcript: Transcript): string | null {
+  const text = transcript.messages.find(message => message.role === 'user')?.text.replace(/\s+/gu, ' ').trim();
+  if (!text) return null;
+  return text.length > CONVERSATION_PREVIEW_LENGTH ? `${text.slice(0, CONVERSATION_PREVIEW_LENGTH - 1).replace(/[\uD800-\uDBFF]$/u, '').trimEnd()}…` : text;
+}
 export type RunOutcome = 'completed' | 'interrupted' | 'failed' | 'connection-lost';
 export type CurrentRun =
   | { readonly kind: 'running'; readonly runId: string }
