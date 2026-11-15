@@ -19,6 +19,7 @@ export async function readJson(request: IncomingMessage, limit: number): Promise
 export function json(response: ServerResponse, status: number, value: unknown, headers: OutgoingHttpHeaders = {}): void {
   const body = canonicalJson(value);
   if (Buffer.byteLength(body) > SERVICE_MAX_RESPONSE_BYTES) throw new Error('Response exceeds byte limit');
+  if (response.destroyed) return;
   response.writeHead(status, { ...headers, 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   response.end(body);
 }

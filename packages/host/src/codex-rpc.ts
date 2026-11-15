@@ -6,6 +6,7 @@ import { StringDecoder } from 'node:string_decoder';
 export interface CodexRpcOptions {
   executable?: string;
   args?: readonly string[];
+  env?: NodeJS.ProcessEnv;
   cwd: string;
   onNotification: (method: string, params: unknown) => void;
   onRequest: (id: string | number, method: string, params: unknown) => void;
@@ -70,7 +71,7 @@ export class CodexRpc {
 
   constructor(private readonly options: CodexRpcOptions) {
     this.child = spawn(options.executable ?? 'codex', options.args ?? ['app-server', '--stdio'], {
-      cwd: options.cwd, stdio: 'pipe', shell: false,
+      cwd: options.cwd, stdio: 'pipe', shell: false, env: options.env ?? process.env,
     });
     this.child.stderr.resume();
     this.child.stderr.on('error', () => this.fail(new Error('Codex stderr stream failed')));

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
+import { hostDependencyManifest } from '../../packages/host/test-support/dependencies.mjs';
 import { test } from 'node:test';
 import { loadConformanceInputs } from './coherence.mjs';
 
@@ -13,7 +14,7 @@ test('AG-UI SDK, validator and installed license match the retained pins', () =>
   const lock = json('package-lock.json');
   assert.equal(digest(readFileSync(join(fork.folder, fork.core.artifact))), fork.core.sha256, 'Installed SDK archive digest must match fork provenance');
   assert.equal(fork.core.version, sdk.version, 'Installed SDK version must match the historical pin');
-  assert.equal(digest(readFileSync(new URL('node_modules/@mattsp1290/switchboard/LICENSE', root))), provenance.files['SWITCHBOARD-LICENSE'].sha256, 'Installed Switchboard license must match the retained digest');
+  assert.equal(digest(readFileSync(join(dirname(hostDependencyManifest('@mattsp1290/switchboard')), 'LICENSE'))), provenance.files['SWITCHBOARD-LICENSE'].sha256, 'Installed Switchboard license must match the retained digest');
   assert.equal(lock.packages['node_modules/ajv'].version, project.devDependencies.ajv, 'Locked Ajv version must match the root manifest');
   assert.deepEqual(json('node_modules/@ag-ui/core/package.json'), fork.core.packedManifest, 'Installed SDK manifest must match the frozen fork core');
   assert.equal(json('node_modules/ajv/package.json').version, project.devDependencies.ajv, 'Installed Ajv version must match the root manifest');

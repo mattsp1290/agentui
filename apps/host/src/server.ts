@@ -29,6 +29,9 @@ import { providerInstallation } from './agent-config.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { describeAgent } from './agents.js';
 import type { InstalledAgent } from './agents.js';
+import { createHostObservability } from './observability.js';
+import type { ObservabilityConfiguration } from './observability.js';
+import { directCodexEnvironment } from './native-environment.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import { providerExtensionSource } from './provider-extensions.js';
 import type { BrowserProviderExtension } from './provider-extensions.js';
@@ -41,6 +44,7 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
+  readonly observability?: ObservabilityConfiguration;
   readonly providerExtensions?: readonly BrowserProviderExtension[];
   readonly accessMode?: 'paired' | 'trusted';
 }
@@ -62,7 +66,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     ? { default: 'default', agents: [{ ...options.provider, name: 'default' }] } : null);
   if (options.provider?.kind === 'pi') piApiKey();
   if (options.provider?.kind === 'claude-sdk') claudeApiKey();
-  const owner = ownDirectory(options.directory);
+  const observability = createHostObservability(options.observability ?? { kind: 'disabled' });
+  let owner: ReturnType<typeof ownDirectory>;
+  try { owner = ownDirectory(options.directory); }
+  catch (error) { await observability.close(); throw error; }
   let access: Access | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
@@ -106,7 +113,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
       access?.close();
       owner.close();
-    })();
+    })().finally(() => observability.close());
     return closePromise;
   }
   try {
@@ -123,15 +130,17 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
-      const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
+      const appendFor = (source: NativeProvider['kind']): Parameters<typeof createCodexDriver>[0]['append'] => (scope, output) => {
         if (!host) throw new Error('Host is not ready to store agent output');
         host.append(scope, output);
+        observability.recordOutput(source, scope, output.events);
       };
       const currentRunId = (scope: ConversationScope): string | null => {
         if (!host) throw new Error('Host not ready');
         return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
       };
       for (const provider of configured.agents) {
+        const append = appendFor(provider.kind);
         if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind}.`);
         const installation = providerInstallation(provider);
         if (agents.some(agent => canonicalJson(agent.installation) === canonicalJson(installation))) throw new Error('Duplicate agent installation');
@@ -153,14 +162,15 @@ export async function startBrowserHost(options: BrowserHostOptions) {
                 ...(provider.executable ? { codexPathOverride: provider.executable } : {}), append, currentRunId });
               break;
             case 'codex': {
+              const env = directCodexEnvironment();
               let version: string;
               try {
-                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096 });
+                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096, env });
                 version = result.stdout.trim();
               } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
               driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
-                ...(provider.executable ? { executable: provider.executable } : {}), append });
+                ...(provider.executable ? { executable: provider.executable } : {}), env, append });
               break;
             }
           }
@@ -205,8 +215,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
     const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
-      files: browser.files, isClosing: apiOptions.isClosing });
-    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing });
+      files: browser.files, isClosing: apiOptions.isClosing, observability });
+    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing, observability });
     http.on('request', (request, response) => {
       const route = request.url?.startsWith('/native/') ? native : handler;
       void route(request, response).catch(() => response.destroy());

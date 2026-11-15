@@ -1,3 +1,4 @@
+import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
 import { describeAgent } from '../../apps/host/build/tsc/agents.js';
 import { recordedInstallation } from '@agentui/host/recorded';
 const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
@@ -26,8 +27,8 @@ async function fixture(t, credentialClass) {
   let observeGate = () => {};
   const isClosing = () => { observeGate(); return closing; };
   const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing });
-  const handler = serviceEndpoint(credentialClass === 'native' ? { access, api, credentialClass, isClosing }
-    : { access, api, credentialClass, isClosing, files: new Map([['browser.html', Buffer.from('test asset')]]) });
+  const handler = serviceEndpoint(credentialClass === 'native' ? { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing }
+    : { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing, files: new Map([['browser.html', Buffer.from('test asset')]]) });
   const server = createServer((req, res) => { void handler(req, res).catch(() => res.destroy()); });
   t.after(async () => {
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });

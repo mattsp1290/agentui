@@ -19,6 +19,7 @@ export interface CodexDriverOptions {
   readonly append: (scope: ConversationScope, output: HostOutput<CodexTranscriptEvent>) => void;
   readonly executable?: string;
   readonly args?: readonly string[];
+  readonly env?: NodeJS.ProcessEnv;
 }
 interface ActiveTurn {
   readonly scope: ConversationScope;
@@ -60,6 +61,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
   const rpc = new CodexRpc({ cwd,
     ...(options.executable === undefined ? {} : { executable: options.executable }),
     ...(options.args === undefined ? {} : { args: options.args }),
+    ...(options.env === undefined ? {} : { env: options.env }),
     onNotification: (method, value) => handleCallback(value, () => notification(method, value)),
     onRequest: (id, method, value) => handleCallback(value, () => request(id, method, value)),
     onClose() {

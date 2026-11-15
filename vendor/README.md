@@ -9,17 +9,81 @@ Switchboard composition. A separate controlled consumer verifies their installat
 public imports and fixture behavior. AgentUI does not start a second native runtime. Full native integration,
 approvals, discovery, provider routes and Apple qualification remain open.
 
-## Switchboard package provenance
+## Current Switchboard package
 
-The host installs private ESM `@mattsp1290/switchboard@0.0.0` from a commit-named
+The host installs `@mattsp1290/switchboard@0.0.0` and the existing Pi, Codex,
+and Claude aliases from one immutable artifact at source
+`dadfe09fb2f0090b46168309309ca01bb89b9a0e`.
+The [active pin](switchboard.json) records the source tree, source-lock SHA-256,
+artifact SHA-256, toolchain, command results, and retained logs.
+The alias pins identify their public entrypoints and native SDK versions. Their
+`qualificationRecord` references the active pin as the single artifact identity.
+Qualification limits are recorded in the active pin’s `qualification.limits`.
+The root lockfile records npm integrity separately.
+
+The public entries are core, `./agui`, `./testkit`, `./pi`, `./codex`, `./claude`,
+and `./observability`. Core has no required runtime dependencies.
+The observability entry requires the exact optional peer
+`@opentelemetry/api@1.9.0`. AgentUI declares that peer and keeps the existing
+native SDK versions. The host owns telemetry providers and exporters.
+
+Qualification ran from a clean `git archive` of this revision on Darwin arm64
+with Node 24.22.3 and npm 11.19.1. `npm ci`, build, lint, type checking,
+`npm test`, and `verify:package` passed. The source test runner reported 185
+passing top-level tests. Its package verification also exercised controlled
+installed-package, compiler, observability, and AG-UI fixtures.
+The explicit package-verification command passed separately.
+No live native agent, Datadog backend, or Apple application test ran for this update.
+These results do not renew the historical Linux or Mac application receipts.
+
+Reproduce the artifact from a separate directory. Do not replace a working
+Switchboard checkout to build the dependency.
+
+```sh
+	git -C /path/to/switchboard archive dadfe09fb2f0090b46168309309ca01bb89b9a0e | tar -x -C /path/to/empty-source
+	cd /path/to/empty-source
+	npm ci
+	npm run build
+	npm run lint
+	npm run check
+	npm test
+	npm run verify:package
+	npm pack --json --pack-destination /path/to/package-output
+```
+
+Rename the packed file to the commit-named artifact without changing its bytes.
+Compare its SHA-256 with the active pin before adoption. This update made no
+cross-machine reproducibility claim.
+
+From AgentUI, check the installed consumer after installation and build.
+
+```sh
+	npm ci
+	npm run build
+	node --test packages/adapter-tests/tests/switchboard*.test.mjs packages/adapter-tests/tests/qualification-consumer*.test.mjs tests/host/*pin.test.mjs
+	npm run protocol:check
+```
+
+The tests compare all runtime aliases with the same current artifact, import
+its public entries, reject private imports, and verify retained historical
+artifact and log bytes. Provider and Apple qualification remain separate.
+
+## Historical Switchboard qualification
+
+The original pin records are preserved byte-for-byte in [historical](historical/).
+The original artifacts and qualification logs remain at their existing paths.
+The following records describe their measured source revisions.
+They do not qualify the current runtime.
+
+The historical host installed private ESM `@mattsp1290/switchboard@0.0.0` from a commit-named
 tarball. No registry publication is claimed. The authoritative
-[pin and qualification record](switchboard.json) names the source revision,
+[historical pin and qualification record](historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json) names the source revision,
 artifact, SHA-256, toolchain and retained logs. The root lockfile separately records
 npm integrity. The installed-consumer test checks the pin, host dependency,
 artifact bytes and lockfile together.
 
 The artifact contains built JavaScript, declarations, the upstream architecture
-record and upstream MIT license. Only core and `./agui` are public exports.
+record and upstream MIT license. That historical package exports only core and `./agui`.
 Core has no required runtime dependency. The AG-UI entry requires the exact
 optional peer `@ag-ui/core@1.0.4`. The `@agentui/host` package, for its `./agui`
 entry, and the pure `@agentui/protocol` package each declare the pinned fork SDK
@@ -38,7 +102,7 @@ Two packs from the qualified archive build produced identical bytes. This does
 not establish identical output across machines. Install the committed artifact
 for downstream qualification instead of rebuilding it on the Mac.
 
-## Rebuild from the immutable source
+### Rebuild the historical immutable source
 
 Use a separate empty checkout and the recorded toolchain. The canonical AG-UI
 gate also needs the recorded uv and Python versions.
@@ -61,7 +125,7 @@ revision. The compiler gate needs a Git checkout to annotate its source revision
 Renaming the package to its commit-named filename does not change its bytes.
 Compare the rebuilt package with the recorded SHA-256 before adopting it.
 
-## Check the installed consumer
+### Historical consumer checks
 
 From the AgentUI root with the pinned Node and npm versions:
 
@@ -80,10 +144,10 @@ The [Mac measurement](../docs/qualification/switchboard-macos/58c7922d8fade3617c
 passed this consumer unit at AgentUI source `54065e2`. It installed the committed
 artifact and verified all eleven requested frozen inputs without repacking it.
 
-## Pi text-chat adapter
+### Historical Pi text-chat adapter
 
-The host installs a separate commit-named Switchboard artifact through the
-`@agentui/switchboard-pi` local package alias. The [Pi pin](switchboard-pi.json)
+The historical host installed a separate commit-named Switchboard artifact through the
+`@agentui/switchboard-pi` local package alias. The [historical Pi pin](historical/switchboard-pi-564f04434b3a6575c5c97f706dd6d5510e41726f.json)
 records its source and digest. AgentUI imports only its public `./pi` entrypoint.
 The existing core and AG-UI dependency pins above remain separate.
 

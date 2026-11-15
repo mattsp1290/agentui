@@ -5,6 +5,7 @@ import type { BrowserHostOptions } from './server.js';
 import { startBrowserHost } from './server.js';
 import { readAgentConfiguration } from './agent-config.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
+import { readObservabilityConfiguration } from './observability.js';
 
 const COMMANDS: Readonly<Record<string, readonly string[]>> = { serve: ['port', 'assets', 'config', 'trusted'], 'browser-dev': ['port', 'assets', 'trusted'], codex: ['port', 'workspace', 'assets', 'executable', 'trusted'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable', 'trusted'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable', 'trusted'], pi: ['port', 'workspace', 'assets', 'trusted'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'] };
 async function main(): Promise<void> {
@@ -37,7 +38,7 @@ async function main(): Promise<void> {
     }
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
-    const host = await startBrowserHost({ directory, port, assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
+    const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
       accessMode: values.trusted ? 'trusted' : 'paired',
       ...(provider === undefined ? {} : { provider }), ...(values.config ? { configuration: readAgentConfiguration(resolve(values.config)) } : {}) });
     process.stdout.write(`${JSON.stringify({ mode: command === 'browser-dev' ? 'browser-development' : command, origin: host.origin, hostId: host.hostId })}\n`);

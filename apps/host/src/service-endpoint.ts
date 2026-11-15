@@ -1,5 +1,6 @@
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES, ServiceError } from '@agentui/contracts/service';
+import type { ServiceFailureKind } from '@agentui/contracts/service';
 import type { Access, Principal } from './access.js';
 import type { createApi } from './api.js';
 import { FAILURE_STATUS } from './errors.js';
@@ -7,6 +8,7 @@ import { json, readJson } from './framing.js';
 import { serveAsset } from './static-assets.js';
 import { DEVICE_SECRET, NATIVE_PAIR_MAX_REQUEST_BYTES, parseNativePairRequest } from './native-wire.js';
 import type { NativeCredential } from './native-wire.js';
+import type { HostObservability, RequestObservation } from './observability.js';
 
 type Api = ReturnType<typeof createApi>;
 type Reply = { readonly value: unknown; readonly headers: OutgoingHttpHeaders };
@@ -14,6 +16,7 @@ type EndpointOptions = {
   readonly access: Access;
   readonly api: Api;
   readonly isClosing: () => boolean;
+  readonly observability: HostObservability;
 } & (
   | { readonly credentialClass: 'browser-development'; readonly files: ReadonlyMap<string, Buffer> }
   | { readonly credentialClass: 'native' }
@@ -23,25 +26,25 @@ type Admission =
   | { readonly kind: 'service'; readonly principal: Principal; readonly message: Parameters<Api>[1] };
 
 function browserCookieName(hostId: string): string { return `agentui_device_${hostId}`; }
+type RequestResult = Pick<RequestObservation, 'operation' | 'outcome'>;
 
 export function serviceEndpoint(options: EndpointOptions) {
-  return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+  async function handle(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
+    if (options.credentialClass === 'browser-development') {
+      const origin = browserOrigin(request);
+      if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
+    } else {
+      const headers = request.headersDistinct;
+      if (request.method !== 'POST' || headers.host?.length !== 1 ||
+        headers.host[0] !== `127.0.0.1:${request.socket.localPort}` ||
+        headers['content-type']?.length !== 1 || headers['content-type'][0] !== 'application/json' ||
+        headers.origin !== undefined || headers.cookie !== undefined) throw new Error('Invalid native request headers');
+    }
+    if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
+    const admission = options.credentialClass === 'browser-development'
+      ? await admitBrowser(request, options.access) : await admitNative(request, options.access);
+    const operation = admission.kind === 'pair' ? 'pair' : admission.message.op;
     try {
-      if (options.credentialClass === 'browser-development') {
-        const origin = `http://127.0.0.1:${request.socket.localPort}`;
-        if (request.headers.host !== new URL(origin).host) throw new Error('Host mismatch');
-        if (request.url !== '/api/v1') { serveAsset(options.files, request, response, origin); return; }
-        if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
-      } else {
-        const headers = request.headersDistinct;
-        if (request.method !== 'POST' || headers.host?.length !== 1 ||
-          headers.host[0] !== `127.0.0.1:${request.socket.localPort}` ||
-          headers['content-type']?.length !== 1 || headers['content-type'][0] !== 'application/json' ||
-          headers.origin !== undefined || headers.cookie !== undefined) throw new Error('Invalid native request headers');
-      }
-      if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
-      const admission = options.credentialClass === 'browser-development'
-        ? await admitBrowser(request, options.access) : await admitNative(request, options.access);
       await writeServiceResult(response, async (): Promise<Reply> => {
         if (admission.kind === 'service') return { value: await options.api(admission.principal, admission.message), headers: {} };
         if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
@@ -53,10 +56,32 @@ export function serviceEndpoint(options: EndpointOptions) {
         }
         return { value: { hostId: paired.principal.hostId, principalId: paired.principal.id, secret: paired.secret } satisfies NativeCredential, headers: {} };
       });
+      return { operation, outcome: 'ok' };
     } catch (error) {
-      writeServiceFailure(response, error);
+      return { operation, outcome: writeServiceFailure(response, error) };
     }
+  }
+  return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    if (options.credentialClass === 'browser-development' && request.url !== '/api/v1') {
+      serveBrowserAsset(options.files, request, response);
+      return;
+    }
+    const startTime = performance.timeOrigin + performance.now();
+    const result = await handle(request, response).catch((error: unknown): RequestResult => ({ operation: 'admission', outcome: writeServiceFailure(response, error) }));
+    options.observability.record({ ...result, credentialClass: options.credentialClass, startTime,
+      statusCode: response.headersSent ? response.statusCode : null });
   };
+}
+
+function browserOrigin(request: IncomingMessage): string {
+  const origin = `http://127.0.0.1:${request.socket.localPort}`;
+  if (request.headers.host !== new URL(origin).host) throw new Error('Host mismatch');
+  return origin;
+}
+
+function serveBrowserAsset(files: ReadonlyMap<string, Buffer>, request: IncomingMessage, response: ServerResponse): void {
+  try { serveAsset(files, request, response, browserOrigin(request)); }
+  catch (error) { writeServiceFailure(response, error); }
 }
 
 async function admitBrowser(request: IncomingMessage, access: Access): Promise<Admission> {
@@ -99,9 +124,10 @@ async function writeServiceResult(response: ServerResponse, run: () => Promise<R
   }
 }
 
-function writeServiceFailure(response: ServerResponse, error: unknown): void {
-  if (response.headersSent || response.destroyed) { response.destroy(); return; }
+function writeServiceFailure(response: ServerResponse, error: unknown): ServiceFailureKind {
   const kind = error instanceof ServiceError ? error.kind : 'invalid';
+  if (response.headersSent || response.destroyed) { response.destroy(); return kind; }
   const message = error instanceof ServiceError ? error.message : 'Invalid host request';
   json(response, FAILURE_STATUS[kind], { ok: false, error: { kind, message } });
+  return kind;
 }
