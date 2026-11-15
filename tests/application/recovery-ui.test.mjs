@@ -79,7 +79,8 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await send.isDisabled(), true);
 });
 
-test('Stop follows the persisted run, guards rapid clicks, preserves drafts and retains recovery after a lost reply', async t => {
+for (const agent of ['codex', 'pi']) {
+test(`${agent} Stop follows the persisted run, guards rapid clicks, preserves drafts and retains recovery after a lost reply`, async t => {
   const bundle = await build({ stdin: { contents: `import React from 'react';
     import { createRoot } from 'react-dom/client';
     import { flushSync } from 'react-dom';
@@ -102,7 +103,7 @@ test('Stop follows the persisted run, guards rapid clicks, preserves drafts and 
     let active = { scope, store };
     const actions = { async submit(operation) { await new Promise(resolve => globalThis.operations.push(async () => { try { await operation(); } catch {} resolve(); })); }, async reconcile() {} };
     let root;
-    const render = () => flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={true} storageFailure="" agent="codex" />));
+    const render = () => flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={true} storageFailure="" agent=${JSON.stringify(agent)} />));
     globalThis.remount = () => { if (root) flushSync(() => root.unmount()); root = createRoot(document.getElementById('root')); render(); };
     globalThis.acknowledgeStop = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { ...view.document.domain, currentRun: { kind: 'stopping', runId: 'exact-native-run', clientCommandId: 'saved-stop-id' } } } }));
     globalThis.finish = () => flushSync(() => update({ ...view, outbox: [], document: { ...view.document, domain: { messages: [{ messageId: 'partial', revision: 1, role: 'assistant', text: 'Kept partial output', complete: true }], currentRun: { kind: 'ended', runId: 'exact-native-run', outcome: 'interrupted' } } } }));
@@ -115,6 +116,11 @@ test('Stop follows the persisted run, guards rapid clicks, preserves drafts and 
   const page = await browser.newPage();
   await page.setContent('<!doctype html><div id="root"></div>');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  if (agent === 'pi') {
+    assert.equal(await page.getByPlaceholder('Write to Pi…').count(), 1);
+    assert.match(await page.locator('.composer-footer').textContent(), /Pi · GLM 5.3 · OpenCode Go · Chat only · No tools/);
+    assert.equal(await page.getByRole('heading', { name: 'Approval required' }).count(), 0);
+  }
   const send = page.getByRole('button', { name: 'Send', exact: true });
   assert.equal(await send.isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).isEnabled(), true);
@@ -152,4 +158,6 @@ test('Stop follows the persisted run, guards rapid clicks, preserves drafts and 
   assert.equal(await send.isEnabled(), true);
   assert.equal(await editor.inputValue(), 'Keep this follow-up');
   assert.match(await page.getByLabel('Messages').textContent(), /Kept partial output/);
+  assert.match(await page.getByLabel('Messages').textContent(), agent === 'pi' ? /Pi/ : /Codex/);
 });
+}

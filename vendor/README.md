@@ -79,3 +79,19 @@ native process or qualify integrated desktop and iOS applications.
 The [Mac measurement](../docs/qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
 passed this consumer unit at AgentUI source `54065e2`. It installed the committed
 artifact and verified all eleven requested frozen inputs without repacking it.
+
+## Pi text-chat adapter
+
+The host installs a separate commit-named Switchboard artifact through the
+`@agentui/switchboard-pi` local package alias. The [Pi pin](switchboard-pi.json)
+records its source and digest. AgentUI imports only its public `./pi` entrypoint.
+The existing core and AG-UI dependency pins above remain separate.
+
+This adapter uses Pi SDK 1.5.2 with `opencode-go/glm-5.3` for text chat.
+Its emitted declarations contain no native SDK types. Switchboard isolates
+known upstream declaration errors in its adapter compiler project. AgentUI
+and Switchboard core retain strict dependency checking.
+
+See the [Pi host guide](../docs/development/pi-host.md) for startup and the
+opt-in live integration test. The test uses a host environment credential and
+checks streaming, follow-up, reload, host restart, Stop and saved-file redaction.
