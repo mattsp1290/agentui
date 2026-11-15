@@ -1,5 +1,5 @@
 import { createProviderRegistry } from '../providers.js';
-import type { DiscoveredProvider, ProviderCreationOperations, ProviderExtension } from '../providers.js';
+import type { DiscoveredProvider, ProviderCommandOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
 export { loadServerExtension } from './loader.js';
 export type { InstalledServerEntry, LoadedServerEntry } from './loader.js';
@@ -129,6 +129,17 @@ export function createServerExtensions() {
     try { return await generation.registry.execute(...args); }
     finally { generation.pending--; }
   }
+  function captureSend(...args: Parameters<ProviderCommandOperations['captureSend']>): ReturnType<ProviderCommandOperations['captureSend']> {
+    if (state.kind !== 'active') throw new Error('Provider unavailable');
+    return state.generation.registry.captureSend(...args);
+  }
+  async function executeSend(...args: Parameters<ProviderCommandOperations['executeSend']>): ReturnType<ProviderCommandOperations['executeSend']> {
+    if (state.kind !== 'active') return args[1] ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+    const generation = state.generation;
+    generation.pending++;
+    try { return await generation.registry.executeSend(...args); }
+    finally { generation.pending--; }
+  }
   function close(): Promise<void> {
     if (closing) return closing;
     const previous = state;
@@ -156,5 +167,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, status, close };
+  return { replace, discover, catalog, capture, execute, captureSend, executeSend, status, close };
 }

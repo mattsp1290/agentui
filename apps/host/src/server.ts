@@ -110,6 +110,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
     access = new Access(accessDatabase);
+    const replacement = await providers.replace(providerExtensionSource(accessDatabase, options.providerExtensions ?? []));
+    if (replacement.kind === 'failed') {
+      const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
+        activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+      throw new Error(messages[replacement.failure]);
+    }
+    if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
@@ -164,18 +171,11 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
-        driver: drivers, authorize: scope => scope.hostId === hostId });
+        driver: drivers, providers, authorize: scope => scope.hostId === hostId });
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
-        hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
+        hostId: access.hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
-    const replacement = await providers.replace(providerExtensionSource(accessDatabase, options.providerExtensions ?? []));
-    if (replacement.kind === 'failed') {
-      const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
-        activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
-      throw new Error(messages[replacement.failure]);
-    }
-    if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {

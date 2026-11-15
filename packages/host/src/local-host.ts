@@ -8,7 +8,7 @@ import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { providerInstallationKey } from './provider-creation.js';
 import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
-import type { ProviderCreationOperations } from './providers.js';
+import type { ProviderCommandOperations, ProviderCreationOperations } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
 import { registerFrontendToolsHost } from './frontend-tools-context.js';
@@ -18,6 +18,7 @@ export interface LocalHostOptions<E, P> {
   readonly projection: Projection<E, P>;
   readonly driver: ProviderDriver<E> | readonly ProviderDriver<E>[];
   readonly authorize: (scope: ConversationScope) => boolean;
+  readonly providers?: ProviderCommandOperations;
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
@@ -124,9 +125,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             if (!sameScope(scope, command.scope)) return { kind: 'rejected', reason: 'scope-mismatch' };
           } catch { return { kind: 'rejected', reason: 'invalid-or-unauthorized-command' }; }
           const target = store.findInstallation(scope);
-          if (target && 'kind' in target) return { kind: 'rejected', reason: 'Messaging is not available for this provider yet.' };
-          const driver = target ? driverFor(target) : undefined;
-          const admitted = store.admit(command, driver?.capability(command) ?? { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation);
+          const provider = target && 'kind' in target;
+          const driver = target && !('kind' in target) ? driverFor(target) : undefined;
+          const registry = options.providers;
+          const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
+            { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
+            registry && command.body.kind === 'send' ? (original, operation) => {
+              if (command.body.kind !== 'send') throw new Error('Provider send required');
+              return registry.captureSend(original, command.body.text, operation);
+            } : undefined);
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
@@ -134,7 +141,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           return inFlight(async () => {
             dispatching.add(key);
             try {
-              const observed = await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
+              const observed = 'kind' in stored
+                ? await registry?.executeSend(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
+                : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
               const receipt = store.settle(scope, command.clientCommandId, observed);
               return { kind: 'receipt' as const, receipt };
             } finally { dispatching.delete(key); }
@@ -159,9 +168,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         return store.settle(scope, id, stored.observation);
       }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
-      const driver = driverFor(stored.target.installation);
       return inFlight(async () => {
-        const observed = await reconcileNative(stored, driver);
+        const observed = 'kind' in stored
+          ? await options.providers?.executeSend(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
+          : await reconcileNative(stored, driverFor(stored.target.installation));
         if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
           const current = store.command(scope, id);
           if (!current) throw new Error('Unknown command');

@@ -44,7 +44,7 @@ export function createApi(options: {
       const installation: ProviderInstallation = { kind: 'provider', contributionId: provider.contributionId,
         instance: provider.instance, agent, presentationVersion: 1, expectedAuthority: provider.expectedAuthority };
       const descriptor = describeProviderAgent(installation, provider.capabilities.create ? { kind: 'ready' }
-        : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' });
+        : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, provider.capabilities.send && provider.capabilities.reconcile);
       return [descriptor.id, { installation, descriptor }] as const;
     })));
     const describe = (installation: ConversationInstallation) => 'kind' in installation

@@ -40,6 +40,7 @@ function extension({ native = false, create, lookup, service = 'http://127.0.0.1
   } });
   const confirmed = operation => ({ kind: 'confirmed', value: binding(operation), evidence: { operationId: operation.operationId } });
   const connected = { ...base, instance: presentation.instance,
+    capabilities: { ...base.capabilities, send: { kind: 'unsupported', reason: 'Creation fixture only' } },
     async discover() { return { kind: 'available', agents: [{ ref: { kind: 'agent', instance: presentation.instance, opaqueId: 'same-agent' }, name: name ?? (native ? 'Local provider' : 'Remote provider') }] }; },
     async create(operation) { calls.creates.push(structuredClone(operation)); return create ? create(operation, { confirmed, context, credential }) : confirmed(operation); },
     async reconcileCreation(operation) { calls.lookups.push(structuredClone(operation)); return lookup ? lookup(operation, { confirmed, context, credential }) : confirmed(operation); },

@@ -7,7 +7,7 @@ import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversatio
 import { budgets } from './durable-model.js';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { openLocalHost } from './local-host.js';
-import type { LocalHost } from './local-host.js';
+import type { LocalHost, LocalHostOptions } from './local-host.js';
 import { createRecordedDriver } from './recorded-driver.js';
 
 export const recordedInstallation: Installation = Object.freeze({ installationId: 'agentui-recorded-v1',
@@ -19,6 +19,7 @@ export interface RecordedHostOptions {
   readonly path: string;
   readonly backendPath: string;
   readonly hostId: string;
+  readonly providers?: LocalHostOptions<TranscriptEvent, Transcript>['providers'];
   readonly progressMs?: number;
 }
 function update(messageId: string, text: string, revision: number, complete: boolean,
@@ -97,6 +98,7 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
     },
   };
   const host = openLocalHost({ path: options.path, projection: transcriptProjection, driver,
+    ...(options.providers ? { providers: options.providers } : {}),
     authorize: scope => scope.hostId === options.hostId });
   return { ...host,
     close() { closing = true; host.close(); },
