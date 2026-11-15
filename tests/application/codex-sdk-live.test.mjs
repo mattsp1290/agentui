@@ -75,6 +75,8 @@ test('live ChatGPT subscription GPT 6.1 Sol chat responds, remembers, reopens an
   delete env.OPENCODE_API_KEY;
   delete env.OPENAI_API_KEY;
   delete env.CODEX_API_KEY;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.AGENTUI_ANTHROPIC_API_KEY;
   browser = await chromium.launch({ env });
   const page = await browser.newPage();
   page.setDefaultTimeout(20_000);
@@ -130,7 +132,7 @@ test('live ChatGPT subscription GPT 6.1 Sol chat responds, remembers, reopens an
   await stop.waitFor();
   assert.equal(await send.isDisabled(), true);
   await stop.click();
-  await wait(async () => await stop.count() === 0, 'stopped native turn');
+  await wait(async () => await page.getByRole('button', { name: /^(?:Stop|Stopping…)$/ }).count() === 0, 'stopped native turn');
   report.checks.push('Stop interrupted active request and blocked overlapping send');
   if (evidence) {
     await page.screenshot({ path: join(evidence, 'codex-sdk-stopped.png'), fullPage: true });

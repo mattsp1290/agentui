@@ -6,6 +6,8 @@ The macOS desktop package launches a Tauri shell with a disconnected landing pag
 
 For GPT 6.1 Sol chat through your Codex subscription, read [Codex SDK setup](docs/development/codex-sdk-host.md). This separate mode supports completed assistant messages, follow-up messages, saved sessions, and Stop.
 
+For Opus or Sonnet text chat with your host API key, read [Claude SDK setup](docs/development/claude-sdk-host.md). Each host selects one model family and supports follow-up messages, saved sessions, and Stop.
+
 For GLM 5.3 text chat through an OpenCode Go subscription, read [Pi setup](docs/development/pi-host.md). Pi supports streamed replies, follow-up messages, saved sessions, and Stop. This mode has no tools or file access.
 
 Use Node 24.22.3 and npm 11.19.1.
