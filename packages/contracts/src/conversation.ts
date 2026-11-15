@@ -1,5 +1,8 @@
 import { record, count, identifier } from './decode.js';
 import type { Projection } from './durable.js';
+import { COMMAND_OUTPUT_BYTES, COMMAND_TEXT_BYTES, COMMAND_CWD_BYTES, escapedBytes, parseCommandActivity, updateCommandActivity } from './command-activity.js';
+import type { CommandActivity } from './command-activity.js';
+export * from './command-activity.js';
 
 export interface TranscriptMessage {
   readonly messageId: string;
@@ -25,8 +28,10 @@ export type CurrentRun =
 export interface Transcript {
   readonly messages: readonly TranscriptMessage[];
   readonly currentRun: CurrentRun | null;
+  readonly activities?: readonly CommandActivity[];
 }
 export type TranscriptEvent =
+  | { readonly kind: 'command-updated'; readonly activity: CommandActivity }
   | (TranscriptMessage & { readonly kind: 'message-updated' })
   | { readonly kind: 'run-started'; readonly runId: string; readonly previousRunId: string | null }
   | { readonly kind: 'run-stop-requested' | 'run-stop-rejected'; readonly runId: string; readonly clientCommandId: string }
@@ -66,6 +71,9 @@ function currentRun(value: unknown): CurrentRun | null {
 export function parseTranscriptEvent(value: unknown): TranscriptEvent {
   const input = record(value);
   switch (input.kind) {
+    case 'command-updated':
+      record(value, ['kind', 'activity']);
+      return { kind: 'command-updated', activity: parseCommandActivity(input.activity) };
     case 'message-updated': return { kind: 'message-updated', ...message(value, true) };
     case 'run-started':
       record(value, ['kind', 'runId', 'previousRunId']);
@@ -83,20 +91,39 @@ export function parseTranscriptEvent(value: unknown): TranscriptEvent {
 }
 export function parseTranscript(value: unknown): Transcript {
   const input = record(value);
-  record(value, Object.hasOwn(input, 'currentRun') ? ['messages', 'currentRun'] : ['messages']);
+  record(value, ['messages', ...(Object.hasOwn(input, 'currentRun') ? ['currentRun'] : []),
+    ...(Object.hasOwn(input, 'activities') ? ['activities'] : [])]);
   if (!Array.isArray(input.messages)) throw new Error('Invalid transcript');
   const messages = input.messages.map(item => message(item, false));
   if (new Set(messages.map(item => item.messageId)).size !== messages.length) throw new Error('Duplicate transcript message');
-  return { messages, currentRun: Object.hasOwn(input, 'currentRun') ? currentRun(input.currentRun) : null };
+  let activities: readonly CommandActivity[] | undefined;
+  if (Object.hasOwn(input, 'activities')) {
+    if (!Array.isArray(input.activities) || !input.activities.length) throw new Error('Invalid activity collection');
+    activities = input.activities.map(parseCommandActivity);
+    if (new Set(activities.map(item => item.activityId)).size !== activities.length) throw new Error('Duplicate command activity');
+  }
+  return { messages, currentRun: Object.hasOwn(input, 'currentRun') ? currentRun(input.currentRun) : null,
+    ...(activities ? { activities } : {}) };
 }
 export const transcriptProjection: Projection<TranscriptEvent, Transcript> = {
-  version: 1,
+  version: 2,
   initial: () => ({ messages: [], currentRun: null }),
   decodeState: parseTranscript,
   decodeEvent: parseTranscriptEvent,
+  reserveBytes(state) {
+    const run = state.currentRun;
+    if (!run || run.kind === 'ended' || !state.activities?.some(item => item.runId === run.runId)) return 0;
+    return 256 + state.activities.filter(item => item.runId === run.runId && item.status.kind === 'running')
+      .reduce((bytes, item) => bytes + COMMAND_OUTPUT_BYTES - escapedBytes(item.output) +
+        COMMAND_TEXT_BYTES - escapedBytes(item.command) + COMMAND_CWD_BYTES - escapedBytes(item.cwd) + 256, 0);
+  },
   apply(state, event) {
     const run = state.currentRun;
     switch (event.kind) {
+      case 'command-updated': {
+        const activities = updateCommandActivity(state.activities ?? [], event.activity);
+        return activities === state.activities ? state : { ...state, activities };
+      }
       case 'run-started':
         if (run && (run.kind !== 'ended' || run.runId === event.runId || run.runId !== event.previousRunId)) return state;
         return { ...state, currentRun: { kind: 'running', runId: event.runId } };

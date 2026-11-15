@@ -21,7 +21,12 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   globalThis.replySource = () => view.document.domain.messages[1];
   globalThis.setReply = (text, complete = false) => flushSync(() => {
     const messages = [view.document.domain.messages[0], { messageId: 'reply', revision: (view.document.domain.messages[1]?.revision ?? 0) + 1, role: 'assistant', text, complete }];
-    view = { ...view, document: { ...view.document, domain: { messages } } };
+    view = { ...view, document: { ...view.document, domain: { ...view.document.domain, messages } } };
+    for (const listener of listeners) listener();
+  });
+  globalThis.setCommands = (activities, run, connected = true) => flushSync(() => {
+    view = { ...view, connection: { kind: connected ? 'connected' : 'connecting' },
+      document: { ...view.document, domain: { ...view.document.domain, activities, currentRun: run } } };
     for (const listener of listeners) listener();
   });
   flushSync(() => root.render(<ConversationView active={active} actions={{}} enabled={true} storageFailure="" />));`, resolveDir: root, loader: 'jsx' },
@@ -161,4 +166,40 @@ test('long code scrolls inside the reply at 360px and keeps the composer visible
   assert.ok(layout.composerTop >= 0 && layout.composerBottom <= layout.height, JSON.stringify(layout));
   await page.getByRole('button', { name: 'Copy code' }).click();
   assert.equal(await page.evaluate(() => navigator.clipboard.readText()), `${'long_code_'.repeat(200)}\n`);
+});
+
+
+test('command disclosure keeps its identity and escaped retained output through updates and reconnect at 360px', async t => {
+  const { page, reply, requests } = await fixture(t, 360);
+  const activity = { kind: 'command', activityId: 'stable', runId: 'run', revision: 1,
+    command: 'printf ' + 'long-command-'.repeat(60), cwd: '/work/' + 'nested/'.repeat(80), detailsTruncated: true,
+    status: { kind: 'running' }, output: '<script>globalThis.executed = true</script>🙂', outputTruncated: false };
+  const setCommands = (rows, run = { kind: 'running', runId: 'run' }, connected = true) =>
+    page.evaluate(({ rows, run, connected }) => globalThis.setCommands(rows, run, connected), { rows, run, connected });
+  await setCommands([activity]);
+  const disclosure = page.locator('.command-activity-row').first();
+  await disclosure.locator('summary').click();
+  await disclosure.evaluate(node => { globalThis.commandNode = node; });
+  assert.equal(await disclosure.getByLabel('Command output').textContent(), activity.output);
+  assert.equal(await disclosure.locator('script').count(), 0);
+  await reply('Assistant message remains independent.');
+  await setCommands([{ ...activity, revision: 2, output: activity.output + '\nnext', outputTruncated: true }], undefined, false);
+  assert.equal(await disclosure.evaluate(node => node === globalThis.commandNode && node.open), true);
+  assert.match(await disclosure.locator('summary').textContent(), /Last observed running/);
+  await setCommands(Array.from({ length: 40 }, (_, index) => ({ ...activity, activityId: index === 0 ? 'stable' : 'row-' + index })), { kind: 'ended', runId: 'run', outcome: 'completed' });
+  assert.match(await disclosure.locator('summary').textContent(), /Outcome not observed/);
+  assert.equal(await disclosure.evaluate(node => node.open), true);
+  const layout = await page.evaluate(() => {
+    const composer = document.querySelector('.composer').getBoundingClientRect();
+    const transcript = document.querySelector('.transcript');
+    return { width: document.documentElement.scrollWidth, viewport: innerWidth,
+      composerTop: composer.top, composerBottom: composer.bottom, height: innerHeight,
+      scrolls: transcript.scrollHeight > transcript.clientHeight };
+  });
+  assert.ok(layout.width <= layout.viewport, JSON.stringify(layout));
+  assert.ok(layout.composerTop >= 0 && layout.composerBottom <= layout.height, JSON.stringify(layout));
+  assert.ok(layout.scrolls);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep my draft');
+  assert.equal(await page.evaluate(() => globalThis.executed), undefined);
+  assert.deepEqual(requests, []);
 });

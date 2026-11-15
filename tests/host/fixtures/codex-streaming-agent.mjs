@@ -8,7 +8,7 @@ const notify = (method, params) => send({ method, params });
 const turns = new Map();
 let threadCount = 0, turnCount = 0, rejected = false;
 
-const commandItem = { id: 'tool', type: 'commandExecution', command: 'printf from-item', cwd: '/workspace/item' };
+const commandItem = { id: 'tool', type: 'commandExecution', status: 'inProgress', command: 'printf from-item', cwd: '/workspace/item' };
 const standardApproval = { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } };
 const scopedFirstApproval = { requestId: 'other-command-request', file: false, items: [commandItem], params: {} };
 const approvalScenarios = {
@@ -70,7 +70,46 @@ createInterface({ input: process.stdin }).on('line', line => {
       notify('turn/started', { threadId: turn.threadId, turn: { id: turn.id } });
       const approval = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? scopedFirstApproval : approvalScenarios[mode];
       setTimeout(() => {
-        if (mode === 'long' || mode === 'short-correction') {
+        if (mode === 'activity-late-context') {
+          const params = { threadId: turn.threadId, turnId: turn.id };
+          if (turn.id !== 'turn-1') {
+            completedItem(turn, 'Current turn remains live');
+            return;
+          }
+          notify('item/started', { ...params, item: { ...commandItem, id: 'late' } });
+          turn.timer = setInterval(() => {
+            if (!existsSync(`${logPath}.finish`)) return;
+            finish(turn);
+            const late = setInterval(() => {
+              if (!existsSync(`${logPath}.late`)) return;
+              clearInterval(late);
+              notify('item/completed', { ...params, item: { ...commandItem, id: 'late', status: 'completed', aggregatedOutput: 'Late final output', exitCode: 0 } });
+              notify('item/commandExecution/outputDelta', { ...params, itemId: 'late', delta: 'ignored' });
+              completedItem(turn, 'Old assistant text must not reach current turn');
+            }, 5);
+          }, 5);
+          return;
+        } else if (mode.startsWith('activity-')) {
+          const params = { threadId: turn.threadId, turnId: turn.id };
+          const full = (id, status, output = null, exitCode = null) => ({ ...commandItem, id, status, aggregatedOutput: output, exitCode });
+          notify('item/commandExecution/outputDelta', { ...params, itemId: 'early', delta: 'early🙂' });
+          notify('item/started', { ...params, item: full('early', 'inProgress') });
+          notify('item/commandExecution/outputDelta', { ...params, itemId: 'early', delta: 'delta' });
+          notify('item/commandExecution/outputDelta', { ...params, turnId: 'foreign', itemId: 'early', delta: 'FOREIGN' });
+          turn.timer = setInterval(() => {
+            if (!existsSync(`${logPath}.finish`)) return;
+            notify('item/completed', { ...params, item: full('early', 'completed', mode === 'activity-empty' ? '' : null, 3) });
+            notify('item/commandExecution/outputDelta', { ...params, itemId: 'early', delta: 'late' });
+            notify('item/completed', { ...params, item: full('missing-start', 'failed', longText, 7) });
+            notify('item/started', { ...params, item: full('late-terminal', 'inProgress') });
+            finish(turn);
+            setTimeout(() => {
+              notify('item/completed', { ...params, item: full('late-terminal', 'declined') });
+              notify('item/commandExecution/outputDelta', { ...params, itemId: 'early', delta: 'after-close' });
+            }, 15);
+          }, 5);
+          return;
+        } else if (mode === 'long' || mode === 'short-correction') {
           for (let offset = 0; offset < longText.length; offset += 80) {
             notify('item/agentMessage/delta', { threadId: turn.threadId, turnId: turn.id, itemId: 'answer', delta: longText.slice(offset, offset + 80) });
           }

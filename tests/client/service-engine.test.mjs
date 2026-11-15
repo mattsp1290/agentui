@@ -8,7 +8,7 @@ import { createServiceConnection } from '../../packages/client/dist/service-engi
 import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
-const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 1, cursor: 0,
+const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 2, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const reply = value => Response.json({ ok: true, value });
 const unauthorized = () => Response.json({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }, { status: 401 });
@@ -79,7 +79,7 @@ test('shared feed applies before ACK, deduplicates pages, and refuses a sequence
     acks.push(request.ack);
     return reply({ kind: 'page', page: pages.shift(), item: snapshot });
   }, transcriptProjection);
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async item => {
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => {
     received.push(item); await applying.promise;
   });
   await until(() => received.length === 1);
@@ -102,7 +102,7 @@ test('shared feed close cancels an uncooperative pull and never ACKs after close
       pulls++; signal = context.signal;
       return duringApply ? reply({ kind: 'page', page: 1, item: snapshot }) : gate.promise;
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => {
+    const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => {
       applying = true; await gate.promise;
     });
     await until(() => duringApply ? applying : pulls === 1);
@@ -135,7 +135,7 @@ test('shared engine decodes an independent projection before delivery and ACK', 
 
 for (const [name, mutate, kind] of [
   ['scope', item => { item.snapshot.scope.hostId = 'foreign'; }, 'refused'],
-  ['projection', item => { item.snapshot.projectionVersion = 2; }, 'refused'],
+  ['projection', item => { item.snapshot.projectionVersion = 1; }, 'refused'],
   ['document', item => { item.snapshot.document.extra = true; }, 'resync'],
 ]) {
   test(`shared engine closes ${name} failure without delivery or ACK`, async () => {
@@ -149,7 +149,7 @@ for (const [name, mutate, kind] of [
       acks.push(request.ack);
       return reply({ kind: 'page', page: 1, item });
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 1 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
     assert.equal((await feed.ended).kind, kind);
     assert.deepEqual(acks, [null]);
     assert.equal(closed, 1);
@@ -185,8 +185,24 @@ for (const [name, body, headers] of [
       acks.push(request.ack);
       return new Response(body, { headers });
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 1 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
     assert.equal((await feed.ended).kind, 'resync');
     assert.deepEqual(acks, [null]);
   });
 }
+
+
+test('a legacy host projection refusal tells the new client to update together and never submits or receives', async () => {
+  const requests = [];
+  const connection = createServiceConnection(async encoded => {
+    const request = JSON.parse(encoded);
+    requests.push(request.op);
+    return reply(request.op === 'watch' ? { feedId: 'old-host' } : request.op === 'close' ? null :
+      { kind: 'ended', end: { kind: 'refused', cursor: null, reason: 'unknown-scope-or-incompatible-projection' } });
+  }, transcriptProjection);
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: transcriptProjection.version }, async () => assert.fail('Old feed delivered'));
+  const end = await feed.ended;
+  assert.equal(end.kind, 'refused');
+  assert.match(end.reason, /Update the app and host together/);
+  assert.equal(requests.includes('submit'), false);
+});

@@ -8,9 +8,10 @@ import { fileURLToPath } from 'node:url';
 import { openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { createCodexDriver } from '../../packages/host/dist/codex-driver.js';
-import { command, scope, snapshot, until } from './fixture.mjs';
+import { command, scope, snapshot as genericSnapshot, until } from './fixture.mjs';
 
 const projection = transcriptProjection;
+const snapshot = port => genericSnapshot(port, projection.version);
 
 function fixture(t, mode = 'stream') {
   const dir = mkdtempSync(join(tmpdir(), 'agentui-codex-driver-'));
@@ -54,7 +55,7 @@ function fixture(t, mode = 'stream') {
 
 async function observe(port, predicate) {
   let latest;
-  const feed = port.watch({ after: null, projectionVersion: 1 }, async item => {
+  const feed = port.watch({ after: null, projectionVersion: 2 }, async item => {
     if (item.kind === 'snapshot') latest = item.snapshot.document;
     else latest = (await snapshot(port)).document;
   });

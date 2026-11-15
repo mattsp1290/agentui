@@ -51,10 +51,10 @@ export function run(conversation = scope, runId = 'run-a') {
 export function question(pendingId = 'question-a') {
   return { visible: { pendingId, runId: 'run-a', choices: ['yes', 'no'], prompt: 'Continue?' }, continuation: { secret: 'private-continuation' } };
 }
-export async function snapshot(port) {
+export async function snapshot(port, projectionVersion = 1) {
   let resolve;
   const got = new Promise(done => { resolve = done; });
-  const feed = port.watch({ after: null, projectionVersion: 1 }, async item => { resolve(item.snapshot); });
+  const feed = port.watch({ after: null, projectionVersion }, async item => { resolve(item.snapshot); });
   const result = await got;
   feed.close();
   await feed.ended;

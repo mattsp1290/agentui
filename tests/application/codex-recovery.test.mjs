@@ -221,15 +221,16 @@ test('restart accepts an existing message-only SQLite snapshot at projection ver
   await original.drained;
   const db = new DatabaseSync(f.path);
   try {
-    db.prepare('UPDATE conversations SET document=?').run(JSON.stringify({
+    const document = JSON.stringify({
       domain: { messages: [{ messageId: 'legacy', revision: 1, role: 'assistant', text: 'Old partial', complete: false }] },
       receipts: {}, decisions: {},
-    }));
+    });
+    db.prepare('UPDATE conversations SET version=1, document=?, bytes=?').run(document, Buffer.byteLength(document));
   } finally { db.close(); }
   const reopened = f.open();
   recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
   const recovered = reopened.inspect(scope).snapshot;
-  assert.equal(recovered.projectionVersion, 1);
+  assert.equal(recovered.projectionVersion, 2);
   assert.equal(recovered.document.domain.currentRun, null);
   assert.deepEqual(recovered.document.domain.messages[0], {
     messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,

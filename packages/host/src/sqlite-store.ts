@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import { migrateTranscriptDatabase } from './transcript-migration.js';
 import { openDatabase } from './sqlite-schema.js';
 import { nonempty, object, installation, integer, nativeRun, output, capturedTarget, observation, cloneJson, assertDispatchIdentity } from './codec.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
@@ -27,6 +29,7 @@ export class SqliteStore<E, P> {
         if (persisted && persisted.value !== configured) throw new Error('Incompatible persistent host budgets');
         if (!persisted) this.db.prepare('INSERT INTO host_limits(id, value) VALUES (1, ?)').run(configured);
       });
+      if (projection === transcriptProjection) migrateTranscriptDatabase(this.db);
       if (this.db.prepare('SELECT 1 FROM conversations WHERE version<>? LIMIT 1').get(projection.version)) throw new Error('Incompatible projection');
       if (this.db.prepare('SELECT 1 FROM conversations WHERE NOT json_valid(document) OR NOT json_valid(installation) LIMIT 1').get()) throw new Error('Corrupt stored JSON');
     } catch (error) { this.db.close(); throw error; }
@@ -96,7 +99,8 @@ export class SqliteStore<E, P> {
   }
   private encodeDocument(scope: ConversationScope, document: ConversationDocument<P>): string {
     const reserve = Object.values(document.receipts).filter(value =>
-      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RECEIPT_GROWTH_BYTES;
+      value.state.kind === 'pending' || value.state.kind === 'accepted').length * QUARANTINE_RECEIPT_GROWTH_BYTES +
+      (this.projection.reserveBytes?.(document.domain) ?? 0);
     let encoded: string;
     try { encoded = canonicalJson(document, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET); }
     catch (error) {
@@ -282,7 +286,7 @@ export class SqliteStore<E, P> {
   plan(scope: ConversationScope, after: number | null, version: number): ResumePlan<P> {
     return this.transaction(() => {
       const row = this.db.prepare('SELECT head, version, bytes FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
-      if (!row || row.version !== version || version !== this.projection.version) return { kind: 'refused', reason: 'unknown-scope-or-incompatible-projection' };
+      if (!row || row.version !== version || version !== this.projection.version) return { kind: 'refused', reason: 'Unknown conversation or incompatible projection. Update the app and host together.' };
       const through = integer(row.head);
       if (after !== null && (!Number.isSafeInteger(after) || after < 0)) return { kind: 'refused', reason: 'invalid-cursor-request-snapshot' };
       if (after !== null && after > through) return { kind: 'resync', reason: 'cursor-ahead-request-snapshot' };

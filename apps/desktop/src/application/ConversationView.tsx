@@ -4,6 +4,7 @@ import type { ConversationActions, OpenConversation } from './application-contro
 import { CommandRecovery } from './CommandRecovery.js';
 import { AGENT_PRESENTATION } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
+import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
 
 type DraftEditor =
@@ -70,6 +71,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
         {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
         {!message.complete && <span className="progress-label">{agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
+      <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} />
     </div>
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">

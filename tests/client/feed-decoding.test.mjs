@@ -6,7 +6,7 @@ import { parseServicePull } from '@agentui/contracts/service';
 import { createBrowserConnection } from '@agentui/client/service';
 import { connected, events, projection, scope, snapshot } from './support.mjs';
 
-const transcriptSnapshot = { kind: 'snapshot', snapshot: { scope, cursor: 0, projectionVersion: 1,
+const transcriptSnapshot = { kind: 'snapshot', snapshot: { scope, cursor: 0, projectionVersion: 2,
   document: { domain: transcriptProjection.initial(), receipts: {}, decisions: {} } } };
 
 for (const [name, corrupt] of [
@@ -39,7 +39,7 @@ test('service framing preserves a second projection for canonical decoding at it
 
 test('projection mismatch is classified before attempting to decode state', () => {
   const incompatible = structuredClone(transcriptSnapshot);
-  incompatible.snapshot.projectionVersion = 2;
+  incompatible.snapshot.projectionVersion = 1;
   incompatible.snapshot.document.domain = null;
   assert.throws(() => parseFeedItem(incompatible, { ...transcriptProjection,
     decodeState() { assert.fail('Incompatible projection reached state decoder'); } }, scope), FeedMismatchError);
@@ -59,7 +59,7 @@ for (const [name, item, expected] of [
       return Response.json({ ok: true, value: request.op === 'watch' ? { feedId: 'feed' }
         : request.op === 'close' ? null : { kind: 'page', page: 1, item } });
     } });
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 1 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
     const end = await feed.ended;
     assert.equal(end.kind, expected);
     assert.equal(end.cursor, 8);
