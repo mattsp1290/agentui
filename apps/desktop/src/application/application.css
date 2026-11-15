@@ -177,3 +177,9 @@
   .desktop-shell:has(.view-rail) .application-controls { padding-inline: 4px; }
   .desktop-shell:has(.view-rail) main { padding-inline: 10px; }
 }
+
+.chat-view { flex-direction: column; }
+.chat-view > .conversation-panel { flex: 1; }
+.customization-panel { flex: none; max-height: 35%; overflow: auto; padding: 8px 0; width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
+.customization-panel h2 { font-size: 16px; margin-top: 0; }
+.customization-modules { border: 1px solid var(--aui-color-border); border-radius: 12px; padding: 1rem; margin: 0; min-width: 0; }

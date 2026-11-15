@@ -1,48 +1,40 @@
-# Committed customization sources
+# Build a local Plan review panel
 
-Copy this directory into your customization Git repository and commit it. The desktop example declares a Plan review module that sends a prompt to the current conversation. Its shared prompt is ordinary source imported by the desktop entry. iOS and server entries remain undeclared, leaving their shipped defaults available.
+Copy this directory into a local Git repository and commit it. The desktop module sends the shared review prompt to the selected conversation and shows the actual submission outcome. It leaves the composer draft untouched. Only committed source enters the build.
 
-This template uses the existing private AgentUI SDK, React, and desktop primitives as imports provided by the future host builder. It has no npm dependencies or lockfile. It is not a standalone npm build. Build provisioning, module composition, and activation are separate work. Reading this snapshot does not display the module or change a running conversation.
+Use Node 24.22.3 within Node 24 and npm 11.19.1. Prepare AgentUI with its ordinary `npm ci` and `npm run build` first. From the AgentUI checkout, build a separate browser artifact with a full immutable commit ID and a new output directory.
 
-The Node host resolves the committed package and its pinned external sources through its dedicated entry point.
-
-```ts
-import { resolveCustomizationSources } from '@agentui/host/customization';
-
-const sources = await resolveCustomizationSources({
-	reference: {
-		repository: '/home/me/personal-agentui',
-		commit: fullCommitId,
-	},
-	scratchParent: '/home/me/.agentui/sources',
-});
-try {
-	console.log(sources.root.directory, sources.root.customization);
-} finally {
-	await sources.dispose();
-}
+```sh
+node scripts/build-local-customization.mjs \
+  --repository /absolute/personal-agentui \
+  --commit FULL_COMMIT_ID \
+  --out /absolute/custom-desktop
+node apps/host/dist/main.js codex \
+  --data-dir /absolute/private-host-data \
+  --workspace /absolute/project \
+  --assets /absolute/custom-desktop
 ```
 
-`package.json.agentui.extension` is the existing SDK manifest. `sources` maps every declared runtime module to exactly one committed source file. The future builder produces `./dist/desktop.js`; it does not need to exist in Git. All source paths start with `./` and remain inside the repository. An absent package, absent `agentui`, or empty `agentui` declares no customization. Shared or external inputs may appear without a local extension.
+The existing `pi` and `browser-dev` commands also accept `--assets`. Without it, startup uses the ordinary installed browser artifact. Open the host's browser address, pair, and select a conversation. Plan review appears below chat. Click **Review the plan** to submit the committed prompt. An accepted receipt means submitted, not completed. Uncertain outcomes use the existing conversation recovery controls.
 
-Optional `extensions` entries declare immutable external sources. The resolver retrieves them recursively in declaration order. Repeated references share the same package object. External packages require meaningful `agentui` metadata. Before resolution, the caller must trust the pinned root and every source declared transitively by its committed descendants. Resolving the root authorizes all descendant repository locations with the same host Git access and credentials, including local paths and remote repositories. Relative repository paths at every depth use the captured invocation working directory.
+To remove the panel, open Settings, expand View options, and choose Restore default view. The current conversation and draft remain available. Reloading the artifact enables the panel again.
 
-```json
-{
-  "repository": "git@example.org:me/widgets.git",
-  "commit": "0123456789012345678901234567890123456789",
-  "subdirectory": "packages/widgets"
-}
-```
+Custom code has full browser privileges. This is not a sandbox. Only build code you trust.
 
-Use Node 24.22.3 or newer within Node 24 and npm 11.19.1. If you add actual npm dependencies, commit an npm v3 `package-lock.json` whose root dependency declarations, name, and version agree with `package.json`. The resolver validates declarations against the committed lock entries and retains exact lock bytes. Required dependencies and peers must have pinned lock targets. Optional peers may be absent. Registry and remote tarball entries require SHA-256, SHA-384, or SHA-512 integrity pins. SHA-1 integrity and bundled entries without their own source and integrity pins are unsupported. Git npm sources and `link:` declarations are unsupported. Contained committed `file:` tarballs and links to declared members of the selected npm workspace retain their files. Other local directory links and lock keys outside the selected npm root are unsupported. A local link can require a separate npm installation context whose transitive pins are absent from the parent lock, even when npm accepts that lock. Use a supported workspace layout or a contained tarball instead. The resolver never installs packages or runs scripts. The builder owns installation, host ABI provisioning, and any additional npm qualification.
+## Supported inputs
 
-Every read fetches the full commit into private storage, copies raw regular-file blobs, and leaves your working tree, index, refs, and `FETCH_HEAD` alone. Dirty and untracked changes are excluded. Executable bits are preserved. LFS pointers stay pointer bytes. Symlinks and Git submodules are unsupported. Git uses existing SSH agents and credential helpers. Do not put passwords or tokens in repository URLs. Custom code will run with host or client process privileges when a later builder and activation path enables it.
+`package.json.agentui.extension` is the existing SDK manifest. `sources` maps each declared runtime module to one committed source file. The runtime module path, such as `./dist/desktop.js`, is an identity in the manifest and does not need to exist in Git. The builder selects the desktop source and bundles it with AgentUI. Other platform declarations are preserved without building those targets. An absent package, absent `agentui`, or absent desktop entry leaves the default application available.
 
-A selected `subdirectory` reads that package's metadata while preserving the complete repository for sibling imports. Workspace declarations support literal paths and a trailing `/*` over immediate packages, as an array or a `packages` array inside an object. Duplicate patterns, overlapping declarations, and unsupported patterns on any examined ancestor fail. A declaring ancestor owns the npm lock. Multiple declaring ancestors, or a selected package lock alongside a declaring ancestor, fail as ambiguous. Workspace manifests and contained local package manifests must agree with their exact lock entries. Sibling workspace customization does not activate automatically.
+The local builder accepts dependency-free JavaScript, TypeScript, JSX, and TSX with contained relative source imports. Relative `.js` imports can resolve committed `.ts` or `.tsx` files. React, `@agentui/sdk`, `@agentui/sdk/react`, and `@agentui/ui-primitives/desktop` come from the installed AgentUI build and share its React runtime.
 
-Each package exposes `directory`, `customization`, ordered `extensions`, and `inputs`. The file inventory contains repository-relative paths, SHA-256 byte hashes, and executable flags for every committed regular file. Its identity excludes temporary directories and repository addresses. The package identity also includes its selected subdirectory. `npm.kind` is `absent` or `locked`. An active package with no dependencies or workspace members returns `absent` even when it has a valid stray lockfile and no npm pin. That lockfile still contributes its exact bytes to the file inventory and identity. Locked inputs retain the npm directory, root manifest, exact lockfile, workspace manifests, local inputs, and a deterministic identity. The complete committed repository contributes to these identities. Ambient npm configuration is neither read nor qualified. Committed configuration remains part of the file inventory.
+Nonempty npm dependency declarations, workspaces, package import maps, and external customization references are unsupported. The builder never installs packages or executes repository scripts or configuration. Assets, CSS imports, other bare imports, absolute imports, computed loading, ambient references, and source JSX configuration are unsupported. The known AgentUI toolchain supplies compiler settings. Nested modules, module actions, and frontend tools are not implemented by this panel host.
 
-One resolution owns private storage for its complete graph. Concurrent calls have independent directories. Disposal is idempotent and a failed descendant removes the entire failing owner's storage. Limits cover 16 repository acquisitions, 64 packages, 256 declared edges, depth 32, 50000 files, 256 MiB of aggregate raw content, and ten minutes. Package analysis checks the same deadline inside its loops. Each selection also permits at most 256 workspace patterns per manifest, 10000 lock entries, and 50000 dependency declarations across analyzed manifests and lock entries. Individual Git commands allow up to 30 seconds, or 120 seconds for retrieval, within that deadline. These limits do not bound Git's transient downloaded object storage.
+The builder reserves a fresh output directory, retains the private committed snapshot throughout the build, generates the ordinary artifact manifest, verifies every asset, and publishes the complete result. Failed builds remove their output and private staging. An existing output is never replaced. The identity asset records the customization commit, namespace, and selected runtime module. The host verifies and retains the artifact bytes at startup.
 
-The existing `readCustomizationSnapshot` operation remains available for a single root snapshot with unresolved external references. It permits 20000 files and 256 MiB. Dispose each successful snapshot or resolved graph when its consumer finishes.
+## Source loader
+
+The source APIs remain available separately through `@agentui/host/customization`. `readCustomizationSnapshot` reads one root snapshot. `resolveCustomizationSources` retrieves a pinned root and its external sources recursively, including selected monorepo packages and committed npm inputs. See the [source API reference](../../docs/customization/sources.md) for ownership, supported inputs, trust, and limits. These broader source inputs remain unsupported by the local desktop builder.
+
+Every read fetches the full commit into private storage and copies raw regular-file blobs. Working files, the index, refs, and `FETCH_HEAD` remain unchanged. Dirty and untracked changes are excluded. Executable bits are preserved; LFS pointers stay pointer bytes. Symlinks and Git submodules are unsupported.
+
+Snapshots permit up to 20000 files and 256 MiB of materialized content. Individual Git commands are bounded to 30 seconds, with 120 seconds for retrieval. Dispose successful snapshots after use. Failed reads remove their own temporary directory.

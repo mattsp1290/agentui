@@ -33,6 +33,8 @@ export const SERVICE_WIRE_VERSION = 1;
 export const EXTENSION_SDK_VERSION = '0.0.0';
 export const RECORDED_RUNTIME = Object.freeze({ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
 export const CODEX_RUNTIME = Object.freeze({ engine: 'codex', version: '0.167.2', format: 'codex-app-server-v2' });
+export const CODEX_SDK_CHAT_LABEL = 'Codex · GPT-6.1 Sol · ChatGPT subscription';
+export const CODEX_SDK_RUNTIME = Object.freeze({ engine: 'codex-sdk', version: '0.169.0', format: 'codex-sdk-chat-chatgpt-gpt-6.1-sol-v1' });
 export const PI_CHAT_LABEL = 'Pi · GLM 5.3 · OpenCode Go';
 export const PI_RUNTIME = Object.freeze({ engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' });
 export const RECORDED_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze({
@@ -42,6 +44,6 @@ export const RECORDED_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze(
 });
 export const SOLO_CLIENT_COMPATIBILITY: ClientCompatibility = Object.freeze({
   ...RECORDED_CLIENT_COMPATIBILITY,
-  supportedNativeRuntimes: Object.freeze([RECORDED_RUNTIME, CODEX_RUNTIME, PI_RUNTIME]),
+  supportedNativeRuntimes: Object.freeze([RECORDED_RUNTIME, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME]),
 });
 
