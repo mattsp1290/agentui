@@ -4,7 +4,7 @@ import { fileURLToPath } from 'node:url';
 export default defineConfig(({ mode }) => ({
   base: './',
   build: mode === 'browser' ? { outDir: 'web-dist-browser', target: 'safari14', rollupOptions: {
-    input: fileURLToPath(new URL('./browser.html', import.meta.url)),
+    input: ['index.html', 'browser.html'].map(entry => fileURLToPath(new URL(entry, import.meta.url))),
   } } : { outDir: 'web-dist', target: 'safari14' },
   server: {
     host: '127.0.0.1',

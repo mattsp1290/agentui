@@ -21,6 +21,23 @@ To remove the panel, open Settings, expand View options, and choose Restore defa
 
 Custom code has full browser privileges. This is not a sandbox. Only build code you trust.
 
+## Package the protected Mac app
+
+The artifact contains separate native `index.html` and cookie-based `browser.html` entries from the same build. Rebuild older browser-only artifacts before packaging.
+
+On a Mac with the ordinary AgentUI and Tauri build prerequisites installed, use the `artifactId` printed by the customization builder. Choose a fresh output directory.
+
+```sh
+node scripts/package-native-customization.mjs \
+  --artifact /absolute/custom-desktop \
+  --artifact-id ARTIFACT_ID_FROM_BUILD \
+  --out /absolute/custom-native-build
+```
+
+The command verifies the selected artifact and stages its retained bytes. It disables the stock frontend rebuild and embeds the native entry with the existing protected pairing flow. It prints the actual `.app` path after Tauri succeeds. Open that app normally without `--host-url`. The output has its own Cargo target directory, so packaging preserves existing apps and the input artifact. Failed builds remove their own output.
+
+Selecting this artifact gives its code full trust inside the protected app. Hashes verify the selected bytes, not the safety of that code. The manifest continues to describe the browser-development asset build; it does not certify a Mac build, distribution signing, or notarization.
+
 ## Supported inputs
 
 `package.json.agentui.extension` is the existing SDK manifest. `sources` maps each declared runtime module to one committed source file. The runtime module path, such as `./dist/desktop.js`, is an identity in the manifest and does not need to exist in Git. The builder selects the desktop source and bundles it with AgentUI. Other platform declarations are preserved without building those targets. An absent package, absent `agentui`, or absent desktop entry leaves the default application available.
