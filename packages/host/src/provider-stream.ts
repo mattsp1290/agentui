@@ -156,7 +156,13 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     try { result = await connected.snapshot(binding); }
     catch { throw new ObservationFailure('snapshot-unavailable'); }
     ensureRunning();
-    if (result.kind !== 'available') throw new ObservationFailure(result.kind === 'unsupported' ? 'unsupported' : 'snapshot-unavailable');
+    switch (result.kind) {
+      case 'unsupported': case 'version-unsupported': throw new ObservationFailure('unsupported');
+      case 'authentication-failed': case 'unauthorized': throw new ObservationFailure('original-credentials-unavailable');
+      case 'unavailable': throw new ObservationFailure('snapshot-unavailable');
+      case 'available': break;
+      default: { const _exhaustive: never = result; throw new ObservationFailure(_exhaustive); }
+    }
     try { apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot'); }
     catch (error) { throw new ObservationFailure(observationFailure(error, 'invalid-projection')); }
   };

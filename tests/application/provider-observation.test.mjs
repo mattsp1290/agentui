@@ -139,7 +139,11 @@ for (const [ending, reason, retryable] of [
   assert.deepEqual(saved(f), before);
 });
 
-for (const [failure, reason] of [['unsupported', 'unsupported'], ['unavailable', 'snapshot-unavailable'], ['throws', 'snapshot-unavailable'], ['invalid', 'invalid-projection']]) {
+for (const [failure, reason] of [
+  ['unsupported', 'unsupported'], ['version-unsupported', 'unsupported'],
+  ['authentication-failed', 'original-credentials-unavailable'], ['unauthorized', 'original-credentials-unavailable'],
+  ['unavailable', 'snapshot-unavailable'], ['throws', 'snapshot-unavailable'], ['invalid', 'invalid-projection'],
+]) {
   test(`manual retry reports ${failure} safely and preserves every saved row`, async t => {
     const remote = await providerService(t), a = remote.extension(), f = await fixture(t, [a]), scope = await f.create();
     await until(() => a.calls.ready === 1); a.calls.disconnect(); await waitStopped(f, scope);
@@ -151,6 +155,7 @@ for (const [failure, reason] of [['unsupported', 'unsupported'], ['unavailable',
     };
     const result = await status(f, scope, 'retry');
     assert.deepEqual(result, { kind: 'stopped', reason }); assert.doesNotMatch(JSON.stringify(result), /SECRET/);
+    assert.equal(canRetryObservation(result), !['unsupported', 'original-credentials-unavailable'].includes(reason));
     assert.deepEqual(saved(f), before); assert.equal(a.calls.observe.length, 1);
     assert.deepEqual(await status(f, scope), result);
   });
