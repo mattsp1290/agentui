@@ -63,7 +63,7 @@ Failed activation disposes earlier valid lifetimes; an entry that throws before 
 The host loads and activates the selected entries, then discovers their providers before listening.
 `installations` uses the existing host provisioning and credential policy.
 Credentials remain server-only. Discovery results, lifecycle status, and replacement results contain no secrets or extension exception text.
-The production CLI does not yet select installed server entries from customization configuration.
+The production CLI selects installed server entries through `serve --extensions` as described below.
 
 The returned host exposes `discoverProviders()`, `extensionStatus()`, `replaceProviderExtensions(selection)`, and `close()`.
 An empty selection disables local extensions. It does not send a provider cancel, delete, or other remote command.
@@ -128,6 +128,85 @@ Agent discovery and creation requests read the active catalog. Retired, changing
 Creation and command recovery retain the original installation, credential, and operation identity across replacement.
 Command lookup never translates or resends the original request. A replacement that cannot match its original target leaves the existing outcome unchanged.
 UI refresh does not invoke server replacement.
+
+## Select installed server extensions with the CLI
+
+`serve --config ./agents.json --extensions ./extensions.json --data-dir ./state` selects installed server packages alongside configured native agents.
+The native `--config` remains required, and `--extensions` is valid only for `serve`.
+Omitting `--extensions` preserves the existing native-agent behavior.
+Selection and credential rotation take effect after a restart.
+
+The version 1 selection document has this shape:
+
+```json
+{
+	"version": 1,
+	"extensions": [{
+		"directory": "./installed/crew-v1",
+		"installations": [{
+			"id": "service",
+			"instance": {
+				"namespace": "example-crew",
+				"installationId": "personal",
+				"generation": "1",
+				"protocolVersion": "crew-v2"
+			},
+			"service": "https://crew.example",
+			"expectedAuthority": "remote-provider",
+			"authentication": {
+				"kind": "environment",
+				"variable": "AGENTUI_EXTENSION_CREW_TOKEN",
+				"revision": "rotation-1"
+			}
+		}]
+	}]
+}
+```
+
+`directory` resolves relative to the selection file's directory. Absolute directories are also accepted.
+Each installed package supplies its canonical manifest at `package.json.agentui.extension`:
+
+```json
+{
+	"name": "@example/crew",
+	"agentui": {
+		"extension": {
+			"namespace": "example-crew",
+			"trust": "full",
+			"sdkVersion": "0.1.0",
+			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
+		}
+	}
+}
+```
+
+Package metadata outside `agentui.extension` is ignored.
+Selection objects, grants, authentication objects, identities, and manifests reject extra or missing fields.
+Empty `extensions` and `installations` arrays are valid.
+Selected namespaces, grant IDs within a package, and complete provider identities must be unique.
+Each grant's namespace must match its package manifest.
+`expectedAuthority` accepts `agentui-host` or `remote-provider`.
+`service` must be an HTTP or HTTPS origin without credentials, a query, a fragment, or a non-root path.
+
+`authentication` accepts either the environment reference shown above or exactly `{ "kind": "unauthenticated" }`.
+Environment names follow `AGENTUI_EXTENSION_[A-Za-z0-9_]+` and have at most 1024 characters.
+Missing or blank secrets fail startup. The host captures the original secret bytes without trimming.
+After the entire selection passes validation, the host removes only referenced variables from its environment before extension activation and native child startup.
+Extensions access the captured value through the existing credential authority. The host persists only grant metadata.
+Unreferenced variables remain available, including other variables with the reserved prefix.
+Changing the process environment after configuration decoding does not change the captured value.
+Use a new explicit `revision` and restart to rotate a credential. Literal secrets are not accepted in the document.
+
+The host validates the complete selection, every package manifest, all grants, and all environment references before importing selected code.
+Configuration failures report `Invalid server extension configuration` without paths, secret names, values, or underlying exception text.
+The existing loader then checks each entry's filesystem path and imported export.
+An earlier entry can execute import effects before a later entry fails those loader checks.
+
+Removing referenced variables reduces explicit inheritance by native child processes.
+It does not isolate credentials from full-trust extensions, same-user processes, existing environment snapshots, or the same secret under another variable name.
+Installed entries are trusted ordinary filesystem modules with host process privileges.
+This selection does not consume [compiled server artifacts](../customization/server-artifacts.md) or provide their retained-byte integrity guarantees.
+Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
 ## Contribute conversation views and actions
 
