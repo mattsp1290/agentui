@@ -196,7 +196,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, providers, providerCatalog: providers.catalog, installation: defaultInstallation, ...(configured ? { agents } : {}),
+      access, host, compatibility, feeds: registry, providers, installation: defaultInstallation, ...(configured ? { agents } : {}),
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });

@@ -54,6 +54,18 @@ test('real host defers credential-backed discovery, imports only on retry, and d
   await host.close(); ownDirectory(configured.directory).close();
 });
 
+test('explicit installed kind imports its declared module even when an entry property is present', async t => {
+  const fixture = entry(t);
+  Object.defineProperty(fixture.value, 'entry', { get() { return assert.fail('installed entry property was inspected'); } });
+  const host = await startBrowserHost({ ...options(t), providerExtensions: [fixture.value] });
+  try {
+    assert.equal(fixture.calls.import, 1);
+    assert.equal(fixture.calls.activate, 1);
+    assert.equal((await host.discoverProviders())[0].agents[0].name, 'entry');
+  } finally { await host.close(); }
+  assert.equal(fixture.calls.dispose, 1);
+});
+
 test('competing replacements defer and host refresh discovery retains its activation', { timeout: 5000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers(), listeners = listenerLog();
   const old = entry(t, { label: 'old', listeners, async dispose() { entered.resolve(); await finish.promise; } });

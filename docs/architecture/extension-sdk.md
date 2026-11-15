@@ -47,6 +47,8 @@ Failed activation disposes earlier valid lifetimes; an entry that throws before 
 
 ## Load and replace server entries
 
+### Contract
+
 `startBrowserHost` accepts imported `providerExtensions` and installed entries with this shape:
 
 ```ts
@@ -90,6 +92,8 @@ It awaits complete old disposal before importing or activating the next generati
 This ordering prevents overlap between activation-owned listeners, with an unavailable interval between generations.
 Close during replacement prevents publication of the new generation and disposes every acquired valid lifetime once.
 
+### Failure and shutdown
+
 A load, authorization, activation, or discovery failure permits an explicit replacement only after successful cleanup.
 A `load` failure caused by the entry module throwing during import stays cached for that path.
 Recover by replacing with a new immutable revision directory, or restart the host.
@@ -108,14 +112,12 @@ Independent credential callbacks and extension background work are not counted a
 They keep the registry's existing close behavior.
 Cooperative code that never settles can leave replacement or shutdown pending indefinitely.
 
-The owner admits provider creation, send, and original-operation lookup. Send and lookup execution enter the generation pending count synchronously before provider delegation.
+The registry admits provider creation, send, and original-operation lookup synchronously before provider delegation.
 It does not own provider observation feeds or deliver frontend tools.
-Each API request reads the active catalog. Retired, changing, disabled, and failed generations expose no choices.
+Agent discovery and creation requests read the active catalog. Retired, changing, disabled, and failed generations expose no choices.
 Creation and command recovery retain the original installation, credential, and operation identity across replacement.
 Command lookup never translates or resends the original request. A replacement that cannot match its original target leaves the existing outcome unchanged.
 UI refresh does not invoke server replacement.
-The remaining `agentui-ksx0` work must connect provider feed lifetimes and production CLI selection, then prove a slow delivered frontend tool survives a UI update.
-Activation listener tests do not establish provider-feed or frontend-tool ownership.
 
 ## Contribute conversation views and actions
 

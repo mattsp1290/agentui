@@ -249,6 +249,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     return closing;
   }
   return {
+    activity(): { readonly phase: typeof phase; readonly pending: number } { return { phase, pending: pending.size }; },
     activate(): Promise<void> {
       if (phase !== 'new') return Promise.reject(new Error('Provider activation unavailable'));
       phase = 'activating';
@@ -313,10 +314,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       return binding.capture(scope, selected);
     },
     captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget {
+      if (phase !== 'active') throw new Error('Provider unavailable');
       const selected = original.installation;
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
       const binding = bindings.find(binding => binding.matches(selected));
-      if (phase !== 'active' || !binding || !discovered?.capabilities.send || !discovered.capabilities.reconcile ||
+      if (!binding || !discovered?.capabilities.send || !discovered.capabilities.reconcile ||
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider send unavailable');
       return binding.captureSend(original, text, operationId);
     },

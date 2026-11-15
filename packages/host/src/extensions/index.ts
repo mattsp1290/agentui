@@ -26,7 +26,6 @@ export type ServerExtensionReplacement =
 interface Generation {
   readonly id: number;
   readonly registry: ReturnType<typeof createProviderRegistry>;
-  pending: number;
 }
 interface Changing {
   readonly kind: 'changing';
@@ -41,6 +40,7 @@ type State =
 const cleanupFailure: ServerExtensionFailure = { kind: 'failed', failure: 'cleanup', recovery: 'restart' };
 
 export function createServerExtensions() {
+  const inactive = createProviderRegistry([]);
   let state: State = { kind: 'empty' };
   let nextGeneration = 0;
   let closing: Promise<void> | undefined;
@@ -68,7 +68,7 @@ export function createServerExtensions() {
       state = { kind: 'empty' };
       return { kind: 'replaced', generation: null };
     }
-    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions), pending: 0 };
+    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions) };
     change.generation = generation;
     let failure: 'activation' | 'discovery' = 'activation';
     try {
@@ -93,7 +93,11 @@ export function createServerExtensions() {
     if (state.kind === 'failed' && state.recovery === 'restart') return Promise.resolve({ ...state });
     if (state.kind === 'closing' || state.kind === 'closed' || closing) return Promise.resolve({ kind: 'unavailable' });
     if (state.kind === 'changing') return Promise.resolve({ kind: 'deferred', reason: 'changing' });
-    if (state.kind === 'active' && state.generation.pending) return Promise.resolve({ kind: 'deferred', reason: 'active-work' });
+    if (state.kind === 'active') {
+      const activity = state.generation.registry.activity();
+      if (activity.phase === 'closing') return Promise.resolve({ kind: 'deferred', reason: 'changing' });
+      if (activity.pending) return Promise.resolve({ kind: 'deferred', reason: 'active-work' });
+    }
     const change: Changing = { kind: 'changing', generation: state.kind === 'active' ? state.generation : null,
       settled: Promise.resolve().then(() => replaceGeneration(change, source)) };
     state = change;
@@ -103,7 +107,6 @@ export function createServerExtensions() {
     if (state.kind === 'empty') return Promise.resolve([]);
     if (state.kind !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
     const generation = state.generation;
-    generation.pending++;
     return generation.registry.discover().catch(() => {
       if (state.kind === 'active' && state.generation === generation) {
         const change: Changing = { kind: 'changing', generation, settled: Promise.resolve().then(async () => {
@@ -113,33 +116,16 @@ export function createServerExtensions() {
         state = change;
       }
       throw new Error('Provider discovery failed');
-    }).finally(() => { generation.pending--; });
+    });
   }
   function catalog(): readonly DiscoveredProvider[] {
-    return state.kind === 'active' ? state.generation.registry.catalog() : [];
+    return current().catalog();
   }
-  function capture(...args: Parameters<ProviderCreationOperations['capture']>): ReturnType<ProviderCreationOperations['capture']> {
-    if (state.kind !== 'active') throw new Error('Provider unavailable');
-    return state.generation.registry.capture(...args);
-  }
-  async function execute(...args: Parameters<ProviderCreationOperations['execute']>): ReturnType<ProviderCreationOperations['execute']> {
-    if (state.kind !== 'active') return { kind: args[1] ? 'not-dispatched' : 'uncertain', source: args[1] ? 'create' : 'lookup', evidence: null };
-    const generation = state.generation;
-    generation.pending++;
-    try { return await generation.registry.execute(...args); }
-    finally { generation.pending--; }
-  }
-  function captureSend(...args: Parameters<ProviderCommandOperations['captureSend']>): ReturnType<ProviderCommandOperations['captureSend']> {
-    if (state.kind !== 'active') throw new Error('Provider unavailable');
-    return state.generation.registry.captureSend(...args);
-  }
-  async function executeSend(...args: Parameters<ProviderCommandOperations['executeSend']>): ReturnType<ProviderCommandOperations['executeSend']> {
-    if (state.kind !== 'active') return args[1] ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
-    const generation = state.generation;
-    generation.pending++;
-    try { return await generation.registry.executeSend(...args); }
-    finally { generation.pending--; }
-  }
+  function current() { return state.kind === 'active' ? state.generation.registry : inactive; }
+  const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
+  const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
+  const captureSend: ProviderCommandOperations['captureSend'] = (...args) => current().captureSend(...args);
+  const executeSend: ProviderCommandOperations['executeSend'] = (...args) => current().executeSend(...args);
   function close(): Promise<void> {
     if (closing) return closing;
     const previous = state;
@@ -162,7 +148,11 @@ export function createServerExtensions() {
   }
   function status(): ServerExtensionStatus {
     switch (state.kind) {
-      case 'active': return { kind: 'active', generation: state.generation.id, pending: state.generation.pending };
+      case 'active': {
+        const activity = state.generation.registry.activity();
+        return activity.phase === 'closing' ? { kind: 'changing', generation: state.generation.id }
+          : { kind: 'active', generation: state.generation.id, pending: activity.pending };
+      }
       case 'changing': return { kind: 'changing', generation: state.generation?.id ?? null };
       default: return { ...state };
     }

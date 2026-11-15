@@ -7,7 +7,7 @@ import { createProviderAuthority } from './provider-credentials.js';
 import type { ProviderInstallation } from './provider-credentials.js';
 
 export type BrowserProviderExtension = (
-  | { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry }
+  | { readonly kind?: never; readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry }
   | { readonly kind: 'installed' } & InstalledServerEntry
 ) & { readonly installations: readonly ProviderInstallation[] };
 
@@ -16,8 +16,8 @@ export function providerExtensionSource(database: AccessDatabase, selected: read
     const loaded: { readonly loaded: LoadedServerEntry; readonly installations: readonly ProviderInstallation[] }[] = [];
     try {
       for (const extension of selected) {
-        loaded.push({ loaded: 'entry' in extension ? { manifest: extension.manifest, entry: extension.entry }
-          : await loadServerExtension(extension), installations: extension.installations });
+        loaded.push({ loaded: extension.kind === 'installed' ? await loadServerExtension(extension)
+          : { manifest: extension.manifest, entry: extension.entry }, installations: extension.installations });
       }
     } catch { return { kind: 'failed', failure: 'load', recovery: 'replace' }; }
     const extensions: ProviderExtension[] = [];

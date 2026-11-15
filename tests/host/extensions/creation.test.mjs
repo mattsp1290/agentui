@@ -3,6 +3,7 @@ import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
+import { createProviderRegistry } from '@agentui/host';
 import { createServerExtensions } from '@agentui/host/extensions';
 import { openAccessDatabase } from '../../../apps/host/build/tsc/access-database.js';
 import { providerExtensionSource } from '../../../apps/host/build/tsc/provider-extensions.js';
@@ -117,7 +118,7 @@ test('shutdown freezes credentials during entered creation and persists uncertai
   assert.equal(old.calls.close, 1); assert.equal(old.calls.dispose, 1);
 });
 
-test('discovery failure hides catalog before owner failure handling while registry cleanup drains', { timeout: 10000 }, async t => {
+test('discovery failure reports changing and defers replacement before owner failure handling while cleanup drains', { timeout: 10000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); },
     async close() { entered.resolve(); await finish.promise; } });
@@ -125,7 +126,10 @@ test('discovery failure hides catalog before owner failure handling while regist
   const discovering = assert.rejects(f.host.discoverProviders(), /Provider discovery failed/);
   try {
     await entered.promise;
-    assert.equal(f.host.extensionStatus().kind, 'active');
+    assert.deepEqual(f.host.extensionStatus(), { kind: 'changing', generation: 1 });
+    const next = entry(t, { label: 'next' });
+    assert.deepEqual(await f.host.replaceProviderExtensions([next.value]), { kind: 'deferred', reason: 'changing' });
+    assert.equal(next.calls.import, 0);
     assert.equal((await f.client.metadata()).agents.filter(value => value.kind === 'provider').length, 0);
     await rejected(f.client.create(f.scope('stale'), agent.id));
     assert.equal(old.calls.commands, 0);
@@ -188,4 +192,29 @@ test('accepted replacement hides the retired catalog during cleanup and after ca
     await rejected(f.client.create(f.scope('failed'), agent.id));
     assert.equal(bad.calls.commands, 0);
   } finally { finish.resolve(); await replacing; }
+});
+
+for (const create of [createProviderRegistry.bind(null, []), createServerExtensions]) {
+  test(`${create.name} inactive send capture refuses before inspecting the original operation`, async () => {
+    const registry = create();
+    const original = { get installation() { return assert.fail('inactive input was inspected'); } };
+    assert.throws(() => registry.captureSend(original, 'text', 'operation'), /^Error: Provider unavailable$/);
+    await registry.close();
+    assert.throws(() => registry.captureSend(original, 'text', 'operation'), /^Error: Provider unavailable$/);
+  });
+}
+
+test('mutating registry activity snapshots cannot change admission or lifecycle phase', async () => {
+  const registry = createProviderRegistry([]);
+  const activating = registry.activate(), observed = registry.activity();
+  assert.deepEqual(observed, { phase: 'activating', pending: 1 });
+  observed.phase = 'closing'; observed.pending = 0;
+  assert.deepEqual(registry.activity(), { phase: 'activating', pending: 1 });
+  await activating;
+  assert.deepEqual(registry.activity(), { phase: 'active', pending: 0 });
+  assert.throws(() => registry.capture(null, null), /Provider agent unavailable/);
+  const closing = registry.close();
+  registry.activity().phase = 'active';
+  assert.throws(() => registry.capture(null, null), /^Error: Provider unavailable$/);
+  await closing;
 });
