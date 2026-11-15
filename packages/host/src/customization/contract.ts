@@ -4,13 +4,44 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 
+export const supportedNodeMinimum = [24, 22, 3] as const;
+export const supportedNodeRange = `>=${supportedNodeMinimum.join('.')} <${supportedNodeMinimum[0] + 1}`;
+export const supportedNpmVersion = '11.19.1';
+export const supportedPackageManager = `npm@${supportedNpmVersion}` as const;
+export const serverCatalogFile = 'entries.mjs';
+const diagnostics = {
+  'output-exists': 'Server customization output must be a fresh directory.',
+  'invalid-graph': 'Server customization requires unique namespaces and compatible server entries.',
+  'build-failed': 'Could not compile server customization sources.',
+  'artifact-changed': 'Server customization output changed during validation.',
+  'publication-failed': 'Could not publish server customization artifact.',
+  'toolchain-mismatch': `Customization requires Node ${supportedNodeRange}.`,
+  'npm-mismatch': `Customization preparation requires npm ${supportedNpmVersion}.`,
+  'entry-validation': 'Server customization entry validation failed.',
+  'invalid-artifact': 'Invalid server customization artifact.',
+  'install-failed': 'Could not install committed customization dependencies.',
+  'input-mutation': 'Committed customization inputs changed during preparation.',
+  'resource-limit': 'Customization preparation resource limit exceeded.',
+  'preparation-failed': 'Could not prepare committed customization sources.',
+};
 export type CustomizationErrorCode = 'invalid-input' | 'invalid-package' | 'path' |
-  'unsupported-tree-entry' | 'unknown-commit' | 'access' | 'retrieval-failed' | 'resource-limit';
+  'unsupported-tree-entry' | 'unknown-commit' | 'access' | 'retrieval-failed' | keyof typeof diagnostics;
 
 export class CustomizationError extends Error {
+  static fixed(code: keyof typeof diagnostics): CustomizationError {
+    return new CustomizationError(code, diagnostics[code]);
+  }
+
   constructor(readonly code: CustomizationErrorCode, message: string) {
     super(message);
     this.name = 'CustomizationError';
+  }
+}
+export function assertSupportedNode(version: string = process.versions.node): void {
+  const [major, minor, patch] = version.split('.').map(Number);
+  const [minimumMajor, minimumMinor, minimumPatch] = supportedNodeMinimum;
+  if (!/^\d+\.\d+\.\d+$/u.test(version) || major !== minimumMajor || minor! < minimumMinor || minor === minimumMinor && patch! < minimumPatch) {
+    throw CustomizationError.fixed('toolchain-mismatch');
   }
 }
 
@@ -102,7 +133,7 @@ export function hasDependencies(pkg: Record<string, unknown>): boolean {
 }
 export function npmLockPackages(lock: unknown, packageManager: unknown): Record<string, unknown> {
   if (lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
-  if (packageManager !== 'npm@11.19.1') throw new CustomizationError('invalid-package', 'Dependencies require npm@11.19.1.');
+  if (packageManager !== supportedPackageManager) throw new CustomizationError('invalid-package', `Dependencies require ${supportedPackageManager}.`);
   const value = record(lock);
   if (value.lockfileVersion !== 3) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
   return record(value.packages);
