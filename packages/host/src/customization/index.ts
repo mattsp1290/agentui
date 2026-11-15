@@ -6,3 +6,5 @@ export { resolveCustomizationSources } from './sources.js';
 export type { ResolvedCustomizationPackage, ResolvedCustomizationSources } from './sources.js';
 export type { CommittedInputs, SourceFile } from './repository.js';
 export type { NpmInputs } from './packages.js';
+export { parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from './server-artifact.js';
+export type { ServerCustomizationArtifact, ServerArtifactPackage, ServerArtifactExpectation } from './server-artifact.js';
