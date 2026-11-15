@@ -125,7 +125,7 @@ async function npmOwner(ctx: AnalysisContext, selected: Member): Promise<NpmOwne
   }
   if (owners.length > 1 || (owners.length && ctx.files.has(posix.join(selected.path, 'package-lock.json')))) throw new Error('Ambiguous npm ownership');
   const { root, files } = owners[0] ?? { root: selected, files: workspaceFiles(ctx, selected) };
-  if ([root.path, selected.path].some(path => ctx.files.has(posix.join(path, 'npm-shrinkwrap.json')))) {
+  if ([root.path, selected.path].some(path => ctx.directories.get(path)?.files.some(file => posix.basename(file.path).toLowerCase() === 'npm-shrinkwrap.json'))) {
     throw new CustomizationError('invalid-package', 'Committed npm-shrinkwrap.json is unsupported in the selected npm context.');
   }
   const members = new Map<string, Member>();
@@ -174,6 +174,9 @@ function lockEntries(ctx: AnalysisContext, owner: NpmOwner, packages: Record<str
     const entry = record(value);
     boundDeclarations(ctx, entry);
     if (entry.hasShrinkwrap !== undefined && entry.hasShrinkwrap !== false) throw new CustomizationError('invalid-package', 'Nested npm shrinkwrap contexts are unsupported.');
+    if (entry.inBundle || (installed && [entry.bundleDependencies, entry.bundledDependencies].some(value => Array.isArray(value) ? value.length > 0 : Boolean(value)))) {
+      throw new CustomizationError('invalid-package', 'Bundled npm dependencies are unsupported.');
+    }
     const source = lockSource(owner, entry, installed);
     const sourceDirectory = source.kind === 'workspace' ? source.target : source.kind === 'tarball' ? parentDirectory(source.archive) : directory;
     if (source.kind === 'workspace') targets.add(source.target);
