@@ -58,10 +58,10 @@ export function DesktopShell({ children, defaultView, protectedContent, status, 
   return <ThemeScope className="desktop-shell">
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
-      <nav aria-label="Recovery controls">
+      <details className="recovery-menu"><summary>View options</summary><nav aria-label="Recovery controls">
         <Button tone="secondary" onClick={() => setView((current) => ({ kind: 'default', revision: current.kind === 'default' ? current.revision + 1 : 1 }))}>Restore default view</Button>
         <Button tone="secondary" onClick={() => window.location.reload()}>Reload app</Button>
-      </nav>
+      </nav></details>
     </header>
     {protectedContent}
     <main id="main-content">
