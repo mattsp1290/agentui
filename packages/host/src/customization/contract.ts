@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { isAbsolute, posix, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 
@@ -52,12 +55,36 @@ export function repositoryLocation(value: unknown): string {
   return value;
 }
 
+export function repositoryAddress(value: unknown, cwd: string): { readonly address: string | undefined; readonly transport: string } {
+  const repository = repositoryLocation(value);
+  let address: string;
+  try {
+    address = repository.startsWith('file://') ? resolve(fileURLToPath(repository)) : isAbsolute(repository) || !repository.includes(':') ? resolve(cwd, repository) : repository;
+  } catch {
+    // Git can retrieve file URLs that cannot form a canonical graph cache address.
+    return { address: undefined, transport: repository };
+  }
+  return { address, transport: isAbsolute(address) ? pathToFileURL(address).href : repository };
+}
+function unsafeSegment(part: string): boolean { return part.toLowerCase() === '.git' || hasControl(part) || /[\\:]/u.test(part); }
+export function npmLocalPath(base: string, value: string): string {
+  if (!value || value.startsWith('/') || value.split('/').some(part => part === '~' || unsafeSegment(part))) {
+    throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
+  }
+  const path = posix.normalize(posix.join(base, value));
+  if (path === '..' || path.startsWith('../')) throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
+  return path === '.' ? '' : containedPath(path);
+}
+export function parentDirectory(path: string): string { const parent = posix.dirname(path); return parent === '.' ? '' : parent; }
+export function byPath(a: { readonly path: string }, b: { readonly path: string }): number { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; }
+export function identity(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+
 export function containedPath(value: unknown, source = false): string {
   if (typeof value !== 'string' || !value || (source && !value.startsWith('./'))) {
     throw new CustomizationError('path', 'Expected a contained repository path.');
   }
   const path = value.startsWith('./') ? value.slice(2) : value;
-  if ((/[\\:]/u.test(path) || hasControl(path)) || path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')) {
+  if (path.split('/').some(part => !part || part === '.' || part === '..' || unsafeSegment(part))) {
     throw new CustomizationError('path', 'Repository paths must be relative and cannot traverse directories or contain .git.');
   }
   return path;
@@ -69,33 +96,30 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
   return object;
 }
 
-function dependencies(packageJson: Record<string, unknown>, lockValue: unknown): void {
-  const keys = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-  const declarations = new Map<string, Record<string, unknown>>();
-  for (const key of keys) {
-    if (packageJson[key] === undefined) continue;
-    const entries = record(packageJson[key]);
-    if (Object.values(entries).some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid dependency declaration');
-    declarations.set(key, entries);
-  }
-  if (![...declarations.values()].some(entries => Object.keys(entries).length)) return;
-  if (packageJson.packageManager !== 'npm@11.19.1') throw new Error('Dependencies require npm@11.19.1');
-  const lock = record(lockValue);
-  if (lock.lockfileVersion !== 3) throw new Error('Dependencies require a committed npm v3 lockfile');
-  const root = record(record(lock.packages)['']);
-  for (const key of keys) {
-    const declared = declarations.get(key) ?? {};
-    const locked = root[key] === undefined ? {} : record(root[key]);
-    if (Object.keys(declared).length !== Object.keys(locked).length || Object.keys(declared).some(name => locked[name] !== declared[name])) {
-      throw new Error('Lockfile root dependencies disagree with package.json');
+export const dependencyGroups = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
+export function hasDependencies(pkg: Record<string, unknown>): boolean {
+  return dependencyGroups.some(key => pkg[key] !== undefined && Object.keys(record(pkg[key])).length > 0);
+}
+export function npmLockPackages(lock: unknown, packageManager: unknown): Record<string, unknown> {
+  if (lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  if (packageManager !== 'npm@11.19.1') throw new CustomizationError('invalid-package', 'Dependencies require npm@11.19.1.');
+  const value = record(lock);
+  if (value.lockfileVersion !== 3) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  return record(value.packages);
+}
+export function manifestMatchesLockEntry(packageJson: Record<string, unknown>, entry: Record<string, unknown>): void {
+  for (const key of dependencyGroups) {
+    const declared = packageJson[key] === undefined ? {} : record(packageJson[key]);
+    const locked = entry[key] === undefined ? {} : record(entry[key]);
+    if (Object.values(declared).some(value => typeof value !== 'string' || !value.trim()) ||
+      Object.keys(declared).length !== Object.keys(locked).length || Object.keys(declared).some(name => locked[name] !== declared[name])) {
+      throw new CustomizationError('invalid-package', 'Lockfile dependencies disagree with package.json.');
     }
   }
-  for (const key of ['name', 'version']) {
-    if (root[key] !== packageJson[key]) throw new Error('Lockfile root identity disagrees with package.json');
-  }
+  if (entry.version !== packageJson.version) throw new CustomizationError('invalid-package', 'Lockfile version disagrees with package.json.');
 }
 
-export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>, lock?: unknown): CustomizationSource | undefined {
+export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>): CustomizationSource | undefined {
   try {
     const packageJson = record(input);
     if (packageJson.agentui === undefined) return undefined;
@@ -126,6 +150,7 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
     const extensions: GitExtensionReference[] = [];
     if (metadata.extensions !== undefined) {
       if (!Array.isArray(metadata.extensions)) throw new Error('Expected external reference array');
+      if (metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       for (const value of metadata.extensions) {
         const reference = fields(value, ['repository', 'commit', 'subdirectory']);
         const repository = repositoryLocation(reference.repository);
@@ -134,10 +159,9 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
-    dependencies(packageJson, lock);
     return { ...(local ? { local } : {}), ...(shared === undefined ? {} : { shared }), extensions };
   } catch (error) {
     if (error instanceof CustomizationError) throw error;
-    throw new CustomizationError('invalid-package', error instanceof Error ? error.message : 'Invalid customization package.');
+    throw new CustomizationError('invalid-package', 'Invalid committed customization package or npm inputs.');
   }
 }

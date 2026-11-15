@@ -1,12 +1,14 @@
+import { record } from '@agentui/contracts/decode';
+import { createHash } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
-import { dirname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { commitId, containedPath, CustomizationError, parseCustomizationPackage, repositoryLocation } from './contract.js';
+import { commitId, containedPath, CustomizationError, hasDependencies, npmLockPackages, manifestMatchesLockEntry, parseCustomizationPackage, repositoryAddress, byPath, identity } from './contract.js';
+import { SourceBudget, MAX_SOURCE_BYTES } from './budget.js';
 import type { CustomizationSource } from './contract.js';
 
 const execute = promisify(execFile);
-const MAX_BYTES = 256 * 1024 * 1024;
 const selectors = ['GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_OBJECT_DIRECTORY',
   'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_COMMON_DIR', 'GIT_NAMESPACE', 'GIT_REPLACE_REF_BASE', 'GIT_SHALLOW_FILE'];
 
@@ -16,14 +18,16 @@ function gitEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
-async function git(args: string[], cwd: string, env: NodeJS.ProcessEnv, fetching = false): Promise<Buffer> {
+async function git(args: string[], cwd: string, env: NodeJS.ProcessEnv, budget: SourceBudget, fetching = false): Promise<Buffer> {
   try {
     const { stdout } = await execute('git', ['-c', 'protocol.allow=never', '-c', 'protocol.file.allow=always',
       '-c', 'protocol.ssh.allow=always', '-c', 'protocol.https.allow=always', ...args], {
-      cwd, env, encoding: 'buffer', timeout: fetching ? 120_000 : 30_000, maxBuffer: MAX_BYTES,
+      cwd, env, encoding: 'buffer', timeout: budget.timeout(fetching ? 120_000 : 30_000), maxBuffer: MAX_SOURCE_BYTES,
     });
     return stdout;
   } catch (error) {
+    if (error instanceof CustomizationError) throw error;
+    budget.check();
     // Git diagnostics can contain repository credentials. Only retain a fixed classification.
     const stderr = error && typeof error === 'object' && 'stderr' in error && Buffer.isBuffer(error.stderr) ? error.stderr.toString('utf8') : '';
     if (fetching && /not our ref|couldn't find remote ref|unadvertised object/iu.test(stderr)) {
@@ -37,7 +41,7 @@ async function git(args: string[], cwd: string, env: NodeJS.ProcessEnv, fetching
 }
 
 interface TreeFile { readonly path: string; readonly object: string; readonly executable: boolean }
-function treeFiles(tree: Buffer): TreeFile[] {
+function treeFiles(tree: Buffer, budget: SourceBudget): TreeFile[] {
   const entries: TreeFile[] = [];
   const decoder = new TextDecoder('utf-8', { fatal: true });
   let text: string;
@@ -50,21 +54,18 @@ function treeFiles(tree: Buffer): TreeFile[] {
       throw new CustomizationError('unsupported-tree-entry', 'Customization snapshots do not support symlinks or Git submodules.');
     }
     entries.push({ path: containedPath(match[4]), object: match[3], executable: match[1] === '100755' });
-    if (entries.length > 20_000) throw new CustomizationError('resource-limit', 'Customization snapshot exceeds 20000 files.');
+    budget.takeFiles(1);
   }
   return entries;
 }
 
-async function packageMetadata(directory: string, files: ReadonlySet<string>): Promise<CustomizationSource | undefined> {
-  if (!files.has('package.json')) return undefined;
-  try {
-    const input: unknown = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
-    const lock: unknown = files.has('package-lock.json') ? JSON.parse(await readFile(join(directory, 'package-lock.json'), 'utf8')) : undefined;
-    return parseCustomizationPackage(input, files, lock);
-  } catch (error) {
-    if (error instanceof CustomizationError) throw error;
-    throw new CustomizationError('invalid-package', 'Expected valid committed package.json and package-lock.json JSON.');
-  }
+export interface SourceFile { readonly path: string; readonly sha256: string; readonly executable: boolean }
+export interface CommittedInputs { readonly identity: string; readonly files: readonly SourceFile[] }
+export interface RepositoryTree {
+  readonly commit: string;
+  readonly directory: string;
+  readonly inputs: CommittedInputs;
+  dispose(): Promise<void>;
 }
 
 export interface CustomizationSnapshot {
@@ -74,14 +75,13 @@ export interface CustomizationSnapshot {
   dispose(): Promise<void>;
 }
 
-export async function readCustomizationSnapshot(input: {
-  readonly repository: string;
+export async function readCommittedRepository(input: {
+  readonly transport: string;
   readonly commit: string;
   readonly scratchParent: string;
-}): Promise<CustomizationSnapshot> {
-  const commit = commitId(input.commit);
-  const repository = repositoryLocation(input.repository);
-  const location = repository.includes(':') || isAbsolute(repository) ? repository : resolve(repository);
+  readonly budget: SourceBudget;
+}): Promise<RepositoryTree> {
+  const { budget, commit, transport } = input;
   const scratchParent = resolve(input.scratchParent);
   await mkdir(scratchParent, { recursive: true, mode: 0o700 });
   const privateDirectory = await mkdtemp(join(scratchParent, 'agentui-source-'));
@@ -91,28 +91,57 @@ export async function readCustomizationSnapshot(input: {
   try {
     await chmod(privateDirectory, 0o700);
     const env = gitEnvironment();
-    await git(['init', '--bare', '--template=', `--object-format=${commit.length === 64 ? 'sha256' : 'sha1'}`, objects], privateDirectory, env);
-    await git(['--git-dir', objects, 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--', location, commit], privateDirectory, env, true);
-    const canonical = (await git(['--git-dir', objects, 'rev-parse', '--verify', `${commit}^{commit}`], privateDirectory, env)).toString('utf8').trim();
+    await git(['init', '--bare', '--template=', `--object-format=${commit.length === 64 ? 'sha256' : 'sha1'}`, objects], privateDirectory, env, budget);
+    await git(['--git-dir', objects, 'fetch', '--no-tags', '--no-write-fetch-head', '--no-recurse-submodules', '--', transport, commit], privateDirectory, env, budget, true);
+    const canonical = (await git(['--git-dir', objects, 'rev-parse', '--verify', `${commit}^{commit}`], privateDirectory, env, budget)).toString('utf8').trim();
     if (canonical !== commit) throw new CustomizationError('unknown-commit', 'The requested object is not the specified commit.');
-    const entries = treeFiles(await git(['--git-dir', objects, 'ls-tree', '-rz', '--full-tree', commit], privateDirectory, env));
+    const entries = treeFiles(await git(['--git-dir', objects, 'ls-tree', '-rz', '--full-tree', commit], privateDirectory, env, budget), budget);
     await mkdir(directory, { mode: 0o700 });
-    let bytes = 0;
+    const files: SourceFile[] = [];
     for (const entry of entries) {
-      const blob = await git(['--git-dir', objects, 'cat-file', 'blob', entry.object], privateDirectory, env);
-      bytes += blob.length;
-      if (bytes > MAX_BYTES) throw new CustomizationError('resource-limit', 'Customization snapshot exceeds 256 MiB.');
+      const blob = await git(['--git-dir', objects, 'cat-file', 'blob', entry.object], privateDirectory, env, budget);
+      budget.takeBytes(blob.length);
+      files.push(Object.freeze({ path: entry.path, sha256: createHash('sha256').update(blob).digest('hex'), executable: entry.executable }));
       const destination = join(directory, entry.path);
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
       await writeFile(destination, blob, { flag: 'wx', mode: entry.executable ? 0o700 : 0o600 });
       if (entry.executable) await chmod(destination, 0o700);
     }
-    const customization = await packageMetadata(directory, new Set(entries.map(entry => entry.path)));
+    files.sort(byPath);
+    const inputs = Object.freeze({ identity: identity(['agentui-tree-v1', files]), files: Object.freeze(files) });
     await rm(objects, { recursive: true, force: true });
-    return { commit: canonical, directory, ...(customization ? { customization } : {}), dispose };
+    return { commit: canonical, directory, inputs, dispose };
   } catch (error) {
     await dispose();
     if (error instanceof CustomizationError) throw error;
     throw new CustomizationError('retrieval-failed', 'Could not materialize the committed customization snapshot.');
+  }
+}
+
+export async function readCustomizationSnapshot(input: {
+  readonly repository: string;
+  readonly commit: string;
+  readonly scratchParent: string;
+}): Promise<CustomizationSnapshot> {
+  const commit = commitId(input.commit);
+  const { transport } = repositoryAddress(input.repository, process.cwd());
+  const tree = await readCommittedRepository({ transport, commit, scratchParent: input.scratchParent, budget: SourceBudget.snapshot() });
+  try {
+    const files = new Set(tree.inputs.files.map(file => file.path));
+    if (!files.has('package.json')) return { commit: tree.commit, directory: tree.directory, dispose: tree.dispose };
+    const packageJson: unknown = JSON.parse(await readFile(join(tree.directory, 'package.json'), 'utf8'));
+    const lock: unknown = files.has('package-lock.json') ? JSON.parse(await readFile(join(tree.directory, 'package-lock.json'), 'utf8')) : undefined;
+    const pkg = record(packageJson);
+    const customization = parseCustomizationPackage(pkg, files);
+    if (customization && hasDependencies(pkg)) {
+      const entry = record(npmLockPackages(lock, pkg.packageManager)['']);
+      manifestMatchesLockEntry(pkg, entry);
+      if (entry.name !== pkg.name) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
+    }
+    return { commit: tree.commit, directory: tree.directory, ...(customization ? { customization } : {}), dispose: tree.dispose };
+  } catch (error) {
+    await tree.dispose();
+    if (error instanceof CustomizationError) throw error;
+    throw new CustomizationError('invalid-package', 'Expected valid committed package.json and package-lock.json JSON.');
   }
 }

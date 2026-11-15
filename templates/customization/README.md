@@ -33,7 +33,7 @@ The builder reserves a fresh output directory, retains the private committed sna
 
 ## Source loader
 
-The existing source loader remains available separately through `@agentui/host/customization`. It validates local and external reference syntax, dependency lock metadata, and source mappings. Its broader accepted metadata does not imply local builder support.
+The source APIs remain available separately through `@agentui/host/customization`. `readCustomizationSnapshot` reads one root snapshot. `resolveCustomizationSources` retrieves a pinned root and its external sources recursively, including selected monorepo packages and committed npm inputs. See the [source API reference](../../docs/customization/sources.md) for ownership, supported inputs, trust, and limits. These broader source inputs remain unsupported by the local desktop builder.
 
 Every read fetches the full commit into private storage and copies raw regular-file blobs. Working files, the index, refs, and `FETCH_HEAD` remain unchanged. Dirty and untracked changes are excluded. Executable bits are preserved; LFS pointers stay pointer bytes. Symlinks and Git submodules are unsupported.
 

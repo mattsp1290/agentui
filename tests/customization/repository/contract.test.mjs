@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseCustomizationPackage, repositoryLocation } from '../../../packages/host/dist/customization/contract.js';
+import { parseCustomizationPackage, repositoryLocation, npmLockPackages, manifestMatchesLockEntry } from '../../../packages/host/dist/customization/contract.js';
 
 const oid = 'a'.repeat(40);
 const files = new Set(['desktop.tsx', 'shared.ts']);
 const manifest = { namespace: 'personal', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
 const local = { extension: manifest, sources: { './dist/desktop.js': './desktop.tsx' } };
-const parse = (agentui, lock) => parseCustomizationPackage({ agentui }, files, lock);
+const parse = agentui => parseCustomizationPackage({ agentui }, files);
 
 test('absent metadata and empty metadata retain shipped defaults', () => {
   assert.equal(parseCustomizationPackage({}, files), undefined);
@@ -68,17 +68,29 @@ test('source maps and shared inputs must identify contained committed regular fi
   ]) assert.throws(() => parse(agentui));
 });
 
-test('dependency declarations need agreeing npm v3 lock root metadata', () => {
-  const pkg = { name: 'notes', version: '1.0.0', packageManager: 'npm@11.19.1', dependencies: { marked: '1.0.0' }, agentui: local };
-  const lock = { lockfileVersion: 3, packages: { '': { name: 'notes', version: '1.0.0', dependencies: { marked: '1.0.0' } } } };
-  assert.ok(parseCustomizationPackage(pkg, files, lock));
-  assert.throws(() => parseCustomizationPackage(pkg, files));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, lockfileVersion: 2 }));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, packages: { '': { ...lock.packages[''], dependencies: { marked: '^2' } } } }));
-  assert.throws(() => parseCustomizationPackage({ ...pkg, packageManager: 'pnpm@9' }, files, lock));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, packages: { '': { ...lock.packages[''], devDependencies: { x: '1' } } } }));
-  for (const agentui of [{ shared: './shared.ts' }, { extensions: [{ repository: '/repo', commit: oid }] }]) {
-    assert.throws(() => parseCustomizationPackage({ ...pkg, agentui }, files), { code: 'invalid-package' });
-    assert.ok(parseCustomizationPackage({ ...pkg, agentui }, files, lock));
+test('metadata parsing does not inspect npm declarations', () => {
+  for (const agentui of [local, { shared: './shared.ts' }, { extensions: [{ repository: '/repo', commit: oid }] }]) {
+    assert.ok(parseCustomizationPackage({ agentui, dependencies: 'unrelated' }, files));
   }
+});
+
+test('npm lock headers require the pinned manager and v3 package table', () => {
+  const packages = { '': {} };
+  assert.equal(npmLockPackages({ lockfileVersion: 3, packages }, 'npm@11.19.1'), packages);
+  for (const lock of [undefined, { lockfileVersion: 1 }, { lockfileVersion: 2, packages }]) {
+    assert.throws(() => npmLockPackages(lock, 'npm@11.19.1'),
+      { code: 'invalid-package', message: 'Dependencies require a committed npm v3 lockfile.' });
+  }
+  assert.throws(() => npmLockPackages({ lockfileVersion: 3, packages }, 'pnpm@9'),
+    { code: 'invalid-package', message: 'Dependencies require npm@11.19.1.' });
+});
+
+test('manifest comparison requires agreeing dependency groups and version', () => {
+  const pkg = { version: '1.0.0', dependencies: { marked: '1.0.0' } };
+  manifestMatchesLockEntry(pkg, pkg);
+  for (const entry of [
+    { ...pkg, dependencies: { marked: '^2' } }, { ...pkg, devDependencies: { x: '1' } },
+    { ...pkg, optionalDependencies: { x: '1' } }, { ...pkg, peerDependencies: { x: '1' } },
+    { ...pkg, version: '2.0.0' },
+  ]) assert.throws(() => manifestMatchesLockEntry(pkg, entry), { code: 'invalid-package' });
 });

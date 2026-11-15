@@ -1,0 +1,28 @@
+{
+  "lockfileVersion": 3,
+  "requires": true,
+  "packages": {
+    "": {
+      "version": "1.0.0",
+      "dependencies": {
+        "a": "file:vendor/a.tgz"
+      },
+      "name": "tarballs"
+    },
+    "node_modules/a": {
+      "version": "1.0.0",
+      "dependencies": {
+        "b": "file:./b.tgz"
+      },
+      "integrity": "sha512-gHyIgcp1Y6/3716wRF3oJ42uJbUeukE+0zQ8/46d6EELreY0cDtNIgs2S+xjt8j1Cu8omcwJ6nxZFPrFtZaEsQ==",
+      "resolved": "file:vendor/a.tgz"
+    },
+    "node_modules/b": {
+      "version": "1.0.0",
+      "integrity": "sha512-2hrZ7fdBAm00KqbwPkym4OWIm5CgQ8vvpmDgPcuVlBbz0YAib2Zs+CfohkWMPqboR3koJCwdjUD/wkzudpFJEQ==",
+      "resolved": "file:vendor/b.tgz"
+    }
+  },
+  "name": "tarballs",
+  "version": "1.0.0"
+}
