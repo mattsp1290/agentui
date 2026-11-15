@@ -3,10 +3,12 @@ import { canonicalJson, copyJson } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
 import type { ConversationScope, RunAuthority } from '@agentui/contracts';
-import { creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
-import type { ProviderCreation, ProviderInstallation, CreationObservation } from './provider-creation.js';
+import { providerTarget, providerOutcome } from './provider-commands.js';
+import type { ProviderTarget, ProviderObservation } from './provider-commands.js';
+import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
+import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
-  ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
+  ProviderCommand, ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
 export { providerIdentity } from './provider-creation.js';
 export type { ProviderIdentity } from './provider-creation.js';
@@ -50,6 +52,8 @@ interface BoundProvider {
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
+  captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget;
+  executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
@@ -131,6 +135,45 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       return providerCreation({ installation: selected, credential: granted.credential,
         intent: { kind: 'create', operationId: randomUUID(), scope,
           agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId } } }, scope);
+    },
+    captureSend(original, text, operationId) {
+      const granted = validate(original.installation);
+      if (original.observation?.kind !== 'confirmed' || canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+      const intent = creationIntent(original.intent, original.installation, instance);
+      const binding = creationBinding(original.observation.binding, intent, original.installation);
+      const request = copyJson(presentation.request(text, binding));
+      if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
+      const decoded = presentation.decodeRequest(copyJson(request));
+      if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
+      return providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential,
+        operation: { kind: 'send', operationId, binding, request } }, intent.scope);
+    },
+    async executeSend(original, fresh, beforeEffect) {
+      let entered = false;
+      const authorize = () => {
+        const granted = validate(original.installation);
+        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+      };
+      try {
+        authorize();
+        const captured = original.operation;
+        const intent = creationIntent(captured.binding.creation, original.installation, instance);
+        const binding = creationBinding(captured.binding, intent, original.installation);
+        const request = presentation.decodeRequest(copyJson(captured.request));
+        if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
+        const operation: ProviderCommand<M, I> = { kind: 'send', operationId: captured.operationId, binding, request };
+        const connected = await connect();
+        authorize();
+        if (!capability(connected.capabilities.reconcile) || (fresh && !capability(connected.capabilities.send))) throw new Error('Provider command unavailable');
+        beforeEffect();
+        authorize();
+        entered = true;
+        const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
+        authorize();
+        return providerOutcome(result, original, fresh);
+      } catch {
+        return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+      }
     },
     async execute(original, fresh, beforeEffect) {
       const source = fresh ? 'create' : 'lookup';
@@ -267,6 +310,21 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
+    },
+    captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget {
+      const selected = original.installation;
+      const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+      const binding = bindings.find(binding => binding.matches(selected));
+      if (phase !== 'active' || !binding || !discovered?.capabilities.send || !discovered.capabilities.reconcile ||
+        !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider send unavailable');
+      return binding.captureSend(original, text, operationId);
+    },
+    executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+      return track(async () => {
+        const binding = bindings.find(binding => binding.matches(original.installation));
+        if (phase !== 'active' || !binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        return binding.executeSend(original, fresh, beforeEffect);
+      });
     },
     execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation> {
       return track(async () => {
