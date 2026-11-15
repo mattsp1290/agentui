@@ -1,12 +1,12 @@
-import { canonicalJson, parseScope } from '@agentui/contracts';
+import { parseScope } from '@agentui/contracts';
 import { nonempty, record } from '@agentui/contracts/decode';
 import { behaviour, extensionNamespace } from './extensions.js';
 import { compileParameters } from './schema.js';
+import { copyToolJson as copy } from './tool-json.js';
 import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, Accepted, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
 export type * from './tool-contracts.js';
 
 type Registered = { definition: FrontendTool; validate(value: unknown): boolean; decode(value: unknown): unknown; execute(value: unknown, context: { readonly conversation: import('@agentui/contracts').ConversationScope }): Promise<string> };
-function copy<T>(value: T): T { canonicalJson(value); return JSON.parse(JSON.stringify(value)) as T; }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     for (const child of Object.values(value)) freeze(child);

@@ -821,3 +821,45 @@ test('accepted contributions preserve identity and opaque provider bindings', as
   p.release();
   await result.generation.retire();
 });
+
+test('JSON snapshots preserve data without invoking hidden serialization hooks', async () => {
+  let hookCalls = 0;
+  const metadata = {};
+  Object.defineProperty(metadata, 'toJSON', {
+    value() {
+      hookCalls++;
+      return ['invalid metadata'];
+    },
+  });
+  const args = { text: 'original' };
+  Object.defineProperty(args, 'toJSON', {
+    value() {
+      hookCalls++;
+      return { text: 'rewritten' };
+    },
+  });
+  const generation = await make({
+    activate(tools) {
+      tools.add({
+        definition: { name: 'x', description: 'x', metadata },
+        decodeInput(value) {
+          return value.text;
+        },
+        async execute(value) {
+          return value;
+        },
+      });
+      return { dispose() {} };
+    },
+  });
+  const snapshot = pin([generation]);
+  try {
+    const result = await snapshot.invoke('demo__x', args);
+    assert.equal(hookCalls, 0);
+    assert.deepEqual(snapshot.definitions[0].metadata, {});
+    assert.deepEqual(result, { kind: 'completed', output: 'original' });
+  } finally {
+    snapshot.release();
+    await generation.retire();
+  }
+});

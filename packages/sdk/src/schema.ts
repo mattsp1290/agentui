@@ -1,6 +1,6 @@
-import { canonicalJson } from '@agentui/contracts';
 import { Validator, dereference, schemaKeyword, schemaArrayKeyword, schemaMapKeyword, type Schema as LibrarySchema } from '@cfworker/json-schema';
 import { draft7 } from './draft-07.js';
+import { copyToolJson as copy } from './tool-json.js';
 type Schema = boolean | LibrarySchema;
 let meta: Validator | undefined;
 function metaValidator(): Validator {
@@ -10,7 +10,6 @@ function metaValidator(): Validator {
 const keywords = new Set('$schema $ref $comment title description default examples readOnly writeOnly type enum const multipleOf maximum exclusiveMaximum minimum exclusiveMinimum maxLength minLength pattern items additionalItems maxItems minItems uniqueItems contains maxProperties minProperties required properties patternProperties additionalProperties dependencies propertyNames definitions allOf anyOf oneOf not if then else format contentMediaType contentEncoding'.split(' '));
 const formats = new Set('date time date-time uri uri-reference uri-template email hostname ipv4 ipv6 regex json-pointer relative-json-pointer'.split(' '));
 const refKeys = new Set('$ref $comment title description default examples readOnly writeOnly'.split(' '));
-function copy<T>(value: T): T { canonicalJson(value); return JSON.parse(JSON.stringify(value)) as T; }
 export function compileParameters(input: unknown): (value: unknown) => boolean {
   const parameters = copy(input === undefined ? {} : input);
   const root = (typeof parameters === 'object' && parameters !== null && !Array.isArray(parameters) && Object.keys(parameters).length === 0 ? { type: 'object' } : parameters) as Schema;
