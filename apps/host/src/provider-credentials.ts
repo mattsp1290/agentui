@@ -29,18 +29,25 @@ function nonblank(value: string): string {
   return value;
 }
 
-/** Borrows Access's connection. Only grant metadata is persisted, never secrets. */
-export function createProviderAuthority(state: AccessDatabase, namespace: string, installations: readonly ProviderInstallation[]): ProviderAuthority & { revoke(handle: string): void } {
-  const configured = new Map(installations.map(installation => {
+export function normalizeProviderInstallations(namespace: string, installations: readonly ProviderInstallation[]): readonly ProviderInstallation[] {
+  const ids = new Set<string>(), identities = new Set<string>();
+  return installations.map(installation => {
     const instance = providerIdentity(installation.instance);
     if (!['agentui-host', 'remote-provider'].includes(installation.expectedAuthority) || instance.namespace !== namespace) throw new Error('Provider authorization refused');
     const authentication: ProviderInstallation['authentication'] = installation.authentication.kind === 'secret'
       ? { kind: 'secret', revision: nonblank(installation.authentication.revision), resolve: installation.authentication.resolve }
       : { kind: 'unauthenticated' };
     if (installation.authentication.kind !== 'secret' && installation.authentication.kind !== 'unauthenticated') throw new Error('Provider authorization refused');
-    return [nonblank(installation.id), { instance, service: origin(installation.service), authentication, expectedAuthority: installation.expectedAuthority }];
-  }));
-  if (configured.size !== installations.length) throw new Error('Provider authorization refused');
+    const id = nonblank(installation.id), identity = canonicalJson(instance);
+    if (ids.has(id) || identities.has(identity)) throw new Error('Provider authorization refused');
+    ids.add(id); identities.add(identity);
+    return { id, instance, service: origin(installation.service), authentication, expectedAuthority: installation.expectedAuthority };
+  });
+}
+
+/** Borrows Access's connection. Only grant metadata is persisted, never secrets. */
+export function createProviderAuthority(state: AccessDatabase, namespace: string, installations: readonly ProviderInstallation[]): ProviderAuthority & { revoke(handle: string): void } {
+  const configured = new Map(normalizeProviderInstallations(namespace, installations).map(installation => [installation.id, installation]));
   const pending = new Set<Promise<unknown>>(), admitted = new Map<string, string>();
   let active = true;
   function installationFor(id: string, instance: ProviderIdentity) {
