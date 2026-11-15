@@ -441,14 +441,13 @@ for (const termination of ['absent', 'unconfirmed', 'confirmed']) test(`Crew unc
   if (termination === 'absent') delete stopped.cancellation;
   else Object.assign(stopped.cancellation, { delivery: 'delivered', nativeTermination: termination });
   conversation.state.phase = 'idle'; conversation.state.pendingApprovals = [];
-  const before = JSON.parse(saved(f).checkpoint.data).cursor.opaque.sequence;
   remote.emit(receipt.conversationId);
-  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.sequence > before);
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.status === 'uncertain');
   const assertObserved = () => {
     const state = saved(f), run = JSON.parse(state.checkpoint.data).state.run;
-    assert.deepEqual(run, { requestId, status: 'uncertain', ...(stopped.cancellation && { cancellation: stopped.cancellation }) });
     assert.deepEqual(JSON.parse(state.conversation.document).domain.currentRun, termination === 'confirmed'
       ? { kind: 'ended', runId, outcome: 'interrupted' } : { kind: 'running', runId });
+    assert.deepEqual(run, { requestId, status: 'uncertain', cancellation: stopped.cancellation ?? null });
     assert.deepEqual(JSON.parse(state.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
   };
   assertObserved();
@@ -468,7 +467,7 @@ for (const termination of ['absent', 'unconfirmed', 'confirmed']) test(`Crew unc
   assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel')).length, 1);
   assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 0);
   if (termination !== 'confirmed') {
-    assert.equal((await f.client.conversation(scope).submit(send(scope, 'blocked'))).kind, 'refused');
+    assert.equal((await f.client.conversation(scope).submit(send(scope, 'blocked'))).kind, 'rejected');
     return;
   }
   const browser = await chromium.launch(); t.after(() => browser.close());
