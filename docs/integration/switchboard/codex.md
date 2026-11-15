@@ -60,8 +60,9 @@ matrix are outside this MVP handoff.
 List only AgentUI's stored conversation catalog and resume only its saved session
 references. Never import native history or accept arbitrary client thread IDs.
 The current driver stores format-version-1 `SessionReference` values with the
-native thread ID in `opaque`. Its binding includes installation `codex-local-v1`,
-account `local`, the resolved workspace, native version, and native format.
+native thread ID in `opaque`. It selects installation `codex-local-v1`.
+The session binding includes the engine, account `local`, the resolved workspace,
+native version, and native format.
 
 The [SQLite store](../../../packages/host/src/sqlite-store.ts) compares installation
 bindings exactly. A blind CLI bump changes that binding and rejects old records.
