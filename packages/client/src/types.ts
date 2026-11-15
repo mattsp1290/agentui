@@ -31,7 +31,7 @@ export interface ConversationStore<P> {
   getSnapshot(): ClientView<P>;
   subscribe(listener: () => void): () => void;
   setDraft(text: string): Promise<void>;
-  send(): Promise<SubmitResult>;
+  send(text?: string): Promise<SubmitResult>;
   approve(pendingId: string, choiceId: string): Promise<SubmitResult>;
   cancel(runId: string): Promise<SubmitResult>;
   retry(clientCommandId: string): Promise<SubmitResult>;
