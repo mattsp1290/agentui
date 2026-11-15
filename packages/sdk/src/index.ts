@@ -1,16 +1,11 @@
 export { contractVersion } from '@agentui/contracts';
 export type { ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
 
-export type ExtensionEntry =
-  | { readonly kind: 'server'; readonly module: string }
-  | { readonly kind: 'desktop'; readonly module: string }
-  | { readonly kind: 'ios'; readonly module: string };
-
-export interface ExtensionManifest {
-  readonly namespace: string;
-  readonly trust: 'full';
-  readonly entries: readonly ExtensionEntry[];
-}
+export { EXTENSION_SDK_VERSION, parseExtensionManifest, checkExtensionEntrypoint, validateExtensionLifetime } from './extensions.js';
+export type {
+  ExtensionEntryKind, ExtensionEntry, ExtensionManifest, ExtensionLifetime, ExtensionCompatibility,
+  ProviderContributions, ServerExtensionContext, ServerExtensionEntry,
+} from './extensions.js';
 
 export { backendProviderContractVersion } from './providers.js';
 export type {
