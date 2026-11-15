@@ -10,6 +10,8 @@ import { CodexRpc, CodexRpcError } from './codex-rpc.js';
 import { approvalItem, approvalPrompt, bounded, rememberApprovalItem } from './codex-approval-display.js';
 import type { ApprovalDetails } from './codex-approval-display.js';
 import { createCommandActivity } from './codex-command-activity.js';
+import { discoverCodexModels } from './codex-models.js';
+import type { CodexModel } from './codex-models.js';
 import { messageParts } from './transcript-parts.js';
 
 export type CodexTranscriptEvent = TranscriptEvent;
@@ -22,6 +24,7 @@ export interface CodexDriverOptions {
   readonly env?: NodeJS.ProcessEnv;
 }
 interface ActiveTurn {
+  readonly installation: Installation;
   readonly scope: ConversationScope;
   readonly threadId: string;
   readonly previousRunId: string | null;
@@ -46,9 +49,17 @@ type Observation = NativeDispatchObservation<CommandResult<CodexTranscriptEvent>
 const empty = (): HostOutput<CodexTranscriptEvent> => ({ events: [], runs: [], decisions: [] });
 const scopeKey = (scope: ConversationScope) => canonicalJson(scope);
 
-export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
-  readonly installation: Installation; close(): void;
-} {
+export interface CodexModelDriver {
+  readonly model: CodexModel;
+  readonly isDefault: boolean;
+  readonly selectable: boolean;
+  readonly driver: ProviderDriver<CodexTranscriptEvent>;
+}
+export interface CodexDriver extends ProviderDriver<CodexTranscriptEvent> {
+  models(): Promise<readonly CodexModelDriver[]>;
+  close(): void;
+}
+export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
   const installation = codexInstallation(options.cwd, options.version);
   const cwd = installation.binding.authorizedScope;
   const active = new Map<string, ActiveTurn>();
@@ -170,8 +181,8 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
   function run(turn: ActiveTurn, turnId: string): NativeRun {
     const value: NativeRun = { identity: { conversation: turn.scope, runId: turnId,
       authority: { kind: 'agentui-host', hostId: turn.scope.hostId,
-        binding: { namespace: 'codex-app-server', installationId: installation.installationId, opaqueSessionId: turn.threadId } } },
-      reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque: turn.threadId },
+        binding: { namespace: 'codex-app-server', installationId: turn.installation.installationId, opaqueSessionId: turn.threadId } } },
+      reference: { kind: 'session', formatVersion: 1, binding: turn.installation.binding, opaque: turn.threadId },
     };
     if (turn.run && turn.run.identity.runId !== turnId) throw new Error('Unexpected Codex turn');
     if (!turn.run) {
@@ -273,8 +284,8 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       continuation: { processId: rpc.processId, requestId: id, threadId: turn.threadId, turnId: turn.run.identity.runId },
     }]);
   }
-  function acknowledged(command: ClientCommand, target: CapturedTarget, output: HostOutput<CodexTranscriptEvent>, nativeId: string): Observation {
-    const result: Observation = { kind: 'conclusive', evidence: {
+  function acknowledged(command: ClientCommand, target: CapturedTarget, output: HostOutput<CodexTranscriptEvent>, nativeId: string): Extract<Observation, { readonly kind: 'conclusive' }> {
+    const result: Extract<Observation, { readonly kind: 'conclusive' }> = { kind: 'conclusive', evidence: {
       identity: target.identity, source: 'native-acknowledgement',
       nativeOperation: { namespace: 'codex-app-server', id: nativeId },
       observation: { namespace: 'codex-app-server', schemaVersion: 2,
@@ -282,7 +293,8 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     }, result: { kind: 'completed', output } };
     return result;
   }
-  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string } }, target: CapturedTarget): Promise<Observation> {
+  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string } }, target: CapturedTarget, model?: string): Promise<Observation> {
+    const modelSelection = model === undefined ? {} : { model };
     const key = scopeKey(command.scope);
     busy.add(key);
     let turn: ActiveTurn | null = null;
@@ -294,21 +306,21 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = target.run.reference.opaque;
         if (!loaded.has(threadId)) {
           method = 'thread/resume';
-          await rpc.request('thread/resume', { threadId, cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only' });
+          await rpc.request('thread/resume', { threadId, cwd, ...modelSelection, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only' });
           loaded.add(threadId);
         }
       } else {
         method = 'thread/start';
-        const response = object(await rpc.request('thread/start', { cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', ephemeral: false }));
+        const response = object(await rpc.request('thread/start', { cwd, ...modelSelection, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', ephemeral: false }));
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, revision: 0, complete: false, stopCommandId: null };
+      turn = { installation: target.installation, scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);
       method = 'turn/start';
-      const result = object(await rpc.request('turn/start', { threadId,
+      const result = object(await rpc.request('turn/start', { threadId, ...modelSelection,
         input: [{ type: 'text', text: command.body.text, text_elements: [] }], clientUserMessageId: command.clientCommandId }));
       const nativeRun = run(turn, nonempty(object(result.turn).id));
       return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
@@ -340,8 +352,68 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       }, result: { kind: 'rejected', reason: rejection.reason } };
     }
   }
-  return {
+  async function dispatch(command: ClientCommand, target: CapturedTarget, expected: Installation, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
+    if (canonicalJson(target.installation) !== canonicalJson(expected)) throw new Error('Wrong Codex installation');
+    switch (command.body.kind) {
+      case 'send': return send({ ...command, body: command.body }, target, model);
+      case 'approve': {
+        if (!target.decision || !target.run) throw new Error('Approval target is missing');
+        const continuation = object(target.decision.continuation);
+        const approval = approvals.get(canonicalJson(continuation.requestId));
+        if (continuation.processId !== rpc.processId || !approval || approval.pendingId !== target.decision.visible.pendingId ||
+          approval.run.identity.runId !== target.run.identity.runId || scopeKey(approval.turn.scope) !== scopeKey(command.scope)) {
+          return { kind: 'not-dispatched', reason: 'Codex approval expired with its connection' };
+        }
+        let timeout: ReturnType<typeof setTimeout> | undefined;
+        const resolved = new Promise<void>((resolve, reject) => {
+          timeout = setTimeout(() => reject(new Error('Codex did not confirm this approval')), 15_000);
+          timeout.unref();
+          approval.waiter = { resolve, reject };
+        });
+        try { await Promise.all([rpc.respond(approval.id, { decision: command.body.choiceId }), resolved]); }
+        finally { clearTimeout(timeout); approval.waiter = null; }
+        approvals.delete(canonicalJson(approval.id));
+        return acknowledged(command, target, empty(), `${approval.turn.threadId}:${canonicalJson(approval.id)}`);
+      }
+      case 'cancel': {
+        if (!target.run) throw new Error('Cancel target is missing');
+        const threadId = target.run.reference.opaque;
+        const turn = active.get(threadId);
+        if (!turn || turn.complete || turn.run?.identity.runId !== command.body.runId ||
+          target.run.identity.runId !== command.body.runId || scopeKey(turn.scope) !== scopeKey(command.scope)) {
+          return { kind: 'not-dispatched', reason: 'Codex turn is no longer active' };
+        }
+        if (turn.stopCommandId) return { kind: 'not-dispatched', reason: 'Codex is already stopping this response.' };
+        turn.stopCommandId = command.clientCommandId;
+        try {
+          publish(turn, [{ kind: 'run-stop-requested', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
+        } catch (error) { turn.stopCommandId = null; throw error; }
+        try {
+          await rpc.request('turn/interrupt', { threadId, turnId: command.body.runId });
+        } catch (error) {
+          if (!(error instanceof CodexRpcError)) throw error;
+          if (!turn.complete) {
+            publish(turn, [{ kind: 'run-stop-rejected', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
+            turn.stopCommandId = null;
+          }
+          return { ...acknowledged(command, target, empty(), command.body.runId),
+            result: { kind: 'rejected', reason: `Codex could not stop this response: ${bounded(error.message, 1_000)}` } };
+        }
+        return acknowledged(command, target, empty(), command.body.runId);
+      }
+    }
+  }
+  let modelDrivers: Promise<readonly CodexModelDriver[]> | undefined;
+  const driver: CodexDriver = {
     source: 'codex', installation,
+    models() {
+      modelDrivers ??= initialize().then(() => discoverCodexModels(params => rpc.request('model/list', params))).then(models => models.map(({ model, isDefault, selectable }) => {
+        const selected = codexInstallation(cwd, options.version, model.id);
+        return { model, isDefault, selectable, driver: { source: driver.source, installation: selected, capability: driver.capability,
+          dispatch: (command, target) => dispatch(command, target, selected, model.id) } };
+      }));
+      return modelDrivers;
+    },
     capability(command) {
       if (closing || disconnected) return { kind: 'unsupported', reason: 'Codex is disconnected. Restart the host to connect again.' };
       if (command.body.kind === 'cancel') {
@@ -353,57 +425,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       if (command.body.kind === 'send' && busy.has(scopeKey(command.scope))) return { kind: 'unsupported', reason: 'Codex is still responding. Wait for it to finish.' };
       return { kind: 'supported' };
     },
-    async dispatch(command, target) {
-      if (canonicalJson(target.installation) !== canonicalJson(installation)) throw new Error('Wrong Codex installation');
-      switch (command.body.kind) {
-        case 'send': return send({ ...command, body: command.body }, target);
-        case 'approve': {
-          if (!target.decision || !target.run) throw new Error('Approval target is missing');
-          const continuation = object(target.decision.continuation);
-          const approval = approvals.get(canonicalJson(continuation.requestId));
-          if (continuation.processId !== rpc.processId || !approval || approval.pendingId !== target.decision.visible.pendingId ||
-            approval.run.identity.runId !== target.run.identity.runId || scopeKey(approval.turn.scope) !== scopeKey(command.scope)) {
-            return { kind: 'not-dispatched', reason: 'Codex approval expired with its connection' };
-          }
-          let timeout: ReturnType<typeof setTimeout> | undefined;
-          const resolved = new Promise<void>((resolve, reject) => {
-            timeout = setTimeout(() => reject(new Error('Codex did not confirm this approval')), 15_000);
-            timeout.unref();
-            approval.waiter = { resolve, reject };
-          });
-          try { await Promise.all([rpc.respond(approval.id, { decision: command.body.choiceId }), resolved]); }
-          finally { clearTimeout(timeout); approval.waiter = null; }
-          approvals.delete(canonicalJson(approval.id));
-          return acknowledged(command, target, empty(), `${approval.turn.threadId}:${canonicalJson(approval.id)}`);
-        }
-        case 'cancel': {
-          if (!target.run) throw new Error('Cancel target is missing');
-          const threadId = target.run.reference.opaque;
-          const turn = active.get(threadId);
-          if (!turn || turn.complete || turn.run?.identity.runId !== command.body.runId ||
-            target.run.identity.runId !== command.body.runId || scopeKey(turn.scope) !== scopeKey(command.scope)) {
-            return { kind: 'not-dispatched', reason: 'Codex turn is no longer active' };
-          }
-          if (turn.stopCommandId) return { kind: 'not-dispatched', reason: 'Codex is already stopping this response.' };
-          turn.stopCommandId = command.clientCommandId;
-          try {
-            publish(turn, [{ kind: 'run-stop-requested', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
-          } catch (error) { turn.stopCommandId = null; throw error; }
-          try {
-            await rpc.request('turn/interrupt', { threadId, turnId: command.body.runId });
-          } catch (error) {
-            if (!(error instanceof CodexRpcError)) throw error;
-            if (!turn.complete) {
-              publish(turn, [{ kind: 'run-stop-rejected', runId: command.body.runId, clientCommandId: command.clientCommandId }]);
-              turn.stopCommandId = null;
-            }
-            return { ...acknowledged(command, target, empty(), command.body.runId),
-              result: { kind: 'rejected', reason: `Codex could not stop this response: ${bounded(error.message, 1_000)}` } };
-          }
-          return acknowledged(command, target, empty(), command.body.runId);
-        }
-      }
-    },
+    dispatch: (command, target) => dispatch(command, target, installation),
     close() {
       if (closing) return;
       try {
@@ -416,4 +438,5 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       finally { closing = true; rpc.close(); }
     },
   };
+  return driver;
 }

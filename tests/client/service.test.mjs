@@ -291,3 +291,13 @@ test('provider descriptors have a strict independent shape and retain native des
   for (const invalid of [{ ...provider, runtime: agent.runtime }, { ...provider, kind: 'remote' },
     { ...provider, namespace: '' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
 });
+
+
+test('native model metadata retains host labels and rejects malformed selections', () => {
+  const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
+  const model = { id: 'remote-astra', label: 'Remote Astra' };
+  assert.deepEqual(parse({ ...agent, model }).model, model);
+  for (const invalid of [null, {}, { id: '', label: 'Remote Astra' }, { id: 'remote-astra', label: 1 }, { ...model, extra: true }]) {
+    assert.throws(() => parse({ ...agent, model: invalid }));
+  }
+});

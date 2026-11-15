@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { readArtifactBytes } from '../../apps/host/build/tsc/artifact.js';
 import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
-import { EXTENSION_SDK_VERSION, CODEX_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
+import { EXTENSION_SDK_VERSION, CODEX_RUNTIME, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
 import { parseServiceRequest, parseServiceResponse } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { openLocalHost, createRecordedDriver } from '@agentui/host';
@@ -28,6 +28,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const feeds = new FeedRegistry(), calls = [];
   const a = installed(CODEX_RUNTIME, 'private-account-a'), b = installed(CLAUDE_SDK_RUNTIMES.sonnet, 'private-account-b');
   const c = installed(CLAUDE_SDK_RUNTIMES.opus, 'private-account-c'), d = installed(CODEX_RUNTIME, 'private-account-d');
+  const e = installed(CODEX_SDK_RUNTIME, 'private-account-e');
   const driver = (installation, name) => ({ ...createRecordedDriver({ installation, backendPath: join(directory, `${name}.jsonl`), decodeEvent: transcriptProjection.decodeEvent,
     resolve: async cmd => { calls.push(name); return { kind: 'completed', output: { events: [
       { kind: 'message-updated', messageId: cmd.clientCommandId, revision: 1, role: 'user', text: cmd.body.text, complete: true },
@@ -40,16 +41,19 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
     compatibility: { wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
-  let api = createApi({ ...options, host, installation: a, agents: [
+  const configuredAgents = [
     { installation: a, name: 'Project A', availability: { kind: 'ready' } }, { installation: b, availability: { kind: 'ready' } },
     { installation: c, availability: { kind: 'unavailable', reason: 'Optional agent unavailable' } },
-    { installation: d, name: 'Project B', availability: { kind: 'ready' } },
-  ] });
+    { installation: d, model: { id: 'remote-fixture', label: 'GPT-6.1 Sol' }, name: 'Project B', availability: { kind: 'ready' } },
+    { installation: e, availability: { kind: 'ready' } },
+  ];
+  let api = createApi({ ...options, host, installation: a, agents: configuredAgents });
   const call = async request => parseServiceResponse(request, { ok: true, value: await api(principal, parseServiceRequest(request)) }).value;
   const metadata = await call({ op: 'metadata' });
   assert.doesNotMatch(JSON.stringify(metadata), /private-account|private\/workspace|same-installation-id/);
   const [codex, sonnet, opus] = metadata.agents;
-  assert.equal(new Set(metadata.agents.map(agent => agent.id)).size, 4);
+  assert.equal(new Set(metadata.agents.map(agent => agent.id)).size, 5);
+  assert.deepEqual(metadata.agents[4].model, { id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' });
   assert.match(sonnet.label, /Sonnet/); assert.match(opus.label, /Opus/);
   assert.deepEqual(sonnet.commands, ['send', 'cancel']);
   const scopeA = { hostId: access.hostId, conversationId: 'a' }, scopeB = { ...scopeA, conversationId: 'b' };
@@ -62,6 +66,19 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.deepEqual(calls, ['codex', 'sonnet']);
   assert.equal((await call({ op: 'search', query: 'no matches', after: null })).items.length, 0);
   assert.equal((await call({ op: 'conversation-agent', scope: scopeB })).id, sonnet.id);
+  const restricted = createApi({ ...options, host, installation: b, agents: [
+    { installation: a, selectable: false, availability: { kind: 'ready' } },
+    { installation: d, model: { id: 'older-version', label: 'Older version' }, selectable: false, availability: { kind: 'ready' } },
+    { installation: b, availability: { kind: 'ready' } },
+  ] });
+  const restrictedMetadata = await restricted(principal, { op: 'metadata' });
+  assert.deepEqual(restrictedMetadata.agents.map(agent => agent.id), [sonnet.id]);
+  assert.equal((await restricted(principal, { op: 'conversation-agent', scope: scopeA })).availability.kind, 'ready');
+  assert.deepEqual(await restricted(principal, { op: 'create', scope: scopeA, agentId: codex.id }), scopeA);
+  for (const agent of [codex, metadata.agents[3]]) {
+    await assert.rejects(restricted(principal, { op: 'create', scope: { ...scopeA, conversationId: 'hidden-agent' }, agentId: agent.id }), /Choose an available agent/);
+  }
+
   const custom = repository();
   t.after(() => rmSync(custom.directory, { recursive: true, force: true }));
   buildCustom(custom);
@@ -82,11 +99,53 @@ test('authorized agent API and browser route two recorded agents and retain unav
     await page.waitForFunction(expected => document.querySelector('.scope-label')?.textContent === expected, id);
     await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   };
+  const originalApi = api;
+  api = createApi({ ...options, host, installation: e, agents: configuredAgents });
+  await page.reload();
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
+  const collidingChoice = page.getByRole('button', { name: 'Start new chat with Project B · GPT-6.1 Sol', exact: true });
+  assert.equal(await collidingChoice.getAttribute('aria-current'), null);
+  assert.equal(await collidingChoice.isEnabled(), true);
+  assert.equal(await page.locator('.composer-picker-option[aria-current="true"]').count(), 0);
+  await page.keyboard.press('Escape');
+  const matchingAgents = configuredAgents.map(entry => entry.installation === d
+    ? { ...entry, model: { id: CODEX_SDK_MODEL.id, label: 'Remote Sol name' } } : entry);
+  api = createApi({ ...options, host, installation: e, agents: matchingAgents });
+  await page.reload();
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
+  const sdkWelcomeChoice = page.getByRole('button', { name: 'Start new chat with Project B · Remote Sol name', exact: true });
+  assert.equal(await sdkWelcomeChoice.getAttribute('aria-current'), 'true');
+  assert.equal(await sdkWelcomeChoice.isEnabled(), true);
+  assert.equal(await page.locator('.composer-picker-option[aria-current="true"]').count(), 1);
+  await page.keyboard.press('Escape');
+  const sdkScope = { hostId: access.hostId, conversationId: 'sdk-selection' };
+  await call({ op: 'create', scope: sdkScope, agentId: metadata.agents[4].id });
+  await page.reload();
+  await open(sdkScope.conversationId);
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
+  const sdkCurrentChoice = page.getByRole('button', { name: 'Project B · Remote Sol name, current model', exact: true });
+  assert.equal(await sdkCurrentChoice.getAttribute('aria-current'), 'true');
+  assert.equal(await sdkCurrentChoice.isDisabled(), true);
+  assert.equal(await page.locator('.composer-picker-option[aria-current="true"]').count(), 1);
+  assert.deepEqual(host.installation(sdkScope), e);
+  await page.keyboard.press('Escape');
+  api = createApi({ ...options, host, installation: e, agents: configuredAgents });
+  await page.reload();
+  await open(sdkScope.conversationId);
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
+  const collidingCurrentChoice = page.getByRole('button', { name: 'Start new chat with Project B · GPT-6.1 Sol', exact: true });
+  assert.equal(await collidingCurrentChoice.isEnabled(), true);
+  assert.equal(await collidingCurrentChoice.getAttribute('aria-current'), null);
+  assert.equal(await page.locator('.composer-picker-option[aria-current="true"]').count(), 0);
+  assert.deepEqual(host.installation(sdkScope), e);
+  await page.keyboard.press('Escape');
+  api = originalApi;
+  await page.reload();
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
   assert.equal(await page.getByRole('combobox', { name: 'Agent for new chat', exact: true }).count(), 0);
   await open('a');
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
-  assert.deepEqual(await page.getByRole('group', { name: 'Chat settings', exact: true }).getByRole('button').allTextContents(), ['Codex', 'Host default', 'Default']);
+  assert.deepEqual(await page.getByRole('group', { name: 'Chat settings', exact: true }).getByRole('button').allTextContents(), ['Codex', 'Select model', 'Default']);
   assert.equal(await page.getByRole('button', { name: 'Effort, Default. Managed by the host.', exact: true }).isDisabled(), true);
   await message.fill('Draft for Codex');
   await open('b');
@@ -99,12 +158,24 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const model = page.getByRole('button', { name: /^Model,/ });
   mkdirSync('.audit/composer', { recursive: true });
   await model.click();
-  assert.equal(await page.getByRole('button', { name: 'Project A · Codex, current model', exact: true }).count(), 1);
-  assert.equal(await page.getByRole('button', { name: 'Start new chat with Project B · Codex', exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'Project A · Codex, current model', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('dialog', { name: 'Choose model' }).locator('small, p').count(), 0);
+  assert.doesNotMatch(await page.getByRole('dialog', { name: 'Choose model' }).textContent(), /Host default|Start new chat|Current|subscription/);
+  assert.equal(await page.getByRole('button', { name: `Start new chat with ${metadata.agents[4].label}`, exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Start new chat with Project B · GPT-6.1 Sol', exact: true }).count(), 1);
   await page.screenshot({ path: '.audit/composer/model-menu.png' });
+  await page.getByRole('button', { name: 'Start new chat with Project B · GPT-6.1 Sol', exact: true }).click();
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).waitFor();
+  const modelScope = { hostId: access.hostId, conversationId: await page.locator('.scope-label').textContent() };
+  assert.deepEqual(host.installation(modelScope), d);
+  await page.reload();
+  await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).waitFor();
+  await open('a');
+  await model.click();
   await page.keyboard.press('Escape');
   assert.equal(await model.evaluate(node => node === document.activeElement), true);
   await harness.click();
+  assert.match(await page.getByRole('button', { name: 'Codex', exact: true }).textContent(), /1 available/);
   assert.equal(await page.getByRole('button', { name: 'Pi, unavailable', exact: true }).isDisabled(), true);
   await page.screenshot({ path: '.audit/composer/harness-menu.png' });
   await page.getByRole('button', { name: 'Claude', exact: true }).click();
@@ -218,7 +289,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await page.getByText('Draft for Codex', { exact: true }).count(), 1);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
   await model.click();
-  assert.equal(await page.getByRole('button', { name: 'Codex, current model', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Codex, current model', exact: true }).count(), 0);
   await page.keyboard.press('Escape');
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-unavailable.png' });
 });

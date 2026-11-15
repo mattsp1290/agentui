@@ -1,13 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { AgentDescriptor } from '@agentui/contracts/service';
-import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { CLAUDE_SDK_RUNTIMES, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
 type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'provider' | 'other';
 type Picker = { readonly kind: 'closed' } | { readonly kind: 'harness' } | { readonly kind: 'model'; readonly harness: Harness };
 const harnessLabels = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', provider: 'Provider', other: 'Local agent' };
 const modelLabels = [
-  { runtime: CODEX_RUNTIME, label: 'Host default' },
-  { runtime: CODEX_SDK_RUNTIME, label: 'GPT-6.1 Sol' },
+  { runtime: CODEX_SDK_RUNTIME, label: CODEX_SDK_MODEL.label },
   { runtime: CLAUDE_SDK_RUNTIMES.opus, label: 'Opus' },
   { runtime: CLAUDE_SDK_RUNTIMES.sonnet, label: 'Sonnet' },
   { runtime: PI_RUNTIME, label: 'GLM 5.3' },
@@ -26,6 +25,8 @@ function harness(agent: AgentDescriptor | null): Harness {
 function model(agent: AgentDescriptor | null): string {
   if (!agent) return 'Select model';
   if (!('runtime' in agent)) return agent.label;
+  if (agent.model) return agent.model.label;
+  if (agent.runtime.engine === 'codex') return 'Select model';
   return modelLabels.find(({ runtime }) => runtime.engine === agent.runtime.engine && runtime.version === agent.runtime.version && runtime.format === agent.runtime.format)?.label ?? agent.label;
 }
 function Chevron() {
@@ -47,7 +48,14 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
   const currentHarness = harness(agent);
   const currentModel = model(agent);
   const selectedHarness = picker.kind === 'model' ? picker.harness : currentHarness;
-  const modelChoices = agent && !agents.some(entry => entry.id === agent.id) ? [agent, ...agents] : agents;
+  const nativeCodexModels = agents.some(entry => 'runtime' in entry && entry.runtime.engine === 'codex' && entry.model);
+  const listedModels = agents.filter(entry => !('runtime' in entry) ||
+    (entry.runtime.engine !== 'codex' || entry.model) && (entry.runtime.engine !== 'codex-sdk' || !nativeCodexModels));
+  const modelChoices = agent && currentHarness !== 'codex' && !agents.some(entry => entry.id === agent.id) ? [agent, ...listedModels] : listedModels;
+  const selectedModelId = agent && 'runtime' in agent ? agent.model?.id : undefined;
+  const selectedChoiceId = agent && 'runtime' in agent && agent.runtime.engine === 'codex-sdk' && nativeCodexModels && selectedModelId !== undefined
+    ? listedModels.find(entry => 'runtime' in entry && entry.runtime.engine === 'codex' && entry.model?.id === selectedModelId)?.id ?? agent.id
+    : agent?.id;
   const open = enabled && picker.kind !== 'closed';
   const groups: readonly Harness[] = ['pi', 'claude', 'codex', ...(['recorded', 'provider', 'other'] satisfies Harness[]).filter(kind => agents.some(entry => harness(entry) === kind) || Boolean(agent && currentHarness === kind))];
   function close(restoreFocus = false): void {
@@ -87,11 +95,11 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
     }}>{currentModel}<Chevron /></button>
     <button type="button" className="composer-setting composer-effort" aria-label="Effort, Default. Managed by the host." title="Effort is managed by the host. This host does not offer effort settings." disabled>Default<Chevron /></button>
     {open && <div id={id} ref={dialog} className="composer-picker" role="dialog" aria-label={picker.kind === 'harness' ? 'Choose harness' : 'Choose model'} tabIndex={-1}>
-      <div className="composer-picker-heading"><strong>{picker.kind === 'harness' ? 'Harness' : `${harnessLabels[picker.kind === 'model' ? picker.harness : currentHarness]} models`}</strong><button type="button" aria-label="Close chat settings" onClick={() => close(true)}>×</button></div>
-      <p>{hasConversation ? 'Choosing a different harness or model starts a new chat. Your draft stays here.' : 'Choose a harness and model to start a new chat.'}</p>
+      <div className="composer-picker-heading"><strong>{picker.kind === 'harness' ? 'Harness' : 'Select model'}</strong><button type="button" aria-label="Close chat settings" onClick={() => close(true)}>×</button></div>
+      {picker.kind === 'harness' && <p>{hasConversation ? 'Choosing a different harness starts a new chat. Your draft stays here.' : 'Choose a harness to start a new chat.'}</p>}
       <div className="composer-picker-options">
         {picker.kind === 'harness' ? groups.map(kind => {
-          const entries = agents.filter(entry => harness(entry) === kind);
+          const entries = listedModels.filter(entry => harness(entry) === kind);
           const ready = entries.some(entry => entry.availability.kind === 'ready');
           const unavailable = entries.find(entry => entry.availability.kind === 'unavailable');
           const reason = unavailable?.availability.kind === 'unavailable' ? unavailable.availability.reason : 'Not configured on this host';
@@ -99,13 +107,14 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
             <span>{harnessLabels[kind]}</span><small>{ready ? `${entries.filter(entry => entry.availability.kind === 'ready').length} available` : reason}</small><span className="picker-check" aria-hidden="true">{kind === currentHarness ? '✓' : '›'}</span>
           </button>;
         }) : modelChoices.filter(entry => harness(entry) === selectedHarness).map(entry => {
-          const current = hasConversation && entry.id === agent?.id;
+          const selected = entry.id === selectedChoiceId;
+          const current = hasConversation && selected;
           const ready = entry.availability.kind === 'ready';
-          return <button type="button" key={entry.id} className="composer-picker-option" disabled={!ready || current} aria-label={current ? `${entry.label}, current model` : `Start new chat with ${entry.label}`} aria-current={current ? 'true' : undefined} title={entry.availability.kind === 'unavailable' ? entry.availability.reason : undefined} onClick={() => {
+          return <button type="button" key={entry.id} className="composer-picker-option" disabled={!ready || current} aria-label={current ? `${entry.label}, current model` : `Start new chat with ${entry.label}`} aria-current={selected ? 'true' : undefined} title={entry.availability.kind === 'unavailable' ? entry.availability.reason : entry.label !== model(entry) ? entry.label : undefined} onClick={() => {
             close();
             onStartConversation(entry.id);
           }}>
-            <span>{model(entry)}</span><small>{entry.label}</small><small>{current ? 'Current' : entry.availability.kind === 'unavailable' ? entry.availability.reason : 'Start new chat'}</small>{current && <span className="picker-check" aria-hidden="true">✓</span>}
+            <span>{model(entry)}</span>{selected && <span className="picker-check" aria-hidden="true">✓</span>}
           </button>;
         })}
       </div>

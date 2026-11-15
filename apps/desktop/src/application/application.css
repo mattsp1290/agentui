@@ -230,7 +230,7 @@
 .conversation-panel .composer-picker-heading button { padding: 0 5px; background: transparent; color: var(--aui-color-muted); font-size: 20px; border: 0; }
 .composer-picker > p { margin: 5px 0 12px; color: var(--aui-color-muted); font-size: 11px; line-height: 1.5; }
 .composer-picker-options { display: grid; gap: 4px; }
-.conversation-panel .composer-picker-option { position: relative; display: grid; gap: 3px; width: 100%; padding: 10px 24px 10px 10px; background: transparent; color: inherit; border: 0; border-radius: 9px; text-align: left; overflow-wrap: anywhere; }
+.conversation-panel .composer-picker-option { position: relative; display: grid; gap: 3px; width: 100%; padding: 8px 24px 8px 10px; background: transparent; color: inherit; border: 0; border-radius: 9px; font-size: 13px; line-height: 1.4; text-align: left; overflow-wrap: anywhere; }
 .conversation-panel .composer-picker-option:hover:not(:disabled) { background: var(--aui-color-raised); }
 .conversation-panel .composer-picker-option[aria-current="true"] { background: var(--aui-color-raised); opacity: 1; }
 .composer-footer .composer-picker-option > span { color: var(--aui-color-text); font-size: 13px; }
