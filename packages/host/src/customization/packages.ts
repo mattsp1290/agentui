@@ -125,7 +125,7 @@ async function npmOwner(ctx: AnalysisContext, selected: Member): Promise<NpmOwne
   }
   if (owners.length > 1 || (owners.length && ctx.files.has(posix.join(selected.path, 'package-lock.json')))) throw new Error('Ambiguous npm ownership');
   const { root, files } = owners[0] ?? { root: selected, files: workspaceFiles(ctx, selected) };
-  if ([root.path, selected.path].some(path => ctx.files.has(posix.join(path, 'npm-shrinkwrap.json')))) {
+  if ([root.path, selected.path].some(path => ctx.directories.get(path)?.files.some(file => posix.basename(file.path).toLowerCase() === 'npm-shrinkwrap.json'))) {
     throw new CustomizationError('invalid-package', 'Committed npm-shrinkwrap.json is unsupported in the selected npm context.');
   }
   const members = new Map<string, Member>();

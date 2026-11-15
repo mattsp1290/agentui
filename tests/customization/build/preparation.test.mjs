@@ -6,7 +6,7 @@ import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { resolveCustomizationSources } from '@agentui/host/customization';
 import { prepareCustomizationSources } from '../../../scripts/prepare-customization-sources.mjs';
-import { files, fixture, locked, write } from './preparation-support.mjs';
+import { files, fixture, locked, tarball, write } from './preparation-support.mjs';
 
 const imported = async node => (await import(pathToFileURL(join(node.directory, 'index.mjs')).href)).default;
 const absent = async path => assert.rejects(access(path), { code: 'ENOENT' });
@@ -108,6 +108,26 @@ for (const name of ['.NPMRC', '.NpMrC']) {
     assert.equal(await readFile(join(prepared.root.directory, name), 'utf8'), bytes);
     assert.equal((await stat(join(prepared.root.directory, name))).mode & 0o777, executable ? 0o700 : 0o600);
     assert.equal(await readFile(join(repo.directory, name), 'utf8'), bytes);
+  });
+}
+
+for (const name of ['npm-shrinkwrap.json', 'NPM-SHRINKWRAP.JSON', 'NpM-ShRiNkWrAp.JsOn']) {
+  test(`conflicting committed ${name} is rejected before preparation can override the validated lock`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('alternative-lock');
+    const { pkg, lock } = await locked(f, repo);
+    pkg.dependencies.value = '*';
+    lock.packages[''].dependencies.value = '*';
+    await write(repo.directory, 'package.json', pkg);
+    await write(repo.directory, 'package-lock.json', lock);
+    const alternative = structuredClone(lock);
+    alternative.packages['node_modules/value'] = await tarball(f, repo, 'value', '2.0.0');
+    await write(repo.directory, name, alternative);
+    t.diagnostic(`case-insensitive shrinkwrap lookup: ${await access(join(repo.directory, 'npm-shrinkwrap.json')).then(() => true, () => false)}`);
+    await assert.rejects(f.prepare(repo.reference(repo.commit())), { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+    assert.equal(await readFile(join(repo.directory, 'package-lock.json'), 'utf8'), JSON.stringify(lock));
+    assert.equal(await readFile(join(repo.directory, name), 'utf8'), JSON.stringify(alternative));
   });
 }
 

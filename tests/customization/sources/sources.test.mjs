@@ -759,19 +759,44 @@ test('relative root and child references work in a spaced invocation cwd through
 });
 
 test('selected and owning npm shrinkwrap files fail closed despite a valid package lock', async t => {
-  for (const variant of ['standalone', 'owner', 'selected']) await t.test(variant, async t => {
+  for (const name of ['npm-shrinkwrap.json', 'NPM-SHRINKWRAP.JSON', 'NpM-ShRiNkWrAp.JsOn']) {
+    for (const variant of ['standalone', 'owner', 'selected']) await t.test(`${variant}/${name}`, async t => {
+      const f = await fixture(t);
+      const repo = await f.repository(variant);
+      const workspace = variant !== 'standalone';
+      const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
+        ...(workspace ? { workspaces: ['packages/foo'] } : { dependencies: { value: '1.0.0' } }) };
+      const entries = workspace ? { 'packages/foo': { name: 'foo', version: '1.0.0' }, 'node_modules/foo': { link: true, resolved: 'packages/foo' } } : { 'node_modules/value': registry };
+      await write(repo.directory, 'package.json', pkg);
+      await shared(repo, workspace ? 'packages/foo' : '', workspace ? { name: 'foo', version: '1.0.0' } : pkg);
+      await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+      const shrinkwrap = lockFor(pkg, { 'node_modules/unsafe': { version: '1.0.0', resolved: 'git+ssh://example.invalid/unsafe' } });
+      await write(repo.directory, variant === 'selected' ? `packages/foo/${name}` : name, shrinkwrap);
+      await assert.rejects(f.read(reference(repo, repo.commit(), workspace ? 'packages/foo' : undefined)), { code: 'invalid-package' });
+      assert.deepEqual(await readdir(f.scratchParent), []);
+    });
+  }
+});
+
+test('manifest and lock filename aliases cannot establish a locked npm context', async t => {
+  for (const name of ['PACKAGE.JSON', 'PaCkAgE.JsOn', 'PACKAGE-LOCK.JSON', 'PaCkAgE-LoCk.JsOn']) await t.test(name, async t => {
     const f = await fixture(t);
-    const repo = await f.repository(variant);
-    const workspace = variant !== 'standalone';
+    const repo = await f.repository('control-alias');
     const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
-      ...(workspace ? { workspaces: ['packages/foo'] } : { dependencies: { value: '1.0.0' } }) };
-    const entries = workspace ? { 'packages/foo': { name: 'foo', version: '1.0.0' }, 'node_modules/foo': { link: true, resolved: 'packages/foo' } } : { 'node_modules/value': registry };
-    await write(repo.directory, 'package.json', pkg);
-    await shared(repo, workspace ? 'packages/foo' : '', workspace ? { name: 'foo', version: '1.0.0' } : pkg);
-    await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
-    const shrinkwrap = lockFor(pkg, { 'node_modules/unsafe': { version: '1.0.0', resolved: 'git+ssh://example.invalid/unsafe' } });
-    await write(repo.directory, variant === 'selected' ? 'packages/foo/npm-shrinkwrap.json' : 'npm-shrinkwrap.json', shrinkwrap);
-    await assert.rejects(f.read(reference(repo, repo.commit(), workspace ? 'packages/foo' : undefined)), { code: 'invalid-package' });
+      dependencies: { value: '1.0.0' }, agentui: { shared: './source.ts' } };
+    const manifestAlias = name.toLowerCase() === 'package.json';
+    await write(repo.directory, manifestAlias ? name : 'package.json', pkg);
+    await write(repo.directory, manifestAlias ? 'package-lock.json' : name, lockFor(pkg, { 'node_modules/value': registry }));
+    await write(repo.directory, 'source.ts', 'export const value = 1;\n');
+    const input = reference(repo, repo.commit());
+    if (manifestAlias) {
+      const result = await f.read(input);
+      assert.deepEqual(result.root.npm, { kind: 'absent' });
+      assert.equal(result.root.customization, undefined);
+      await result.dispose();
+    } else {
+      await assert.rejects(f.read(input), { code: 'invalid-package' });
+    }
     assert.deepEqual(await readdir(f.scratchParent), []);
   });
 });
