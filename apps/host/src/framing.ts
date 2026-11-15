@@ -1,4 +1,4 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import { canonicalJson } from '@agentui/contracts';
 import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 
@@ -16,9 +16,9 @@ export async function readJson(request: IncomingMessage, limit: number): Promise
   const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString('utf8'));
   return parsed;
 }
-export function json(response: ServerResponse, status: number, value: unknown): void {
+export function json(response: ServerResponse, status: number, value: unknown, headers: OutgoingHttpHeaders = {}): void {
   const body = canonicalJson(value);
   if (Buffer.byteLength(body) > SERVICE_MAX_RESPONSE_BYTES) throw new Error('Response exceeds byte limit');
-  response.writeHead(status, { 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  response.writeHead(status, { ...headers, 'content-type': 'application/json', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
   response.end(body);
 }

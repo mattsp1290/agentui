@@ -14,4 +14,4 @@ npm_package=$(node -p "require('./package.json').packageManager")
 export CARGO_TARGET_DIR="$repo_root/apps/desktop/src-tauri/target"
 
 npm exec --yes --package="$node_package" --package="$npm_package" --call 'npm ci && npm run desktop:bundle'
-exec /usr/bin/open -n "$CARGO_TARGET_DIR/release/bundle/macos/AgentUI.app"
+exec /usr/bin/open -n "$CARGO_TARGET_DIR/release/bundle/macos/AgentUI.app" --args "$@"

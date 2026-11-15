@@ -36,6 +36,7 @@
 .composer-footer button { background: var(--aui-color-accent); color: var(--aui-color-on-accent); }
 .decision-card, .outbox { padding: 1.25rem; margin-top: 1.5rem; border: 1px solid var(--aui-color-border); border-radius: .8rem; }
 .decision-card h2, .outbox h2 { margin-top: 0; font-size: 1rem; }
+.decision-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .outbox > p { color: var(--aui-color-muted); font-size: .85rem; }
 .outbox article + article { border-top: 1px solid var(--aui-color-border); padding-top: 1rem; margin-top: 1rem; }
 .outbox code { font-size: .7rem; overflow-wrap: anywhere; }

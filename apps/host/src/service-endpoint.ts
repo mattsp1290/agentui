@@ -1,4 +1,4 @@
-import type { IncomingMessage, ServerResponse } from 'node:http';
+import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import { identifier, record } from '@agentui/contracts/decode';
 import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES, ServiceError } from '@agentui/contracts/service';
 import type { Access, Principal } from './access.js';
@@ -8,6 +8,7 @@ import { json, readJson } from './framing.js';
 import { serveAsset } from './static-assets.js';
 
 type Api = ReturnType<typeof createApi>;
+type Reply = { readonly value: unknown; readonly headers: OutgoingHttpHeaders };
 type EndpointOptions = {
   readonly access: Access;
   readonly api: Api;
@@ -38,17 +39,16 @@ export function serviceEndpoint(options: EndpointOptions) {
       if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
       const admission = options.credentialClass === 'browser-development'
         ? await admitBrowser(request, options.access) : await admitNative(request, options.access);
-      await writeServiceResult(response, async () => {
-        if (admission.kind === 'service') return options.api(admission.principal, admission.message);
+      await writeServiceResult(response, async (): Promise<Reply> => {
+        if (admission.kind === 'service') return { value: await options.api(admission.principal, admission.message), headers: {} };
         if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
         let paired: ReturnType<Access['pair']>;
         try { paired = options.access.pair(admission.code, options.credentialClass); }
         catch { throw new ServiceError('unauthorized', 'Pairing invitation is invalid or expired'); }
         if (options.credentialClass === 'browser-development') {
-          response.setHeader('set-cookie', `agentui_device_${options.access.hostId}=${paired.secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600`);
-          return null;
+          return { value: null, headers: { 'set-cookie': `agentui_device_${options.access.hostId}=${paired.secret}; HttpOnly; SameSite=Strict; Path=/; Max-Age=3600` } };
         }
-        return { hostId: paired.principal.hostId, principalId: paired.principal.id, secret: paired.secret };
+        return { value: { hostId: paired.principal.hostId, principalId: paired.principal.id, secret: paired.secret }, headers: {} };
       });
     } catch (error) {
       writeServiceFailure(response, error);
@@ -89,8 +89,8 @@ async function admitNative(request: IncomingMessage, access: Access): Promise<Ad
   return { kind: 'service', principal, message };
 }
 
-async function writeServiceResult(response: ServerResponse, run: () => Promise<unknown>): Promise<void> {
-  try { json(response, 200, { ok: true, value: await run() }); }
+async function writeServiceResult(response: ServerResponse, run: () => Promise<Reply>): Promise<void> {
+  try { const { value, headers } = await run(); json(response, 200, { ok: true, value }, headers); }
   catch (error) {
     if (error instanceof ServiceError) throw error;
     throw new ServiceError('unavailable', 'Host request did not complete');

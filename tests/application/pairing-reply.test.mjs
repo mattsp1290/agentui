@@ -55,6 +55,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     assert.equal(injections, 1);
     assert.equal(committedAtFailure, true);
     assert.equal(response.status, 503);
+    assert.equal(response.headers.get('set-cookie'), null);
     assert.deepEqual(JSON.parse(raw), { ok: false, error: { kind: 'unavailable', message: 'Host request did not complete' } });
     assert.ok(!raw.includes(diagnostic));
     for (const [, value] of response.headers) assert.ok(!value.includes(diagnostic));
