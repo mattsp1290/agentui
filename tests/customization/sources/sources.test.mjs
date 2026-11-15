@@ -954,3 +954,38 @@ test('peer metadata uses own properties for selected and installed declarations'
     });
   }
 });
+
+test('dependency names cannot normalize lock lookup paths', async t => {
+  for (const location of ['root', 'workspace', 'installed']) {
+    for (const name of ['.', '..', '@scope/.', '@scope/..', '@scope/_leading', '@scope/-leading']) {
+      await t.test(`${location} ${name}`, async t => {
+        const f = await fixture(t);
+        const repo = await f.repository('dependency-name');
+        const workspace = location === 'workspace';
+        const installed = location === 'installed';
+        const invalid = ['.', '..', '@scope/.', '@scope/..'].includes(name);
+        const dependencies = { [name]: '1.0.0' };
+        const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
+          ...(workspace ? { workspaces: ['packages/foo'] } : { dependencies: installed ? { wrapper: '1.0.0' } : dependencies }) };
+        if (workspace) {
+          await write(repo.directory, 'package.json', pkg);
+          await shared(repo, 'packages/foo', { name: 'foo', version: '1.0.0', dependencies });
+        } else await shared(repo, '', pkg);
+        const entries = {
+          ...(workspace ? { 'packages/foo': { name: 'foo', version: '1.0.0', dependencies }, 'node_modules/foo': { link: true, resolved: 'packages/foo' } } : {}),
+          ...(installed ? { 'node_modules/wrapper': { ...registry, dependencies } } : {}),
+          ...(invalid ? {} : { [`node_modules/${name}`]: registry }),
+        };
+        await write(repo.directory, 'package-lock.json', lockFor(pkg, entries));
+        const ref = reference(repo, repo.commit(), workspace ? 'packages/foo' : undefined);
+        if (invalid) await assert.rejects(f.read(ref), { code: 'invalid-package' });
+        else {
+          const graph = await f.read(ref);
+          assert.equal(graph.root.npm.kind, 'locked');
+          await graph.dispose();
+        }
+        assert.deepEqual(await readdir(f.scratchParent), []);
+      });
+    }
+  }
+});

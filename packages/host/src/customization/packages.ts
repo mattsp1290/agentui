@@ -30,7 +30,7 @@ interface AnalysisContext {
 interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
 interface Declaration { readonly name: string; readonly spec: string; readonly peer: boolean; readonly optional: boolean }
 type LockSource = { readonly kind: 'workspace'; readonly target: string; readonly resolved: string } | { readonly kind: 'tarball'; readonly archive: string }
-  | { readonly kind: 'remote'; readonly url: string; readonly integrityValid: boolean } | { readonly kind: 'none' };
+  | { readonly kind: 'remote'; readonly url: string } | { readonly kind: 'none' };
 interface LockEntry { readonly record: Record<string, unknown>; readonly source: LockSource; readonly context: DeclarationContext; readonly declarations: readonly Declaration[] }
 const manifestPath = (path: string) => posix.join(path, 'package.json');
 const isInstalledPath = (path: string) => path.split('/').includes('node_modules');
@@ -137,7 +137,8 @@ function declarations(ctx: AnalysisContext, pkg: Record<string, unknown>, groups
   for (const group of groups) {
     for (const [name, spec] of Object.entries(pkg[group] === undefined ? {} : record(pkg[group]))) {
       ctx.budget.check();
-      if (typeof spec !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name)) throw new Error('Invalid dependency');
+      if (typeof spec !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name) ||
+        name.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid dependency');
       const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
       const peer = group === 'peerDependencies';
       result.push({ name, spec, peer, optional: peer && Object.hasOwn(meta, name) && record(meta[name]).optional === true });
@@ -155,8 +156,7 @@ function lockSource(owner: NpmOwner, entry: Record<string, unknown>, installed: 
   if (installed && (typeof entry.version !== 'string' || !entry.version)) throw new Error('Invalid locked version');
   const archive = filePayload(entry.resolved);
   if (archive !== undefined) return { kind: 'tarball', archive: npmLocalPath(owner.root.path, archive) };
-  const integrityValid = integrity(entry.integrity);
-  if (safeRemote(entry.resolved) && (!installed || integrityValid)) return { kind: 'remote', url: entry.resolved, integrityValid };
+  if (safeRemote(entry.resolved) && (!installed || integrity(entry.integrity))) return { kind: 'remote', url: entry.resolved };
   if (!installed && entry.resolved === undefined) return { kind: 'none' };
   throw new Error('Unsupported locked source');
 }
@@ -205,7 +205,7 @@ function validateDeclarations(ctx: AnalysisContext, entries: ReadonlyMap<string,
       if (source.kind !== 'workspace' && source.kind !== 'tarball') throw new CustomizationError('invalid-package', 'Local lock target has an incompatible source kind.');
       if ((source.kind === 'workspace' ? source.target : source.archive) !== localTarget) throw new CustomizationError('invalid-package', 'Local lock target disagrees with its declaration.');
     }
-    if (safeRemote(spec) && (source.kind !== 'remote' || source.url !== spec || !source.integrityValid)) throw new Error('Unpinned remote tarball');
+    if (safeRemote(spec) && (source.kind !== 'remote' || source.url !== spec)) throw new Error('Unpinned remote tarball');
   }
 }
 function capture(ctx: AnalysisContext, owner: NpmOwner, targets: ReadonlySet<string>): SourceFile[] {
