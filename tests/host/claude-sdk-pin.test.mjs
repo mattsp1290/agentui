@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { resolveHostDependency } from '../../packages/host/test-support/dependencies.mjs';
 
 const root = new URL('../../', import.meta.url);
 const json = path => JSON.parse(readFileSync(new URL(path, root), 'utf8'));
@@ -16,7 +17,7 @@ test('Claude host consumes the pinned public Switchboard artifact with SDK-free 
   assert.equal(host.dependencies['@agentui/switchboard-claude'], dependency);
   assert.equal(createHash('sha256').update(readFileSync(new URL(`vendor/${pin.artifact}`, root))).digest('hex'), pin.sha256);
   assert.equal(host.dependencies['@anthropic-ai/claude-agent-sdk'], pin.nativeSdk);
-  const entry = fileURLToPath(import.meta.resolve('@agentui/switchboard-claude/claude'));
+  const entry = fileURLToPath(resolveHostDependency('@agentui/switchboard-claude/claude'));
   assert.doesNotMatch(readFileSync(entry.replace(/\.js$/, '.d.ts'), 'utf8'), /@anthropic-ai/);
   const lock = json('package-lock.json');
   assert.equal(lock.packages['packages/host'].dependencies['@agentui/switchboard-claude'], dependency);

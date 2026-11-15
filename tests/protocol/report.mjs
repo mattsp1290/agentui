@@ -30,7 +30,7 @@ function projectCategories({ pin, definitions, fixtures }, registry) {
   return categories;
 }
 
-function buildConformanceReport({ inputs: { retained, vendor, project, descriptor, sdk, pythonSdk, fork }, registry }) {
+function buildConformanceReport({ inputs: { retained, vendor, historicalVendor, project, descriptor, sdk, pythonSdk, fork }, registry }) {
   const { provenance, pin, definitions, fixtures } = retained;
   const { metadata, core: installedSdk } = fork;
   const retainedPath = (file) => `${retained.retainedDir}${file}`;
@@ -52,9 +52,9 @@ function buildConformanceReport({ inputs: { retained, vendor, project, descripto
       version: pin.protocol, sourceCommit: pin.sourceCommit, typescriptSdk: sdk.version, pythonSdk: pythonSdk.version,
       fixturePathsExecutedByAgentUI: false,
       authority: reportText.authority,
-      definitionCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
+      definitionCoverageOwner: { repository: historicalVendor.sourceRepository, source: historicalVendor.sourceRevision,
         matrix: provenance.files['ag-ui-matrix.tsv'].path, retained: retainedPath('ag-ui-matrix.tsv'), verifier: pin.ownership.schemaTest },
-      fixtureCoverageOwner: { repository: vendor.sourceRepository, source: vendor.sourceRevision,
+      fixtureCoverageOwner: { repository: historicalVendor.sourceRepository, source: historicalVendor.sourceRevision,
         index: provenance.files['upstream.tsv'].path, retained: retainedPath('upstream.tsv'), python: pin.ownership.pythonTest },
       counts: { categories: categories.length, definitions: definitions.length, eventDiscriminators: categories.flatMap((row) => row.canonicalEventDiscriminators).length,
         fixtures: fixtures.length, valid: count((fixture) => fixture.valid),
@@ -72,7 +72,9 @@ function buildConformanceReport({ inputs: { retained, vendor, project, descripto
     switchboard: {
       repository: vendor.sourceRepository, sourceRevision: vendor.sourceRevision, artifact: vendor.artifact, sha256: vendor.sha256,
       descriptor,
-      retainedCanonicalComparison: { log: `vendor/${vendor.qualification.logs['verify-agui'].path}`, scope: reportText.canonicalComparisonScope },
+      retainedCanonicalComparison: { sourceRevision: historicalVendor.sourceRevision,
+        provenance: `vendor/${vendor.historicalRecord}`,
+        log: `vendor/${historicalVendor.qualification.logs['verify-agui'].path}`, scope: reportText.canonicalComparisonScope },
     },
     nativeEvidence: {
       availability: projectionFacts.nativeAvailability, declarationScope: reportText.nativeDeclarationScope,

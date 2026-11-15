@@ -1,0 +1,92 @@
+# Export host request traces
+
+The host can export OpenTelemetry request spans and observed native agent runs to an OTLP HTTP receiver. Tracing is off by default. Enable it in the environment of a serving command such as `browser-dev`, `serve`, or `codex-sdk`.
+
+After building the repository, start a host with a local Collector:
+
+```sh
+OTEL_TRACES_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+node apps/host/dist/main.js browser-dev --data-dir /path/to/private-host --port 7140
+```
+
+The receiver must accept OTLP `http/json`. The host appends `/v1/traces` to the base endpoint. Pair a browser or native client and make a service request. Look for the `agentui-host` service and `agentui.host.request` spans in your tracing backend. Static asset requests do not produce spans.
+
+## Send traces through a Datadog Agent
+
+Enable the HTTP receiver in the local Agent's `datadog.yaml`:
+
+```yaml
+otlp_config:
+  receiver:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+```
+
+Restart the Agent, then start the host with the same environment shown above. The Agent owns Datadog authentication and forwarding. The host does not need a Datadog API key. The Agent must run on the same host as AgentUI. See [Datadog's OTLP endpoint setup](https://docs.datadoghq.com/opentelemetry/setup/otlp_ingest_in_the_agent/) for Agent requirements and container configuration.
+
+For Datadog LLM Observability, enable that product on the Agent and set `AGENTUI_DATADOG_LLMOBS=true` in the host environment. This adds the `dd_llmobs_enabled: true` resource attribute to exported spans. Switchboard's GenAI agent spans describe observed native runs. They contain no conversation content. See [Datadog's OpenTelemetry mapping](https://docs.datadoghq.com/llm_observability/instrument/otel_instrumentation/) for Agent requirements and backend conversion. HTTP export success alone does not prove a converted LLM span is visible in Datadog.
+
+## Configure export
+
+These variables apply only when starting the host. Control commands such as `invite`, `devices`, and `revoke` do not create a telemetry exporter.
+
+| Variable | Behavior |
+| --- | --- |
+| `OTEL_TRACES_EXPORTER` | `otlp` enables tracing. Unset, empty, or `none` disables it. Other values fail startup. |
+| `OTEL_SDK_DISABLED` | `true`, ignoring case and surrounding spaces, disables tracing before other telemetry settings are parsed. |
+| `OTEL_EXPORTER_OTLP_ENDPOINT` | Base HTTP or HTTPS URL. Defaults to `http://127.0.0.1:4318`. The host appends `/v1/traces`. |
+| `OTEL_EXPORTER_OTLP_TRACES_ENDPOINT` | Full trace URL. Overrides the base URL without appending a path. |
+| `OTEL_EXPORTER_OTLP_PROTOCOL` | Only `http/json` is supported. The default is `http/json`. |
+| `OTEL_EXPORTER_OTLP_TRACES_PROTOCOL` | Overrides the general protocol. |
+| `OTEL_EXPORTER_OTLP_HEADERS` | Collector authorization headers as comma-separated `name=value` entries. Percent-encode header values. |
+| `OTEL_EXPORTER_OTLP_TRACES_HEADERS` | Overrides matching general header names. |
+| `OTEL_SERVICE_NAME` | Exported service name. Defaults to `agentui-host`. Allows 1 to 128 printable characters. |
+| `AGENTUI_DATADOG_LLMOBS` | `true` adds the Datadog LLM Observability resource marker. Unset or `false` omits it. Other values fail startup. |
+
+Endpoint URLs cannot contain credentials, query strings, or fragments. Invalid configuration fails startup with a generic diagnostic that omits the supplied value. Keep Collector credentials in host environment variables. Use HTTPS when sending them across a network.
+
+The host supplies its own resource and sampler. It does not read `OTEL_RESOURCE_ATTRIBUTES`, detect process or machine attributes, or configure sampling from environment variables. No Datadog-specific host variables are required. Configure environment and version tags in your Collector or Agent.
+
+## Inspect span fields
+
+Each request span has kind `SERVER` and these attributes:
+
+| Attribute | Values |
+| --- | --- |
+| `agentui.operation` | The admitted service operation, including `pair`. Failures before admission use `admission`. |
+| `agentui.credential_class` | `browser-development` or `native`. |
+| `agentui.outcome` | `ok`, `unauthorized`, `forbidden`, `invalid`, `unavailable`, or `create-rejected`. |
+| `http.response.status_code` | The response code associated with the outcome. |
+
+Duration covers admission, dispatch, and response serialization. It ends when the endpoint writes the response. It does not measure client delivery or the lifetime of a provider run. Failures have OpenTelemetry status `ERROR` without an error description.
+
+The exporter receives no request URLs, headers, bodies, prompts, replies, search queries, tool arguments, exception messages, filesystem paths, or host, principal, conversation, and run identifiers. Incoming trace headers and baggage do not establish parentage. Each request starts a new trace. The operator-selected service name is exported verbatim.
+
+## Inspect observed agent runs
+
+AgentUI consumes Switchboard's public `./observability` entry from revision `dadfe09fb2f0090b46168309309ca01bb89b9a0e`. Its observer uses `contentPolicy: { kind: 'none' }` and an empty tool allowlist. The host borrows a tracer from its own provider under Switchboard's versioned instrumentation scope.
+
+After the host persists a native `run-started` event, it opens an `invoke_agent` span. The matching persisted `run-ended` event closes it. This covers Codex CLI, Codex SDK, Claude SDK, and Pi. The interval measures the host's observed run lifecycle. It starts after run-start persistence and ends after terminal-event persistence. Failures before a run starts produce no agent span.
+
+Spans use fixed agent names `codex`, `codex-sdk`, `claude-sdk`, or `pi`, and fixed provider names `openai`, `anthropic`, or `opencode-go`. Completed runs have Switchboard outcome `success`. Failed runs have outcome `error` and bounded category `unknown-error`, since local storage and cleanup can also fail. Interrupted or disconnected runs, including runs still open at shutdown, have outcome `outcome-unknown`. A Stop request alone does not establish cancellation.
+
+Scope and native run IDs identify observations only inside the host's bounded map. They are not exported as correlations. The host records no model-request spans, token usage, or tool spans because the native lifecycle does not establish those facts. At most 128 agent observations remain open. Additional observations may be dropped while native work continues.
+
+The host owns a separate tracer provider for each running host. It does not register a global provider or patch HTTP, provider clients, or filesystem access. This slice does not export logs, metrics, client spans, or control-socket operations.
+
+Export runs in the background. The queue holds at most 128 spans and batches at most 32. Under pressure, spans may be dropped. Exports have a 500 ms timeout, batch processing has a 750 ms timeout, and telemetry shutdown waits at most one second before destroying its connections. Export failure does not change a service response or host shutdown result. Traces are diagnostic evidence rather than durable receipts.
+
+## Verify the local export path
+
+Build first, then run the receiver and bundled-host tests:
+
+```sh
+npm run build
+node --test tests/application/observability.test.mjs
+```
+
+The tests inspect actual OTLP JSON sent by the bundled host. They check content exclusions, disabled mode, receiver failures, and Switchboard GenAI spans from a controlled native fixture. They do not attest to receipt in a live Datadog account.
+
+See [OpenTelemetry JavaScript instrumentation](https://opentelemetry.io/docs/languages/js/instrumentation/) for SDK concepts.

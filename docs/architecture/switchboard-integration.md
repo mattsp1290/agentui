@@ -11,10 +11,10 @@ compatibility promise. Node `>=24.22.3 <25` and npm 11.19.1 are required.
 Switchboard owns adapter identity, registration and instance lifecycle contracts,
 capability states, native session references, bounded event observation and
 interaction continuation parsing. The host exposes only the core contracts used
-by its current consumers. The direct Codex MVP bridge currently owns native
-process and protocol handling in AgentUI. The target integration moves that work
-to a public Switchboard adapter. Clients and extensions depend on AgentUI
-contracts rather than the Node host.
+by its current consumers. The SDK-backed Pi, Codex, and Claude drivers import
+Switchboard public native adapters. The direct Codex app-server bridge remains
+a separate driver with process and protocol handling in AgentUI. Clients and
+extensions depend on AgentUI contracts rather than the Node host.
 
 The installed consumer calls the upstream parser directly:
 
@@ -73,7 +73,8 @@ pending-record ownership, event persistence, replay, uncertainty and retry polic
 Observer disposal does not cancel authoritative work. Only a separately qualified
 native cancellation operation could establish a native cancellation result.
 The current host has a SQLite store, an admission gate, and durable dispatch
-receipts. The pinned Switchboard package does not supply native cancellation.
+receipts. Cancellation support belongs to each driver and its native operation.
+Telemetry observation never establishes cancellation.
 
 Crew remains a remote provider with its own execution and approval authority.
 Its transport, authentication and replay belong to the Crew extension.
@@ -81,32 +82,41 @@ The Node host does not turn a remote Crew operation into a local native adapter.
 
 ## Distinguish available library code from native support
 
-The selected package exports core and `./agui`. Its projection descriptor is
-`basic-values-messages-and-terminals`; reasoning and subagent lifecycle mappings
-remain planned. The AG-UI entry needs the exact optional SDK peer.
-`@agentui/host` declares it as a package dependency for its `./agui` entry;
-core-only consumers install it, but the core entry imports no AG-UI code.
-The [protocol matrix](../protocol/README.md) names controlled installed fixtures and pending transport, replay and UI consumers.
-A schema or projection does not prove that
-a native provider emits the corresponding event.
+The current package exports core, `./agui`, `./testkit`, `./pi`, `./codex`,
+`./claude`, and `./observability`. Its AG-UI projection descriptor is
+`basic-values-messages-terminals-reasoning-and-subagents`, with `planned: none`.
+The AG-UI entry needs the exact optional SDK peer.
+`@agentui/host` declares that peer for its `./agui` entry.
+Core imports no AG-UI or observability code.
+The [protocol matrix](../protocol/README.md) distinguishes the current runtime
+from historical canonical fixtures. AgentUI's existing reasoning and subagent
+fixtures cover availability descriptions, message content, and owner attribution.
+They do not exercise dedicated reasoning or subagent lifecycle output.
+A schema or projection does not prove that a native provider emits an event.
 
-There is no packaged Claude, Codex or Pi adapter in this artifact.
-AgentUI now has a working direct Codex MVP bridge. Upstream's newer source selects
-Codex 0.169.0 and resolves the historical unknown-file omission selection blocker.
-That source is distinct from the pinned package and AgentUI's 0.167.2 contract.
-The [Codex dependency assessment](../integration/switchboard/codex.md) describes
-the bounded handoff to a public shared adapter and the saved-reference transition.
-Neither upstream selection nor the current bridge establishes broader live direct
-and LiteLLM qualification. The pinned package exports define the library code
-available from this artifact.
+The three native aliases and the core dependency use the same commit-named
+artifact. Their pin files retain each adapter's native SDK version.
+The development qualification alias remains a separate historical artifact.
+Package imports and controlled fixtures do not establish broader live native,
+LiteLLM, or integrated Apple qualification.
 
-Linux package checks and the [installed-consumer procedure](../../vendor/README.md#check-the-installed-consumer)
-prove artifact installation, public contract consumption and controlled continuation
-behavior. Mac package verification is a separate measurement of the same bytes.
-Neither measurement qualifies live native operations or integrated Apple clients.
+The optional observability entry uses exact peer `@opentelemetry/api@1.9.0`.
+AgentUI exposes it through `@agentui/host/observability`.
+The host owns providers, exporters, parent contexts, and flush deadlines.
+The [observability guide](../development/observability.md) describes host setup
+and the observed run lifecycle. Observations do not authorize dispatch,
+retry native work, or change durable run outcomes.
+
+Current package checks ran on Darwin arm64 from the immutable source archive.
+The [vendor record](../../vendor/README.md) identifies their exact source,
+artifact, commands, and logs. Those checks qualify package installation and
+controlled behavior. No live native agent, Datadog backend, or Apple application
+ran during that package update.
+
+The original Linux package checks remain in the
+[historical pin](../../vendor/historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json).
+The [historical Mac consumer record](../qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
+qualifies installation, workspace compilation, and five controlled tests at
+AgentUI source `54065e2`. Its artifact and eleven frozen inputs matched before
+and after that run. Neither historical receipt qualifies the current artifact.
 Broader Apple qualification remains `agentui-onxu`.
-
-The [Mac consumer record](../qualification/switchboard-macos/58c7922d8fade3617cc86fedcf41677f897025ef/54065e2/README.md)
-qualifies installation, workspace compilation and five controlled tests at AgentUI
-source `54065e2`. The artifact and all eleven frozen inputs matched before and
-after the run. This adds Mac package compatibility evidence within the limits above.

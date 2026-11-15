@@ -5,6 +5,7 @@ import type { BrowserHostOptions } from './server.js';
 import { startBrowserHost } from './server.js';
 import { readAgentConfiguration } from './agent-config.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
+import { readObservabilityConfiguration } from './observability.js';
 
 const COMMANDS: Readonly<Record<string, readonly string[]>> = { serve: ['port', 'assets', 'config'], 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets', 'executable'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'] };
 async function main(): Promise<void> {
@@ -36,7 +37,7 @@ async function main(): Promise<void> {
     }
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
-    const host = await startBrowserHost({ directory, port, assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
+    const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
       ...(provider === undefined ? {} : { provider }), ...(values.config ? { configuration: readAgentConfiguration(resolve(values.config)) } : {}) });
     process.stdout.write(`${JSON.stringify({ mode: command === 'browser-dev' ? 'browser-development' : command, origin: host.origin, hostId: host.hostId })}\n`);
     const close = () => { void host.close().catch(() => { process.exitCode = 1; }); };

@@ -1,9 +1,10 @@
 export const coverageContractVersion = 2;
 
 export const projectionFacts = {
-  families: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage'],
-  plannedFamilies: ['reasoning', 'subagents'],
-  plannedDescriptor: 'reasoning-subagents',
+  families: ['state', 'activity', 'raw', 'custom', 'messages', 'interrupts', 'usage', 'reasoning', 'subagents'],
+  plannedFamilies: [],
+  mappingDescriptor: 'basic-values-messages-terminals-reasoning-and-subagents',
+  plannedDescriptor: 'none',
   nativeAvailability: { kind: 'undeclared' },
 };
 
@@ -60,12 +61,12 @@ export const coverage = {
     evidence: ['lifecycle-text-tools', 'terminal-interrupts-usage', 'terminal-ordering-limit'], pending: ['AgentUI single-terminal run coordinator and lifecycle UI; agentui-7s6y and agentui-ckpw'],
   },
   reasoning: {
-    mapping: 'partial', scope: 'Opaque reasoning-role message content only; reasoning lifecycle mapping planned.',
-    evidence: ['messages-and-opaque-content', 'acknowledged-absence-and-fault'], pending: ['Switchboard reasoning lifecycle mapping; AgentUI reasoning consumer; agentui-ckpw'],
+    mapping: 'partial', scope: 'Opaque reasoning-role message content and availability description. Dedicated reasoning lifecycle output is not exercised by these AgentUI fixtures.',
+    evidence: ['messages-and-opaque-content', 'acknowledged-absence-and-fault'], pending: ['AgentUI reasoning lifecycle fixtures and consumer; agentui-ckpw'],
   },
   subagents: {
-    mapping: 'partial', scope: 'Scoped owner attribution only; subagent lifecycle mapping planned.',
-    evidence: ['lifecycle-text-tools', 'identity-run-source-scope', 'acknowledged-absence-and-fault'], pending: ['Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw'],
+    mapping: 'partial', scope: 'Scoped owner attribution and availability description. Dedicated subagent lifecycle output is not exercised by these AgentUI fixtures.',
+    evidence: ['lifecycle-text-tools', 'identity-run-source-scope', 'acknowledged-absence-and-fault'], pending: ['AgentUI subagent lifecycle fixtures and consumer; agentui-ckpw'],
   },
   outcomes: {
     mapping: 'represented', scope: 'Observed nested terminal outcomes without native termination proof. The terminal-ordering-limit fixture records a stream-ordering gap.',

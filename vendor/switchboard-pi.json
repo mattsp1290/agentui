@@ -1,8 +1,8 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "564f04434b3a6575c5c97f706dd6d5510e41726f",
-  "artifact": "switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
-  "sha256": "0f8c2820f89b44068b14081b9fef7f4697b8c9d49a28c93a9947efffb2620ac8",
+  "sourceRevision": "dadfe09fb2f0090b46168309309ca01bb89b9a0e",
+  "artifact": "switchboard-dadfe09fb2f0090b46168309309ca01bb89b9a0e.tgz",
+  "sha256": "675957f5550d34fa8ed43de6ec16693725917c0930a013304904c2fd5ce046c5",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-pi",
   "entrypoint": "./pi",
@@ -10,20 +10,12 @@
   "provider": "opencode-go",
   "model": "glm-5.3",
   "license": "MIT",
-  "limits": "Bounded text-only Pi sessions. Existing core and AG-UI package qualification remains on the separate historical pin. No tools, native feature hooks, external discovery, proxy routing or cross-process writer qualification claimed.",
-  "sourceTree": "df95912db8f4c386b0d6a1f7d86eb8ecc92fe60c",
+  "limits": "Current package and controlled fixture checks only. Historical native and Apple measurements do not qualify this revision. No live native agent, Datadog backend or Apple application execution was performed for this update.",
+  "sourceTree": "24f889f95efa3b36dd2f9d86e01236cc0f0fba47",
   "toolchain": {
     "node": "24.22.3",
     "npm": "11.19.1"
   },
-  "qualification": {
-    "scope": "Offline native SDK fixtures and installed public package. Live subscription journey is separately exercised by AgentUI.",
-    "checks": [
-      "npm run build",
-      "npm run lint",
-      "npm run check",
-      "npm test"
-    ],
-    "testsPassed": 137
-  }
+  "historicalRecord": "historical/switchboard-pi-564f04434b3a6575c5c97f706dd6d5510e41726f.json",
+  "qualificationRecord": "switchboard.json"
 }

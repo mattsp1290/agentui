@@ -73,18 +73,20 @@
   },
   "switchboard": {
     "repository": "https://github.com/mattsp1290/switchboard",
-    "sourceRevision": "58c7922d8fade3617cc86fedcf41677f897025ef",
-    "artifact": "switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
-    "sha256": "15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421",
+    "sourceRevision": "dadfe09fb2f0090b46168309309ca01bb89b9a0e",
+    "artifact": "switchboard-dadfe09fb2f0090b46168309309ca01bb89b9a0e.tgz",
+    "sha256": "675957f5550d34fa8ed43de6ec16693725917c0930a013304904c2fd5ce046c5",
     "descriptor": {
       "version": "1.0",
       "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
       "typescriptSdk": "1.0.4",
       "pythonSdk": "1.0.0",
-      "mapping": "basic-values-messages-and-terminals",
-      "planned": "reasoning-subagents"
+      "mapping": "basic-values-messages-terminals-reasoning-and-subagents",
+      "planned": "none"
     },
     "retainedCanonicalComparison": {
+      "sourceRevision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+      "provenance": "vendor/historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json",
       "log": "vendor/qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-agui.log.gz",
       "scope": "Historical canonical schema and SDK runtime validator comparison using zod/pydantic. It does not evaluate published TypeScript types, native behavior or installed AgentUI output."
     }
@@ -699,7 +701,7 @@
         }
       ],
       "mapping": "partial",
-      "scope": "Opaque reasoning-role message content only; reasoning lifecycle mapping planned.",
+      "scope": "Opaque reasoning-role message content and availability description. Dedicated reasoning lifecycle output is not exercised by these AgentUI fixtures.",
       "installedFixtures": [
         "messages-and-opaque-content",
         "acknowledged-absence-and-fault"
@@ -707,7 +709,7 @@
       "canonicalControls": [],
       "publishedTypeContracts": [],
       "pendingProductOwners": [
-        "Switchboard reasoning lifecycle mapping; AgentUI reasoning consumer; agentui-ckpw"
+        "AgentUI reasoning lifecycle fixtures and consumer; agentui-ckpw"
       ]
     },
     {
@@ -768,7 +770,7 @@
         }
       ],
       "mapping": "partial",
-      "scope": "Scoped owner attribution only; subagent lifecycle mapping planned.",
+      "scope": "Scoped owner attribution and availability description. Dedicated subagent lifecycle output is not exercised by these AgentUI fixtures.",
       "installedFixtures": [
         "lifecycle-text-tools",
         "identity-run-source-scope",
@@ -777,7 +779,7 @@
       "canonicalControls": [],
       "publishedTypeContracts": [],
       "pendingProductOwners": [
-        "Switchboard subagent lifecycle mapping; AgentUI subagent consumer; agentui-ckpw"
+        "AgentUI subagent lifecycle fixtures and consumer; agentui-ckpw"
       ]
     },
     {

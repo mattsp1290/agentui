@@ -7,6 +7,7 @@ import { json, readJson } from './framing.js';
 import { serveAsset } from './static-assets.js';
 import { DEVICE_SECRET, NATIVE_PAIR_MAX_REQUEST_BYTES, parseNativePairRequest } from './native-wire.js';
 import type { NativeCredential } from './native-wire.js';
+import type { HostObservability } from './observability.js';
 
 type Api = ReturnType<typeof createApi>;
 type Reply = { readonly value: unknown; readonly headers: OutgoingHttpHeaders };
@@ -14,6 +15,7 @@ type EndpointOptions = {
   readonly access: Access;
   readonly api: Api;
   readonly isClosing: () => boolean;
+  readonly observability?: HostObservability;
 } & (
   | { readonly credentialClass: 'browser-development'; readonly files: ReadonlyMap<string, Buffer> }
   | { readonly credentialClass: 'native' }
@@ -26,11 +28,15 @@ function browserCookieName(hostId: string): string { return `agentui_device_${ho
 
 export function serviceEndpoint(options: EndpointOptions) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    const startTime = performance.timeOrigin + performance.now();
+    let operation: Parameters<HostObservability['record']>[0]['operation'] = 'admission';
+    let outcome: Parameters<HostObservability['record']>[0]['outcome'] = 'ok';
+    let asset = false;
     try {
       if (options.credentialClass === 'browser-development') {
         const origin = `http://127.0.0.1:${request.socket.localPort}`;
         if (request.headers.host !== new URL(origin).host) throw new Error('Host mismatch');
-        if (request.url !== '/api/v1') { serveAsset(options.files, request, response, origin); return; }
+        if (request.url !== '/api/v1') { asset = true; serveAsset(options.files, request, response, origin); return; }
         if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
       } else {
         const headers = request.headersDistinct;
@@ -42,6 +48,7 @@ export function serviceEndpoint(options: EndpointOptions) {
       if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
       const admission = options.credentialClass === 'browser-development'
         ? await admitBrowser(request, options.access) : await admitNative(request, options.access);
+      operation = admission.kind === 'pair' ? 'pair' : admission.message.op;
       await writeServiceResult(response, async (): Promise<Reply> => {
         if (admission.kind === 'service') return { value: await options.api(admission.principal, admission.message), headers: {} };
         if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
@@ -54,7 +61,10 @@ export function serviceEndpoint(options: EndpointOptions) {
         return { value: { hostId: paired.principal.hostId, principalId: paired.principal.id, secret: paired.secret } satisfies NativeCredential, headers: {} };
       });
     } catch (error) {
+      outcome = error instanceof ServiceError ? error.kind : 'invalid';
       writeServiceFailure(response, error);
+    } finally {
+      if (!asset) options.observability?.record({ operation, credentialClass: options.credentialClass, outcome, startTime });
     }
   };
 }

@@ -32,6 +32,8 @@ import type { InstalledAgent } from './agents.js';
 import type { ExtensionManifest, ServerExtensionEntry } from '@agentui/sdk';
 import { createProviderAuthority } from './provider-credentials.js';
 import type { ProviderInstallation } from './provider-credentials.js';
+import { createHostObservability } from './observability.js';
+import type { ObservabilityConfiguration } from './observability.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -40,6 +42,7 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
+  readonly observability?: ObservabilityConfiguration;
   readonly providerExtensions?: readonly { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry;
     readonly installations: readonly ProviderInstallation[] }[];
 }
@@ -61,7 +64,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     ? { default: 'default', agents: [{ ...options.provider, name: 'default' }] } : null);
   if (options.provider?.kind === 'pi') piApiKey();
   if (options.provider?.kind === 'claude-sdk') claudeApiKey();
-  const owner = ownDirectory(options.directory);
+  const observability = createHostObservability(options.observability ?? { kind: 'disabled' });
+  let owner: ReturnType<typeof ownDirectory>;
+  try { owner = ownDirectory(options.directory); }
+  catch (error) { await observability.close(); throw error; }
   let access: Access | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
@@ -102,7 +108,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
       access?.close();
       owner.close();
-    })();
+    })().finally(() => observability.close());
     return closePromise;
   }
   try {
@@ -118,15 +124,19 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const providerCatalog = await providers.discover();
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
-      const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
+      const appendFor = (source: NativeProvider['kind']): Parameters<typeof createCodexDriver>[0]['append'] => (scope, output) => {
         if (!host) throw new Error('Host is not ready to store agent output');
         host.append(scope, output);
+        for (const event of output.events) {
+          if (event.kind === 'run-started' || event.kind === 'run-ended') observability.recordRun(source, scope, event);
+        }
       };
       const currentRunId = (scope: ConversationScope): string | null => {
         if (!host) throw new Error('Host not ready');
         return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
       };
       for (const provider of configured.agents) {
+        const append = appendFor(provider.kind);
         if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind}.`);
         const installation = providerInstallation(provider);
         if (agents.some(agent => canonicalJson(agent.installation) === canonicalJson(installation))) throw new Error('Duplicate agent installation');
@@ -200,8 +210,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
     const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
-      files: browser.files, isClosing: apiOptions.isClosing });
-    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing });
+      files: browser.files, isClosing: apiOptions.isClosing, observability });
+    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing, observability });
     http.on('request', (request, response) => {
       const route = request.url?.startsWith('/native/') ? native : handler;
       void route(request, response).catch(() => response.destroy());

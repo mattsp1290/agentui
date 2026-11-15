@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { importHostDependency } from '../../host/test-support/dependencies.mjs';
 import { setImmediate } from 'node:timers/promises';
 import { readFile } from 'node:fs/promises';
 import { spawnSync } from 'node:child_process';
@@ -59,7 +60,7 @@ test('host consumes real Switchboard bounded FIFO observation', async () => {
 
 test('package exports reject private implementation imports', async () => {
   for (const name of ['@agentui/contracts', '@agentui/protocol', '@agentui/sdk', '@agentui/host', '@agentui/theme', '@agentui/ui-primitives', '@mattsp1290/switchboard']) {
-    await assert.rejects(import(`${name}/src/index.js`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
+    await assert.rejects(importHostDependency(`${name}/src/index.js`), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
   }
 });
 

@@ -1,0 +1,119 @@
+{
+  "sourceRepository": "https://github.com/mattsp1290/switchboard",
+  "sourceRevision": "58c7922d8fade3617cc86fedcf41677f897025ef",
+  "sourceTree": "1cd287a7ed95acdf82bc7f0b1c4cd5118a52fe86",
+  "artifact": "switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
+  "sha256": "15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421",
+  "license": "MIT",
+  "qualification": {
+    "platform": "Linux arm64",
+    "node": "v24.22.3",
+    "npm": "11.19.1",
+    "python": "3.13.12",
+    "uv": "0.11.3",
+    "sourceLockSha256": "dd791818d18390d274be68867907a12e062e8bc1ecaf5c380ac2060a10f077ad",
+    "steps": [
+      {
+        "command": [
+          "npm",
+          "ci"
+        ],
+        "exitCode": 0,
+        "context": "clean-source-archive"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "lint"
+        ],
+        "exitCode": 0,
+        "context": "clean-source-archive"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "check"
+        ],
+        "exitCode": 0,
+        "context": "clean-source-archive"
+      },
+      {
+        "command": [
+          "npm",
+          "test"
+        ],
+        "exitCode": 0,
+        "context": "clean-source-archive"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "verify:agui"
+        ],
+        "exitCode": 0,
+        "context": "clean-source-archive"
+      },
+      {
+        "command": [
+          "npm",
+          "run",
+          "verify:compiler"
+        ],
+        "exitCode": 0,
+        "context": "exact-git-checkout"
+      }
+    ],
+    "logs": {
+      "npm-ci": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/npm-ci.log.gz",
+        "uncompressedSha256": "cc2978b473fc97c2fd8ecf921469cb2da5d8e792e1f811cb31e0bf42119fc8ff"
+      },
+      "lint": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/lint.log.gz",
+        "uncompressedSha256": "3b4de50643085dce3a43371f5ab83e5eec6e270d7530eccbcee664013605e8e6"
+      },
+      "check": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/check.log.gz",
+        "uncompressedSha256": "705c2b0a330338b807b632cd29e9528f3117e6972d117b4c2ac0b12a8fc2965c"
+      },
+      "test": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/test.log.gz",
+        "uncompressedSha256": "9041688c1dd18bd054a7acf8a1daae00ab0a8e87e0fc4ce983e80a5b0058defc"
+      },
+      "verify-agui": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-agui.log.gz",
+        "uncompressedSha256": "3d0213d594916849f7c602cc96acdca4d671fbc4877b3f3eb2054c5a9a8288a0"
+      },
+      "verify-compiler": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-compiler.log.gz",
+        "uncompressedSha256": "9175d12f9a4d64d129885f5c5d6168648f5492c2645bbaf05f4d4cf8c2afb634"
+      },
+      "verify-compiler-archive": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/verify-compiler-archive.log.gz",
+        "uncompressedSha256": "a0447c9e6a22fef4b039bda7246aba6ab30c41aea0414f616322778a81c0bd32"
+      },
+      "final-artifact-install": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/final-artifact-install.log.gz",
+        "uncompressedSha256": "e01f78f355926522029407309c9d9e715a31f1756a60966fd51fd26e1bd3dc5e"
+      },
+      "final-artifact-continuation": {
+        "path": "qualification/58c7922d8fade3617cc86fedcf41677f897025ef/final-artifact-continuation.log.gz",
+        "uncompressedSha256": "13468d267d35d83d23b8c7ac4e8b1ad1cdd97bf886f1e10270f94e2e326bc096"
+      }
+    },
+    "compilerArchiveAttempt": {
+      "exitCode": 1,
+      "reason": "Compiler controls reached Git revision annotation, which requires .git. The same exact source passed from its clean Git checkout. Failed archive log is retained."
+    },
+    "sameBuildPackBytesIdentical": true,
+    "limits": "Package and controlled fixture qualification only. No native agent, provider, credential or Apple execution in this Linux measurement.",
+    "finalArtifactConsumer": {
+      "continuationTestsPassed": 10,
+      "coreWithoutAguiPeer": true,
+      "privateImportRejected": true
+    }
+  }
+}

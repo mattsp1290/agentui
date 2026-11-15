@@ -198,3 +198,11 @@ The report binds the frozen fork acquisition identity with
 the sibling `qualification.json`, which binds back to that identity. Adding a
 qualification record does not change the protocol report. Changes to the frozen
 identity still require matrix regeneration.
+
+The active [Switchboard pin](../../vendor/switchboard.json) now records the
+observability-capable runtime. The retained canonical fixtures and their original
+Linux and Mac receipts stay bound to the [historical pin](../../vendor/historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json).
+The conformance report names the active descriptor separately from that historical
+comparison. The active descriptor includes reasoning and subagent mapping.
+AgentUI's existing fixtures cover their availability descriptions, message content,
+and owner attribution. Dedicated lifecycle output remains unqualified by those fixtures.

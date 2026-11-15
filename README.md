@@ -30,6 +30,8 @@ Apple application builds remain separate.
 
 Read [recorded host development](docs/development/recorded-host.md) to run paired browser views against the independent host process.
 
+Read [host observability](docs/development/observability.md) to export opt-in OpenTelemetry request and agent-run traces to a Collector or local Datadog Agent.
+
 Read the [default theme and primitives](docs/design/theme.md) and [T3 Code design findings](docs/design/t3-code.md).
 Run `npm run preview:theme` after building to inspect the local visual fixture.
 
