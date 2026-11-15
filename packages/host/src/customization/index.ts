@@ -7,4 +7,6 @@ export type { ResolvedCustomizationPackage, ResolvedCustomizationSources } from 
 export type { CommittedInputs, SourceFile } from './repository.js';
 export type { NpmInputs } from './packages.js';
 export { planServerCatalog, serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from './server-artifact.js';
-export type { VerifiedServerCustomizationArtifact, ServerCatalogPlan, ServerCatalog, ServerCustomizationArtifact, ServerArtifactPackage, ServerArtifactNpm, ServerArtifactExpectation } from './server-artifact.js';
+export type { VerifiedServerCustomizationArtifact, ServerCatalogPlan, ServerCatalog, ServerCustomizationArtifact, ServerArtifactExpectation } from './server-artifact.js';
+export { planCustomizationCatalog } from './catalog.js';
+export type { CustomizationArtifactPackage, CustomizationArtifactNpm, CustomizationCatalog, CustomizationCatalogPlan } from './catalog.js';

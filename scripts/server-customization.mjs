@@ -3,31 +3,15 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { build, version as esbuildVersion } from 'esbuild';
 import { fileURLToPath } from 'node:url';
-import { parseSync } from 'vite';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { CustomizationError, assertSupportedNode, planServerCatalog, serverCatalogFile, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
 import { prepareCustomizationSources } from './prepare-customization-sources.mjs';
 import { classifyHostSpecifier, serverCustomizationAbi } from './server-customization-abi.mjs';
 import { qualificationChild, qualifyServerCatalog } from './server-customization-qualifier.mjs';
+import { checkCustomizationSource, sourcePolicies } from './lib/customization-source-policy.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const inside = (root, path) => { const part = relative(root, path); return part === '' || part !== '..' && !part.startsWith('../') && !isAbsolute(part); };
-function rejectRuntimeLookups(text, file) {
-  const parsed = parseSync(file, text, { sourceType: 'module' });
-  if (parsed.errors.length) throw CustomizationError.fixed('build-failed');
-  const visit = node => {
-    if (!node || typeof node !== 'object') return;
-    if (node.type === 'ImportExpression' && (node.source.type !== 'Literal' || typeof node.source.value !== 'string')) throw CustomizationError.fixed('build-failed');
-    if (node.type === 'CallExpression' && node.callee.type === 'Identifier' && node.callee.name === 'require' &&
-      (node.arguments.length !== 1 || node.arguments[0].type !== 'Literal' || typeof node.arguments[0].value !== 'string')) throw CustomizationError.fixed('build-failed');
-    if (node.type === 'MemberExpression' && node.object.type === 'Identifier' && node.object.name === 'require') throw CustomizationError.fixed('build-failed');
-    for (const value of Object.values(node)) {
-      if (Array.isArray(value)) value.forEach(visit);
-      else if (value && typeof value === 'object') visit(value);
-    }
-  };
-  visit(parsed.program);
-}
 function preparedResolutionPlugin(roots, abi) {
   const approved = path => roots.some(root => inside(root, path));
   return { name: 'prepared-customization', setup(builder) {
@@ -44,7 +28,7 @@ function preparedResolutionPlugin(roots, abi) {
     });
     builder.onLoad({ filter: /\.[cm]?[jt]sx?$/ }, async args => {
       const contents = await readFile(args.path, 'utf8');
-      rejectRuntimeLookups(contents, args.path);
+      checkCustomizationSource(contents, args.path, sourcePolicies.server, () => CustomizationError.fixed('build-failed'));
       const extension = args.path.split('.').at(-1);
       const loader = ['ts', 'mts', 'cts'].includes(extension) ? 'ts' : ['tsx', 'jsx'].includes(extension) ? extension : 'js';
       return { contents, loader };

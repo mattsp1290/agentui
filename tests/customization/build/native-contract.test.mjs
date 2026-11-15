@@ -32,6 +32,13 @@ test('optional iOS artifact accepts absence and a matching embedded full native 
   }));
 });
 
+test('iOS descriptor inventory permits artifact.json and NFC nested asset names', () => {
+  const input = fixture();
+  input.artifact.assets = ['artifact.json', 'assets/café.png'].map(path => ({ path, sha256: 'a'.repeat(64) }));
+  input.artifact.artifactId = digest(iosArtifactIdentityText(input.artifact));
+  assert.deepEqual(parse(input).artifact.assets, input.artifact.assets);
+});
+
 for (const field of ['engine', 'version', 'format', 'reactNativeVersion', 'nativeBuildIdentity']) {
   test(`iOS runtime rejects independent ${field} mismatch`, () => {
     const { artifact } = parse(fixture());
@@ -88,7 +95,8 @@ for (const [label, change] of [
 });
 
 for (const path of ['', '/', '/absolute', '../escape', './main.hbc', 'a/../main.hbc',
-  'a//main.hbc', 'a/', 'a\\main.hbc', 'C:/main.hbc', 'C:main.hbc', 'main\0.hbc', 'assets/cafe\u0301.png']) {
+  'a//main.hbc', 'a/', 'a\\main.hbc', 'C:/main.hbc', 'C:main.hbc', 'a:b',
+  'main\0.hbc', 'main\n.hbc', 'main\t.hbc', 'main\u007f.hbc', 'assets/cafe\u0301.png']) {
   test(`optional iOS contract rejects invalid path ${JSON.stringify(path)}`, () => {
     const input = fixture();
     input.artifact.assets[0].path = path;

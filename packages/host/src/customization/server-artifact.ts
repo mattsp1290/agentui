@@ -4,28 +4,16 @@ import { join, resolve } from 'node:path';
 import { count, hex, nonempty, record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 import { commitId, containedPath, CustomizationError, identity, serverCatalogFile, supportedPackageManager } from './contract.js';
-import { sourceFile, treeIdentity, type CommittedInputs, type SourceFile } from './repository.js';
-import { npmIdentity, type NpmInputs } from './packages.js';
+import { sourceFile, treeIdentity, type SourceFile } from './repository.js';
+import { npmIdentity } from './packages.js';
 import { packageIdentity, type ResolvedCustomizationPackage } from './sources.js';
-import { customizationPreorder } from './traversal.js';
+import { customizationCatalog, planCustomizationCatalog, type CustomizationArtifactNpm, type CustomizationArtifactPackage, type CustomizationCatalog } from './catalog.js';
 
-export type ServerArtifactNpm = Extract<NpmInputs, { kind: 'absent' }> | Omit<Extract<NpmInputs, { kind: 'locked' }>, 'directory'>;
-
-export interface ServerArtifactPackage {
-  readonly identity: string;
-  readonly commit: string;
-  readonly subdirectory: string;
-  readonly inputs: CommittedInputs;
-  readonly npm: ServerArtifactNpm;
-  readonly local: { readonly manifest: ExtensionManifest; readonly sources: readonly { readonly module: string; readonly source: string }[] } | null;
-  readonly shared: string | null;
-  readonly extensions: readonly { readonly packageIdentity: string; readonly commit: string }[];
-}
 export interface ServerCustomizationArtifact {
   readonly schemaVersion: 1;
   readonly kind: 'server-customization';
   readonly root: string;
-  readonly packages: readonly ServerArtifactPackage[];
+  readonly packages: readonly CustomizationArtifactPackage[];
   readonly sdkVersion: string;
   readonly builder: { readonly identity: string; readonly esbuildVersion: string };
   readonly runtime: { readonly engine: 'node'; readonly version: string; readonly modules: string; readonly abiIdentity: string };
@@ -58,12 +46,12 @@ function file(value: unknown): SourceFile {
   return sourceFile({ path: containedPath(input.path), sha256: hex(input.sha256, 64), executable: input.executable });
 }
 const files = (value: unknown) => sorted(array(value, file), value => value.path);
-function parseNpm(value: unknown, committed: ReadonlyMap<string, SourceFile>, treeId: string, packageJsonPath: string): ServerArtifactNpm {
+function parseNpm(value: unknown, committed: ReadonlyMap<string, SourceFile>, treeId: string, packageJsonPath: string): CustomizationArtifactNpm {
   const rawNpm = record(value);
   if (rawNpm.kind === 'absent') { record(rawNpm, ['kind']); return { kind: 'absent' }; }
   record(rawNpm, ['kind', 'identity', 'packageManager', 'path', 'packageJson', 'lockfile', 'workspaces', 'localInputs']);
   if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== supportedPackageManager) throw invalid();
-  const npm: ServerArtifactNpm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: supportedPackageManager, path: directory(rawNpm.path),
+  const npm: CustomizationArtifactNpm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: supportedPackageManager, path: directory(rawNpm.path),
     packageJson: file(rawNpm.packageJson), lockfile: file(rawNpm.lockfile), workspaces: files(rawNpm.workspaces), localInputs: files(rawNpm.localInputs) };
   const selected = committed.get(packageJsonPath);
   if (!selected || npmIdentity({ ...npm, treeId, selected }) !== npm.identity) throw invalid();
@@ -73,7 +61,7 @@ function parseNpm(value: unknown, committed: ReadonlyMap<string, SourceFile>, tr
   }
   return npm;
 }
-function parseLocal(value: unknown, committed: ReadonlyMap<string, SourceFile>, packagePath: (path: string) => string): ServerArtifactPackage['local'] {
+function parseLocal(value: unknown, committed: ReadonlyMap<string, SourceFile>, packagePath: (path: string) => string): CustomizationArtifactPackage['local'] {
   if (value === null) return null;
   const rawLocal = record(value, ['manifest', 'sources']);
   const manifest = parseExtensionManifest(rawLocal.manifest);
@@ -87,7 +75,7 @@ function parseLocal(value: unknown, committed: ReadonlyMap<string, SourceFile>, 
   if (sources.some(source => !committed.has(packagePath(source.source)))) throw invalid();
   return { manifest, sources };
 }
-function parsePackage(value: unknown): ServerArtifactPackage {
+function parsePackage(value: unknown): CustomizationArtifactPackage {
   const input = record(value, ['identity', 'commit', 'subdirectory', 'inputs', 'npm', 'local', 'shared', 'extensions']);
   const rawInputs = record(input.inputs, ['identity', 'files']);
   const inputs = { identity: hex(rawInputs.identity, 64), files: files(rawInputs.files) };
@@ -107,35 +95,18 @@ function parsePackage(value: unknown): ServerArtifactPackage {
   return { identity: id, commit: commitId(input.commit), subdirectory, inputs, npm, local, shared, extensions };
 }
 export interface ServerCatalog {
-  readonly packages: readonly ServerArtifactPackage[];
+  readonly packages: readonly CustomizationArtifactPackage[];
   readonly entries: ServerCustomizationArtifact['entries'];
   readonly manifests: readonly ExtensionManifest[];
 }
-export function serverCatalog(packages: readonly ServerArtifactPackage[], sdkVersion: string): ServerCatalog {
-  const invalidGraph = () => CustomizationError.fixed('invalid-graph');
-  const root = packages[0];
-  const lookup = new Map(packages.map(pkg => [pkg.identity, pkg]));
-  if (!root || packages.length > 64 || lookup.size !== packages.length) throw invalidGraph();
-  const ordered = customizationPreorder({ packageIdentity: root.identity, commit: root.commit }, edge => edge.packageIdentity, edge => {
-    const pkg = lookup.get(edge.packageIdentity);
-    if (!pkg || pkg.commit !== edge.commit) throw invalidGraph();
-    return pkg.extensions;
-  }).map(edge => lookup.get(edge.packageIdentity)!);
-  const namespaces = new Set<string>();
-  const entries: ServerCustomizationArtifact['entries'][number][] = [];
-  const manifests: ExtensionManifest[] = [];
-  for (const pkg of ordered) {
-    if (!pkg.local) continue;
-    const { manifest } = pkg.local;
-    if (manifest.sdkVersion !== sdkVersion || namespaces.has(manifest.namespace)) throw invalidGraph();
-    namespaces.add(manifest.namespace);
-    for (const entry of manifest.entries.filter(entry => entry.kind === 'server')) {
-      entries.push({ packageIdentity: pkg.identity, module: entry.module, index: entries.length });
-      manifests.push(manifest);
-    }
-  }
-  if (ordered.length !== packages.length || !entries.length || entries.length > 64) throw invalidGraph();
-  return { packages: ordered, entries, manifests };
+function serverCatalogEntries(catalog: CustomizationCatalog): ServerCatalog {
+  if (catalog.packages.length > 64 || !catalog.entries.length || catalog.entries.length > 64) throw CustomizationError.fixed('invalid-graph');
+  return { packages: catalog.packages,
+    entries: catalog.entries.map(({ packageIdentity, module }, index) => ({ packageIdentity, module, index })),
+    manifests: catalog.entries.map(entry => entry.manifest) };
+}
+export function serverCatalog(packages: readonly CustomizationArtifactPackage[], sdkVersion: string): ServerCatalog {
+  return serverCatalogEntries(customizationCatalog(packages, sdkVersion, 'server'));
 }
 export interface ServerCatalogPlan {
   readonly catalog: ServerCatalog;
@@ -144,26 +115,8 @@ export interface ServerCatalogPlan {
   readonly sources: readonly string[];
 }
 export function planServerCatalog(root: ResolvedCustomizationPackage, sdkVersion: string): ServerCatalogPlan {
-  const nodes = customizationPreorder(root, node => node.identity, node => node.extensions);
-  const packages = nodes.map((node): ServerArtifactPackage => {
-    let npm: ServerArtifactNpm = node.npm;
-    if (node.npm.kind === 'locked') { const { directory: _directory, ...locked } = node.npm; npm = locked; }
-    const local = node.customization?.local;
-    return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs, npm,
-      local: local ? { manifest: local.manifest,
-        sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : 0) } : null,
-      shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
-  });
-  const catalog = serverCatalog(packages, sdkVersion);
-  const absolute = new Map(nodes.map(node => [node.identity,
-    new Map([...(node.customization?.local?.sources ?? [])].map(([module, source]) => [module, resolve(node.directory, source)]))]));
-  const sources = catalog.entries.map(entry => {
-    const source = absolute.get(entry.packageIdentity)?.get(entry.module);
-    if (!source) throw CustomizationError.fixed('invalid-graph');
-    return source;
-  });
-  return { catalog, repositoryDirectory: root.repositoryDirectory,
-    roots: [...new Set(nodes.map(node => node.repositoryDirectory))], sources };
+  const plan = planCustomizationCatalog(root, sdkVersion, 'server');
+  return { catalog: serverCatalogEntries(plan), repositoryDirectory: plan.repositoryDirectory, roots: plan.roots, sources: plan.sources };
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }

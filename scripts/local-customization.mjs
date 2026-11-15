@@ -1,67 +1,37 @@
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { parseSync } from 'vite';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
+import { planCustomizationCatalog } from '@agentui/host/customization';
+import { checkCustomizationSource, sourcePolicies } from './lib/customization-source-policy.mjs';
 
 const selection = fileURLToPath(new URL('../apps/desktop/src/application/customization-selection.ts', import.meta.url));
 const tsconfig = fileURLToPath(new URL('../apps/desktop/tsconfig.json', import.meta.url));
-const qualifier = '\0agentui-desktop-qualifier';
-const shared = /^(?:react(?:-dom)?(?:\/|$)|@agentui\/(?:sdk|contracts|protocol|ui-primitives|theme)(?:\/|$))/u;
+const SHARED = Object.freeze({
+  react: ['', '/jsx-runtime', '/jsx-dev-runtime'], 'react-dom': ['', '/client'],
+  '@agentui/sdk': ['', '/react', '/tools'], '@agentui/contracts': ['*'], '@agentui/protocol': [''],
+  '@agentui/ui-primitives': ['/desktop'], '@agentui/theme': ['', '/react'],
+});
+const sharedPackage = specifier => Object.keys(SHARED).find(name => specifier === name || specifier.startsWith(`${name}/`));
+function sharedImport(specifier) {
+  const name = sharedPackage(specifier);
+  return name && (SHARED[name].includes('*') || SHARED[name].includes(specifier.slice(name.length)));
+}
 const scripts = /\.[cm]?[jt]sx?$/u;
 
-export function desktopSelection(root) {
-  const nodes = [], seen = new Set(), namespaces = new Set(), entries = [];
-  function visit(node) {
-    if (seen.has(node.identity)) return;
-    seen.add(node.identity); nodes.push(node);
-    const local = node.customization?.local;
-    if (local) {
-      if (local.manifest.sdkVersion !== EXTENSION_SDK_VERSION || namespaces.has(local.manifest.namespace)) throw new Error('Invalid desktop customization graph');
-      namespaces.add(local.manifest.namespace);
-      for (const entry of local.manifest.entries.filter(entry => entry.kind === 'desktop')) {
-        const source = local.sources.get(entry.module);
-        if (!source) throw new Error('Missing desktop customization source');
-        entries.push({ packageIdentity: node.identity, module: entry.module, manifest: local.manifest, source: resolve(node.directory, source) });
-      }
-    }
-    node.extensions.forEach(visit);
-  }
-  visit(root);
-  const packages = nodes.map(node => {
-    const { directory: _directory, ...npm } = node.npm;
-    const local = node.customization?.local;
-    return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs, npm,
-      local: local ? { manifest: local.manifest, sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : 0) } : null,
-      shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
-  });
-  return { roots: [...new Set(nodes.map(node => node.repositoryDirectory))], entries,
-    catalog: { schemaVersion: 1, root: root.identity, packages, entries: entries.map(({ source: _source, ...entry }) => entry) } };
+export function desktopPlan(root) {
+  const plan = planCustomizationCatalog(root, EXTENSION_SDK_VERSION, 'desktop');
+  return { roots: plan.roots, entries: plan.entries.map((entry, index) => ({ ...entry, source: plan.sources[index] })),
+    catalog: { schemaVersion: 1, root: root.identity, packages: plan.packages, entries: plan.entries } };
 }
 
 function checkSource(code, id, label) {
-  const parsed = parseSync(id, code, { sourceType: 'module' });
-  if (parsed.errors.length) throw new Error('Invalid customization source');
-  if (parsed.comments.some(comment => /<reference\b|@jsx(?:ImportSource|Runtime)?\b/u.test(comment.value))) throw new Error('Unsupported ambient reference or JSX configuration');
-  const literal = node => node?.type === 'Literal' && typeof node.value === 'string';
-  function visit(node, parent) {
-    if (!node || typeof node !== 'object') return;
-    const specifier = ['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(node.type) ? node.source :
-      node.type === 'ImportExpression' ? node.source : node.type === 'CallExpression' && node.callee?.name === 'require' ? node.arguments[0] : null;
-    if (literal(specifier) && (isAbsolute(specifier.value) || specifier.value.includes('\0'))) throw new Error(`Unsupported customization import in ${label}`);
-    if ((node.type === 'MetaProperty' && node.meta.name === 'import' && !(parent?.type === 'MemberExpression' && parent.object === node && !parent.computed && parent.property.name === 'url')) || node.type === 'TSImportEqualsDeclaration' ||
-      (node.type === 'TSModuleDeclaration' && (node.kind === 'global' || node.id.type === 'Literal')) ||
-      (node.type === 'ImportExpression' && (!literal(node.source) || node.options)) ||
-      (['CallExpression', 'NewExpression'].includes(node.type) && node.callee.type === 'Identifier' &&
-        (['eval', 'Function'].includes(node.callee.name) || (node.callee.name === 'require' && (node.type !== 'CallExpression' || node.optional || node.arguments.length !== 1 || !literal(node.arguments[0])))))) {
-      throw new Error(`Unsupported computed or ambient loading in ${label}`);
-    }
-    for (const value of Object.values(node)) {
-      if (Array.isArray(value)) value.forEach(child => visit(child, node));
-      else if (value && typeof value === 'object') visit(value, node);
-    }
-  }
-  visit(parsed.program);
+  checkCustomizationSource(code, id, sourcePolicies.desktop, rule => {
+    if (rule === 'syntax') return new Error(`Invalid customization source in ${label}`);
+    if (rule === 'ambientReference') return new Error(`Unsupported ambient reference or JSX configuration (${rule}) in ${label}`);
+    if (rule === 'absoluteSpecifier') return new Error(`Unsupported customization import (${rule}) in ${label}`);
+    return new Error(`Unsupported computed or ambient loading (${rule}) in ${label}`);
+  });
 }
 
 export function customizationPlugin(plan) {
@@ -70,7 +40,7 @@ export function customizationPlugin(plan) {
     return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
   };
   const contained = id => plan.roots.some(root => within(root, id));
-  const reserved = name => (name ?? '').startsWith('@agentui/') || shared.test(name ?? '');
+  const reserved = name => (name ?? '').startsWith('@agentui/') || Object.hasOwn(SHARED, name);
   const owners = new Map();
   async function owner(path) {
     let directory = dirname(path);
@@ -78,8 +48,7 @@ export function customizationPlugin(plan) {
       if (owners.has(directory)) return owners.get(directory);
       try {
         const value = JSON.parse(await readFile(join(directory, 'package.json'), 'utf8'));
-        owners.set(directory, value.name);
-        return value.name;
+        if (typeof value.name === 'string') { owners.set(directory, value.name); return value.name; }
       } catch (error) { if (error.code !== 'ENOENT') throw error; }
       const parent = dirname(directory);
       if (parent === directory) break;
@@ -89,18 +58,17 @@ export function customizationPlugin(plan) {
   const source = `export default [${plan.entries.map(entry => `{manifest:${JSON.stringify(entry.manifest)},load:()=>import(${JSON.stringify(entry.source)})}`).join(',')}];`;
   return {
     name: 'agentui-committed-customization', enforce: 'pre',
-    config: () => ({ tsconfig, resolve: { dedupe: ['react', 'react-dom', '@agentui/sdk', '@agentui/contracts', '@agentui/protocol'] },
-      oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
-      build: { rollupOptions: { input: [qualifier] } } }),
+    config: () => ({ tsconfig, resolve: { dedupe: Object.keys(SHARED) },
+      oxc: { jsx: { runtime: 'automatic', importSource: 'react' } } }),
     async resolveId(specifier, importer, options) {
-      if (specifier === qualifier) return qualifier;
       if (!importer || !contained(importer.split('?')[0])) return;
       if (specifier.startsWith('\0')) return;
-      if (shared.test(specifier)) {
-        try { return fileURLToPath(import.meta.resolve(specifier)); }
-        catch { throw new Error(`Unsupported shared customization import: ${specifier}`); }
+      if (sharedImport(specifier)) {
+        const result = await this.resolve(specifier, selection, { skipSelf: true, kind: 'import-statement' });
+        if (!result || result.external) throw new Error(`Unsupported shared customization import: ${specifier}`);
+        return result;
       }
-      if (specifier.startsWith('@agentui/') || specifier.includes('\\') || /^(?:node:|[a-z]+:|#)/iu.test(specifier)) throw new Error(`Unsupported customization import: ${specifier}`);
+      if (sharedPackage(specifier) || specifier.startsWith('@agentui/') || specifier.includes('\\') || /^(?:node:|[a-z]+:|#)/iu.test(specifier)) throw new Error(`Unsupported customization import: ${specifier}`);
       const result = await this.resolve(specifier, importer, { skipSelf: true, kind: options.kind });
       if (result?.id.startsWith('\0') && !result.external) return result;
       if (!result || result.external || !isAbsolute(result.id.split('?')[0])) throw new Error(`Unsupported customization import: ${specifier}`);
@@ -111,7 +79,6 @@ export function customizationPlugin(plan) {
     },
     async load(id) {
       if (id === selection) return source;
-      if (id === qualifier) return `import entries from ${JSON.stringify(selection)}; import {checkExtensionEntrypoint} from '@agentui/sdk'; globalThis.__agentuiQualification=(async()=>{for(const entry of entries){const loaded=await entry.load(); const result=checkExtensionEntrypoint(entry.manifest,'desktop',loaded.default); if(result.kind!=='compatible') throw new Error(result.reason);} return entries.map(entry=>entry.manifest.namespace);})();`;
       const path = id.split('?')[0];
       if (contained(path) && scripts.test(path)) {
         if (reserved(await owner(path))) throw new Error('Duplicate shared customization dependency');

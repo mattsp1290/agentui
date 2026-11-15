@@ -46,9 +46,10 @@ test('a locked package is compiled from its verified installation', { timeout: 6
 });
 
 
-for (const actualName of ['react', '@agentui/unlisted']) test(`a package alias cannot bring ${actualName} into the graph`, { timeout: 60_000 }, async t => {
+for (const actualName of ['react', '@agentui/unlisted']) for (const scoped of [false, true]) test(`a package alias cannot bring ${actualName} into the graph${scoped ? ' through a nameless scope manifest' : ''}`, { timeout: 60_000 }, async t => {
   const f = await fixture(t), repo = await f.repository('alias');
-  const alias = await tarball(f, repo, 'my-react', '1.0.0', { name: actualName });
+  const alias = await tarball(f, repo, 'my-react', '1.0.0', { name: actualName, exports: scoped ? './dist/index.js' : './index.js' },
+    scoped ? { 'dist/package.json': '{"type":"module"}', 'dist/index.js': "export default 'aliased';" } : {});
   const pkg = { name: 'fixture', version: '1.0.0', type: 'module', packageManager: 'npm@11.19.1', dependencies: { 'my-react': alias.resolved }, agentui: extension };
   await write(repo.directory, 'package.json', pkg);
   await write(repo.directory, 'package-lock.json', { name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: {

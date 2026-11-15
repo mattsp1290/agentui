@@ -6,7 +6,7 @@ import { parseArgs } from 'node:util';
 import { build } from 'vite';
 import { readArtifactBytes } from '../apps/host/build/tsc/artifact.js';
 import { prepareCustomizationSources } from './prepare-customization-sources.mjs';
-import { customizationPlugin, desktopSelection } from './local-customization.mjs';
+import { customizationPlugin, desktopPlan } from './local-customization.mjs';
 import { qualifyDesktopArtifact } from './desktop-customization-qualifier.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -22,7 +22,7 @@ try {
   scratch = await realpath(await mkdtemp(join(dirname(out), '.agentui-build-')));
   prepared = await prepareCustomizationSources({ reference: { repository: values.repository, commit: values.commit,
     ...(values.subdirectory ? { subdirectory: values.subdirectory } : {}) }, scratchParent: scratch });
-  const plan = desktopSelection(prepared.root);
+  const plan = desktopPlan(prepared.root);
   const stage = join(scratch, 'browser');
   const result = await build({ root: join(root, 'apps/desktop'), configFile: join(root, 'apps/desktop/vite.config.mjs'), mode: 'browser',
     plugins: [customizationPlugin(plan)], build: { outDir: stage, emptyOutDir: true } });
@@ -32,16 +32,13 @@ try {
   for (const item of outputs) {
     if (item.type === 'chunk' && [...item.imports, ...item.dynamicImports].some(path => !paths.has(path))) throw new Error('Unsupported external desktop import');
   }
-  const qualifier = outputs.find(item => item.type === 'chunk' && item.facadeModuleId === '\0agentui-desktop-qualifier');
-  if (!qualifier) throw new Error('Missing desktop qualification entry');
   await writeFile(join(stage, 'customization-identity.json'), JSON.stringify(plan.catalog) + '\n');
   execFileSync(process.execPath, [join(root, 'scripts/artifact-manifest.mjs'), 'browser-development', '--directory', stage], { cwd: root, stdio: 'inherit' });
   const verified = readArtifactBytes(stage, 'browser-development');
   const catalog = JSON.parse(verified.files.get('customization-identity.json').toString());
-  await qualifyDesktopArtifact({ files: verified.files, entry: qualifier.fileName, namespaces: catalog.entries.map(entry => entry.manifest.namespace) });
+  await qualifyDesktopArtifact({ files: verified.files, namespaces: catalog.entries.map(entry => entry.manifest.namespace) });
   const final = readArtifactBytes(stage, 'browser-development');
-  if (verified.manifest.artifactId !== final.manifest.artifactId || verified.files.size !== final.files.size ||
-    [...verified.files].some(([path, bytes]) => !final.files.get(path)?.equals(bytes))) throw new Error('Desktop artifact changed during qualification');
+  if (verified.manifest.artifactId !== final.manifest.artifactId) throw new Error('Desktop artifact changed during qualification');
   await rename(stage, out);
   owned = false;
   process.stdout.write(`${JSON.stringify({ directory: out, artifactId: verified.manifest.artifactId, root: prepared.root.identity })}\n`);

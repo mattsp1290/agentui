@@ -4,7 +4,7 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync
 import { join, posix } from 'node:path';
 import { readArtifactBytes } from '../../../apps/host/build/tsc/artifact.js';
 import { repository, buildCustom } from './support.mjs';
-import { desktopSelection } from '../../../scripts/local-customization.mjs';
+import { desktopPlan } from '../../../scripts/local-customization.mjs';
 
 function fixture(t) {
   const value = repository();
@@ -14,7 +14,7 @@ function fixture(t) {
 test('catalog sources have locale-independent code-unit order', () => {
   const node = { identity: 'root', commit: 'commit', subdirectory: '', inputs: [], npm: {}, repositoryDirectory: '/tmp/root', directory: '/tmp/root', extensions: [],
     customization: { local: { manifest: { sdkVersion: '0.1.0', namespace: 'example', entries: [] }, sources: new Map([['./z.js', 'z'], ['./t.js', 't'], ['./s.js', 's'], ['./B.js', 'B']]) } } };
-  assert.deepEqual(desktopSelection(node).catalog.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
+  assert.deepEqual(desktopPlan(node).catalog.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
 });
 
 test('an ambient installed package outside prepared roots is rejected', { timeout: 30_000 }, t => {
@@ -99,6 +99,9 @@ const cases = [
   ['parent escape', "import '../../escape.js';", /Unsupported customization import/],
   ['absolute import', "import '/etc/passwd';", /Unsupported customization import/],
   ['bare import', "import 'other-package';", /Unsupported customization import/],
+  ['native UI package', "import '@agentui/ui-primitives/native';", /Unsupported customization import/],
+  ['UI stylesheet entry', "import '@agentui/ui-primitives/styles.css';", /Unsupported customization import/],
+  ['require member', "require.resolve('./value.js');", /requireMember/],
   ['unlisted AgentUI package', "import '@agentui/host';", /Unsupported customization import/],
   ['missing source', "import './missing.js';", /Unsupported customization import/],
   ['computed import', 'import(globalThis.moduleName);', /computed or ambient/],
