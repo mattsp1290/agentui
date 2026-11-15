@@ -233,6 +233,81 @@ test('ambiguous npm owners, unsupported workspace patterns and conflicting manag
   }
 });
 
+test('workspace extglobs reject on active roots and examined ancestors without literal directories', async t => {
+  for (const operator of ['@', '+', '*', '?', '!']) for (const selection of ['root', 'ancestor']) await t.test(`${operator} ${selection}`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('extglob');
+    await shared(repo, '', { name: 'root', version: '1.0.0', workspaces: [`${operator}(packages|plugins)/*`],
+      ...(selection === 'ancestor' ? { dependencies: { value: '1.0.0' } } : {}) });
+    await shared(repo, 'packages/foo', { name: 'foo', version: '1.0.0',
+      ...(selection === 'root' ? { dependencies: { value: '1.0.0' } } : {}) });
+    await assert.rejects(async () => {
+      const result = await f.read(reference(repo, repo.commit(), selection === 'root' ? undefined : 'packages/foo'));
+      await result.dispose();
+      assert.fail(`Unsupported workspace pattern returned npm.kind=${result.root.npm.kind}`);
+    }, { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('literal scoped workspace paths keep their canonical links', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('scoped-workspace');
+  const member = 'packages/@scope/foo';
+  const pkg = { name: 'root', version: '1.0.0', packageManager: manager, workspaces: [member] };
+  await shared(repo, '', pkg);
+  await shared(repo, member, { name: '@scope/foo', version: '1.0.0' });
+  await write(repo.directory, 'package-lock.json', lockFor(pkg, {
+    [member]: { name: '@scope/foo', version: '1.0.0' }, 'node_modules/@scope/foo': { link: true, resolved: member },
+  }));
+  const result = await f.read(reference(repo, repo.commit()));
+  assert.equal(result.root.npm.kind, 'locked');
+  assert.deepEqual(result.root.npm.workspaces.map(file => file.path), [`${member}/package.json`]);
+  await result.dispose();
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('npm home shorthand rejects in declarations and resolved payloads with committed literal archives', async t => {
+  for (const payload of ['~/b.tgz', './~/b.tgz', 'vendor/../~/b.tgz']) for (const boundary of ['declaration', 'resolved']) await t.test(`${boundary} ${payload}`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('home-shorthand');
+    const bytes = await readFile(new URL('./fixtures/b.tgz', import.meta.url));
+    const pkg = { name: 'root', version: '1.0.0', packageManager: manager,
+      dependencies: { b: boundary === 'declaration' ? `file:${payload}` : '1.0.0' } };
+    await shared(repo, '', pkg);
+    await mkdir(join(repo.directory, '~'));
+    await writeFile(join(repo.directory, '~/b.tgz'), bytes);
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, {
+      'node_modules/b': { version: '1.0.0', resolved: `file:${payload}`, integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64') },
+    }));
+    await assert.rejects(async () => {
+      const result = await f.read(reference(repo, repo.commit()));
+      await result.dispose();
+      assert.fail(`Npm home shorthand returned npm.kind=${result.root.npm.kind}`);
+    }, { code: 'path' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('npm file payloads preserve literal tilde-prefixed names', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('literal-tilde');
+  const bytes = await readFile(new URL('./fixtures/b.tgz', import.meta.url));
+  const pkg = { name: 'root', version: '1.0.0', packageManager: manager, dependencies: { b: 'file:~name/b.tgz' } };
+  await shared(repo, '', pkg);
+  await mkdir(join(repo.directory, '~name'));
+  await writeFile(join(repo.directory, '~name/b.tgz'), bytes);
+  await write(repo.directory, 'package-lock.json', lockFor(pkg, {
+    'node_modules/b': { version: '1.0.0', resolved: 'file:~name/b.tgz', integrity: 'sha512-' + createHash('sha512').update(bytes).digest('base64') },
+  }));
+  const result = await f.read(reference(repo, repo.commit()));
+  assert.equal(result.root.npm.kind, 'locked');
+  assert.deepEqual(result.root.npm.localInputs.map(file => file.path), ['~name/b.tgz']);
+  assert.equal(result.root.npm.localInputs[0].sha256, digest(bytes));
+  await result.dispose();
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('symlinks and credential helper diagnostics cannot escape or survive failed acquisition', async t => {
   const f = await fixture(t);
   const repo = await f.repository('links');

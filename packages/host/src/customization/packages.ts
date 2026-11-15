@@ -17,7 +17,7 @@ export type NpmInputs = { readonly kind: 'absent' } | {
 interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
 
 function localPath(base: string, value: string): string {
-  if (!value || value.startsWith('/') || /[\\:]/u.test(value) || [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || value.split('/').some(part => part.toLowerCase() === '.git')) {
+  if (!value || value.startsWith('/') || /[\\:]/u.test(value) || [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || value.split('/').some(part => part === '~' || part.toLowerCase() === '.git')) {
     throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
   }
   const path = posix.normalize(posix.join(base, value));
@@ -99,7 +99,7 @@ export async function selectPackage(tree: RepositoryTree, subdirectory: string, 
       const members = new Set<string>();
       for (const pattern of patterns) {
         check();
-        if (typeof pattern !== 'string' || seen.has(pattern) || /[?!{}[\]]/u.test(pattern)) throw new Error('Unsupported workspace pattern');
+        if (typeof pattern !== 'string' || seen.has(pattern) || /[?!{}[\]]|[+@]\(/u.test(pattern)) throw new Error('Unsupported workspace pattern');
         seen.add(pattern);
         const wildcard = pattern.endsWith('/*');
         const literal = wildcard ? pattern.slice(0, -2) : pattern;
