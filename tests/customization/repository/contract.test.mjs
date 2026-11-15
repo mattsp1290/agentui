@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseCustomizationPackage, repositoryLocation } from '../../../packages/host/dist/customization/contract.js';
+import { parseCustomizationPackage as parsePackage, repositoryLocation } from '../../../packages/host/dist/customization/contract.js';
 
 const oid = 'a'.repeat(40);
 const files = new Set(['desktop.tsx', 'shared.ts']);
 const manifest = { namespace: 'personal', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
 const local = { extension: manifest, sources: { './dist/desktop.js': './desktop.tsx' } };
+const parseCustomizationPackage = (input, files, lock) => parsePackage(input, files, { lock, packagePath: '', packageManager: input.packageManager });
 const parse = (agentui, lock) => parseCustomizationPackage({ agentui }, files, lock);
 
 test('absent metadata and empty metadata retain shipped defaults', () => {

@@ -69,33 +69,28 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
   return object;
 }
 
-function dependencies(packageJson: Record<string, unknown>, lockValue: unknown): void {
-  const keys = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-  const declarations = new Map<string, Record<string, unknown>>();
-  for (const key of keys) {
-    if (packageJson[key] === undefined) continue;
-    const entries = record(packageJson[key]);
-    if (Object.values(entries).some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid dependency declaration');
-    declarations.set(key, entries);
-  }
-  if (![...declarations.values()].some(entries => Object.keys(entries).length)) return;
-  if (packageJson.packageManager !== 'npm@11.19.1') throw new Error('Dependencies require npm@11.19.1');
-  const lock = record(lockValue);
+export const dependencyGroups = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
+export interface NpmContext { readonly lock: unknown; readonly packagePath: string; readonly packageManager: unknown }
+export function validateNpmManifest(packageJson: Record<string, unknown>, context: NpmContext): void {
+  if (context.packageManager !== 'npm@11.19.1') throw new Error('Dependencies require npm@11.19.1');
+  const lock = record(context.lock);
   if (lock.lockfileVersion !== 3) throw new Error('Dependencies require a committed npm v3 lockfile');
-  const root = record(record(lock.packages)['']);
-  for (const key of keys) {
-    const declared = declarations.get(key) ?? {};
-    const locked = root[key] === undefined ? {} : record(root[key]);
-    if (Object.keys(declared).length !== Object.keys(locked).length || Object.keys(declared).some(name => locked[name] !== declared[name])) {
-      throw new Error('Lockfile root dependencies disagree with package.json');
+  const entry = record(record(lock.packages)[context.packagePath]);
+  for (const key of dependencyGroups) {
+    const declared = packageJson[key] === undefined ? {} : record(packageJson[key]);
+    const locked = entry[key] === undefined ? {} : record(entry[key]);
+    if (Object.values(declared).some(value => typeof value !== 'string' || !value.trim()) ||
+      Object.keys(declared).length !== Object.keys(locked).length || Object.keys(declared).some(name => locked[name] !== declared[name])) {
+      throw new Error('Lockfile dependencies disagree with package.json');
     }
   }
-  for (const key of ['name', 'version']) {
-    if (root[key] !== packageJson[key]) throw new Error('Lockfile root identity disagrees with package.json');
-  }
+  if (entry.version !== packageJson.version) throw new Error('Lockfile version disagrees with package.json');
+  const link = record(lock.packages)[`node_modules/${String(packageJson.name)}`];
+  const linkedName = context.packagePath && link !== undefined && record(link).link === true && record(link).resolved === context.packagePath;
+  if (entry.name !== packageJson.name && !(entry.name === undefined && linkedName)) throw new Error('Lockfile name disagrees with package.json');
 }
 
-export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>, lock?: unknown): CustomizationSource | undefined {
+export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>, npm?: NpmContext): CustomizationSource | undefined {
   try {
     const packageJson = record(input);
     if (packageJson.agentui === undefined) return undefined;
@@ -125,6 +120,7 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
     }
     const extensions: GitExtensionReference[] = [];
     if (metadata.extensions !== undefined) {
+      if (Array.isArray(metadata.extensions) && metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       if (!Array.isArray(metadata.extensions)) throw new Error('Expected external reference array');
       for (const value of metadata.extensions) {
         const reference = fields(value, ['repository', 'commit', 'subdirectory']);
@@ -134,10 +130,12 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
-    dependencies(packageJson, lock);
+    if (dependencyGroups.some(key => packageJson[key] !== undefined && Object.keys(record(packageJson[key])).length > 0)) {
+      validateNpmManifest(packageJson, npm ?? { lock: undefined, packagePath: '', packageManager: packageJson.packageManager });
+    }
     return { ...(local ? { local } : {}), ...(shared === undefined ? {} : { shared }), extensions };
   } catch (error) {
     if (error instanceof CustomizationError) throw error;
-    throw new CustomizationError('invalid-package', error instanceof Error ? error.message : 'Invalid customization package.');
+    throw new CustomizationError('invalid-package', 'Invalid committed customization package or npm inputs.');
   }
 }
