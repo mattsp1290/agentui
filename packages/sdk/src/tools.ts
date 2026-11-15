@@ -1,15 +1,18 @@
 import { canonicalJson } from '@agentui/contracts';
+import { record } from '@agentui/contracts/decode';
 import { Validator, dereference } from '@cfworker/json-schema';
-import { validateExtensionLifetime } from './extensions.js';
+import { extensionNamespace, validateExtensionLifetime } from './extensions.js';
 import { draft7 } from './draft-07.js';
 import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
 export type * from './tool-contracts.js';
 
 type Schema = boolean | Record<string, unknown>;
 type Registered = { definition: FrontendTool; validate(value: unknown): boolean; decode(value: unknown): unknown; execute(value: unknown, context: { readonly conversation: FrontendToolPin['run']['conversation'] }): Promise<string> };
-const meta = new Validator(draft7, '7', false);
+let meta: Validator | undefined;
+function metaValidator(): Validator { return meta ??= new Validator(draft7, '7', false); }
 const keywords = new Set('$schema $ref $comment title description default examples readOnly writeOnly type enum const multipleOf maximum exclusiveMaximum minimum exclusiveMinimum maxLength minLength pattern items additionalItems maxItems minItems uniqueItems contains maxProperties minProperties required properties patternProperties additionalProperties dependencies propertyNames definitions allOf anyOf oneOf not if then else format contentMediaType contentEncoding'.split(' '));
-const formats = new Set('date time date-time duration uri uri-reference uri-template url email hostname ipv4 ipv6 regex uuid json-pointer json-pointer-uri-fragment relative-json-pointer'.split(' '));
+const formats = new Set('date time date-time uri uri-reference uri-template email hostname ipv4 ipv6 regex json-pointer relative-json-pointer'.split(' '));
+const refKeys = new Set('$ref $comment title description default examples readOnly writeOnly'.split(' '));
 const single = new Set('additionalItems contains additionalProperties propertyNames not if then else'.split(' '));
 const maps = new Set('properties patternProperties definitions'.split(' '));
 const arrays = new Set('allOf anyOf oneOf'.split(' '));
@@ -22,20 +25,22 @@ function freeze<T>(value: T): T {
   return value;
 }
 function schemaValidator(input: unknown): (value: unknown) => boolean {
-  const root = copy(input === undefined ? { type: 'object' } : input) as Schema;
+  const parameters = copy(input === undefined ? {} : input);
+  const root = (typeof parameters === 'object' && parameters !== null && !Array.isArray(parameters) && Object.keys(parameters).length === 0 ? { type: 'object' } : parameters) as Schema;
   if (typeof root !== 'object' || root === null || root.type !== 'object') throw new Error('Tool parameters must have object type');
-  if (!meta.validate(root).valid) throw new Error('Invalid draft-07 schema');
+  if (!metaValidator().validate(root).valid) throw new Error('Invalid draft-07 schema');
   const edges = new Map<object, Schema[]>();
   const refs: [object, string][] = [];
   function walk(schema: Schema, isRoot = false): void {
     if (typeof schema === 'boolean') return;
     if (!schema || typeof schema !== 'object' || Array.isArray(schema)) throw new Error('Invalid schema node');
     if (edges.has(schema)) return;
+    if ('$ref' in schema && Object.keys(schema).some(key => !refKeys.has(key))) throw new Error('Schema references cannot have sibling assertions');
     const children: Schema[] = [];
     edges.set(schema, children);
     for (const [key, value] of Object.entries(schema)) {
       if (!keywords.has(key)) throw new Error(`Unsupported schema keyword: ${key}`);
-      if (key === '$schema' && (!isRoot || value !== 'http://json-schema.org/draft-07/schema#')) throw new Error('Unsupported schema dialect');
+      if (key === '$schema' && (!isRoot || value !== 'http://json-schema.org/draft-07/schema#' && value !== 'http://json-schema.org/draft-07/schema')) throw new Error('Unsupported schema dialect');
       if (key === 'format' && (typeof value !== 'string' || !formats.has(value))) throw new Error('Unsupported schema format');
       if (key === '$ref') {
         if (typeof value !== 'string' || !(value === '#' || value.startsWith('#/'))) throw new Error('Only local schema references are supported');
@@ -54,7 +59,7 @@ function schemaValidator(input: unknown): (value: unknown) => boolean {
   for (const [node] of refs) {
     const absolute = (node as Record<string, unknown>).__absolute_ref__;
     const target = typeof absolute === 'string' ? lookup[absolute] : undefined;
-    if (target === undefined || (typeof target !== 'boolean' && !edges.has(target))) throw new Error('Unresolved schema reference');
+    if (target === undefined || typeof target === 'boolean' || !edges.has(target)) throw new Error('Unresolved schema reference');
     edges.get(node)!.push(target as Schema);
   }
   const visiting = new Set<object>();
@@ -70,8 +75,8 @@ function schemaValidator(input: unknown): (value: unknown) => boolean {
   const validator = new Validator(root, '7', false);
   return value => validator.validate(value).valid;
 }
-const generationTools = new WeakMap<Generation, readonly Registered[]>();
-const generationState = new WeakMap<Generation, { retired(): boolean; retain(): void; drop(): void }>();
+const generationTools = new WeakMap<FrontendToolGeneration, readonly Registered[]>();
+const generationState = new WeakMap<FrontendToolGeneration, { retired(): boolean; retain(): void; drop(): void }>();
 class Generation implements FrontendToolGeneration {
   readonly namespace: string;
   readonly generation: string;
@@ -82,7 +87,7 @@ class Generation implements FrontendToolGeneration {
   #completion: Promise<void> | undefined;
   #resolve: (() => void) | undefined;
   #reject!: (error: unknown) => void;
-  constructor(options: FrontendToolGenerationOptions, lifetime: { dispose(): void | Promise<void> }, tools: Registered[]) {
+  constructor(options: Pick<FrontendToolGeneration, 'namespace' | 'generation' | 'platform'>, lifetime: { dispose(): void | Promise<void> }, tools: Registered[]) {
     this.namespace = options.namespace; this.generation = options.generation; this.platform = options.platform;
     this.#lifetime = lifetime; generationTools.set(this, Object.freeze(tools));
     generationState.set(this, { retired: () => this.#retired, retain: () => this.#retain(), drop: () => this.#drop() });
@@ -102,13 +107,13 @@ class Generation implements FrontendToolGeneration {
     if (this.#retired && this.#refs === 0 && this.#resolve) {
       const resolve = this.#resolve; const reject = this.#reject;
       this.#resolve = undefined;
-      Promise.resolve().then(() => this.#lifetime.dispose()).then(resolve, reject);
+      Promise.resolve().then(() => this.#lifetime.dispose()).finally(() => generationTools.delete(this)).then(resolve, reject);
     }
   }
 }
 export async function createFrontendToolGeneration(options: FrontendToolGenerationOptions): Promise<FrontendToolGeneration> {
-  const { namespace, generation, platform, activate } = options;
-  if (typeof namespace !== 'string' || !/^[a-z][a-z0-9-]*$/.test(namespace)) throw new Error('Invalid tool namespace');
+  const { generation, platform, activate } = options;
+  const namespace = extensionNamespace(options.namespace);
   if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
   if (platform !== 'desktop' && platform !== 'ios') throw new Error('Invalid platform');
   const tools: Registered[] = [];
@@ -117,8 +122,12 @@ export async function createFrontendToolGeneration(options: FrontendToolGenerati
   const contributions = { add<Input>(tool: FrontendToolContribution<Input>): void {
     if (!open) throw new Error('Tool registration is closed');
     try {
-      const definition = copy(tool.definition);
-      if (!definition || typeof definition !== 'object' || Array.isArray(definition) || typeof definition.name !== 'string' || typeof definition.description !== 'string' || Object.keys(definition).some(key => !['name', 'description', 'parameters', 'metadata'].includes(key)) || ('metadata' in definition && (!definition.metadata || typeof definition.metadata !== 'object' || Array.isArray(definition.metadata)))) throw new Error('Invalid tool definition');
+      const input = record(tool.definition);
+      if (Object.keys(input).some(key => !['name', 'description', 'parameters', 'metadata'].includes(key)) || typeof input.name !== 'string' || typeof input.description !== 'string') throw new Error('Invalid tool definition');
+      const metadata = input.metadata === undefined ? undefined : record(input.metadata);
+      const definition: FrontendTool = copy({ name: input.name, description: input.description,
+        ...(input.parameters === undefined ? {} : { parameters: input.parameters }),
+        ...(metadata === undefined ? {} : { metadata }) });
       if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(definition.name)) throw new Error('Invalid tool name');
       const name = `${namespace}__${definition.name}`;
       if (name.length > 64 || names.has(name)) throw new Error('Duplicate or oversized tool name');
@@ -133,16 +142,20 @@ export async function createFrontendToolGeneration(options: FrontendToolGenerati
   try {
     validateExtensionLifetime(lifetime);
     if (poisoned) throw poison;
-    return new Generation({ namespace, generation, platform, activate }, { dispose: lifetime.dispose.bind(lifetime) }, tools);
+    return new Generation({ namespace, generation, platform }, { dispose: lifetime.dispose.bind(lifetime) }, tools);
   } catch (error) {
-    if (lifetime && typeof lifetime.dispose === 'function') await lifetime.dispose();
+    if (lifetime && typeof lifetime.dispose === 'function') {
+      try { await lifetime.dispose(); }
+      catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
+    }
     throw error;
   }
 }
 export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
-  const selected: Generation[] = []; const namespaces = new Set<string>();
+  const selected: FrontendToolGeneration[] = []; const namespaces = new Set<string>();
   for (const generation of options.generations) {
-    if (!(generation instanceof Generation) || generationState.get(generation)!.retired()) throw new Error('Invalid or retired tool generation');
+    const state = generationState.get(generation);
+    if (!state || state.retired()) throw new Error('Invalid or retired tool generation');
     if (generation.platform !== options.platform) continue;
     if (namespaces.has(generation.namespace)) throw new Error('Duplicate tool namespace');
     namespaces.add(generation.namespace); selected.push(generation);
@@ -150,7 +163,7 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
   const run = freeze(copy(options.run));
   const enabled = options.capabilities?.tools?.clientProvided === true && options.capabilities.tools.supported !== false;
   const generations = enabled ? selected : [];
-  const entries = new Map<string, { tool: Registered; generation: Generation }>();
+  const entries = new Map<string, { tool: Registered; generation: FrontendToolGeneration }>();
   for (const generation of generations) {
     generationState.get(generation)!.retain();
     for (const tool of generationTools.get(generation)!) entries.set(tool.definition.name, { tool, generation });
@@ -174,6 +187,6 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
         return { kind: 'completed', output };
       } finally { generationState.get(entry.generation)!.drop(); }
     },
-    release() { if (!released) { released = true; for (const generation of generations) generationState.get(generation)!.drop(); } },
+    release() { if (!released) { released = true; entries.clear(); for (const generation of generations) generationState.get(generation)!.drop(); } },
   };
 }

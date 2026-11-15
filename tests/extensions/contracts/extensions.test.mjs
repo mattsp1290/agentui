@@ -143,3 +143,8 @@ test('manifest metadata remains plain exact data while behavior values allow pro
     assert.throws(() => validateConversationModules([value]));
   }
 });
+
+ test('manifest namespaces use the shared bounded grammar', () => {
+  for (const namespace of ['Notes', 'acme.notes', 'my_ext', 'a'.repeat(33)]) assert.throws(() => parseExtensionManifest({ ...manifest, namespace }));
+  assert.equal(parseExtensionManifest({ ...manifest, namespace: 'a'.repeat(32) }).namespace, 'a'.repeat(32));
+});

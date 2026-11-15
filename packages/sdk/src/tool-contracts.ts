@@ -1,8 +1,8 @@
 import type { ConversationScope, RunIdentity } from '@agentui/contracts';
 import type { AgentCapabilities, RunAgentInput } from '@agentui/protocol';
-import type { ExtensionLifetime } from './extensions.js';
+import type { ExtensionEntryKind, ExtensionLifetime } from './extensions.js';
 
-export type FrontendPlatform = 'desktop' | 'ios';
+export type FrontendPlatform = Exclude<ExtensionEntryKind, 'server'>;
 export type FrontendTool = NonNullable<RunAgentInput['tools']>[number];
 export interface FrontendToolContribution<Input> {
   readonly definition: FrontendTool;

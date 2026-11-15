@@ -40,7 +40,7 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
 });
 
 test('invalid schemas poison registration and clean up', async () => {
-  for (const schema of [{ type: 'object', properties: { x: { minimum: 'no' } } }, { type: 'object', future: true }, { type: 'object', format: 'unknown' }, { type: 'object', properties: { x: { $ref: '#/missing' } } }, { type: 'object', $ref: 'https://example.com/schema' }, { type: 'object', $id: 'x' }, { type: 'object', $schema: 'other' }, { type: 'object', properties: { x: { $ref: '#' } } }, { type: 'object', definitions: { a: { type: 'object', properties: { b: { type: 'string' } } } }, properties: { x: { $ref: '#/definitions/a%2Fproperties%2Fb' } } }]) {
+  for (const schema of [{ type: 'object', properties: { x: { minimum: 'no' } } }, { type: 'object', future: true }, { type: 'object', $ref: '#/definitions/s', definitions: { s: { type: 'string' } } }, { type: 'object', definitions: { s: { type: 'string' } }, properties: { x: { $ref: '#/definitions/s', maxLength: 2 } } }, { type: 'object', properties: { a: { type: 'string', readOnly: false }, b: { $ref: '#/properties/a/readOnly' } } }, { type: 'object', properties: { x: { type: 'string', format: 'uuid' } } }, { type: 'object', format: 'unknown' }, { type: 'object', properties: { x: { $ref: '#/missing' } } }, { type: 'object', $ref: 'https://example.com/schema' }, { type: 'object', $id: 'x' }, { type: 'object', $schema: 'other' }, { type: 'object', properties: { x: { $ref: '#' } } }, { type: 'object', definitions: { a: { type: 'object', properties: { b: { type: 'string' } } } }, properties: { x: { $ref: '#/definitions/a%2Fproperties%2Fb' } } }]) {
     let disposed = 0;
     await assert.rejects(make({ activate(t) { try { t.add({ definition: { name: 'x', description: 'x', parameters: schema }, decodeInput(x) { return x; }, async execute() { return ''; } }); } catch {} return { dispose() { disposed++; } }; } }));
     assert.equal(disposed, 1);
@@ -113,4 +113,44 @@ test('registration captures methods and schema independently', async () => {
   contribution.definition.parameters.properties.n.type = 'number'; contribution.decodeInput = () => 'changed'; contribution.execute = async () => 'changed';
   const p = pin([g]); assert.equal((await p.invoke('demo__x', { n: 'original' })).output, 'original'); assert.equal((await p.invoke('demo__x', { n: 2 })).code, 'invalid-arguments'); p.release(); await g.retire();
   await assert.rejects(make({ namespace: ['demo'] }));
+});
+
+
+test('activation reports registration and disposal failures', async () => {
+  await assert.rejects(make({ activate(t) {
+    try { t.add({ definition: { name: 'x', description: 'x', parameters: { type: 'object', future: true } }, decodeInput(x) { return x; }, async execute() { return ''; } }); } catch {}
+    return { dispose() { throw Error('dispose boom'); } };
+  } }), error => error instanceof AggregateError && error.errors[0].message.includes('Unsupported schema keyword') && error.errors[1].message === 'dispose boom');
+});
+
+test('refusals and failed pins drain retired generations', async () => {
+  let disposed = 0;
+  const g = await make({ activate(t) { t.add({ definition: { name: 'x', description: 'x', parameters: { type: 'object', properties: { n: { type: 'number' } } } }, decodeInput(x) { if (x.bad) throw Error('decode'); return x; }, async execute() { return 'ok'; } }); return { dispose() { disposed++; } }; } });
+  assert.throws(() => pin([g], { run: new Date() }));
+  assert.throws(() => pin([Object.create(Object.getPrototypeOf(g))]), /Invalid or retired/);
+  const p = pin([g]); const retired = g.retire();
+  assert.equal((await p.invoke('demo__x', { n: 'bad' })).code, 'invalid-arguments');
+  assert.equal((await p.invoke('demo__x', { bad: true })).code, 'decode-failed');
+  assert.equal((await p.invoke('missing', {})).code, 'unknown-tool');
+  p.release(); assert.equal((await p.invoke('demo__x', {})).code, 'released');
+  await retired; assert.equal(disposed, 1);
+});
+
+test('rejected activation closes registration', async () => {
+  let add;
+  const tool = { definition: { name: 'x', description: 'x' }, decodeInput(x) { return x; }, async execute() { return ''; } };
+  await assert.rejects(make({ activate(t) { add = t.add; t.add(tool); throw Error('activation'); } }), /activation/);
+  assert.throws(() => add(tool), /closed/);
+});
+
+test('optional definitions and empty schemas preserve object arguments', async () => {
+  for (const parameters of [undefined, {}, { $schema: 'http://json-schema.org/draft-07/schema', type: 'object' }]) {
+    const g = await make({ activate(t) { t.add({ definition: { name: 'x', description: 'x', parameters, metadata: undefined }, decodeInput(x) { return x; }, async execute() { return 'ok'; } }); return { dispose() {} }; } });
+    const p = pin([g]); assert.equal((await p.invoke('demo__x', {})).kind, 'completed'); assert.equal((await p.invoke('demo__x', 'text')).code, 'invalid-arguments');
+    if (parameters && !Object.keys(parameters).length) assert.deepEqual(p.definitions[0].parameters, {});
+    p.release(); await g.retire();
+  }
+  for (const definition of [Object.assign({ name: 'x', description: 'x' }, { [Symbol('x')]: 1 }), { name: 'x', description: 'x', metadata: new Date() }, { name: 'x', description: 'x', get metadata() { return {}; } }]) {
+    await assert.rejects(make({ activate(t) { t.add({ definition, decodeInput(x) { return x; }, async execute() { return ''; } }); return { dispose() {} }; } }));
+  }
 });

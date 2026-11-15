@@ -16,8 +16,8 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
     for (const pack of packs) { const dest = join(dir, 'node_modules', pack.name); await mkdir(dest, { recursive: true }); run('tar', ['-xzf', join(dir, pack.filename), '-C', dest, '--strip-components=1'], dir); }
     await writeFile(join(dir, 'package.json'), '{"type":"module"}');
     await writeFile(join(dir, 'tsconfig.json'), JSON.stringify({ extends: join(root, 'tsconfig.base.json') }));
-    await assertCompileCases({ config: join(dir, 'tsconfig.json'), prefix: "import { createFrontendToolGeneration, type FrontendToolContribution } from '@agentui/sdk/tools';\n", cases: [
-      ["const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t;", null],
+    await assertCompileCases({ config: join(dir, 'tsconfig.json'), prefix: "import { createFrontendToolGeneration, pinFrontendTools, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\n", cases: [
+      ["const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t; declare const g: import('@agentui/sdk/tools').FrontendToolGeneration; declare const run: import('@agentui/contracts').RunIdentity; const p = pinFrontendTools({ generations: [g], platform: 'ios', run, capabilities: { tools: { clientProvided: true } } }); const o: Promise<FrontendToolOutcome> = p.invoke('a__b', {}); void o;", null],
       ["const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 1; }, async execute(x) { return x; } }; void t;", /not assignable/u],
       ['void document;', /Cannot find name 'document'/u],
     ] });
@@ -29,4 +29,16 @@ test('root and react bundles exclude the validator', async () => {
     const result = await build({ stdin: { contents: `import * as sdk from '${entry}'; console.log(sdk);`, resolveDir: root }, bundle: true, platform: 'node', format: 'esm', write: false, metafile: true, external: ['react'] });
     assert.equal(Object.keys(result.metafile.inputs).some(path => path.includes('@cfworker/json-schema')), false);
   }
+});
+
+
+test('tools import survives a URL with a getter-only hash', () => {
+  run(process.execPath, ['--input-type=module', '-e', `
+    const NativeURL = URL;
+    globalThis.URL = class extends NativeURL { get hash() { return super.hash; } };
+    const { createFrontendToolGeneration } = await import('@agentui/sdk/tools');
+    let failed = false;
+    try { await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'ios', activate(t) { t.add({ definition: { name: 'x', description: 'x' }, decodeInput(x) { return x; }, async execute() { return ''; } }); return { dispose() {} }; } }); } catch { failed = true; }
+    if (!failed) throw Error('registration should fail with a constrained URL');
+  `], root);
 });
