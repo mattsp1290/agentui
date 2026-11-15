@@ -14,6 +14,19 @@ const result = await build({
   format: 'esm',
   target: 'node24',
   sourcemap: true,
+  banner: { js: "import { createRequire as hostCreateRequire } from 'node:module'; const require = hostCreateRequire(import.meta.url);" },
+  plugins: [{
+    name: 'optional-websocket-acceleration',
+    setup(plugin) {
+      plugin.onResolve({ filter: /^(bufferutil|utf-8-validate)$/ }, args => {
+        if (!/[/\\]ws[/\\]lib[/\\]/.test(args.importer)) return undefined;
+        return { path: args.path, namespace: 'optional-websocket-acceleration' };
+      });
+      plugin.onLoad({ filter: /.*/, namespace: 'optional-websocket-acceleration' }, () => ({
+        contents: "throw new Error('Optional native WebSocket acceleration is unavailable');", loader: 'js',
+      }));
+    },
+  }],
   metafile: true,
   write: false,
   logLevel: 'silent',

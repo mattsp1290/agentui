@@ -7,7 +7,7 @@ import test from 'node:test';
 import { canonicalJson, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { openLocalHost } from '@agentui/host';
-import { recoverCodexConversations } from '../../apps/host/build/tsc/codex-recovery.js';
+import { recoverProviderConversations, PROVIDER_RECOVERY } from '../../apps/host/build/tsc/provider-recovery.js';
 
 const scope = { hostId: 'restart-host', conversationId: 'conversation' };
 const installation = { installationId: 'codex-local-v1', binding: {
@@ -78,7 +78,7 @@ for (const answered of [false, true]) {
     await original.drained;
     const privateBefore = f.readPrivate(), dispatchCount = f.dispatches.length;
     const reopened = f.open();
-    recoverCodexConversations(reopened, scope.hostId, installation);
+    recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
     const recovered = reopened.inspect(scope).snapshot;
     assert.deepEqual(recovered.document.domain.messages[0], {
       messageId: 'partial', revision: 2, role: 'assistant', text, complete: true,
@@ -94,7 +94,7 @@ for (const answered of [false, true]) {
     assert.deepEqual(f.readPrivate(), privateBefore);
     assert.doesNotMatch(canonicalJson(recovered), /private-thread-binding|privateRequest/);
     assert.equal(f.dispatches.length, dispatchCount);
-    recoverCodexConversations(reopened, scope.hostId, installation);
+    recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
     assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
     if (uncertain) assert.deepEqual(await reopened.conversation(scope).submit(approval), uncertain);
     assert.deepEqual(await reopened.conversation(scope).submit({ ...approval, clientCommandId: 'new-answer' }),
@@ -130,7 +130,7 @@ test('restart pages all conversations and preserves histories with a different w
   original.close();
   await original.drained;
   const reopened = f.open();
-  recoverCodexConversations(reopened, scope.hostId, installation);
+  recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
   const last = reopened.inspect({ ...scope, conversationId: 'page-100' }).snapshot.document.domain.messages;
   assert.equal(last[0].complete, true);
   assert.equal(last.length, 2);
@@ -161,7 +161,7 @@ for (const activeRun of [false, true]) {
     await original.drained;
     const reopened = f.open(), warnings = [];
     t.mock.method(process, 'emitWarning', (warning, options) => { warnings.push({ warning, options }); });
-    assert.doesNotThrow(() => recoverCodexConversations(reopened, scope.hostId, installation));
+    assert.doesNotThrow(() => recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex));
     const recovered = reopened.inspect(scope).snapshot;
     assert.deepEqual(recovered.document.domain.messages.at(-1), { ...last, revision: 2, complete: true });
     assert.equal(recovered.document.domain.messages.length, 64);
@@ -171,7 +171,7 @@ for (const activeRun of [false, true]) {
     const other = reopened.inspect(fresh).snapshot.document.domain.messages;
     assert.equal(other[0].complete, true);
     assert.match(other[1].text, /connection was interrupted/);
-    recoverCodexConversations(reopened, scope.hostId, installation);
+    recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
     assert.equal(warnings.length, activeRun ? 2 : 1);
     assert.equal((await reopened.conversation(fresh).submit(command('fresh-send', undefined, fresh))).receipt.state.kind, 'completed');
   });
@@ -189,7 +189,7 @@ test('restart propagates corrupt stored transcript errors', async t => {
     }));
   } finally { db.close(); }
   const reopened = f.open();
-  assert.throws(() => recoverCodexConversations(reopened, scope.hostId, installation), /Invalid|Expected|Unexpected|Missing/);
+  assert.throws(() => recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex), /Invalid|Expected|Unexpected|Missing/);
 });
 
 for (const kind of ['running', 'stopping']) {
@@ -204,11 +204,11 @@ for (const kind of ['running', 'stopping']) {
     original.close();
     await original.drained;
     const reopened = f.open();
-    recoverCodexConversations(reopened, scope.hostId, installation);
+    recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
     const recovered = reopened.inspect(scope).snapshot;
     assert.deepEqual(recovered.document.domain.currentRun, { kind: 'ended', runId, outcome: 'connection-lost' });
     assert.match(recovered.document.domain.messages[0].text, /connection was interrupted/);
-    recoverCodexConversations(reopened, scope.hostId, installation);
+    recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
     assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
     assert.deepEqual(f.dispatches, []);
   });
@@ -227,11 +227,34 @@ test('restart accepts an existing message-only SQLite snapshot at projection ver
     }));
   } finally { db.close(); }
   const reopened = f.open();
-  recoverCodexConversations(reopened, scope.hostId, installation);
+  recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
   const recovered = reopened.inspect(scope).snapshot;
   assert.equal(recovered.projectionVersion, 1);
   assert.equal(recovered.document.domain.currentRun, null);
   assert.deepEqual(recovered.document.domain.messages[0], {
     messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,
   });
+});
+
+test('Pi restart seals its unfinished response and names the provider without suggesting tool actions', async t => {
+  const f = fixture(t), original = f.open();
+  const piInstallation = { installationId: 'pi-chat-v1', binding: { ...installation.binding,
+    engine: 'pi', nativeVersion: '1.5.2', nativeFormat: 'pi-sdk-chat-opencode-go-glm-5.3-v1' } };
+  original.createConversation(scope, piInstallation);
+  original.append(scope, { ...empty(), events: [
+    { kind: 'run-started', runId: 'pi-run', previousRunId: null },
+    message('partial-pi', 'Keep this streamed text'),
+  ] });
+  original.close();
+  await original.drained;
+  const reopened = f.open();
+  recoverProviderConversations(reopened, scope.hostId, piInstallation, PROVIDER_RECOVERY.pi);
+  const recovered = reopened.inspect(scope).snapshot;
+  assert.deepEqual(recovered.document.domain.currentRun, { kind: 'ended', runId: 'pi-run', outcome: 'connection-lost' });
+  assert.equal(recovered.document.domain.messages[0].complete, true);
+  assert.equal(recovered.document.domain.messages[0].text, 'Keep this streamed text');
+  assert.match(recovered.document.domain.messages[1].text, /The Pi connection was interrupted/);
+  assert.doesNotMatch(recovered.document.domain.messages[1].text, /Codex|actions/);
+  recoverProviderConversations(reopened, scope.hostId, piInstallation, PROVIDER_RECOVERY.pi);
+  assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
 });

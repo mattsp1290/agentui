@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkCompatibility } from '@agentui/client';
+import { PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 
 const nativeRuntime = { engine: 'recorded', version: '1.0.0', format: 'recorded-v1' };
 const client = { supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.2'], supportedNativeRuntimes: [nativeRuntime], expectedArtifactId: 'artifact-a' };
@@ -32,4 +33,17 @@ for (const [dimension, change] of [
 test('deployment and applied artifact mismatches remain distinct findings', () => {
   const result = checkCompatibility(client, { ...host, wireVersion: 2, extensionSdkVersion: 'unknown', nativeRuntime: { ...nativeRuntime, version: 'unknown' }, desiredGitRevision: 'pending-revision', appliedArtifact: { artifactId: 'other-artifact', gitRevision: 'old-revision' } });
   assert.deepEqual(result.issues.map(issue => issue.dimension), ['wire', 'extension-sdk', 'native-runtime', 'deployment', 'artifact']);
+});
+
+test('solo clients accept the exact Pi SDK chat runtime and reject other versions or formats', () => {
+  const piHost = { ...host, wireVersion: 1, extensionSdkVersion: '0.0.0',
+    nativeRuntime: { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' } };
+  assert.deepEqual(PI_RUNTIME, piHost.nativeRuntime);
+  assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, piHost), { kind: 'compatible' });
+  for (const change of [{ version: '1.5.3' }, { format: 'pi-sdk-chat-v2' }, { engine: 'other' }]) {
+    const result = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...piHost,
+      nativeRuntime: { ...piHost.nativeRuntime, ...change } });
+    assert.equal(result.kind, 'incompatible');
+    assert.deepEqual(result.issues.map(issue => issue.dimension), ['native-runtime']);
+  }
 });
