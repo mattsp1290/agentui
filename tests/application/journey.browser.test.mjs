@@ -527,7 +527,7 @@ test('committed custom artifact sends one exact prompt, retains drafts and resto
     await wait(() => review.isEnabled(), 'custom review ready');
     const before = submissions;
     await review.evaluate(button => { button.click(); button.click(); });
-    await page.getByRole('status').filter({ hasText: /Review (submitted|pending|completed)\./ }).waitFor();
+    await page.getByRole('status').filter({ hasText: /Review (request sent|pending)\./ }).waitFor();
     await page.locator('.message-user p').filter({ hasText: prompt }).waitFor();
     assert.equal(submissions, before + 1);
     assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), text);
