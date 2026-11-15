@@ -10,7 +10,7 @@ import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { createCodexDriver, openLocalHost } from '@agentui/host';
-import type { LocalHost } from '@agentui/host';
+import type { CodexModelDriver, LocalHost, ProviderDriver } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
@@ -75,6 +75,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
   const drivers: Driver[] = [];
+  const modelDrivers: ProviderDriver<TranscriptEvent>[] = [];
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
@@ -147,6 +148,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         if (agents.some(agent => canonicalJson(agent.installation) === canonicalJson(installation))) throw new Error('Duplicate agent installation');
         if (provider.name === configured.default) defaultInstallation = installation;
         let driver: Driver | undefined;
+        let discovered: readonly CodexModelDriver[] = [];
         try {
           switch (provider.kind) {
             case 'pi':
@@ -170,23 +172,33 @@ export async function startBrowserHost(options: BrowserHostOptions) {
                 version = result.stdout.trim();
               } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
-              driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
+              const codex = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
                 ...(provider.executable ? { executable: provider.executable } : {}), env, append });
+              driver = codex;
               break;
             }
           }
           drivers.push(driver);
           if ('ready' in driver) await driver.ready();
-          agents.push({ installation, ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } });
+          if ('models' in driver) {
+            discovered = await driver.models();
+            const selected = discovered.find(entry => entry.selectable && entry.isDefault) ?? discovered.find(entry => entry.selectable);
+            if (!selected) throw new Error('Codex did not offer any available models.');
+            if (provider.name === configured.default) defaultInstallation = selected.driver.installation;
+          }
+          agents.push({ installation, ...('models' in driver ? { selectable: false } : {}), ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } },
+            ...discovered.map((entry): InstalledAgent => ({ installation: entry.driver.installation, model: entry.model, selectable: entry.selectable,
+              ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } })));
+          modelDrivers.push(...discovered.map(entry => entry.driver));
         } catch (error) {
           if (!options.configuration) throw error;
-          if (driver) { await driver.close(); drivers.splice(drivers.indexOf(driver), 1); }
+          if (driver) { await driver.close(); const index = drivers.indexOf(driver); if (index !== -1) drivers.splice(index, 1); }
           agents.push({ installation, ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'unavailable', reason: 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
         }
       }
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
-        driver: drivers, providers, authorize: scope => scope.hostId === hostId });
+        driver: [...drivers, ...modelDrivers], providers, authorize: scope => scope.hostId === hostId });
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });

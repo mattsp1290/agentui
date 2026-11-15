@@ -15,10 +15,10 @@ export type { RecordedDriverOptions } from './recorded-driver.js';
 export type { Installation, NativeRun, NativeDecision, HostOutput, CommandResult, NotDispatched, ProviderDispatchObservation, CapturedTarget, ProviderDriver, HostBudgets } from './durable-model.js';
 
 export { createCodexDriver } from './codex-driver.js';
-export type { CodexDriverOptions, CodexTranscriptEvent } from './codex-driver.js';
+export type { CodexDriverOptions, CodexTranscriptEvent, CodexDriver, CodexModelDriver } from './codex-driver.js';
 export { CapacityError as HostCapacityError } from './sqlite-store.js';
 
-export { codexInstallation, codexSdkInstallation, claudeSdkInstallation, piInstallation } from './native-installations.js';
+export { codexInstallationModel, codexInstallation, codexSdkInstallation, claudeSdkInstallation, piInstallation } from './native-installations.js';
 
 export type { ConversationInstallation, ProviderInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 export { providerInstallationKey } from './provider-creation.js';

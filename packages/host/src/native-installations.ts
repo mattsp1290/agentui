@@ -9,8 +9,14 @@ function installed(installationId: string, runtime: NativeRuntimeIdentity, accou
   return { installationId, binding: { engine: runtime.engine, nativeVersion: runtime.version,
     nativeFormat: runtime.format, account, authorizedScope: cwd } };
 }
-export function codexInstallation(cwd: string, version: string): Installation {
-  return installed('codex-local-v1', { engine: 'codex', version: nonempty(version), format: 'codex-app-server-v2' }, 'local', resolve(cwd));
+const codexModelPrefix = 'codex-local-model-v1:';
+export function codexInstallation(cwd: string, version: string, model?: string): Installation {
+  return installed(model === undefined ? 'codex-local-v1' : `${codexModelPrefix}${encodeURIComponent(nonempty(model))}`, { engine: 'codex', version: nonempty(version), format: 'codex-app-server-v2' }, 'local', resolve(cwd));
+}
+export function codexInstallationModel(installation: Installation): string | null {
+  if (installation.binding.engine !== 'codex' || !installation.installationId.startsWith(codexModelPrefix)) return null;
+  try { return nonempty(decodeURIComponent(installation.installationId.slice(codexModelPrefix.length))); }
+  catch { return null; }
 }
 export function codexSdkInstallation(cwd: string): Installation {
   return installed('codex-sdk-chatgpt-gpt-6-1-sol-v1', CODEX_SDK_RUNTIME, 'chatgpt:gpt-6.1-sol', realpathSync(cwd));

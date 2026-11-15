@@ -41,7 +41,10 @@ interface AgentDescription {
   readonly commands: readonly ('send' | 'cancel' | 'approve')[];
   readonly availability: { readonly kind: 'ready' } | { readonly kind: 'unavailable'; readonly reason: string };
 }
-export type NativeAgentDescriptor = AgentDescription & { readonly runtime: NativeRuntimeIdentity };
+export type NativeAgentDescriptor = AgentDescription & {
+  readonly runtime: NativeRuntimeIdentity;
+  readonly model?: { readonly id: string; readonly label: string };
+};
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
 });
@@ -147,7 +150,7 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
   exact(input, input.kind === 'provider' ? ['id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
-    : ['id', 'label', 'runtime', 'commands', 'availability']);
+    : ['id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
   if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
@@ -164,7 +167,9 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   const common = { id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
-  return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) } };
+  const model = Object.hasOwn(input, 'model') ? record(input.model, ['id', 'label']) : null;
+  return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
+    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label) } } : {}) };
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);

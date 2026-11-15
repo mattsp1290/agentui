@@ -6,7 +6,7 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createCodexDriver, openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-import { command, scope, snapshot, until } from './fixture.mjs';
+import { command, scope, snapshot } from './fixture.mjs';
 
 function fixture(t, mode = 'stream') {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-codex-models-'));
@@ -27,7 +27,6 @@ function fixture(t, mode = 'stream') {
   };
   t.after(async () => {
     for (const session of sessions) session.close();
-    await new Promise(resolve => setTimeout(resolve, 30));
     rmSync(directory, { recursive: true, force: true });
   });
   return { open, records,
@@ -46,7 +45,7 @@ function fixture(t, mode = 'stream') {
 test('discovers every visible model page once and shares one Codex process', async t => {
   const f = fixture(t), session = await f.open();
   assert.deepEqual(session.choices.map(choice => choice.model), [
-    { id: 'remote-sol', label: 'Remote Sol' }, { id: 'remote-astra', label: 'Remote Astra' },
+    { id: 'gpt-9.2-sol', label: 'GPT-9.2 Sol' }, { id: 'gpt-9.1-astra', label: 'GPT-9.1 Astra' },
   ]);
   assert.equal(await session.owner.models(), session.choices);
   assert.equal(new Set([session.owner.installation, ...session.choices.map(choice => choice.driver.installation)].map(value => value.installationId)).size, 3);
@@ -60,13 +59,13 @@ test('discovers every visible model page once and shares one Codex process', asy
 
 for (const mode of ['models-repeat', 'models-malformed', 'models-error']) {
   test(`catalog failure ${mode} rejects instead of returning only the host default`, async t => {
-    await assert.rejects(fixture(t, mode).open(), /model|catalog|fixture/i);
+    await assert.rejects(fixture(t, mode).open(), /invalid model catalog|repeated a model catalog cursor|Fixture model catalog unavailable/);
   });
 }
 
 test('selected model survives persisted routing and reaches thread start, resume, and turns', async t => {
   const f = fixture(t), first = await f.open();
-  const selected = first.choices.find(choice => choice.model.id === 'remote-astra');
+  const selected = first.choices.find(choice => choice.model.id === 'gpt-9.1-astra');
   first.host.createConversation(scope, selected.driver.installation);
   assert.equal((await first.port.submit(command('first-model'))).receipt.state.kind, 'completed');
   const firstRun = first.host.inspect(scope).snapshot.document.domain.currentRun.runId;
@@ -83,8 +82,23 @@ test('selected model survives persisted routing and reaches thread start, resume
   for (const method of ['thread/start', 'thread/resume', 'turn/start']) {
     const requests = incoming.filter(value => value.method === method);
     assert.ok(requests.length > 0, method);
-    assert.ok(requests.every(value => value.params.model === 'remote-astra'), method);
+    assert.ok(requests.every(value => value.params.model === 'gpt-9.1-astra'), method);
   }
   f.finish(run.runId);
   await f.ended(reopened.port);
+});
+
+test('latest three numeric generations follow the catalog order while older models keep routing', async () => {
+  const { discoverCodexModels } = await import('../../packages/host/dist/codex-models.js');
+  const ids = ['gpt-12.1-sol', 'gpt-12-astra', 'gpt-12.1-terra', 'gpt-11.10-sol', 'gpt-11.9-sol', 'gpt-2-sol', 'custom-latest'];
+  const catalog = await discoverCodexModels(async () => ({
+    data: ids.map(model => ({ model, displayName: model, hidden: false, isDefault: model === 'gpt-2-sol' })), nextCursor: null,
+  }));
+  assert.deepEqual(catalog.map(entry => entry.model.id), ids);
+  assert.deepEqual(catalog.filter(entry => entry.selectable).map(entry => entry.model.id), ids.filter(id => !['gpt-11.9-sol', 'gpt-2-sol'].includes(id)));
+  assert.equal(catalog.find(entry => entry.model.id === 'gpt-2-sol').isDefault, true);
+  const future = await discoverCodexModels(async () => ({
+    data: [{ model: 'gpt-13-sol', displayName: 'Future', hidden: false }, ...ids.map(model => ({ model, displayName: model, hidden: false }))], nextCursor: null,
+  }));
+  assert.deepEqual(future.filter(entry => entry.selectable).map(entry => entry.model.id), ['gpt-13-sol', 'gpt-12.1-sol', 'gpt-12-astra', 'gpt-12.1-terra', 'custom-latest']);
 });
