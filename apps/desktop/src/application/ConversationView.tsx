@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
@@ -16,8 +16,9 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, agent = 'recorded' }: {
+export function ConversationView({ actions, active, enabled, storageFailure, agent = 'recorded', composerControls }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
+  readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
   const presentation = AGENT_PRESENTATION[agent];
   const view = useConversation(active.store);
@@ -82,8 +83,10 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
       <label htmlFor="message">Message</label>
       <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={presentation.placeholder} rows={3} />
       {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
-      <div className="composer-footer"><span>{presentation.footer}</span><button disabled={!canSend}>Send</button>
+      <div className="composer-footer">{composerControls?.(enabled && editor.kind === 'saved' && !responding)}<div className="composer-send-actions"><button disabled={!canSend}>Send</button>
         {run && run.kind !== 'ended' && <button type="button" disabled={!connected || !active.agent.commands.includes('cancel') || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
+      <p className="composer-disclosure">{presentation.footer}</p>
+      </div>
     </form>
     <CommandRecovery view={view} actions={actions} enabled={enabled} canRetry={available} retry={id => active.store.retry(id)} />
   </section>;

@@ -10,6 +10,7 @@ import '../application/application.css';
 import customization from '../application/customization-selection.js';
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
+import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -21,7 +22,6 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
-  const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
   const pendingScope = app.saved.pendingCreation?.scope;
   const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
@@ -29,7 +29,9 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const enabled = applicationEnabled(app) && !suspended;
   const metadata = 'metadata' in app.host ? app.host.metadata : null;
   const choices = metadata?.agents ?? [];
-  const selected = choices.find(agent => agent.id === selectedAgent) ?? choices.find(agent => agent.id === metadata?.defaultAgentId);
+  const selected = choices.find(agent => agent.id === app.active?.agent.id && agent.availability.kind === 'ready')
+    ?? choices.find(agent => agent.id === metadata?.defaultAgentId && agent.availability.kind === 'ready')
+    ?? choices.find(agent => agent.availability.kind === 'ready');
   const options = choices.map(agent => <option key={agent.id} value={agent.id} disabled={agent.availability.kind !== 'ready'}>
     {agent.label}{agent.availability.kind !== 'ready' ? ' · Unavailable' : ''}
   </option>);
@@ -41,11 +43,13 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
         actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} />}
       />
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
         <p>Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.</p>
+        <div className="composer empty-composer"><p>Choose your chat settings.</p><ComposerAgentControls agents={choices} agent={selected ?? null} hasConversation={false} enabled={enabled && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} /></div>
       </section>;
   const controls = <div className="application-controls">
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : 'Settings'}</h2>
@@ -58,10 +62,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     {app.host.kind === 'unpaired' && connectionControls === undefined && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
-        <label className="agent-choice">Agent for new chat<select aria-label="Agent for new chat" disabled={!enabled || app.saved.pendingCreation !== null} value={selected?.id ?? ''} onChange={event => setSelectedAgent(event.target.value)}>{options}</select></label>
         <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
       </div>
-      {selected?.availability.kind === 'unavailable' && <p role="note">{selected.availability.reason}</p>}
       {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
         {app.saved.pendingCreation.agentId === null && <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
           <option value="">Check the saved chat first</option>{options}

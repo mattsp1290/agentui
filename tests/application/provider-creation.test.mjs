@@ -248,17 +248,24 @@ test('browser chooser opens an empty provider conversation, disables Send, and r
   await context.addCookies([{ name: f.cookie.split('=')[0], value: f.cookie.split('=')[1], url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000);
   await page.goto(`${f.running.origin}/browser.html`);
-  const choice = page.getByRole('combobox', { name: 'Agent for new chat', exact: true });
-  await choice.selectOption((await selected(f)).id);
-  const create = page.getByRole('button', { name: 'New conversation', exact: true });
-  await create.click();
+  const agent = await selected(f);
+  const harness = page.getByRole('button', { name: /^Harness,/ });
+  const chooseProvider = async () => {
+    await harness.click();
+    await page.getByRole('button', { name: 'Provider', exact: true }).click();
+    await page.getByRole('button', { name: `Start new chat with ${agent.label}`, exact: true }).click();
+  };
+  await chooseProvider();
   await page.getByRole('alert').filter({ hasText: 'did not create' }).waitFor();
-  assert.equal(await create.isEnabled(), true);
+  assert.equal(await harness.isEnabled(), true);
   assert.equal(await page.locator('.creation-recovery').count(), 0);
-  refuse = false; await create.click();
+  refuse = false; await chooseProvider();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), false);
   assert.match(await page.locator('.composer-footer').textContent(), /Messaging is not available yet/);
+  assert.equal(await page.getByRole('button', { name: 'Harness, Provider', exact: true }).count(), 1);
+  await page.getByRole('button', { name: `Model, ${agent.label}`, exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: `${agent.label}, current model`, exact: true }).isDisabled(), true);
   assert.equal(a.calls.creates.length, 2); assert.equal(a.calls.submits, 0);
 });
 
