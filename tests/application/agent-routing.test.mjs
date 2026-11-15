@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -82,8 +82,11 @@ test('authorized agent API and browser route two recorded agents and retain unav
     await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   };
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  assert.equal(await page.getByRole('combobox', { name: 'Agent for new chat', exact: true }).count(), 0);
   await open('a');
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  assert.deepEqual(await page.getByRole('group', { name: 'Chat settings', exact: true }).getByRole('button').allTextContents(), ['Codex', 'Host default', 'Default']);
+  assert.equal(await page.getByRole('button', { name: 'Effort, Default. Managed by the host.', exact: true }).isDisabled(), true);
   await message.fill('Draft for Codex');
   await open('b');
   assert.match(await page.locator('.composer-footer').textContent(), /Claude.*Sonnet/);
@@ -91,12 +94,23 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-sonnet.png' });
   await open('a');
   assert.equal(await message.inputValue(), 'Draft for Codex');
-  const chooser = page.getByRole('combobox', { name: 'Agent for new chat', exact: true });
-  assert.equal(await chooser.locator('option').filter({ hasText: 'Opus' }).isDisabled(), true);
-  assert.equal(await chooser.locator('option', { hasText: 'Project A · Codex' }).count(), 1);
-  assert.equal(await chooser.locator('option', { hasText: 'Project B · Codex' }).count(), 1);
-  await chooser.selectOption(sonnet.id);
+  const harness = page.getByRole('button', { name: /^Harness,/ });
+  const model = page.getByRole('button', { name: /^Model,/ });
+  mkdirSync('.audit/composer', { recursive: true });
+  await model.click();
+  assert.equal(await page.getByRole('button', { name: 'Project A · Codex, current model', exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'Start new chat with Project B · Codex', exact: true }).count(), 1);
+  await page.screenshot({ path: '.audit/composer/model-menu.png' });
+  await page.keyboard.press('Escape');
+  assert.equal(await model.evaluate(node => node === document.activeElement), true);
+  await harness.click();
+  assert.equal(await page.getByRole('button', { name: 'Pi, unavailable', exact: true }).isDisabled(), true);
+  await page.screenshot({ path: '.audit/composer/harness-menu.png' });
+  await page.getByRole('button', { name: 'Claude', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: `Start new chat with ${opus.label}`, exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).isEnabled(), true);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  assert.equal(await message.inputValue(), 'Draft for Codex');
   let loseCreate = true, dropCreate = false, droppedScope;
   await page.route('**/api/v1', async route => {
     if (dropCreate && route.request().postDataJSON().op === 'create') {
@@ -105,8 +119,10 @@ test('authorized agent API and browser route two recorded agents and retain unav
       loseCreate = false; await route.fetch(); await route.abort();
     } else await route.continue();
   });
-  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
+  assert.equal(await harness.isDisabled(), true);
+  assert.equal(await model.isDisabled(), true);
   await page.reload();
   await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(codex.id);
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
@@ -122,6 +138,9 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-chooser.png' });
   await page.setViewportSize({ width: 360, height: 480 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await harness.click();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1280, height: 720 });
   await open('a');
   assert.equal(await message.inputValue(), 'Draft for Codex');
@@ -150,7 +169,6 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.waitForFunction(() => document.querySelector('.scope-label')?.textContent === 'legacy-absent');
   assert.deepEqual(host.installation({ ...scopeA, conversationId: 'legacy-absent' }), b);
   await open('a');
-  await chooser.selectOption(codex.id);
   dropCreate = true;
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
@@ -180,5 +198,8 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await page.getByRole('button', { name: 'Review the plan', exact: true }).isDisabled(), true);
   assert.equal(await page.getByText('Draft for Codex', { exact: true }).count(), 1);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  await model.click();
+  assert.equal(await page.getByRole('button', { name: 'Codex, current model', exact: true }).isDisabled(), true);
+  await page.keyboard.press('Escape');
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-unavailable.png' });
 });
