@@ -242,14 +242,93 @@ test('bundled CLI hides discovery exceptions, closes acquired resources and perm
   const recovered = f.launch(['serve', '--config', f.config, '--port', '0']); await ready(recovered); await stop(recovered);
 });
 
-test('bundled CLI keeps native config required, rejects empty selection options and limits --extensions to serve', { timeout: 15000 }, async t => {
+test('bundled CLI requires a serving configuration, rejects empty selection options and limits --extensions to serve', { timeout: 15000 }, async t => {
   const f = await fixture(t);
-  const missingNative = f.launch(['serve', '--extensions', f.selection]);
-  assert.equal(await missingNative.exited, 1); assert.match(missingNative.stderr, /Provide --config/);
+  const missingNative = f.launch(['serve']);
+  assert.equal(await missingNative.exited, 1); assert.match(missingNative.stderr, /Provide --config or --extensions/);
   const blank = f.start(['--extensions=']); assert.equal(await blank.exited, 1); assert.match(blank.stderr, /Invalid server extension configuration/);
   for (const command of ['browser-dev', 'codex', 'codex-sdk', 'claude-sdk', 'pi', 'invite', 'invite-native', 'devices', 'revoke']) {
     const failed = f.launch([command, '--extensions', f.selection]);
     assert.equal(await failed.exited, 1); assert.match(failed.stderr, new RegExp(`--extensions is not valid for ${command}`));
     assert.equal(failed.stdout, ''); privateDiagnostics(failed);
   }
+});
+
+for (const trusted of [false, true]) test(`bundled extension-only serve creates and sends with ${trusted ? 'trusted' : 'paired'} browser access and separate native credentials`, { timeout: 20000 }, async t => {
+  const f = await fixture(t);
+  await writeFile(join(f.installed, 'server.mjs'), f.module
+    .replace("discover: () => request('/agents')", 'discover: () => fixture.crewBackend.discover()')
+    .replace("create: operation => request('/create', operation)", 'create: operation => fixture.crewBackend.create(operation)')
+    .replace("submit: operation => request('/send', operation)", 'submit: operation => fixture.crewBackend.submit(operation)'));
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0', ...(trusted ? ['--trusted'] : [])]);
+  const lines = createInterface({ input: running.child.stdout });
+  const info = await Promise.race([new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))), running.exited.then(() => { throw new Error(running.stderr); })]);
+  lines.close();
+  let cookie;
+  async function call(body, path = '/api/v1', headers = {}) {
+    const response = await fetch(info.origin + path, { method: 'POST', signal: AbortSignal.timeout(5000), headers: {
+      'Content-Type': 'application/json', ...(path.startsWith('/native/') ? {} : { Origin: info.origin, ...(cookie ? { Cookie: cookie } : {}) }), ...headers,
+    }, body: JSON.stringify(body) });
+    if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+    return { status: response.status, ...await response.json() };
+  }
+  async function control(args) {
+    const request = f.launch(args); assert.equal(await request.exited, 0, request.stderr); return JSON.parse(request.stdout).value;
+  }
+  assert.equal((await call({ op: 'metadata' })).status, trusted ? 200 : 401);
+  if (!trusted) assert.equal((await call({ op: 'pair', code: (await control(['invite'])).code })).ok, true);
+  const metadata = (await call({ op: 'metadata' })).value;
+  assert.equal(metadata.compatibility.nativeRuntime, null);
+  assert.equal(metadata.compatibility.wireVersion, 6);
+  assert.ok(metadata.agents.length); assert.ok(metadata.agents.every(agent => agent.kind === 'provider'));
+  assert.equal(metadata.defaultAgentId, metadata.agents.filter(agent => agent.availability.kind === 'ready').map(agent => agent.id).sort()[0]);
+  const scope = { hostId: info.hostId, conversationId: 'extension-browser' };
+  assert.deepEqual((await call({ op: 'create', scope, agentId: metadata.defaultAgentId })).value, scope);
+  const sent = await call({ op: 'submit', command: { version: 1, scope, clientCommandId: 'send', body: { kind: 'send', text: 'hello provider' } } });
+  assert.equal(sent.ok, true, JSON.stringify(sent)); assert.equal(sent.value.kind, 'receipt');
+  assert.equal((await call({ op: 'create', scope: { ...scope, conversationId: 'foreign', hostId: 'foreign' }, agentId: metadata.defaultAgentId })).status, 403);
+  const nativePath = '/native/v1';
+  assert.equal((await call({ op: 'metadata' }, nativePath)).status, 401);
+  const nativeInvite = await control(['invite-native']);
+  const native = await call({ version: 1, hostId: info.hostId, code: nativeInvite.code }, nativePath + '/pair');
+  assert.equal(native.status, 200);
+  const authorization = { Authorization: `Bearer ${native.value.secret}` };
+  const nativeMetadata = await call({ op: 'metadata' }, nativePath, authorization);
+  assert.equal(nativeMetadata.status, 200); assert.equal(nativeMetadata.value.defaultAgentId, metadata.defaultAgentId);
+  assert.deepEqual((await call({ op: 'create', scope: { ...scope, conversationId: 'extension-native' }, agentId: metadata.defaultAgentId }, nativePath, authorization)).value, { ...scope, conversationId: 'extension-native' });
+  await control(['revoke', '--id', nativeMetadata.value.principalId]);
+  assert.equal((await call({ op: 'metadata' }, nativePath, authorization)).status, 401);
+  if (!trusted) {
+    assert.equal((await call({ op: 'metadata' }, '/api/v1', { Origin: 'https://foreign.example' })).status, 400);
+    await control(['revoke', '--id', metadata.principalId]);
+    assert.equal((await call({ op: 'metadata' })).status, 401);
+  }
+  assert.equal(existsSync(join(f.directory, 'data', 'recorded.jsonl')), false);
+  await stop(running); privateDiagnostics(running);
+});
+
+for (const [name, change] of [
+  ['empty selection', f => { f.input.extensions = []; return f.save(); }],
+  ['empty discovery', f => writeFile(join(f.installed, 'server.mjs'), f.module.replace("discover: () => request('/agents')", "discover: () => ({ kind: 'available', agents: [] })"))],
+  ['creation unsupported', f => writeFile(join(f.installed, 'server.mjs'), f.module
+    .replace("discover: () => request('/agents')", 'discover: () => fixture.crewBackend.discover()')
+    .replace('...fixture.crewBackend.capabilities, observe:', "...fixture.crewBackend.capabilities, create: { kind: 'unsupported', reason: 'Read only' }, observe:"))],
+]) test(`bundled extension-only serve remains readable with ${name}`, { timeout: 10000 }, async t => {
+  const f = await fixture(t); await change(f);
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
+  const info = await ready(running);
+  const invitation = f.launch(['invite']); assert.equal(await invitation.exited, 0);
+  const pair = await fetch(`${info.origin}/api/v1`, { method: 'POST', headers: { Origin: info.origin, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ op: 'pair', code: JSON.parse(invitation.stdout).value.code }) });
+  const cookie = pair.headers.get('set-cookie').split(';')[0]; await pair.arrayBuffer();
+  const client = (await import('@agentui/client/service')).createBrowserConnection({ fetch: (path, init) => fetch(info.origin + path, {
+    ...init, headers: { ...init.headers, Origin: info.origin, Cookie: cookie },
+  }) });
+  const metadata = await client.metadata();
+  assert.equal(metadata.defaultAgentId, null); assert.equal(metadata.compatibility.nativeRuntime, null);
+  assert.equal(metadata.agents.length, name === 'creation unsupported' ? 1 : 0);
+  assert.ok(metadata.agents.every(agent => agent.availability.kind === 'unavailable'));
+  assert.deepEqual(await client.catalog(), []);
+  assert.equal(existsSync(join(f.directory, 'data', 'recorded.jsonl')), false);
+  await stop(running);
 });

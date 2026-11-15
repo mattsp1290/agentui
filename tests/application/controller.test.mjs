@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@agentui/contracts/service';
-import { EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
@@ -31,7 +31,7 @@ function fixture() {
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION,
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
@@ -964,4 +964,28 @@ test('observation transport failure is local unknown status, and revoked access 
   t.mock.timers.tick(2000); await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
   assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
+});
+
+test('empty provider hosts reject create before saving and retain original pending creation recovery', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.agents = []; f.behavior.runtime = null; f.behavior.defaultId = null;
+  await f.app.start();
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  const before = structuredClone(f.app.getSnapshot().saved);
+  await f.app.create();
+  assert.match(f.app.getSnapshot().error, /No agent is available/);
+  assert.deepEqual(f.app.getSnapshot().saved, before);
+  assert.equal(f.created.length, 0);
+  const original = { scope, agentId: 'original-provider' };
+  f.views.set('original-view/host', { ...empty(), pendingCreation: original });
+  f.behavior.agentLookup = async () => ({ id: 'original-provider', kind: 'provider', label: 'Original',
+    namespace: 'original', protocolVersion: '1', commands: [], availability: { kind: 'unavailable', reason: 'Removed' } });
+  f.behavior.create = async () => { throw new ServiceError('unavailable', 'Original provider unavailable'); };
+  await f.app.reconnect();
+  await f.app.recoverCreation('replacement-provider');
+  assert.equal(f.created.length, 0);
+  await f.app.recoverCreation();
+  assert.deepEqual(f.selected, ['original-provider']);
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, original);
+  assert.match(f.app.getSnapshot().error, /Original provider unavailable/);
 });

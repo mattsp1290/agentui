@@ -4,7 +4,6 @@ import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, DiscoveredProvider, ProviderCreationOperations } from '@agentui/host';
-import { recordedInstallation } from '@agentui/host/recorded';
 import type { Access, CredentialClass, Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
@@ -14,24 +13,26 @@ import type { InstalledAgent } from './agents.js';
 import { canonicalJson } from '@agentui/contracts';
 
 type Request = Exclude<ServiceRequest, { op: 'pair' }>;
+type ApiAgentSelection =
+  | { readonly kind: 'native'; readonly agents: readonly InstalledAgent[]; readonly defaultInstallation: Installation }
+  | { readonly kind: 'extensions' };
 export function createApi(options: {
   readonly access: Access; readonly host: LocalHost<TranscriptEvent, Transcript>;
   readonly compatibility: HostCompatibility; readonly feeds: FeedRegistry;
-  readonly installation?: Installation;
-  readonly agents?: readonly InstalledAgent[];
+  readonly agentSelection: ApiAgentSelection;
   readonly providers?: ProviderCreationOperations & { catalog(): readonly DiscoveredProvider[] };
   readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
 }) {
   const { access, host, feeds } = options;
-  const defaultInstallation = options.installation ?? recordedInstallation;
-  const configured: readonly InstalledAgent[] = options.agents ?? [{ installation: defaultInstallation, availability: { kind: 'ready' } }];
+  const selection = options.agentSelection;
+  const configured = selection.kind === 'native' ? selection.agents : [];
   const agents = new Map(configured.map(entry => {
     const descriptor = describeAgent(entry.installation, entry.availability, entry.model);
     return [canonicalJson(entry.installation), { ...descriptor, label: entry.name ? `${entry.name} · ${descriptor.label}` : descriptor.label }];
   }));
   const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability).id));
-  const defaultAgentId = describeAgent(defaultInstallation, { kind: 'ready' }).id;
-  if (agents.size !== configured.length || !selectable.has(defaultAgentId)) throw new Error('Invalid configured agents');
+  const nativeDefault = selection.kind === 'native' ? describeAgent(selection.defaultInstallation, { kind: 'ready' }).id : null;
+  if (agents.size !== configured.length || (nativeDefault !== null && !selectable.has(nativeDefault))) throw new Error('Invalid configured agents');
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
@@ -62,6 +63,8 @@ export function createApi(options: {
     switch (request.op) {
       case 'metadata': {
         const providerAgents = providerChoices();
+        const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
+          descriptor.availability.kind === 'ready' && (selected === null || descriptor.id < selected) ? descriptor.id : selected, null);
         return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents.values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({

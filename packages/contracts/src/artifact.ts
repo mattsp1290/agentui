@@ -1,5 +1,5 @@
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from './compatibility.js';
-import type { HostCompatibility } from './compatibility.js';
+import type { NativeRuntimeIdentity } from './compatibility.js';
 import { assetInventory, runtimeIdentity, RUNTIME_IDENTITY_FIELDS } from './artifact-data.js';
 import type { ArtifactAsset } from './artifact-data.js';
 import { canonicalJson } from './durable.js';
@@ -13,8 +13,8 @@ export interface ArtifactManifest {
   readonly sourceDirty: SourceDirty;
   readonly wireVersion: typeof SERVICE_WIRE_VERSION;
   readonly extensionSdkVersion: typeof EXTENSION_SDK_VERSION;
-  readonly nativeRuntime: HostCompatibility['nativeRuntime'];
-  readonly artifactRuntime: HostCompatibility['nativeRuntime'];
+  readonly nativeRuntime: NativeRuntimeIdentity;
+  readonly artifactRuntime: NativeRuntimeIdentity;
   readonly lockSha256: string;
   readonly assets: readonly ArtifactAsset[];
   readonly artifactId: string;
