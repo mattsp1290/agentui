@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:http';
@@ -12,6 +13,7 @@ import test from 'node:test';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { createCrewFixture } from '../extensions/providers/contracts/crew.ts';
+import { setup as setupServerArtifact, extension as artifactExtension, write as writeArtifactSource, resigned } from '../customization/build/server-support.mjs';
 
 const main = fileURLToPath(new URL('../../apps/host/dist/main.js', import.meta.url));
 const instance = { namespace: 'example-crew', installationId: 'personal', generation: '1', protocolVersion: 'crew-v2' };
@@ -331,4 +333,114 @@ for (const [name, change] of [
   assert.deepEqual(await client.catalog(), []);
   assert.equal(existsSync(join(f.directory, 'data', 'recorded.jsonl')), false);
   await stop(running);
+});
+
+
+async function artifactFixture(t) {
+  const f = await fixture(t);
+  const source = f.module.replace(new URL('../extensions/providers/contracts/crew.ts', import.meta.url).href, './crew.ts')
+    .replace("discover: () => request('/agents')", `discover: async () => {
+      await context.credentials.use({credential, service}, async value => {if(value !== ${JSON.stringify(secret)}) throw new Error('Wrong credential');});
+      return fixture.crewBackend.discover();
+    }`)
+    .replace("create: operation => request('/create', operation)", 'create: operation => fixture.crewBackend.create(operation)')
+    .replace("submit: operation => request('/send', operation)", 'submit: operation => fixture.crewBackend.submit(operation)');
+  const build = await setupServerArtifact(t, source);
+  await writeArtifactSource(build.repo.directory, 'package.json', { type: 'module', agentui: artifactExtension(instance.namespace) });
+  await writeArtifactSource(build.repo.directory, 'crew.ts', await readFile(new URL('../extensions/providers/contracts/crew.ts', import.meta.url), 'utf8'));
+  const artifact = await build.build();
+  f.input.extensions[0] = { kind: 'artifact', directory: artifact.directory, artifactId: artifact.manifest.artifactId,
+    installations: f.input.extensions[0].installations };
+  await writeFile(f.selection, JSON.stringify(f.input));
+  await rm(f.marker, { force: true });
+  return { ...f, artifact };
+}
+
+test('bundled serve starts a caller-pinned artifact, uses credentials, creates and sends, and disposes on shutdown', { timeout: 20000 }, async t => {
+  const f = await artifactFixture(t);
+  const running = f.launch(['serve', '--extensions', f.selection, '--trusted', '--port', '0']);
+  const lines = createInterface({ input: running.child.stdout });
+  const info = await Promise.race([new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))), running.exited.then(() => { throw new Error(running.stderr); })]);
+  lines.close();
+  const call = async body => {
+    const response = await fetch(info.origin + '/api/v1', { method: 'POST', signal: AbortSignal.timeout(5000),
+      headers: { Origin: info.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return response.json();
+  };
+  const metadata = (await call({ op: 'metadata' })).value;
+  assert.equal(metadata.agents[0].namespace, instance.namespace);
+  assert.equal(metadata.agents[0].availability.kind, 'ready');
+  const scope = { hostId: info.hostId, conversationId: 'artifact-provider' };
+  assert.deepEqual((await call({ op: 'create', scope, agentId: metadata.defaultAgentId })).value, scope);
+  const sent = await call({ op: 'submit', command: { version: 1, scope, clientCommandId: 'artifact-send', body: { kind: 'send', text: 'hello' } } });
+  assert.equal(sent.ok, true); assert.equal(sent.value.kind, 'receipt');
+  assert.deepEqual(JSON.parse(await readFile(f.marker, 'utf8')), { credentialPresent: false });
+  await stop(running); assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\ndispose\n');
+  privateDiagnostics(running);
+});
+
+for (const [name, mutate] of [
+  ['caller pin', async f => { f.input.extensions[0].artifactId = '0'.repeat(64); }],
+  ['bytes', f => writeFile(join(f.artifact.directory, 'entries.mjs'), "throw new Error('PRIVATE_ARTIFACT_TAMPER')")],
+  ['ABI', async f => {
+    const manifest = resigned(f.artifact.manifest, value => { value.runtime.abiIdentity = '0'.repeat(64); });
+    await writeFile(join(f.artifact.directory, 'customization.json'), JSON.stringify(manifest));
+    f.input.extensions[0].artifactId = manifest.artifactId;
+  }],
+  ['Node version', async f => {
+    const manifest = resigned(f.artifact.manifest, value => { value.runtime.version = '0.0.0'; });
+    await writeFile(join(f.artifact.directory, 'customization.json'), JSON.stringify(manifest));
+    f.input.extensions[0].artifactId = manifest.artifactId;
+  }],
+]) test(`artifact ${name} failure prevents earlier installed imports and listener announcement`, { timeout: 15000 }, async t => {
+  const f = await artifactFixture(t);
+  await mutate(f);
+  f.input.extensions.unshift({ directory: f.installed, installations: [] });
+  const installedManifest = { ...f.manifest, namespace: 'earlier' };
+  await writeFile(join(f.installed, 'package.json'), JSON.stringify({ agentui: { extension: installedManifest } }));
+  await writeFile(f.selection, JSON.stringify(f.input));
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
+  assert.equal(await running.exited, 1); assert.equal(running.stdout, '');
+  assert.equal(existsSync(f.marker), false); privateDiagnostics(running);
+  assert.doesNotMatch(running.stderr, /PRIVATE_ARTIFACT_TAMPER/);
+});
+
+test('packaged SDK facade and host use one emitted runtime module graph', async () => {
+  const graph = JSON.parse(await readFile(new URL('../../apps/host/dist/runtime-graph.json', import.meta.url), 'utf8'));
+  const owner = Object.entries(graph.outputs).filter(([, output]) => Object.keys(output.inputs).includes('packages/sdk/dist/extensions.js'));
+  assert.equal(owner.length, 1);
+  const [path] = owner[0];
+  assert.ok(graph.outputs['apps/host/dist/main.js'].imports.some(value => value.path === path));
+  assert.ok(graph.outputs['apps/host/dist/sdk.js'].imports.some(value => value.path === path));
+});
+
+
+test('later selected import failure releases an earlier artifact hook before process cleanup', { timeout: 15000 }, async t => {
+  const f = await artifactFixture(t), cleanup = join(f.directory, 'module-cleanup');
+  const catalog = await readFile(join(f.artifact.directory, 'entries.mjs'), 'utf8');
+  const code = catalog + "\nglobalThis.agentuiArtifactCleanupProbe = () => import('./cleanup-probe.mjs');\n";
+  const lazy = 'export const value = 1;';
+  const inventory = (path, bytes) => ({ path, sha256: createHash('sha256').update(bytes).digest('hex'), size: Buffer.byteLength(bytes) });
+  const manifest = resigned(f.artifact.manifest, value => {
+    value.assets = value.assets.filter(asset => asset.path !== 'entries.mjs');
+    value.assets.push(inventory('entries.mjs', code), inventory('cleanup-probe.mjs', lazy));
+    value.assets.sort((a, b) => a.path.localeCompare(b.path));
+  });
+  await writeFile(join(f.artifact.directory, 'entries.mjs'), code);
+  await writeFile(join(f.artifact.directory, 'cleanup-probe.mjs'), lazy);
+  await writeFile(join(f.artifact.directory, 'customization.json'), JSON.stringify(manifest));
+  f.input.extensions[0].artifactId = manifest.artifactId;
+  f.input.extensions.push({ directory: f.installed, installations: [] });
+  await writeFile(join(f.installed, 'package.json'), JSON.stringify({ agentui: { extension: { ...f.manifest, namespace: 'later' } } }));
+  await writeFile(join(f.installed, 'server.mjs'), `import {writeFileSync} from 'node:fs';
+    setImmediate(async () => {
+      try { await globalThis.agentuiArtifactCleanupProbe(); writeFileSync(${JSON.stringify(cleanup)}, 'leaked'); }
+      catch { writeFileSync(${JSON.stringify(cleanup)}, 'released'); }
+    });
+    throw new Error('PRIVATE_LATER_IMPORT_FAILURE');`);
+  await writeFile(f.selection, JSON.stringify(f.input));
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
+  assert.equal(await running.exited, 1); assert.equal(running.stdout, '');
+  assert.equal(await readFile(cleanup, 'utf8'), 'released');
+  privateDiagnostics(running); assert.doesNotMatch(running.stderr, /PRIVATE_LATER_IMPORT_FAILURE/);
 });

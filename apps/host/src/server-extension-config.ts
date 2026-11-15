@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
-import { identifier, record } from '@agentui/contracts/decode';
+import { hex, identifier, record } from '@agentui/contracts/decode';
 import { providerIdentity } from '@agentui/host';
+import { parseServerCustomizationArtifact, serverCatalog } from '@agentui/host/customization';
 import { EXTENSION_SDK_VERSION, parseExtensionManifest } from '@agentui/sdk';
 import { normalizeProviderInstallations } from './provider-credentials.js';
 import type { ProviderInstallation } from './provider-credentials.js';
@@ -23,6 +24,13 @@ function authentication(value: unknown, environment: Readonly<Record<string, str
   return { kind: 'secret', revision, resolve: async () => secret };
 }
 
+function installation(value: unknown, environment: Readonly<Record<string, string | undefined>>, variables: Set<string>): ProviderInstallation {
+  const grant = record(value, ['id', 'instance', 'service', 'expectedAuthority', 'authentication']);
+  if (grant.expectedAuthority !== 'agentui-host' && grant.expectedAuthority !== 'remote-provider') throw new Error('Invalid authority');
+  return { id: identifier(grant.id), instance: providerIdentity(grant.instance), service: identifier(grant.service),
+    expectedAuthority: grant.expectedAuthority, authentication: authentication(grant.authentication, environment, variables) };
+}
+
 export function takeServerExtensionConfiguration(path: string, environment: Record<string, string | undefined>): readonly BrowserProviderExtension[] {
   try {
     const filename = resolve(path);
@@ -31,21 +39,32 @@ export function takeServerExtensionConfiguration(path: string, environment: Reco
     const namespaces = new Set<string>();
     const variables = new Set<string>();
     const extensions = input.extensions.map((value: unknown): BrowserProviderExtension => {
-      const selected = record(value, ['directory', 'installations']);
+      const candidate = record(value);
+      const selected = candidate.kind === 'artifact' ? record(value, ['kind', 'directory', 'artifactId', 'installations'])
+        : record(value, ['directory', 'installations']);
       const directoryName = identifier(selected.directory);
       if (!directoryName.trim() || !Array.isArray(selected.installations)) throw new Error('Invalid installation');
       const directory = resolve(dirname(filename), directoryName);
+      if (candidate.kind === 'artifact') {
+        const artifactId = hex(selected.artifactId, 64);
+        const artifact = parseServerCustomizationArtifact(JSON.parse(readFileSync(join(directory, 'customization.json'), 'utf8')));
+        if (artifact.artifactId !== artifactId) throw new Error('Invalid artifact selection');
+        const manifests = serverCatalog(artifact.packages, artifact.sdkVersion).manifests;
+        for (const manifest of manifests) {
+          if (namespaces.has(manifest.namespace)) throw new Error('Invalid manifest selection');
+          namespaces.add(manifest.namespace);
+        }
+        const installations = selected.installations.map((value: unknown) => installation(value, environment, variables));
+        for (const grant of installations) if (!manifests.some(manifest => manifest.namespace === grant.instance.namespace)) throw new Error('Invalid installation');
+        for (const manifest of manifests) normalizeProviderInstallations(manifest.namespace, installations.filter(grant => grant.instance.namespace === manifest.namespace));
+        return { kind: 'artifact', directory, artifactId, installations };
+      }
       const metadata = record(JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')));
       const manifest = parseExtensionManifest(record(metadata.agentui).extension);
       if (manifest.sdkVersion !== EXTENSION_SDK_VERSION || !manifest.entries.some(entry => entry.kind === 'server') ||
         namespaces.has(manifest.namespace)) throw new Error('Invalid manifest selection');
       namespaces.add(manifest.namespace);
-      const installations = selected.installations.map((value: unknown): ProviderInstallation => {
-        const grant = record(value, ['id', 'instance', 'service', 'expectedAuthority', 'authentication']);
-        if (grant.expectedAuthority !== 'agentui-host' && grant.expectedAuthority !== 'remote-provider') throw new Error('Invalid authority');
-        return { id: identifier(grant.id), instance: providerIdentity(grant.instance), service: identifier(grant.service),
-          expectedAuthority: grant.expectedAuthority, authentication: authentication(grant.authentication, environment, variables) };
-      });
+      const installations = selected.installations.map((value: unknown) => installation(value, environment, variables));
       return { kind: 'installed', directory, manifest, installations: normalizeProviderInstallations(manifest.namespace, installations) };
     });
     for (const variable of variables) delete environment[variable];

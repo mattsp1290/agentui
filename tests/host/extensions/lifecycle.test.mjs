@@ -245,3 +245,15 @@ test('mutating replacement results cannot clear cleanup failure while shutdown o
   assert.equal(old.calls.dispose, 1); assert.equal(next.calls.import, 0);
   assert.throws(() => ownDirectory(configured.directory), /Another host owns/);
 });
+
+test('artifact candidates require restart without disturbing an active installed generation', async t => {
+  const fixture = entry(t), configured = options(t);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [fixture.value] });
+  try {
+    const before = host.extensionStatus();
+    assert.deepEqual(await host.replaceProviderExtensions([{ kind: 'artifact', directory: '/missing', artifactId: '0'.repeat(64), installations: [] }]), { kind: 'unavailable' });
+    assert.deepEqual(host.extensionStatus(), before);
+    assert.equal((await host.discoverProviders())[0].agents[0].name, 'entry');
+    assert.equal(fixture.calls.close, 0); assert.equal(fixture.calls.dispose, 0);
+  } finally { await host.close(); }
+});
