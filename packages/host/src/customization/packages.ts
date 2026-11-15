@@ -134,12 +134,13 @@ async function npmOwner(ctx: AnalysisContext, selected: Member): Promise<NpmOwne
 }
 function declarations(ctx: AnalysisContext, pkg: Record<string, unknown>, groups: readonly string[]): Declaration[] {
   const result: Declaration[] = [];
+  let peerMetadata: Record<string, unknown> | undefined;
   for (const group of groups) {
     for (const [name, spec] of Object.entries(pkg[group] === undefined ? {} : record(pkg[group]))) {
       ctx.budget.check();
       if (typeof spec !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name) ||
         name.split('/').some(part => part === '.' || part === '..')) throw new Error('Invalid dependency');
-      const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
+      const meta = peerMetadata ??= pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
       const peer = group === 'peerDependencies';
       result.push({ name, spec, peer, optional: peer && Object.hasOwn(meta, name) && record(meta[name]).optional === true });
     }
