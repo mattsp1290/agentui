@@ -1,14 +1,14 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { readArtifact, readArtifactBytes, readInstalledArtifact } from '../../apps/host/build/tsc/artifact.js';
 import { parseArtifactManifest, artifactIdentityText } from '@agentui/contracts/artifact';
-import { stageNativeArtifact } from '../../scripts/stage-native-artifact.mjs';
+import { createNativeOutput, stageNativeArtifact } from '../../scripts/stage-native-artifact.mjs';
 
 const generator = fileURLToPath(new URL('../../scripts/artifact-manifest.mjs', import.meta.url));
 function fixture(t) {
@@ -175,6 +175,23 @@ test('native staging uses retained bytes even if input files change after verifi
   await staging;
   assert.deepEqual(readArtifactBytes(out, 'browser-development'), before);
 });
+
+for (const alias of [false, true]) {
+  test(`native output rejects artifact descendants through ${alias ? 'symlinked' : 'direct'} parents without changing input`, async t => {
+    const f = fixture(t), artifact = join(f.root, 'apps/desktop/web-dist-browser');
+    f.put('apps/desktop/web-dist-browser/browser.html', '<title>Browser</title>');
+    const manifest = f.build('browser-development'), before = readArtifactBytes(artifact, 'browser-development');
+    const parent = alias ? join(f.root, 'artifact-alias') : artifact;
+    if (alias) symlinkSync(artifact, parent);
+    const out = join(parent, 'native-build');
+    await assert.rejects(createNativeOutput({ artifact, out }), /inside the input artifact/);
+    assert.equal(existsSync(out), false);
+    assert.deepEqual(readArtifactBytes(artifact, 'browser-development'), before);
+    await assert.rejects(stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), /inside the input artifact/);
+    assert.equal(existsSync(out), false);
+    assert.deepEqual(readArtifactBytes(artifact, 'browser-development'), before);
+  });
+}
 
 test('native staging rejects wrong IDs, tampering, symlinks, and old browser-only output before creating a stage', async t => {
   const f = fixture(t), artifact = join(f.root, 'apps/desktop/web-dist-browser'), out = join(f.root, 'native');

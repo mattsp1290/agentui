@@ -1,9 +1,9 @@
 import { execFileSync } from 'node:child_process';
-import { lstat, mkdir, realpath, rm, writeFile } from 'node:fs/promises';
+import { lstat, realpath, rm, writeFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
-import { stageNativeArtifact } from './stage-native-artifact.mjs';
+import { createNativeOutput, stageNativeArtifact } from './stage-native-artifact.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: Object.fromEntries(['artifact', 'artifact-id', 'out'].map(name => [name, { type: 'string' }])) });
@@ -14,7 +14,7 @@ if (process.platform !== 'darwin' || !['arm64', 'x64'].includes(process.arch)) {
   throw new Error('Native customization packaging requires an arm64 or x64 Mac');
 }
 const out = resolve(values.out);
-await mkdir(out, { mode: 0o700 });
+await createNativeOutput({ artifact: resolve(values.artifact), out });
 let complete = false;
 try {
   const directory = await realpath(out);
