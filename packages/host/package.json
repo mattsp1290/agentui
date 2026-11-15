@@ -47,7 +47,7 @@
     "@ag-ui/core": "file:../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-core-1.0.4.tgz",
     "@agentui/contracts": "0.0.0",
     "@agentui/sdk": "0.0.0",
-    "@agentui/switchboard-claude": "file:../../vendor/switchboard-b4744816ea4010ef7f517bedbf6ed52eb07ff067.tgz",
+    "@agentui/switchboard-claude": "file:../../vendor/switchboard-044d8672680b516b0f58da9cdc1161461c81f01c.tgz",
     "@agentui/switchboard-codex": "file:../../vendor/switchboard-a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c.tgz",
     "@agentui/switchboard-pi": "file:../../vendor/switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
     "@anthropic-ai/claude-agent-sdk": "0.3.323",
