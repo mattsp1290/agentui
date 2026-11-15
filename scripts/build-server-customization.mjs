@@ -1,4 +1,5 @@
 import { parseArgs } from 'node:util';
+import { CustomizationError } from '@agentui/host/customization';
 import { buildServerCustomization } from './server-customization.mjs';
 
 try {
@@ -8,6 +9,6 @@ try {
     ...(values.subdirectory ? { subdirectory: values.subdirectory } : {}) }, out: values.out });
   console.log(JSON.stringify({ directory: result.directory, artifactId: result.manifest.artifactId, root: result.manifest.root }));
 } catch (error) {
-  console.error(typeof error.code === 'string' && /^[a-z-]+$/u.test(error.code) ? error.message : 'Usage: build-server-customization.mjs --repository PATH --commit FULL_COMMIT --out FRESH_DIRECTORY [--subdirectory PATH]');
+  console.error(error instanceof CustomizationError ? error.message : 'Usage: build-server-customization.mjs --repository PATH --commit FULL_COMMIT --out FRESH_DIRECTORY [--subdirectory PATH]');
   process.exitCode = 1;
 }

@@ -13,7 +13,7 @@ const diagnostics = {
   'resource-limit': 'Customization preparation resource limit exceeded.',
   'preparation-failed': 'Could not prepare committed customization sources.',
 };
-const failure = code => Object.assign(new Error(diagnostics[code]), { code });
+const failure = code => new CustomizationError(code, diagnostics[code]);
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 async function validateInstalledPackages(directory, packages, check) {
@@ -220,7 +220,7 @@ export async function prepareCustomizationSources(input) {
   } catch (error) {
     await sources?.dispose();
     await dispose();
-    if (error instanceof CustomizationError || Object.hasOwn(diagnostics, error.code)) throw error;
+    if (error instanceof CustomizationError) throw error;
     throw failure('preparation-failed');
   }
 }

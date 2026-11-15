@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, readFile, readdir, rm } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
-import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { tarball } from './preparation-support.mjs';
-import { setup, extension, validSource, write } from './server-support.mjs';
+import { clean, valueFromCatalog, setup, extension, validSource, write } from './server-support.mjs';
 
 async function dependencies(f, definitions) {
   const dependencies = {}, packages = {};
@@ -18,20 +16,6 @@ async function dependencies(f, definitions) {
   const root = { name: 'fixture', version: '1.0.0', dependencies };
   await write(f.repo.directory, 'package.json', { ...root, type: 'module', packageManager: 'npm@11.19.1', agentui: extension('fixture') });
   await write(f.repo.directory, 'package-lock.json', { name: root.name, version: root.version, lockfileVersion: 3, packages: { '': root, ...packages } });
-}
-
-async function valueFromCatalog(built) {
-  const abi = await serverCustomizationAbi();
-  const program = `import {registerHooks} from 'node:module';
-    registerHooks({resolve(s,c,n){return s==='@agentui/sdk'?{url:${JSON.stringify(abi.imports['@agentui/sdk'])},shortCircuit:true}:n(s,c)}});
-    const {entries}=await import(${JSON.stringify(pathToFileURL(join(built.directory, 'entries.mjs')).href)});
-    process.stdout.write(JSON.stringify(entries[0].activate().value));`;
-  return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { cwd: built.directory, encoding: 'utf8' }));
-}
-
-async function clean(f, output) {
-  await assert.rejects(access(join(f.root, output)), { code: 'ENOENT' });
-  assert.deepEqual((await readdir(f.root)).filter(name => name.startsWith('.agentui-server-')), []);
 }
 
 test('retains Node import, require, and main semantics after locked sources are disposed', async t => {

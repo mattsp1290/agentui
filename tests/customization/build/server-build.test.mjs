@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { access, cp, readFile, readdir, realpath, rm } from 'node:fs/promises';
+import { access, cp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { pathToFileURL } from 'node:url';
-import { readServerCustomizationArtifact } from '@agentui/host/customization';
-import { qualifyServerCatalog, serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
-import { locked, tarball } from './preparation-support.mjs';
-import { setup, extension, expectation, validSource, write } from './server-support.mjs';
-
-async function clean(f, absent = 'bad') {
-  await assert.rejects(access(join(f.root, absent)));
-  assert.deepEqual((await readdir(f.root)).filter(name => name.startsWith('.agentui-server-')), []);
-}
+import { CustomizationError, serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
+import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
+import { qualifyServerCatalog } from '../../../scripts/server-customization-qualifier.mjs';
+import { execute, locked, tarball } from './preparation-support.mjs';
+import { clean, valueFromCatalog, setup, extension, expectation, validSource, write } from './server-support.mjs';
 
 test('builds stable committed server bytes, excludes dirty files, and retains verified assets', async t => {
   const f = await setup(t);
@@ -46,9 +41,7 @@ test('bundles real locked dependencies while ignoring author build and compiler 
   await write(f.repo.directory, 'vite.config.ts', "throw new Error('must not run')");
   await write(f.repo.directory, 'index.ts', `import value from 'value'; ${validSource.replace('return {dispose(){}}', 'return {value, dispose(){}}')}`);
   const built = await f.build();
-  const abi = await serverCustomizationAbi();
-  const program = `import {registerHooks} from 'node:module'; registerHooks({resolve(s,c,n){return s==='@agentui/sdk'?{url:${JSON.stringify(abi.imports['@agentui/sdk'])},shortCircuit:true}:n(s,c)}}); const {entries}=await import(${JSON.stringify(pathToFileURL(join(built.directory, 'entries.mjs')).href)}); process.stdout.write(entries[0].activate().value);`;
-  assert.equal(execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8' }), 'value@1.0.0');
+  assert.equal(await valueFromCatalog(built), 'value@1.0.0');
   assert.equal(built.manifest.packages[0].npm.kind, 'locked');
   assert.match(built.manifest.packages[0].npm.identity, /^[a-f0-9]{64}$/u);
   await clean(f);
@@ -70,8 +63,68 @@ test('deduplicates external diamond and selected monorepo siblings in determinis
   await write(f.repo.directory, 'package.json', { type: 'module', agentui: extension('fixture', { extensions: refs }) });
   const result = await f.build();
   assert.deepEqual(result.manifest.packages.map(pkg => pkg.local.manifest.namespace), ['fixture', 'left', 'leaf', 'right']);
-  assert.equal(result.manifest.packages[0].extensions[0], result.manifest.packages[0].extensions[2]);
+  assert.deepEqual(result.manifest.packages[0].extensions[0], result.manifest.packages[0].extensions[2]);
   assert.deepEqual(result.manifest.entries.map(entry => entry.index), [0, 1, 2, 3]);
+  const reordered = structuredClone(result.manifest);
+  [reordered.packages[1], reordered.packages[2]] = [reordered.packages[2], reordered.packages[1]];
+  const { artifactId: _, ...body } = reordered;
+  reordered.artifactId = serverCustomizationArtifactId(body);
+  assert.throws(() => parseServerCustomizationArtifact(reordered), /Invalid server customization artifact/u);
+});
+
+test('retains every pinned commit while compiling identical child content once', async t => {
+  const f = await setup(t, validSource.replace('return {dispose(){}}', 'return {value:globalThis.childLoads,dispose(){}}'));
+  const child = await f.repository('child');
+  await write(child.directory, 'package.json', { agentui: extension('child') });
+  await write(child.directory, 'index.ts', `globalThis.childLoads=(globalThis.childLoads??0)+1; ${validSource}`);
+  const first = child.commit(), second = child.commit();
+  assert.notEqual(first, second);
+  assert.equal(execute('git', ['rev-parse', `${first}^{tree}`], child.directory), execute('git', ['rev-parse', `${second}^{tree}`], child.directory));
+  const build = async (commits, name) => {
+    await write(f.repo.directory, 'package.json', { agentui: extension('fixture', { extensions: commits.map(commit => child.reference(commit)) }) });
+    return f.build(undefined, name);
+  };
+  const initial = await build([first, first], 'initial');
+  const built = await build([first, second], 'both');
+  const [root, representative] = built.manifest.packages;
+  assert.equal(built.manifest.packages.length, 2);
+  assert.equal(built.manifest.entries.length, 2);
+  assert.equal(representative.commit, first);
+  assert.equal(representative.identity, initial.manifest.packages[1].identity);
+  assert.deepEqual(root.extensions, [first, second].map(commit => ({ packageIdentity: representative.identity, commit })));
+  assert.equal(await valueFromCatalog(built), 1);
+  assert.deepEqual(await readFile(join(initial.directory, 'entries.mjs')), await readFile(join(built.directory, 'entries.mjs')));
+  assert.notEqual(initial.manifest.artifactId, built.manifest.artifactId);
+  const verified = await readServerCustomizationArtifact({ directory: built.directory, expected: expectation(built.manifest) });
+  assert.deepEqual(verified.manifest, built.manifest);
+  const changed = structuredClone(built.manifest);
+  changed.packages[0].extensions[1].commit = first;
+  const { artifactId: _, ...body } = changed;
+  changed.artifactId = serverCustomizationArtifactId(body);
+  assert.notEqual(changed.artifactId, built.manifest.artifactId);
+  assert.deepEqual(parseServerCustomizationArtifact(changed), changed);
+
+  for (const [name, mutate] of [
+    ['legacy string edge', value => { value.packages[0].extensions[0] = representative.identity; }],
+    ['missing edge field', value => { delete value.packages[0].extensions[0].commit; }],
+    ['extra edge field', value => { value.packages[0].extensions[0].subdirectory = ''; }],
+    ['malformed edge identity', value => { value.packages[0].extensions[0].packageIdentity = 'bad'; }],
+    ['malformed edge commit', value => { value.packages[0].extensions[0].commit = 'bad'; }],
+    ['unknown edge target', value => { value.packages[0].extensions[0].packageIdentity = '0'.repeat(64); }],
+    ['unreachable package', value => { value.packages[0].extensions = []; }],
+    ['cycle', value => { value.packages[1].extensions.push({ packageIdentity: root.identity, commit: root.commit }); }],
+    ['wrong package order', value => { value.packages.reverse(); }],
+    ['unreferenced representative', value => { value.packages[1].commit = '0'.repeat(40); }],
+    ['missing representative edge', value => { value.packages[0].extensions[0].commit = second; }],
+  ]) {
+    await t.test(name, () => {
+      const invalid = structuredClone(built.manifest);
+      mutate(invalid);
+      const { artifactId: _, ...body } = invalid;
+      invalid.artifactId = serverCustomizationArtifactId(body);
+      assert.throws(() => parseServerCustomizationArtifact(invalid), /Invalid server customization artifact/u);
+    });
+  }
 });
 
 test('rejects duplicate namespaces across distinct graph packages', async t => {
@@ -101,7 +154,7 @@ for (const [name, source, code] of [
     const good = await f.build();
     const previous = await readFile(join(good.directory, 'entries.mjs'));
     await write(f.repo.directory, 'index.ts', source);
-    await assert.rejects(f.build(undefined, 'bad'), error => { assert.equal(error.code, code); assert.ok(!error.message.includes('SOURCE_SECRET')); return true; });
+    await assert.rejects(f.build(undefined, 'bad'), error => { assert.ok(error instanceof CustomizationError); assert.equal(error.code, code); assert.ok(!error.message.includes('SOURCE_SECRET')); return true; });
     assert.deepEqual(await readFile(join(good.directory, 'entries.mjs')), previous);
     await clean(f);
   });
@@ -125,7 +178,11 @@ test('install failure cleans owned staging and leaves a previous artifact intact
   lock.packages['node_modules/value'].integrity = 'sha512-' + 'A'.repeat(86) + '==';
   await write(f.repo.directory, 'package.json', pkg);
   await write(f.repo.directory, 'package-lock.json', lock);
-  await assert.rejects(f.build(undefined, 'bad'), { code: 'install-failed' });
+  await assert.rejects(f.build(undefined, 'bad'), error => {
+    assert.ok(error instanceof CustomizationError);
+    assert.equal(error.code, 'install-failed');
+    return true;
+  });
   await access(join(good.directory, 'entries.mjs'));
   await clean(f);
 });
@@ -140,7 +197,7 @@ test('refuses overwrites and does not remove somebody else\'s output', async t =
 
 test('rejects mutation of emitted bytes during actual catalog qualification', async t => {
   const f = await setup(t, `import {writeFileSync} from 'node:fs'; writeFileSync(new URL('./entries.mjs',import.meta.url),'changed'); ${validSource}`);
-  await assert.rejects(f.build(undefined, 'bad'));
+  await assert.rejects(f.build(undefined, 'bad'), { code: 'artifact-changed' });
   await clean(f);
 });
 
@@ -183,5 +240,51 @@ test('bundles locked workspace imports across external members and qualifies rel
   await rm(f.repo.directory, { recursive: true });
   await rm(repo.directory, { recursive: true });
   await rm(built.directory, { recursive: true });
-  await qualifyServerCatalog({ directory: await realpath(relocated), manifest: built.manifest, abi: await serverCustomizationAbi() });
+  await qualifyServerCatalog({ directory: await realpath(relocated), manifest: built.manifest, manifests: serverCatalog(built.manifest.packages, built.manifest.sdkVersion).manifests, abi: await serverCustomizationAbi() });
+});
+
+test('preserves canonical source errors through build and CLI boundaries', async t => {
+  const f = await setup(t);
+  await assert.rejects(f.build('bad-commit', 'bad'), error => {
+    assert.ok(error instanceof CustomizationError);
+    assert.equal(error.code, 'invalid-input');
+    return true;
+  });
+  await clean(f);
+  assert.throws(() => execFileSync(process.execPath, ['scripts/build-server-customization.mjs', '--repository', f.repo.directory,
+    '--commit', 'bad-commit', '--out', join(f.root, 'bad')], { encoding: 'utf8', stdio: 'pipe' }),
+  error => { assert.equal(error.stderr.trim(), 'Expected a full immutable Git commit ID.'); return true; });
+  await clean(f);
+});
+
+test('supports shared module declarations and canonicalizes a symlinked output parent', async t => {
+  const f = await setup(t);
+  const agentui = extension('fixture');
+  agentui.extension.entries.push({ kind: 'desktop', module: './server.mjs' });
+  await write(f.repo.directory, 'package.json', { agentui });
+  await mkdir(join(f.root, 'physical'));
+  await symlink(join(f.root, 'physical'), join(f.root, 'alias'));
+  const built = await f.build(undefined, 'alias/artifact');
+  assert.equal(built.directory, await realpath(join(f.root, 'physical/artifact')));
+  assert.equal(built.manifest.packages[0].local.sources.length, 1);
+});
+
+test('only one concurrent publisher owns a fresh output and failed overwrite preserves it', async t => {
+  const f = await setup(t);
+  const commit = f.repo.commit();
+  const results = await Promise.allSettled([f.build(commit), f.build(commit)]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  const failed = results.find(result => result.status === 'rejected');
+  assert.equal(failed.reason.code, 'output-exists');
+  const manifest = JSON.parse(await readFile(join(f.root, 'artifact/customization.json'), 'utf8'));
+  await readServerCustomizationArtifact({ directory: join(f.root, 'artifact'), expected: expectation(manifest) });
+});
+
+test('rejects unsupported native addons and lazy CommonJS builtin loading', async t => {
+  for (const source of ["import './addon.node';" + validSource,
+    `export default {kind:'server',sdkVersion:'1',activate(){return require('node:fs')}};`]) {
+    const f = await setup(t, source);
+    await write(f.repo.directory, 'addon.node', 'not a native module');
+    await assert.rejects(f.build(), { code: 'build-failed' });
+  }
 });

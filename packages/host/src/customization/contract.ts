@@ -5,9 +5,24 @@ import { record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 
 export type CustomizationErrorCode = 'invalid-input' | 'invalid-package' | 'path' |
-  'unsupported-tree-entry' | 'unknown-commit' | 'access' | 'retrieval-failed' | 'resource-limit';
+  'unsupported-tree-entry' | 'unknown-commit' | 'access' | 'retrieval-failed' | 'resource-limit' | 'toolchain-mismatch' | 'install-failed' | 'input-mutation' |
+  'preparation-failed' | keyof typeof serverDiagnostics;
+
+const serverDiagnostics = {
+  'output-exists': 'Server customization output must be a fresh directory.',
+  'invalid-graph': 'Server customization requires unique namespaces and compatible server entries.',
+  'build-failed': 'Could not compile server customization sources.',
+  'artifact-changed': 'Server customization output changed during validation.',
+  'publication-failed': 'Could not publish server customization artifact.',
+  'toolchain-mismatch': 'Server customization requires Node >=24.22.3 <25.',
+  'entry-validation': 'Server customization entry validation failed.',
+};
 
 export class CustomizationError extends Error {
+  static server(code: keyof typeof serverDiagnostics): CustomizationError {
+    return new CustomizationError(code, serverDiagnostics[code]);
+  }
+
   constructor(readonly code: CustomizationErrorCode, message: string) {
     super(message);
     this.name = 'CustomizationError';

@@ -2,6 +2,8 @@
 
 Build a pinned committed source graph into a fresh directory with Node >=24.22.3 <25 and npm 11.19.1. The builder checks Node before creating output directories, including graphs without npm dependencies. Source preparation checks npm when an installation is required.
 
+First run `npm ci` and `npm run build` from the AgentUI checkout. The CLI imports the built host and SDK workspace exports.
+
 ```sh
 node scripts/build-server-customization.mjs \
   --repository /path/to/customization \
@@ -16,6 +18,8 @@ The builder calls source preparation once. It bundles committed JavaScript or Ty
 TypeScript sources include `.ts`, `.tsx`, `.mts`, and `.cts` files. Package exports select the `import` or `require` condition for each dependency reference, with the common `node` condition enabled. Packages without exports use `main`, without preferring the bundler-specific `module` field. Static CommonJS dependencies are bundled.
 
 `customization.json` contains immutable root and package provenance, full committed file inventories, source mappings, npm lock identities and inputs, graph edges, catalog entry indexes, builder implementation identity, exact SDK and Node versions, Node module ABI, host SDK ABI identity, and sorted emitted file hashes. Its artifact ID hashes canonical metadata. Temporary directories and dirty or untracked author files never enter the artifact.
+
+Each package's `extensions` contains ordered `{ packageIdentity, commit }` edges. The target package supplies the selected subdirectory and committed content identity. Different commits with identical content share one package and one catalog contribution, while each edge retains its pinned commit. A package's `commit` is the representative used for compilation. Every non-root representative commit must appear on an incoming edge. Edge commits can differ from that representative and remain part of the artifact ID.
 
 Before publication, a bounded Node child imports the actual emitted catalog and checks each export with `checkExtensionEntrypoint`. It never calls `activate`. Output bytes must remain unchanged throughout qualification. Failure removes owned staging and the fresh reservation. Existing output directories are rejected and previous artifacts survive failures.
 
@@ -32,12 +36,12 @@ const manifest = verified.manifest;
 const catalogBytes = verified.readAsset(manifest.catalog);
 ```
 
-All expectations are mandatory and belong to the caller. The reader checks the complete inventory, hashes, provenance structure, compatibility, and pinned artifact ID before retaining bytes. `readAsset` returns a copy of retained bytes, so later filesystem changes cannot change the verified result. The reader executes no customization code.
+All expectations are mandatory and belong to the caller. The reader checks the complete inventory, hashes, provenance structure, compatibility, and pinned artifact ID before retaining bytes. `readAsset` returns a copy of retained bytes, so later filesystem changes cannot change the verified result. The reader executes no customization code. Its result has the named type `VerifiedServerCustomizationArtifact`. The raw parser and artifact ID helpers are metadata utilities only; they do not verify retained bytes or authorize execution.
 
 ## Host ABI and scope
 
 The only host-provided author import is `@agentui/sdk`. Supported Node builtins also remain external. Imports of `module` and `node:module` are unsupported, including `createRequire` and explicit loader registration. Other `@agentui/*` imports, SDK subpaths, native addons, nonliteral dependency imports, and residual runtime CommonJS package loading are unsupported. Ordinary dependencies must resolve inside prepared repositories and validated npm installations. Host `node_modules` cannot supply missing customization dependencies.
 
-`scripts/server-customization-abi.mjs` owns `serverCustomizationAbi()`. It returns the exact SDK specifier map and a digest of the reachable installed public SDK runtime graph, including package versions and file bytes. Workspace version `0.0.0` alone does not identify an ABI. The qualification child uses this map through Node `registerHooks`. A future consumer must compute the same identity and use the same map when importing retained artifact modules. A plain filesystem import without that mapping is unsupported.
+`scripts/server-customization-abi.mjs` owns `serverCustomizationAbi()`. It returns the exact SDK specifier map and a digest of the reachable installed public SDK runtime graph, including package versions and file bytes. Workspace version `0.0.0` alone does not identify an ABI. `scripts/server-catalog-loader.mjs` exports `registerServerCatalogHooks({ imports, allowed })`. The qualification child and consumer tests use this module to map the SDK specifier and restrict resolved URLs to the SDK graph and artifact assets. `scripts/server-customization-qualifier.mjs` passes the catalog and canonical manifests to the real child module over stdin, with a five-second timeout and 16 KiB output limit. A future consumer must compute the same identity and use the same map when importing retained artifact modules. A plain filesystem import without that mapping is unsupported.
 
 This is a server extension catalog. It is separate from the complete application artifact contract. Desktop and iOS production, importing retained modules, provider activation, version selection, refresh, and rollback belong to future consumers. Qualification executes trusted top-level code with process privileges. It establishes import and export compatibility, not a sandbox or successful provider activation.

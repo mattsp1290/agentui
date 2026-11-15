@@ -3,22 +3,20 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { count, hex, nonempty, record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
-import { commitId, containedPath, identity } from './contract.js';
-import type { SourceFile } from './repository.js';
+import { commitId, containedPath, CustomizationError, identity } from './contract.js';
+import { treeIdentity, type CommittedInputs, type SourceFile } from './repository.js';
+import { npmIdentity, type NpmInputs } from './packages.js';
+import { packageIdentity } from './sources.js';
 
 export interface ServerArtifactPackage {
   readonly identity: string;
   readonly commit: string;
   readonly subdirectory: string;
-  readonly inputs: { readonly identity: string; readonly files: readonly SourceFile[] };
-  readonly npm: { readonly kind: 'absent' } | {
-    readonly kind: 'locked'; readonly identity: string; readonly packageManager: 'npm@11.19.1';
-    readonly directory: string; readonly packageJson: SourceFile; readonly lockfile: SourceFile;
-    readonly workspaces: readonly SourceFile[]; readonly localInputs: readonly SourceFile[];
-  };
+  readonly inputs: CommittedInputs;
+  readonly npm: NpmInputs;
   readonly local: { readonly manifest: ExtensionManifest; readonly sources: readonly { readonly module: string; readonly source: string }[] } | null;
   readonly shared: string | null;
-  readonly extensions: readonly string[];
+  readonly extensions: readonly { readonly packageIdentity: string; readonly commit: string }[];
 }
 export interface ServerCustomizationArtifact {
   readonly schemaVersion: 1;
@@ -62,8 +60,10 @@ function parsePackage(value: unknown): ServerArtifactPackage {
   const rawInputs = record(input.inputs, ['identity', 'files']);
   const inputs = { identity: hex(rawInputs.identity, 64), files: files(rawInputs.files) };
   const subdirectory = directory(input.subdirectory);
-  const packageIdentity = hex(input.identity, 64);
-  if (identity(['agentui-tree-v1', inputs.files]) !== inputs.identity || identity(['agentui-package-v1', inputs.identity, subdirectory]) !== packageIdentity) throw invalid();
+  const id = hex(input.identity, 64);
+  const committed = new Map(inputs.files.map(file => [file.path, file]));
+  const packagePath = (path: string) => [subdirectory, path.replace(/^\.\//u, '')].filter(Boolean).join('/');
+  if (treeIdentity(inputs.files) !== inputs.identity || packageIdentity(inputs.identity, subdirectory) !== id) throw invalid();
   let npm: ServerArtifactPackage['npm'];
   const rawNpm = record(input.npm);
   if (rawNpm.kind === 'absent') { record(rawNpm, ['kind']); npm = { kind: 'absent' }; }
@@ -72,10 +72,11 @@ function parsePackage(value: unknown): ServerArtifactPackage {
     if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== 'npm@11.19.1') throw invalid();
     npm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: 'npm@11.19.1', directory: directory(rawNpm.directory),
       packageJson: file(rawNpm.packageJson), lockfile: file(rawNpm.lockfile), workspaces: files(rawNpm.workspaces), localInputs: files(rawNpm.localInputs) };
-    const selected = inputs.files.find(value => value.path === (subdirectory ? `${subdirectory}/package.json` : 'package.json'));
-    if (!selected || identity(['agentui-npm-v1', inputs.identity, npm.directory, selected, npm.packageJson, npm.lockfile, npm.workspaces, npm.localInputs]) !== npm.identity) throw invalid();
+    const selected = committed.get(packagePath('package.json'));
+    if (!selected || npmIdentity({ ...npm, treeId: inputs.identity, selected }) !== npm.identity) throw invalid();
     for (const captured of [npm.packageJson, npm.lockfile, ...npm.workspaces, ...npm.localInputs]) {
-      if (!inputs.files.some(value => value.path === captured.path && value.sha256 === captured.sha256 && value.executable === captured.executable)) throw invalid();
+      const file = committed.get(captured.path);
+      if (!file || file.sha256 !== captured.sha256 || file.executable !== captured.executable) throw invalid();
     }
   }
   let local: ServerArtifactPackage['local'] = null;
@@ -86,13 +87,59 @@ function parsePackage(value: unknown): ServerArtifactPackage {
       const source = record(value, ['module', 'source']);
       return { module: `./${containedPath(source.module, true)}`, source: `./${containedPath(source.source, true)}` };
     }), value => value.module);
-    if (sources.length !== new Set(manifest.entries.map(entry => entry.module)).size || sources.some(source => !manifest.entries.some(entry => entry.module === source.module) ||
-      !inputs.files.some(file => file.path === [subdirectory, source.source.slice(2)].filter(Boolean).join('/')))) throw invalid();
+    const modules = new Set(manifest.entries.map(entry => entry.module));
+    if (sources.length !== modules.size) throw invalid();
+    if (sources.some(source => !modules.has(source.module))) throw invalid();
+    if (sources.some(source => !committed.has(packagePath(source.source)))) throw invalid();
     local = { manifest, sources };
   }
   const shared = input.shared === null ? null : `./${containedPath(input.shared, true)}`;
-  if (shared && !inputs.files.some(file => file.path === [subdirectory, shared.slice(2)].filter(Boolean).join('/'))) throw invalid();
-  return { identity: packageIdentity, commit: commitId(input.commit), subdirectory, inputs, npm, local, shared, extensions: array(input.extensions, value => hex(value, 64), 256) };
+  if (shared && !committed.has(packagePath(shared))) throw invalid();
+  const extensions = array(input.extensions, value => {
+    const edge = record(value, ['packageIdentity', 'commit']);
+    return { packageIdentity: hex(edge.packageIdentity, 64), commit: commitId(edge.commit) };
+  }, 256);
+  return { identity: id, commit: commitId(input.commit), subdirectory, inputs, npm, local, shared, extensions };
+}
+export interface ServerCatalog {
+  readonly packages: readonly ServerArtifactPackage[];
+  readonly entries: ServerCustomizationArtifact['entries'];
+  readonly manifests: readonly ExtensionManifest[];
+}
+export function serverCatalog(packages: readonly ServerArtifactPackage[], sdkVersion: string): ServerCatalog {
+  const invalidGraph = () => CustomizationError.server('invalid-graph');
+  const root = packages[0];
+  const lookup = new Map(packages.map(pkg => [pkg.identity, pkg]));
+  if (!root || packages.length > 64 || lookup.size !== packages.length) throw invalidGraph();
+  const ordered: ServerArtifactPackage[] = [], active = new Set<string>(), seen = new Set<string>(), namespaces = new Set<string>();
+  const representatives = new Set<string>();
+  const entries: ServerCustomizationArtifact['entries'][number][] = [];
+  const manifests: ExtensionManifest[] = [];
+  const visit = (id: string): void => {
+    if (active.has(id)) throw invalidGraph();
+    if (seen.has(id)) return;
+    const pkg = lookup.get(id);
+    if (!pkg) throw invalidGraph();
+    seen.add(id); active.add(id); ordered.push(pkg);
+    if (pkg.local) {
+      const { manifest } = pkg.local;
+      if (manifest.sdkVersion !== sdkVersion || namespaces.has(manifest.namespace)) throw invalidGraph();
+      namespaces.add(manifest.namespace);
+      for (const entry of manifest.entries.filter(entry => entry.kind === 'server')) {
+        entries.push({ packageIdentity: id, module: entry.module, index: entries.length });
+        manifests.push(manifest);
+      }
+    }
+    for (const child of pkg.extensions) {
+      if (lookup.get(child.packageIdentity)?.commit === child.commit) representatives.add(child.packageIdentity);
+      visit(child.packageIdentity);
+    }
+    active.delete(id);
+  };
+  visit(root.identity);
+  if (ordered.length !== packages.length || !entries.length || entries.length > 64) throw invalidGraph();
+  if (ordered.some(pkg => pkg !== root && !representatives.has(pkg.identity))) throw invalidGraph();
+  return { packages: ordered, entries, manifests };
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
@@ -115,29 +162,16 @@ export function parseServerCustomizationArtifact(value: unknown): ServerCustomiz
     if (runtime.engine !== 'node' || typeof runtime.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(runtime.version) || typeof runtime.modules !== 'string' || !/^\d+$/u.test(runtime.modules)) throw invalid();
     const packages = array(input.packages, parsePackage, 64);
     const root = hex(input.root, 64);
-    const lookup = new Map(packages.map(pkg => [pkg.identity, pkg]));
-    if (lookup.size !== packages.length || packages[0]?.identity !== root) throw invalid();
-    const ordered: string[] = [], active = new Set<string>(), seen = new Set<string>(), namespaces = new Set<string>();
-    const visit = (id: string) => {
-      if (active.has(id)) throw invalid();
-      if (seen.has(id)) return;
-      const pkg = lookup.get(id);
-      if (!pkg) throw invalid();
-      seen.add(id); active.add(id); ordered.push(id);
-      if (pkg.local) { if (namespaces.has(pkg.local.manifest.namespace)) throw invalid(); namespaces.add(pkg.local.manifest.namespace); }
-      for (const child of pkg.extensions) visit(child);
-      active.delete(id);
-    };
-    visit(root);
-    if (ordered.length !== packages.length || ordered.some((id, index) => packages[index]?.identity !== id)) throw invalid();
+    if (packages[0]?.identity !== root) throw invalid();
     const sdkVersion = nonempty(input.sdkVersion);
-    if (packages.some(pkg => pkg.local && pkg.local.manifest.sdkVersion !== sdkVersion)) throw invalid();
+    const catalog = serverCatalog(packages, sdkVersion);
+    if (catalog.packages.some((pkg, index) => packages[index]?.identity !== pkg.identity)) throw invalid();
     const entries = array(input.entries, value => {
       const entry = record(value, ['packageIdentity', 'module', 'index']);
       return { packageIdentity: hex(entry.packageIdentity, 64), module: `./${containedPath(entry.module, true)}`, index: count(entry.index) };
     }, 64);
-    const expected = packages.flatMap(pkg => pkg.local?.manifest.entries.filter(entry => entry.kind === 'server').map(entry => ({ packageIdentity: pkg.identity, module: entry.module })) ?? []);
-    if (!entries.length || entries.length !== expected.length || entries.some((entry, index) => entry.index !== index || entry.packageIdentity !== expected[index]?.packageIdentity || entry.module !== expected[index]?.module)) throw invalid();
+    if (entries.length !== catalog.entries.length) throw invalid();
+    if (entries.some((entry, index) => entry.index !== index || entry.packageIdentity !== catalog.entries[index]?.packageIdentity || entry.module !== catalog.entries[index]?.module)) throw invalid();
     const assets = sorted(array(input.assets, value => {
       const asset = record(value, ['path', 'sha256', 'size']);
       const path = containedPath(asset.path);
@@ -153,9 +187,13 @@ export function parseServerCustomizationArtifact(value: unknown): ServerCustomiz
     return freeze({ ...body, artifactId });
   } catch { throw invalid(); }
 }
+export interface VerifiedServerCustomizationArtifact {
+  readonly manifest: ServerCustomizationArtifact;
+  readAsset(path: string): Buffer;
+}
 export async function readServerCustomizationArtifact(input: {
   readonly directory: string; readonly expected: ServerArtifactExpectation;
-}): Promise<{ readonly manifest: ServerCustomizationArtifact; readAsset(path: string): Buffer }> {
+}): Promise<VerifiedServerCustomizationArtifact> {
   try {
     const directory = resolve(input.directory);
     if (!(await lstat(directory)).isDirectory()) throw invalid();

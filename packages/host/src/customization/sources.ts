@@ -5,6 +5,8 @@ import { selectPackage, type NpmInputs } from './packages.js';
 import { SourceBudget } from './budget.js';
 import { readCommittedRepository, type CommittedInputs, type RepositoryTree } from './repository.js';
 
+export function packageIdentity(treeId: string, subdirectory: string): string { return identity(['agentui-package-v1', treeId, subdirectory]); }
+
 export interface ResolvedCustomizationPackage {
   readonly identity: string;
   readonly commit: string;
@@ -55,12 +57,12 @@ export async function resolveCustomizationSources(input: {
       repositories.set(address, tree);
     }
     const key = JSON.stringify([address, subdirectory]);
-    const packageIdentity = identity(['agentui-package-v1', tree.inputs.identity, subdirectory]);
-    if (active.has(packageIdentity)) throw new CustomizationError('invalid-package', 'Customization source dependency cycle detected.');
+    const id = packageIdentity(tree.inputs.identity, subdirectory);
+    if (active.has(id)) throw new CustomizationError('invalid-package', 'Customization source dependency cycle detected.');
     const previous = packages.get(key);
     if (previous) return previous;
     if (++nodes > 64) throw new CustomizationError('resource-limit', 'Customization source package limit exceeded.');
-    active.add(packageIdentity);
+    active.add(id);
     const selected = await selectPackage(tree, subdirectory, budget);
     if (external && !selected.customization) throw new CustomizationError('invalid-package', 'External sources require committed customization metadata.');
     const extensions: ResolvedCustomizationPackage[] = [];
@@ -68,9 +70,9 @@ export async function resolveCustomizationSources(input: {
       if (++edges > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       extensions.push(await visit(child, depth + 1, true));
     }
-    const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, customization: selected.customization, npm: selected.npm, identity: packageIdentity, commit: tree.commit,
+    const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, customization: selected.customization, npm: selected.npm, identity: id, commit: tree.commit,
       subdirectory, inputs: tree.inputs, extensions: Object.freeze(extensions) });
-    active.delete(packageIdentity);
+    active.delete(id);
     packages.set(key, result);
     return result;
   };

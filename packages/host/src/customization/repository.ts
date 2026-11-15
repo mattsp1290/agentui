@@ -60,6 +60,7 @@ function treeFiles(tree: Buffer, budget: SourceBudget): TreeFile[] {
 }
 
 export interface SourceFile { readonly path: string; readonly sha256: string; readonly executable: boolean }
+export function treeIdentity(files: readonly SourceFile[]): string { return identity(['agentui-tree-v1', files]); }
 export interface CommittedInputs { readonly identity: string; readonly files: readonly SourceFile[] }
 export interface RepositoryTree {
   readonly commit: string;
@@ -108,7 +109,7 @@ export async function readCommittedRepository(input: {
       if (entry.executable) await chmod(destination, 0o700);
     }
     files.sort(byPath);
-    const inputs = Object.freeze({ identity: identity(['agentui-tree-v1', files]), files: Object.freeze(files) });
+    const inputs = Object.freeze({ identity: treeIdentity(files), files: Object.freeze(files) });
     await rm(objects, { recursive: true, force: true });
     return { commit: canonical, directory, inputs, dispose };
   } catch (error) {

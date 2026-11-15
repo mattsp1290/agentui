@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { cp, mkdir, readFile, realpath, rm, symlink, writeFile } from 'node:fs/promises';
+import { cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
-import { setup, expectation, write, extension, validSource } from './server-support.mjs';
+import { setup, expectation } from './server-support.mjs';
 
 const reverseKeys = value => Array.isArray(value) ? value.map(reverseKeys) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).reverse().map(([key, child]) => [key, reverseKeys(child)])) : value;
@@ -46,7 +46,7 @@ test('parser validates provenance, graph order, entry map and canonical artifact
     value => { value.packages[0].inputs.files[0].sha256 = '0'.repeat(64); },
     value => { value.packages[0].identity = '0'.repeat(64); },
     value => { value.packages[0].commit = 'not-a-commit'; },
-    value => { value.packages[0].extensions.push(value.root); },
+    value => { value.packages[0].extensions.push({ packageIdentity: value.root, commit: value.packages[0].commit }); },
     value => { value.entries[0].index = 1; },
     value => { value.entries[0].module = './wrong'; },
     value => { value.assets.push(value.assets[0]); },
@@ -65,36 +65,4 @@ test('parser validates provenance, graph order, entry map and canonical artifact
   changed.artifactId = serverCustomizationArtifactId(body);
   await writeFile(join(f.root, 'artifact', 'customization.json'), JSON.stringify(changed));
   await assert.rejects(readServerCustomizationArtifact({ directory: join(f.root, 'artifact'), expected: expectation(manifest) }));
-});
-
-test('supports shared module declarations and canonicalizes a symlinked output parent', async t => {
-  const f = await setup(t);
-  const agentui = extension('fixture');
-  agentui.extension.entries.push({ kind: 'desktop', module: './server.mjs' });
-  await write(f.repo.directory, 'package.json', { agentui });
-  await mkdir(join(f.root, 'physical'));
-  await symlink(join(f.root, 'physical'), join(f.root, 'alias'));
-  const built = await f.build(undefined, 'alias/artifact');
-  assert.equal(built.directory, await realpath(join(f.root, 'physical/artifact')));
-  assert.equal(built.manifest.packages[0].local.sources.length, 1);
-});
-
-test('only one concurrent publisher owns a fresh output and failed overwrite preserves it', async t => {
-  const f = await setup(t);
-  const commit = f.repo.commit();
-  const results = await Promise.allSettled([f.build(commit), f.build(commit)]);
-  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
-  const failed = results.find(result => result.status === 'rejected');
-  assert.equal(failed.reason.code, 'output-exists');
-  const manifest = JSON.parse(await readFile(join(f.root, 'artifact/customization.json'), 'utf8'));
-  await readServerCustomizationArtifact({ directory: join(f.root, 'artifact'), expected: expectation(manifest) });
-});
-
-test('rejects unsupported native addons and lazy CommonJS builtin loading', async t => {
-  for (const source of ["import './addon.node';" + validSource,
-    `export default {kind:'server',sdkVersion:'1',activate(){return require('node:fs')}};`]) {
-    const f = await setup(t, source);
-    await write(f.repo.directory, 'addon.node', 'not a native module');
-    await assert.rejects(f.build(), { code: 'build-failed' });
-  }
 });

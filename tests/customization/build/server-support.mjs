@@ -1,3 +1,8 @@
+import assert from 'node:assert/strict';
+import { execFileSync } from 'node:child_process';
+import { access, readdir } from 'node:fs/promises';
+import { pathToFileURL } from 'node:url';
+import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { join } from 'node:path';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { buildServerCustomization } from '../../../scripts/server-customization.mjs';
@@ -15,3 +20,19 @@ export async function setup(t, source = validSource) {
 }
 export const expectation = manifest => ({ artifactId: manifest.artifactId, sdkVersion: manifest.sdkVersion, nodeVersion: manifest.runtime.version,
   nodeModules: manifest.runtime.modules, abiIdentity: manifest.runtime.abiIdentity });
+
+export async function clean(f, output = 'bad') {
+  await assert.rejects(access(join(f.root, output)), { code: 'ENOENT' });
+  assert.deepEqual((await readdir(f.root)).filter(name => name.startsWith('.agentui-server-')), []);
+}
+export async function valueFromCatalog(built) {
+  const abi = await serverCustomizationAbi();
+  const hook = new URL('../../../scripts/server-catalog-loader.mjs', import.meta.url).href;
+  const catalog = pathToFileURL(join(built.directory, built.manifest.catalog)).href;
+  const allowed = [...abi.files, ...built.manifest.assets.map(asset => pathToFileURL(join(built.directory, asset.path)).href)];
+  const program = `import {registerServerCatalogHooks} from ${JSON.stringify(hook)};
+    registerServerCatalogHooks(${JSON.stringify({ imports: abi.imports, allowed })});
+    const {entries}=await import(${JSON.stringify(catalog)});
+    process.stdout.write(JSON.stringify(entries[0].activate().value));`;
+  return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { cwd: built.directory, encoding: 'utf8' }));
+}
