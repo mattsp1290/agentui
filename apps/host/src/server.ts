@@ -42,6 +42,7 @@ export interface BrowserHostOptions {
   readonly configuration?: AgentConfiguration;
   readonly providerExtensions?: readonly { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry;
     readonly installations: readonly ProviderInstallation[] }[];
+  readonly accessMode?: 'paired' | 'trusted';
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -109,7 +110,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    access = new Access(accessDatabase);
+    access = new Access(accessDatabase, options.accessMode);
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
