@@ -31,10 +31,22 @@ fn main() {
     });
     tauri::Builder::default()
         .setup(move |app| {
+            let window = app
+                .get_webview_window("main")
+                .ok_or("AgentUI window is missing")?;
+            let background = |theme| match theme {
+                tauri::Theme::Dark => tauri::window::Color(33, 33, 33, 255),
+                _ => tauri::window::Color(247, 247, 248, 255),
+            };
+            window.set_background_color(Some(background(window.theme()?)))?;
+            let themed_window = window.clone();
+            window.on_window_event(move |event| {
+                if let tauri::WindowEvent::ThemeChanged(theme) = event {
+                    let _ = themed_window.set_background_color(Some(background(*theme)));
+                }
+            });
             if let Some(url) = &host_url {
-                app.get_webview_window("main")
-                    .ok_or("AgentUI window is missing")?
-                    .navigate(url.clone())?;
+                window.navigate(url.clone())?;
             }
             Ok(())
         })

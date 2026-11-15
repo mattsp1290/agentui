@@ -21,7 +21,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
-        <p>Pair this browser, then create or open a conversation. Drafts belong to this tab. The host keeps the conversation when you close it.</p>
+        <p>Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.</p>
       </section>;
   const controls = <div className="application-controls">
     <div className="application-status"><strong>{hostLabel}</strong>
@@ -43,9 +43,10 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       <button disabled={!enabled} onClick={() => void controller.recoverCreation()}>Recover creation</button>
     </div>}
     {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
-      {app.catalog.items.map(scope => <button key={scope.conversationId} disabled={!enabled}
+      {app.catalog.items.map((scope, index) => <button key={scope.conversationId} disabled={!enabled}
+        title={scope.conversationId} aria-label={`Open conversation ${scope.conversationId}`}
         aria-current={scope.conversationId === app.active?.scope.conversationId ? 'page' : undefined}
-        onClick={() => void controller.open(scope)}>Open conversation {scope.conversationId}</button>)}
+        onClick={() => void controller.open(scope)}>Conversation {index + 1}</button>)}
       {app.catalog.after !== null && <button disabled={!enabled} onClick={() => void controller.moreConversations()}>More conversations</button>}
     </nav>}
     {(app.savedViews.items.length > 0 || app.savedViews.after !== null) && <nav className="conversation-catalog" aria-label="Saved local views">

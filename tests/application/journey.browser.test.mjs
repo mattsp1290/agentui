@@ -82,6 +82,11 @@ async function draft(page, text) {
   }, text), 'persisted draft');
 }
 
+async function revealRecovery(page) {
+  const menu = page.locator('.recovery-menu');
+  if (await menu.getAttribute('open') === null) await menu.locator('summary').click();
+}
+
 test('desktop connection action opens the paired host app and keeps conversations on return', { timeout: 45_000 }, async t => {
   const host = await fixture(t);
   const desktop = join(root, 'apps/desktop');
@@ -121,6 +126,7 @@ test('desktop connection action opens the paired host app and keeps conversation
   assert.equal(await page.getByLabel('Pairing code').count(), 0);
   assert.equal(await page.locator('.scope-label').textContent(), conversation);
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this private draft');
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view' }).click();
   await connected(page);
   await Promise.all([page.waitForEvent('load'), page.getByRole('button', { name: 'Reload app' }).click()]);
@@ -220,6 +226,7 @@ test('built browser app pairs two views, streams, races approval and recovers or
   await alice.reload();
   await connected(alice);
   assert.equal(watches.at(-1).after, null, 'cold reload requests snapshot');
+  await revealRecovery(alice);
   await alice.getByRole('button', { name: 'Restore default view', exact: true }).click();
   assert.equal(await alice.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'A newer draft survives recovery');
   const beforeRestart = (await host.entries()).length;
@@ -296,10 +303,12 @@ test('custom content failure keeps host controls and restores the same connected
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   const before = watches;
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   await page.getByRole('heading', { name: 'Your conversation', exact: true }).waitFor();
   assert.equal(watches, before, 'restore does not reconstruct the store');
   await draft(page, 'Draft survives restored content');
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Draft survives restored content');
   assert.equal(watches, before);

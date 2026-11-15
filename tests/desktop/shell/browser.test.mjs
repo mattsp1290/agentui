@@ -23,6 +23,11 @@ async function observeCspViolations(page) {
   return violations;
 }
 
+async function revealRecovery(page) {
+  const menu = page.locator('.recovery-menu');
+  if (await menu.getAttribute('open') === null) await menu.locator('summary').click();
+}
+
 test('production desktop renders disconnected, follows appearance, and reloads', async (t) => {
   const server = await preview({
     root: fileURLToPath(desktop),
@@ -57,6 +62,7 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   await appearance('dark');
   assert.notEqual(await background(), 'rgba(0, 0, 0, 0)');
   assert.notEqual(await background(), lightBackground);
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view' }).focus();
   await page.keyboard.press('Enter');
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
@@ -98,10 +104,13 @@ test('content failure leaves shell controls usable and restores the built-in vie
   const violations = await observeCspViolations(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
   await page.getByRole('alert').waitFor();
+  await revealRecovery(page);
   await page.getByRole('navigation', { name: 'Recovery controls' }).waitFor();
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view' }).click();
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
   assert.equal(await page.getByRole('alert').count(), 0);
+  await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view' }).click();
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
   assert.deepEqual(violations, []);
