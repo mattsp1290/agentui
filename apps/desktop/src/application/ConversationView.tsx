@@ -1,3 +1,4 @@
+import { PI_CHAT_LABEL } from '@agentui/contracts/compatibility';
 import { useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
@@ -7,14 +8,22 @@ type DraftEditor =
   | { readonly kind: 'saved' | 'saving'; readonly text: string }
   | { readonly kind: 'failed'; readonly text: string; readonly message: string };
 
+const AGENT_PRESENTATION = {
+  codex: { assistant: 'Codex', placeholder: 'Write to Codex…', footer: 'Local Codex · Approvals required for changes' },
+  pi: { assistant: 'Pi', placeholder: 'Write to Pi…', footer: `${PI_CHAT_LABEL} · Chat only · No tools` },
+  recorded: { assistant: 'Recorded assistant', placeholder: 'Write to the recorded assistant…', footer: 'Recorded playback · No live model' },
+  local: { assistant: 'Assistant', placeholder: 'Write a message…', footer: 'Local agent' },
+};
+
 export function ConversationStatus({ active }: { readonly active: OpenConversation }) {
   const view = useConversation(active.store);
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
 export function ConversationView({ actions, active, enabled, storageFailure, agent = 'recorded' }: {
-  readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: 'codex' | 'recorded' | 'local';
+  readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
 }) {
+  const presentation = AGENT_PRESENTATION[agent];
   const view = useConversation(active.store);
   const [editor, setEditor] = useState<DraftEditor>({ kind: 'saved', text: view.draft });
   const editVersion = useRef(0);
@@ -35,8 +44,9 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     }
   }
   const connected = enabled && view.connection.kind === 'connected';
-  const run = agent === 'codex' ? view.document.domain.currentRun : null;
-  const responding = agent === 'codex' && (Boolean(run && run.kind !== 'ended') ||
+  const live = agent === 'codex' || agent === 'pi';
+  const run = live ? view.document.domain.currentRun : null;
+  const responding = live && (Boolean(run && run.kind !== 'ended') ||
     (!run && view.document.domain.messages.some(message => message.role === 'assistant' && !message.complete)));
   const retainedCancel = run && view.outbox.some(entry => entry.command.body.kind === 'cancel' && entry.command.body.runId === run.runId);
   const stopping = run?.kind === 'stopping' || Boolean(retainedCancel) ||
@@ -60,7 +70,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     <div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
-        <strong>{message.role === 'user' ? 'You' : agent === 'codex' ? 'Codex' : agent === 'recorded' ? 'Recorded assistant' : 'Assistant'}</strong><p>{message.text}</p>
+        <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong><p>{message.text}</p>
         {!message.complete && <span className="progress-label">{agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
     </div>
@@ -71,9 +81,9 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); if (canSend) void actions.submit(() => active.store.send()); }}>
       <label htmlFor="message">Message</label>
-      <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={agent === 'codex' ? 'Write to Codex…' : agent === 'recorded' ? 'Write to the recorded assistant…' : 'Write a message…'} rows={3} />
+      <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={presentation.placeholder} rows={3} />
       {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
-      <div className="composer-footer"><span>{agent === 'codex' ? 'Local Codex · Approvals required for changes' : agent === 'recorded' ? 'Recorded playback · No live model' : 'Local agent'}</span><button disabled={!canSend}>Send</button>
+      <div className="composer-footer"><span>{presentation.footer}</span><button disabled={!canSend}>Send</button>
         {run && run.kind !== 'ended' && <button type="button" disabled={!connected || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
     </form>
     <CommandRecovery view={view} actions={actions} enabled={enabled} retry={id => active.store.retry(id)} />

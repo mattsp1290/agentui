@@ -72,7 +72,7 @@ Establish whether the public adapter can accept the existing references before
 changing versions. If the binding must change, use a narrow, explicit transition
 for AgentUI-owned records that preserves saved transcripts and receipts.
 Transition a record's installation before relying on the existing
-[recovery path](../../../apps/host/src/codex-recovery.ts) to expire process-bound
+[recovery path](../../../apps/host/src/provider-recovery.ts) to expire process-bound
 approvals. Keep unknown outcomes unknown. Resume compatibility across 0.167.2
 and 0.169.0 is not established here.
 
