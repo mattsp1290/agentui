@@ -167,6 +167,7 @@
 .settings-link { display: block; color: var(--aui-color-text); text-decoration: none; padding: 10px; border-radius: 8px; background: var(--aui-color-raised); font-size: 13px; }
 @media (max-width: 760px) {
   .desktop-shell:has(.view-rail) { grid-template-columns: 48px 160px minmax(0, 1fr); }
+  .settings-panel { padding-top: 72px; }
   .view-rail { padding-inline: 4px; }
   .view-rail button { width: 36px; height: 36px; padding: 7px; }
 }

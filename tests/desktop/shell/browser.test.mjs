@@ -140,6 +140,11 @@ test('chat workspace separates the icon rail and chat list and opens settings wi
   await settings.click();
   await page.getByRole('heading', { name: 'Settings', level: 1, exact: true }).waitFor();
   await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+  await page.setViewportSize({ width: 360, height: 480 });
+  const settingsHeading = await page.getByRole('heading', { name: 'Settings', level: 1, exact: true }).boundingBox();
+  const recoverySummary = await page.locator('.recovery-menu summary').boundingBox();
+  assert.ok(recoverySummary.y + recoverySummary.height <= settingsHeading.y,
+    'recovery controls do not overlap the Settings heading at minimum width');
   await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   assert.equal(await chats.getAttribute('aria-pressed'), 'true');
