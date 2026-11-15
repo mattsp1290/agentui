@@ -62,6 +62,7 @@ export function customizationPlugin(snapshot, selected) {
     name: 'agentui-committed-customization', enforce: 'pre',
     config: () => ({ tsconfig, resolve: { dedupe: ['react', 'react-dom'] }, oxc: { jsx: { runtime: 'automatic', importSource: 'react' } } }),
     async resolveId(specifier, importer) {
+      if (importer === selection && selected && specifier === selected.source) return selected.source;
       if (!importer || !contained(importer)) return;
       if (abi.has(specifier)) return abi.get(specifier);
       if (!specifier.startsWith('./') && !specifier.startsWith('../') || /[?#\\:]/u.test(specifier)) {

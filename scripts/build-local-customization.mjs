@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdir, mkdtemp, rename, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -18,7 +18,7 @@ let owned = false, scratch, snapshot;
 try {
   await mkdir(out, { mode: 0o700 });
   owned = true;
-  scratch = await mkdtemp(join(dirname(out), '.agentui-build-'));
+  scratch = await realpath(await mkdtemp(join(dirname(out), '.agentui-build-')));
   snapshot = await readCustomizationSnapshot({ repository: resolve(values.repository), commit: values.commit, scratchParent: scratch });
   const selected = await desktopSelection(snapshot);
   const stage = join(scratch, 'browser');
