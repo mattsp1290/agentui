@@ -89,7 +89,7 @@ test('passes the caller environment to its Codex process', { timeout: 4000 }, as
   const env = { PATH: process.env.PATH ?? '', OPENAI_API_KEY: 'explicit-provider-credential',
     OTEL_EXPORTER_OTLP_HEADERS: 'explicit-collector-header', AGENTUI_DATADOG_LLMOBS: 'true' };
   const driver = createCodexDriver({ cwd: dir, version: '0.167.2', executable: process.execPath,
-    args: ['--eval', `require('node:fs').writeFileSync(process.argv[1], JSON.stringify(process.env)); setInterval(() => {}, 1000);`, path],
+    args: ['--eval', `const fs = require('node:fs'); const temporary = process.argv[1] + '.tmp'; fs.writeFileSync(temporary, JSON.stringify(process.env)); fs.renameSync(temporary, process.argv[1]); setInterval(() => {}, 1000);`, path],
     env, append() {},
   });
   t.after(() => { driver.close(); rmSync(dir, { recursive: true, force: true }); });

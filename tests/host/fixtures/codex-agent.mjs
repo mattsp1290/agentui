@@ -37,6 +37,15 @@ createInterface({ input: process.stdin }).on('line', line => {
   switch (message.method) {
     case 'initialize': reply({ userAgent: 'agentui-codex-fixture', platformFamily: 'unix' }); break;
     case 'initialized': break;
+    case 'model/list': {
+      if (mode === 'models-error') { send({ id: message.id, error: { code: -32000, message: 'Fixture model catalog unavailable' } }); break; }
+      if (mode === 'models-malformed') { reply({ data: [{ model: 3 }], nextCursor: null }); break; }
+      const sol = { id: 'sol-choice', model: 'gpt-9.2-sol', displayName: 'GPT-9.2-Sol', hidden: false, isDefault: false };
+      const astra = { id: 'astra-choice', model: 'gpt-9.1-astra', displayName: 'GPT-9.1-Astra', hidden: false, isDefault: true };
+      reply(message.params.cursor ? { data: [sol, astra], nextCursor: mode === 'models-repeat' ? 'next-model-page' : null }
+        : { data: [sol, { ...astra, model: 'hidden-model', hidden: true }], nextCursor: 'next-model-page' });
+      break;
+    }
     case 'thread/start':
     case 'thread/resume': reply({ thread: { id: threadId, turns: [] } }); break;
     case 'turn/start': {

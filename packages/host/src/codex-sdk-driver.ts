@@ -1,6 +1,7 @@
 import { codexSdkInstallation } from './native-installations.js';
 import type { ConversationScope } from '@agentui/contracts';
 import type { TranscriptEvent } from '@agentui/contracts/conversation';
+import { CODEX_SDK_MODEL } from '@agentui/contracts/compatibility';
 import { createCodexRuntime } from '@agentui/switchboard-codex/codex';
 import type { HostOutput } from './durable-model.js';
 import { createSdkChatDriver } from './sdk-chat-driver.js';
@@ -16,7 +17,7 @@ export interface CodexSdkDriverOptions {
 export function createCodexSdkDriver(options: CodexSdkDriverOptions) {
   const installation = codexSdkInstallation(options.cwd);
   const cwd = installation.binding.authorizedScope;
-  const runtime = createCodexRuntime({ cwd, model: 'gpt-6.1-sol',
+  const runtime = createCodexRuntime({ cwd, model: CODEX_SDK_MODEL.id,
     ...(options.codexPathOverride === undefined ? {} : { codexPathOverride: options.codexPathOverride }),
     ...(options.codexHome === undefined ? {} : { codexHome: options.codexHome }),
   });
