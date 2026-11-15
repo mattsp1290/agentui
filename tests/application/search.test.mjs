@@ -46,6 +46,24 @@ test('saved history search scans past empty pages and searches only current tran
   assert.equal((await search('balcony', first.after)).items[0].scope.conversationId, target.conversationId);
   assert.equal((await search('new chat · chat-000')).items[0].scope.conversationId, scopes[0].conversationId);
   assert.equal((await search('superseded', first.after)).items.length, 0);
+  for (const [messageId, text, query, expected] of [
+    ['expanded', `${'İ'.repeat(60)} lavender`, 'lavender', 'lavender'],
+    ['expanded-middle', `${'İ'.repeat(200)} rosemary ${'herbs '.repeat(100)}`, 'rosemary', 'rosemary'],
+    ['long-hit', `${'İ'.repeat(60)} ${'a'.repeat(150)}`, 'a'.repeat(150), 'a'.repeat(150)],
+    ['final-sigma', `${'İ'.repeat(60)} ΟΣ`, 'ος', 'ΟΣ'],
+    ['surrogate-start', `😀${'x'.repeat(39)}seabreeze${'y'.repeat(140)}`, 'seabreeze', 'seabreeze'],
+    ['surrogate-end', `shore ${'x'.repeat(153)}😀`, 'shore', 'shore'],
+  ]) {
+    append(target, messageId, text);
+    const result = await search(query, first.after);
+    assert.equal(result.items.length, 1);
+    const excerpt = result.items[0].excerpt;
+    assert.ok(excerpt.length > 0 && excerpt.length <= 160);
+    assert.ok(excerpt.includes(expected), `excerpt contains the complete ${messageId} hit`);
+    assert.ok(text.includes(excerpt), 'excerpt preserves original message text');
+    assert.ok(excerpt.isWellFormed(), 'excerpt does not split a surrogate pair');
+  }
+  assert.equal((await search('οσ', first.after)).items.length, 0, 'matching preserves contextual final sigma lowercasing');
   await host.conversation(scopes[0]).submit({ version: 1, scope: scopes[0], clientCommandId: 'private-receipt-marker', body: { kind: 'send', text: 'Public message' } });
   const privateOperation = Object.values(host.inspect(scopes[0]).snapshot.document.receipts)[0].hostOperationId;
   for (const query of ['private-receipt-marker', privateOperation, 'approval-v1']) {

@@ -64,7 +64,9 @@ test('background search leaves active state usable and rejects stale, foreign an
   await assert.rejects(pending, /Search connection changed/);
   const live = new AbortController().signal;
   f.behavior.search = async () => ({ items: [], after: 'a' });
-  await assert.rejects(f.app.search('garden', 'z', live), /did not advance/);
+  await assert.rejects(f.app.search('garden', 'a', live), /did not advance/);
+  f.behavior.search = async () => ({ items: [], after: '😀' });
+  assert.deepEqual(await f.app.search('garden', '\uE000', live), { items: [], after: '😀' });
   f.behavior.search = async () => ({ items: [{ scope: { ...scope, hostId: 'foreign' }, preview: null, excerpt: null }], after: null });
   await assert.rejects(f.app.search('garden', null, live), /another host/);
   const replaced = deferred();
