@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
+import { preview } from 'vite';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const cli = join(root, 'apps/host/dist/main.js');
@@ -80,6 +81,54 @@ async function draft(page, text) {
     return rows.some(row => row.draft === expected);
   }, text), 'persisted draft');
 }
+
+test('desktop connection action opens the paired host app and keeps conversations on return', { timeout: 45_000 }, async t => {
+  const host = await fixture(t);
+  const desktop = join(root, 'apps/desktop');
+  const config = JSON.parse(await readFile(join(desktop, 'src-tauri/tauri.conf.json'), 'utf8'));
+  const server = await preview({
+    root: desktop, configFile: join(desktop, 'vite.config.mjs'),
+    preview: { host: '127.0.0.1', port: 0, headers: { 'Content-Security-Policy': config.app.security.csp } },
+  });
+  t.after(() => server.close());
+  const page = await host.browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  let navigations = 0;
+  await page.route('http://127.0.0.1:7140/**', async route => {
+    assert.equal(route.request().url(), 'http://127.0.0.1:7140/browser.html');
+    assert.equal(route.request().isNavigationRequest(), true);
+    navigations++;
+    await route.fulfill({ status: 307, headers: { location: `${host.origin}/browser.html` } });
+  });
+  const landing = `http://127.0.0.1:${server.httpServer.address().port}`;
+  const connect = async () => {
+    await page.goto(landing);
+    await page.getByRole('button', { name: 'Connect to local Codex', exact: true }).click();
+    await page.waitForURL(`${host.origin}/browser.html`);
+  };
+  await connect();
+  await page.getByLabel('Pairing code').fill((await host.control({ op: 'invite' })).code);
+  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
+  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'paired host');
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  const conversation = await page.locator('.scope-label').textContent();
+  await draft(page, 'Keep this private draft');
+  await connect();
+  await connected(page);
+  assert.equal(await page.getByLabel('Pairing code').count(), 0);
+  assert.equal(await page.locator('.scope-label').textContent(), conversation);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep this private draft');
+  await page.getByRole('button', { name: 'Restore default view' }).click();
+  await connected(page);
+  await Promise.all([page.waitForEvent('load'), page.getByRole('button', { name: 'Reload app' }).click()]);
+  await connected(page);
+  assert.equal(await page.locator('.scope-label').textContent(), conversation);
+  assert.equal(navigations, 2);
+  assert.deepEqual(errors, []);
+});
 
 test('built browser app pairs two views, streams, races approval and recovers original intents after restart', { timeout: 90_000 }, async t => {
   const host = await fixture(t);

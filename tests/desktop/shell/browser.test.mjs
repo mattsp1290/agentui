@@ -47,6 +47,7 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   assert.match(await response.headerValue('content-security-policy'), /connect-src 'none'/);
   await page.getByRole('heading', { name: 'A home for your conversations.' }).waitFor();
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
+  await page.getByRole('button', { name: 'Connect to local Codex', exact: true }).waitFor({ timeout: 2000 });
   const appearance = (value) => page.waitForFunction((expected) => document.querySelector('.desktop-shell')?.getAttribute('data-appearance') === expected, value);
   await appearance('light');
   const background = () => page.locator('.desktop-shell').evaluate((shell) => getComputedStyle(shell).backgroundColor);
