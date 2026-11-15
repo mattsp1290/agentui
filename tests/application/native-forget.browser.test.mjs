@@ -23,7 +23,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
       globalThis.heldAction = null;
       await new Promise((resolve, reject) => { globalThis.releaseNative = resolve; globalThis.rejectNative = reject; });
     }
-    if (command.kind === 'status') { access = { ...access, observation: 'status-' + globalThis.nativeCalls.length }; return access; }
+    if (command.kind === 'status') { access = globalThis.nativeStatus ?? { ...access, observation: 'status-' + globalThis.nativeCalls.length }; return access; }
     if (command.kind === 'forget') { access = { kind: 'absent', observation: 'forgotten' }; return access; }
     if (command.kind === 'pair') throw 'pairing-failed';
     if (command.kind !== 'execute') throw new Error('Unexpected access action');
@@ -81,6 +81,12 @@ test('native connection controls show category-specific recovery without exposin
     if (cause !== 'keychain-denied') assert.doesNotMatch(text, /Keychain/);
     assert.doesNotMatch(text, /private-token-and-profile-path/);
   }
+  await page.evaluate(() => { globalThis.nativeFailure = null; globalThis.nativeStatus = { kind: 'unreadable', observation: 'unreadable' }; });
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await page.getByRole('heading', { name: 'Connect this Mac', exact: true }).waitFor();
+  const unreadable = await page.getByRole('alert').textContent();
+  assert.doesNotMatch(unreadable, /Keychain/);
+  assert.match(unreadable, /Update AgentUI.*explicitly discard/);
 });
 
 test('native Forget asks visibly, cancels with focus, and confirms once without changing saved drafts', async t => {
