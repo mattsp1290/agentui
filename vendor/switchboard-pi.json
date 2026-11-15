@@ -1,8 +1,8 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "5865f6df8180df8341e4bfd1dcb46fd8a5c21995",
-  "artifact": "switchboard-5865f6df8180df8341e4bfd1dcb46fd8a5c21995.tgz",
-  "sha256": "8aa5b49a660059dd6ec70c59c256410be4cb412db8b61629d61ae92277805a88",
+  "sourceRevision": "564f04434b3a6575c5c97f706dd6d5510e41726f",
+  "artifact": "switchboard-564f04434b3a6575c5c97f706dd6d5510e41726f.tgz",
+  "sha256": "0f8c2820f89b44068b14081b9fef7f4697b8c9d49a28c93a9947efffb2620ac8",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-pi",
   "entrypoint": "./pi",
@@ -11,7 +11,7 @@
   "model": "glm-5.3",
   "license": "MIT",
   "limits": "Bounded text-only Pi sessions. Existing core and AG-UI package qualification remains on the separate historical pin. No tools, native feature hooks, external discovery, proxy routing or cross-process writer qualification claimed.",
-  "sourceTree": "d6c9dc32e3ffe2035f9e22060c82bb2b299fb875",
+  "sourceTree": "df95912db8f4c386b0d6a1f7d86eb8ecc92fe60c",
   "toolchain": {
     "node": "24.22.3",
     "npm": "11.19.1"
@@ -24,6 +24,6 @@
       "npm run check",
       "npm test"
     ],
-    "testsPassed": 136
+    "testsPassed": 137
   }
 }
