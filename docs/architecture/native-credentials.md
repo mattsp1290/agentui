@@ -16,8 +16,8 @@ Revision = { key: SlotKey, ownerLifetime, mutationCounter, rawIdentity: ExactRec
 Observation<K> = opaque redacted reference to one native Revision and observed kind K
 RecordFault = Invalid | UnsupportedVersion
 StorageBlock = Locked | Unavailable | PermissionDenied
-StoreState = Present(Revision, ProtectedCredential) | Absent(Revision)
-           | Unreadable(Revision, RecordFault) | Blocked(StorageBlock)
+RawState = Present(ExactRecord, ProtectedCredential) | Absent
+         | Unreadable(ExactRecord, RecordFault) | Blocked(StorageBlock)
 Status = Ready(Observation<Ready>, hostId, principalId) | Absent(Observation<Absent>)
        | Unreadable(Observation<Unreadable>, RecordFault) | Blocked(StorageBlock)
 ```
@@ -29,10 +29,12 @@ The current protocol permits only literal `http://127.0.0.1:<port>`. The host ID
 The [wire credential](../../apps/host/src/native-wire.ts) contains `hostId`, `principalId`, and `secret`, with no expiry field.
 The [host policy](../../apps/host/src/access.ts) enforces the one-hour lifetime and revocation. `Ready` establishes local admission only.
 
-`Revision` is the sole guard. Its raw identity distinguishes the exact stored record, including an unreadable record, from absence.
+The owner alone composes and holds revisions, issues observations, and advances mutation counters, including on a current 401.
+Its full revision guard includes the exact stored record, even if unreadable, or absence.
 The revision and raw identity remain native. JavaScript receives only a native-issued opaque observation reference, never record bytes or a fingerprint.
 An identity that cannot be established produces `Blocked(Unavailable)`, not an unreadable or absent observation.
-Each replacement has a fresh, never-reused durable `generation`. It identifies replacement outcomes during durable readback.
+Before replacement, the owner constructs the complete intended record with a fresh `generation` from at least 128 CSPRNG bits.
+Generation allocation is independent of deleted counters and app reinstalls. Readback compares the complete record, never generation alone.
 The owner reuses a current observation for repeated status reads. Retirement never revives an old reference.
 
 ## Ownership and private store
@@ -46,34 +48,35 @@ If the adapter cannot establish that exclusion, the selection is `Blocked(Unavai
 A process-local lock or an uncoordinated read-then-write sequence does not establish this guarantee.
 
 ```text
-read(key) -> StoreState
-replace(key, revision, validatedNativeCredential) -> Committed(generation) | MutationFailure
-remove(key, revision) -> Removed | MutationFailure
-MutationFailure = Conflict | NoWrite(StorageBlock) | CommitUnknown
+read(key) -> RawState
+replace(key, expectedRaw: ExactRecord | Absent, intended: ProtectedCredential) -> Committed | MutationFailure
+remove(key, expectedRaw: ExactRecord | Absent) -> Removed | MutationFailure
+MutationFailure = ExclusionLost | NoWrite(StorageBlock) | CommitUnknown
 ```
 
-The store accepts only revisions it issued for the supplied key and owner lifetime.
-`replace` accepts an absent or valid present revision and atomically replaces the entire versioned record.
-The native pairing boundary validates the complete credential and selected binding before constructing `validatedNativeCredential`.
-`remove` accepts any issued revision, including absence and unreadable records. It has no knowledge of owner operations or user confirmation.
+The private backend reads raw state and compares only `expectedRaw`. It neither issues revisions nor holds owner lifetimes or counters.
+The owner validates the native pairing reply and selected binding before constructing the complete replacement record.
+Backend replacement atomically writes that record. Removal accepts any exact raw identity, including unreadable records and absence.
+The backend has no knowledge of caller operations, observations, admission policy, or user confirmation.
 `Committed` and `Removed` require durable evidence that a subsequent process can observe the replacement or absence.
-The generation returned by `Committed` equals the generation stored in the complete replacement record.
-`NoWrite` proves that the previous durable record is unchanged. `Conflict` proves that the guard did not match and performs no write.
-`CommitUnknown` means the adapter cannot establish whether the mutation committed. The transition table defines its recovery.
+`NoWrite` proves the previous durable record is unchanged. `CommitUnknown` cannot establish whether the mutation committed.
+`ExclusionLost` means the raw precondition failed after owner acceptance. The backend performs no write, but another writer may have changed the record.
+This is an arbitration failure, not pre-acceptance staleness. The table defines retirement and recovery for each outcome.
 
 ## Owner interface and transitions
 
 ```text
 status(selection) -> Status
-enroll(selection, observation: Observation<Ready | Absent>, code) -> Ready | Failure
-forget(observation: Observation<Ready | Absent>) -> Forgotten | Failure
-discard(observation: Observation<Unreadable>) -> Discarded | Failure
+enroll(observation: Observation<Ready | Absent>, code) -> Ready | Failure
+forget(observation: Observation<Ready | Absent>) -> Absent | Failure
+discard(observation: Observation<Unreadable>) -> Absent | Failure
 execute(observation: Observation<Ready>, request) -> BoundedServiceResponse | Failure
 Failure = InvalidInput | Stale | WrongState | Cancelled | Blocked(StorageBlock)
         | PairingFailed | NetworkFailed | Unauthorized
 ```
 
-`selection` names native-validated application, profile, host, and endpoint configuration. Enrollment must match its observation's key.
+`status(selection)` is the sole selection entry point. It validates application, profile, host, and endpoint configuration.
+Other operations obtain their slot key from the observation. Mutation success returns a `Ready` or `Absent` status with a fresh observation.
 Every observation-taking operation resolves the reference and checks its declared kind at the native boundary.
 Unknown, retired, wrong-lifetime, or mismatched references return `Stale`. A valid reference supplied to an unsupported operation returns `WrongState`.
 Before request admission or starting pairing or confirmation, and again after an asynchronous reply or confirmation, the owner rereads under exclusive ownership and compares the full revision.
@@ -81,35 +84,36 @@ Raw changes retire observations of the old revision before the owner exposes a n
 
 The accepted-mutation rule is one transaction under arbitration. Reread the authoritative raw state and compare the entire incoming revision before acceptance.
 On a match, advance the mutation counter and retire all prior observations and pending enrollment work, then attempt replacement or removal without releasing ownership.
-The compare precedes counter advancement. There is no intermediate revision or second guard. A conflict before acceptance cannot retire newer observations.
-This rule applies to every accepted attempt, including matching absence, `NoWrite`, and `CommitUnknown`. Failed writes never revive retired observations.
-Call rows apply in order. Completion and restart rows govern their named events. `Present` corresponds to owner `Ready`. Effects and invalidations belong only to the named slot.
+The backend receives only the compared raw identity, never the revision or advanced counter. Its raw precondition cannot decide owner admission.
+A failed owner guard precedes acceptance and cannot retire newer observations.
+This rule applies to every accepted attempt, including matching absence and every backend failure. Failed writes never revive retired observations.
+Call rows apply in order. Completion and restart rows govern their named events. Effects and invalidations belong only to the named slot.
 
 | Operation and current state | Outcome and durable effect | Invalidation |
 | --- | --- | --- |
 | Any call with malformed application IPC input | `InvalidInput`. No request, write, or callback. | None. |
 | Any observation call with an unknown or retired reference | `Stale`. No request, write, or callback. | None. |
-| Any application operation while durability is unresolved | `Blocked(Unavailable)`. Only authoritative readback is permitted. | No new observations. |
+| Any application operation while durability or exclusion is unresolved | `Blocked(Unavailable)`. Only the recovery below is permitted. | No new observations. |
 | Any operation whose required read is `Blocked(reason)` | `Blocked(reason)`. No admission, confirmation, or write. | No new observations. |
 | Any observation call whose revision differs from the authoritative current revision | `Stale`. No request, write, or callback. | Old observations retire if the raw state changed. New observations are unaffected. |
-| `status` with `Present`, `Absent`, or `Unreadable` | Return the corresponding `Status` and current observation. No write. | None unless raw state changed. |
-| `enroll` with matching `Present` or `Absent` | Start pairing with the captured revision. A validated reply must pass the guard again. Durable replacement returns a new `Ready`. | Retire on accepted mutation. |
+| `status` with `Ready`, `Absent`, or `Unreadable` | Return the corresponding `Status` and current observation. No write. | None unless raw state changed. |
+| `enroll` with matching `Ready` or `Absent` | Start pairing with the captured revision. A validated reply must pass the guard again. Durable replacement returns a new `Ready`. | Retire on accepted mutation. |
 | `enroll` with `Unreadable` | `WrongState`. No pairing or overwrite. | None. |
-| `forget` with matching `Present` or `Absent` | Accept removal. Return `Forgotten` only after durable absence, including already absent slots. | Retire on acceptance, including absence. |
+| `forget` with matching `Ready` or `Absent` | Accept removal. Return fresh `Absent` only after durable absence, including already absent slots. | Retire on acceptance, including absence. |
 | `forget` with `Unreadable` | `WrongState`. No removal. | None. |
-| `discard` with matching `Unreadable` | Obtain native user confirmation, including unsupported-version downgrade risk. Recheck the guard after confirmation, then accept removal. Durable absence returns `Discarded`. | Retire on acceptance. |
-| `discard` with `Present` or `Absent`, or declined confirmation | `WrongState`, or `Cancelled` for declined confirmation. No write. | None. |
-| `execute` with matching `Present` | Admit the bounded request with its captured observation and credential. No store write. | None. |
+| `discard` with matching `Unreadable` | Obtain native user confirmation, including unsupported-version downgrade risk. Recheck the guard after confirmation, then accept removal. Durable absence returns fresh `Absent`. | Retire on acceptance. |
+| `discard` with `Ready` or `Absent`, or declined confirmation | `WrongState`, or `Cancelled` for declined confirmation. No write. | None. |
+| `execute` with matching `Ready` | Admit the bounded request with its captured observation and credential. No store write. | None. |
 | `execute` with `Absent` or `Unreadable` | `WrongState`. No request. | None. |
 | Pairing or transport fails before a store mutation | `PairingFailed` or `NetworkFailed`. No local credential-store write. Remote enrollment or command effects may already exist. No automatic pairing retry. | None. |
-| Store mutation returns `Conflict` | `Stale`. No write. The guard failed before acceptance. | None. |
-| Store mutation returns `NoWrite(reason)` | `Blocked(reason)`. Previous durable record remains. Later status requires an authoritative read. | Keep retirement from any accepted attempt. |
-| Store mutation returns `CommitUnknown` | `Blocked(Unavailable)`. No success, new observations, or admission. The uncertain write must finish or be fenced against any later write before authoritative durable readback can resolve it. A timeout does not prove this. | Keep retirement. |
-| Quiescent or fenced mutation has authoritative readback | The complete intended record including its fresh generation, or intended absence, establishes success. The exact prior record establishes no write. Either permits fresh status. An unexplained third identity stays `Blocked(Unavailable)` pending ownership or adapter recovery. | Old references stay retired. |
+| Backend returns `ExclusionLost` | `Blocked(Unavailable)`. No backend write. The current record may belong to another writer. Require the restart recovery below. | Keep accepted retirement. No new observations or writes. |
+| Backend returns `NoWrite(reason)` | `Blocked(reason)`. Previous durable record remains. Later status requires an authoritative read. | Keep retirement from any accepted attempt. |
+| Backend returns `CommitUnknown` | `Blocked(Unavailable)`. No success, new observations, or admission. The uncertain write must finish or be fenced against any later write before authoritative durable readback can resolve it. A timeout does not prove this. | Keep retirement. |
+| Quiescent or fenced mutation has authoritative readback | The complete intended record including its fresh generation, or intended absence, establishes success. The exact prior record establishes no write. Either permits fresh status. An unexplained third identity requires the restart recovery below and stays `Blocked(Unavailable)` until then. | Old references stay retired. |
 | Readback fails or cannot establish durable identity | Remain `Blocked(Unavailable)`. Cached data cannot resolve the outcome. | No new observations. |
-| A response or callback arrives for a retired observation | Finish only its original request as appropriate. It cannot affect a replacement connection or invoke its callbacks. | None. |
+| A response or callback arrives for a retired observation | Deliver the bounded response or failure only to the original caller. No authority change, retirement, status publication, or replacement-connection callback. | None. |
 | A 401 arrives for an admitted observation whose full revision still matches | Under arbitration, return `Unauthorized`, advance the counter, and retire that captured current revision. No store write. | Later status may issue a fresh observation, even for the same durable record. An older 401 cannot retire it. |
-| Owner restart | Establish exclusion of predecessor-owner writes and their quiescence or fencing, then authoritative status, before issuing observations. A fresh lifetime alone does not stop late writes. | Every reference from the previous owner lifetime is invalid. |
+| Owner restart, including exclusion-loss or third-identity recovery | Restore arbitration and establish quiescence or fencing of all pending and predecessor writes, then restart and read authoritative status before issuing observations. Restart alone does not stop late writes. | Every reference from the previous owner lifetime is invalid. |
 
 ## Native transport and application recovery
 
@@ -119,7 +123,7 @@ Execution accepts the existing closed service requests except `pair`, and verifi
 JavaScript cannot supply a destination URL, authentication header, cookie, or replacement host identity.
 Native code chooses routes and headers from the [native wire rules](../development/recorded-host.md#native-protocol-prerequisite), rejects redirects, and enforces invitation, request, response, and deadline bounds.
 Service replies contain only bounded service data and safe transport metadata. Errors use fixed secret-free categories.
-If pairing succeeds remotely but persistence fails, the invitation may be consumed and an unused host credential may remain until expiry or revocation.
+Any local failure after remote pairing success, including `Stale` or `Blocked`, may leave a consumed invitation and an unused host credential until expiry or revocation.
 
 Each `ServiceConnection` binds one immutable ready observation. Replacement creates a new connection, and retirement closes the old connection's feeds.
 The [service engine](../../packages/client/src/service-engine.ts) retains service decoding and resynchronization duties.
