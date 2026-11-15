@@ -68,6 +68,14 @@ export class Journal<E, P> {
       } else { stop(plan.kind, plan.reason); return; }
       while (!stopped) {
         const generation = this.generation;
+        const next = this.store.plan(scope, cursor, request.projectionVersion);
+        if (next.kind === 'snapshot') {
+          through = next.snapshot.cursor;
+          await deliver({ kind: 'snapshot', snapshot: next.snapshot }, through);
+          continue;
+        }
+        if (next.kind !== 'resume') { stop(next.kind, next.reason); return; }
+        through = next.through;
         if (cursor !== null && cursor < through) {
           const events = this.store.page(scope, cursor, through);
           const last = events.at(-1);

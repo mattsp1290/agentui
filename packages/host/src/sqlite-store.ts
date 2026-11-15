@@ -1,3 +1,5 @@
+import { providerCheckpoint } from './provider-stream.js';
+import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore } from './provider-stream.js';
 import { providerTarget, providerObservation, retainProviderRun } from './provider-commands.js';
 import type { ProviderTarget, ProviderRun } from './provider-commands.js';
 import { creationObservation, providerCreation, conversationInstallation } from './provider-creation.js';
@@ -23,7 +25,7 @@ class OutputApplicationError extends Error {}
 export class CapacityError extends Error {}
 const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
-export class SqliteStore<E, P> {
+export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
   onCommit: (() => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
@@ -41,7 +43,13 @@ export class SqliteStore<E, P> {
       this.db.exec(`CREATE TABLE IF NOT EXISTS provider_creations (
         host TEXT NOT NULL, conversation TEXT NOT NULL, original TEXT NOT NULL,
         status TEXT NOT NULL CHECK(status IN ('reserved','attempted','observed')), observation TEXT,
-        PRIMARY KEY(host, conversation));`);
+        PRIMARY KEY(host, conversation));
+        CREATE TABLE IF NOT EXISTS provider_checkpoints (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, original TEXT NOT NULL, data TEXT NOT NULL, floor INTEGER NOT NULL,
+          PRIMARY KEY(host, conversation), FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE IF NOT EXISTS provider_event_ids (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
@@ -113,6 +121,79 @@ export class SqliteStore<E, P> {
       this.db.prepare("UPDATE provider_creations SET status='observed', observation=? WHERE host=? AND conversation=?")
         .run(canonicalJson(observed), ...key(scope));
       return observed;
+    });
+  }
+  providerCheckpoint(original: ProviderCreation): ProviderCheckpoint | null {
+    const row = this.db.prepare('SELECT original, data FROM provider_checkpoints WHERE host=? AND conversation=?').get(...key(original.intent.scope));
+    if (!row) return null;
+    if (row.original !== canonicalJson(original)) throw new Error('Provider checkpoint association changed');
+    return providerCheckpoint(json(row.data));
+  }
+  commitProvider(original: ProviderCreation, expected: number | null,
+    event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange): ProviderCheckpoint {
+    return this.transaction(() => {
+      const scope = original.intent.scope, creation = this.creation(scope);
+      if (this.projection !== transcriptProjection || creation?.observation?.kind !== 'confirmed' ||
+        canonicalJson({ installation: creation.installation, intent: creation.intent, credential: creation.credential }) !== canonicalJson(original)) {
+        throw new Error('Provider observation association changed');
+      }
+      const current = this.providerCheckpoint(original);
+      if (event) {
+        const prior = this.db.prepare('SELECT payload FROM provider_event_ids WHERE host=? AND conversation=? AND id=?').get(...key(scope), event.id);
+        if (prior) {
+          if (prior.payload !== event.payload || !current) throw new Error('Conflicting provider event');
+          return current;
+        }
+      }
+      if ((current?.revision ?? null) !== expected) throw new Error('Provider checkpoint advanced');
+      const change = render();
+      for (const run of change.runs) this.writeProviderRun(scope, run);
+      const requireRun = (runId: string) => {
+        if (!this.db.prepare('SELECT 1 FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId)) throw new Error('Provider run is missing');
+      };
+      let floor = integer(this.db.prepare('SELECT floor FROM provider_checkpoints WHERE host=? AND conversation=?').get(...key(scope))?.floor ?? 0);
+      if (change.output.kind === 'snapshot') {
+        const snapshot = this.snapshot(scope), decisions = new Map<string, ReturnType<typeof parseDecision>>();
+        for (const pending of change.output.decisions) {
+          const id = pending.visible.pendingId, data = canonicalJson(pending);
+          const prior = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
+          if (prior && prior.data !== data) {
+            const previous = object(json(prior.data));
+            if (prior.status !== 'open' || canonicalJson(previous.reference) !== canonicalJson(pending.reference) ||
+              parseDecision(previous.visible).runId !== pending.visible.runId) throw new Error('Provider decision changed');
+            this.db.prepare('UPDATE pending_decisions SET data=? WHERE host=? AND conversation=? AND id=?').run(data, ...key(scope), id);
+          }
+          requireRun(pending.visible.runId);
+          if (!prior) this.db.prepare("INSERT INTO pending_decisions(host, conversation, id, run, data, status, operation) VALUES (?, ?, ?, ?, ?, 'open', NULL)")
+            .run(...key(scope), id, pending.visible.runId, data);
+          if (prior?.status !== 'closed') decisions.set(id, pending.visible);
+        }
+        for (const row of this.db.prepare("SELECT id FROM pending_decisions WHERE host=? AND conversation=? AND status='open'").all(...key(scope))) {
+          const id = nonempty(row.id);
+          if (!decisions.has(id)) this.db.prepare("UPDATE pending_decisions SET status='closed' WHERE host=? AND conversation=? AND id=?").run(...key(scope), id);
+        }
+        const transcript = change.output.transcript;
+        if (transcript.currentRun) requireRun(transcript.currentRun.runId);
+        for (const activity of transcript.activities ?? []) requireRun(activity.runId);
+        const document = this.encodeDocument(scope, { ...snapshot.document, domain: this.projection.decodeState(transcript), decisions: Object.fromEntries(decisions) });
+        floor = snapshot.cursor + 1;
+        if (!Number.isSafeInteger(floor)) throw new Error('Host cursor exhausted');
+        this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
+          .run(floor, document, Buffer.byteLength(document), ...key(scope));
+      } else {
+        for (const event of change.output.events) {
+          if ('runId' in event) requireRun(event.runId);
+          if (event.kind === 'command-updated') requireRun(event.activity.runId);
+        }
+        this.appendEvents(scope, change.output.events.map(event => ({ kind: 'domain', event: this.projection.decodeEvent(event) })));
+      }
+      const next = providerCheckpoint({ ...change.checkpoint, revision: (current?.revision ?? 0) + 1 });
+      const data = canonicalJson(next);
+      if (Buffer.byteLength(data) > this.limits.snapshotBytes) throw new CapacityError('Provider state exceeds snapshot budget');
+      this.db.prepare('INSERT INTO provider_checkpoints(host, conversation, original, data, floor) VALUES (?, ?, ?, ?, ?) ON CONFLICT(host, conversation) DO UPDATE SET data=excluded.data, floor=excluded.floor')
+        .run(...key(scope), canonicalJson(original), data, floor);
+      if (event) this.db.prepare('INSERT INTO provider_event_ids(host, conversation, id, payload) VALUES (?, ?, ?, ?)').run(...key(scope), event.id, event.payload);
+      return next;
     });
   }
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
@@ -379,7 +460,8 @@ export class SqliteStore<E, P> {
       if (after !== null && after > through) return { kind: 'resync', reason: 'cursor-ahead-request-snapshot' };
       const totals = this.db.prepare('SELECT count(*) AS count, coalesce(sum(bytes),0) AS bytes FROM events WHERE host=? AND conversation=? AND sequence>? AND sequence<=?')
         .get(...key(scope), after ?? through, through);
-      if (after === null || integer(totals?.count) > this.limits.replayEvents || integer(totals?.bytes) > this.limits.replayBytes) {
+      const floor = integer(this.db.prepare('SELECT floor FROM provider_checkpoints WHERE host=? AND conversation=?').get(...key(scope))?.floor ?? 0);
+      if (after === null || after < floor || integer(totals?.count) > this.limits.replayEvents || integer(totals?.bytes) > this.limits.replayBytes) {
         const wrapperBytes = this.snapshotOverheadBytes(scope);
         if (integer(row.bytes) + wrapperBytes > this.limits.snapshotBytes) return { kind: 'refused', reason: 'snapshot-overflow' };
         return { kind: 'snapshot', snapshot: this.snapshot(scope) };
