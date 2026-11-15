@@ -174,6 +174,9 @@ function lockEntries(ctx: AnalysisContext, owner: NpmOwner, packages: Record<str
     const entry = record(value);
     boundDeclarations(ctx, entry);
     if (entry.hasShrinkwrap !== undefined && entry.hasShrinkwrap !== false) throw new CustomizationError('invalid-package', 'Nested npm shrinkwrap contexts are unsupported.');
+    if (entry.inBundle || (installed && [entry.bundleDependencies, entry.bundledDependencies].some(value => Array.isArray(value) ? value.length > 0 : Boolean(value)))) {
+      throw new CustomizationError('invalid-package', 'Bundled npm dependencies are unsupported.');
+    }
     const source = lockSource(owner, entry, installed);
     const sourceDirectory = source.kind === 'workspace' ? source.target : source.kind === 'tarball' ? parentDirectory(source.archive) : directory;
     if (source.kind === 'workspace') targets.add(source.target);

@@ -1,6 +1,6 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { chmod, lstat, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from 'node:fs/promises';
+import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
 import { delimiter, dirname, join, relative, resolve } from 'node:path';
 import { promisify } from 'node:util';
 import { CustomizationError, resolveCustomizationSources } from '@agentui/host/customization';
@@ -15,6 +15,70 @@ const diagnostics = {
 };
 const failure = code => Object.assign(new Error(diagnostics[code]), { code });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
+
+async function validateInstalledPackages(directory, packages, check) {
+  try {
+    const expected = new Map();
+    const pending = ['node_modules'];
+    const seen = new Set();
+    for (const [path, entry] of Object.entries(packages)) {
+      check();
+      if (path.split('/').includes('node_modules')) expected.set(path, entry);
+      else if (path) pending.push(`${path}/node_modules`);
+    }
+    const canonical = await realpath(directory);
+    for (const location of pending) {
+      check();
+      const container = join(directory, location);
+      const metadata = await lstat(container).catch(error => {
+        if (error.code === 'ENOENT') return undefined;
+        throw error;
+      });
+      if (!metadata) continue;
+      if (!metadata.isDirectory()) throw failure('install-failed');
+      const modules = location.split('/').at(-1) === 'node_modules';
+      const entries = await readdir(container);
+      for (const name of entries) {
+        check();
+        if (modules && (name === '.bin' || name === '.package-lock.json')) continue;
+        const path = `${location}/${name}`;
+        const destination = join(directory, path);
+        const metadata = await lstat(destination);
+        if (modules && name.startsWith('@')) {
+          if (!metadata.isDirectory()) throw failure('install-failed');
+          pending.push(path);
+          continue;
+        }
+        const entry = expected.get(path);
+        if (!entry) throw failure('install-failed');
+        let identity = entry;
+        if (entry.link === true) {
+          if (!metadata.isSymbolicLink() || await realpath(destination) !== join(canonical, entry.resolved)) throw failure('install-failed');
+          identity = packages[entry.resolved];
+        } else {
+          if (!metadata.isDirectory()) throw failure('install-failed');
+          pending.push(`${path}/node_modules`);
+        }
+        const manifestPath = join(destination, 'package.json');
+        if (!(await lstat(manifestPath)).isFile()) throw failure('install-failed');
+        const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
+        if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.version !== identity.version ||
+          (identity.name !== undefined && manifest.name !== identity.name) || (entry.name !== undefined && manifest.name !== entry.name) ||
+          [manifest.bundleDependencies, manifest.bundledDependencies].some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
+          throw failure('install-failed');
+        }
+        seen.add(path);
+      }
+    }
+    for (const [path, entry] of expected) {
+      check();
+      if (!seen.has(path) && entry.optional !== true) throw failure('install-failed');
+    }
+  } catch (error) {
+    if (error.code === 'resource-limit') throw error;
+    throw failure('install-failed');
+  }
+}
 
 /** @typedef {import('@agentui/host/customization').ResolvedCustomizationPackage} ResolvedCustomizationPackage */
 /** @typedef {{readonly root: ResolvedCustomizationPackage, dispose(): Promise<void>}} PreparedCustomizationSources */
@@ -37,7 +101,7 @@ export async function prepareCustomizationSources(input) {
     await chmod(owner, 0o700);
     sources = await resolveCustomizationSources({ reference: input.reference, scratchParent: owner });
     const repositories = new Map();
-    const installs = new Set();
+    const installs = new Map();
     const nodes = new Map();
     const pending = [sources.root];
     for (const node of pending) {
@@ -49,7 +113,7 @@ export async function prepareCustomizationSources(input) {
         repositories.set(original, { original, directory: join(owner, `repository-${repositories.size}`), inputs: node.inputs });
       }
       nodes.set(node, repositories.get(original));
-      if (node.npm.kind === 'locked') installs.add(node.npm.directory);
+      if (node.npm.kind === 'locked') installs.set(node.npm.directory, { repository: repositories.get(original), npm: node.npm });
       pending.push(...node.extensions);
     }
     for (const repository of repositories.values()) {
@@ -70,6 +134,11 @@ export async function prepareCustomizationSources(input) {
         await writeFile(destination, bytes, { flag: 'wx', mode: file.executable ? 0o700 : 0o600 });
         await chmod(destination, file.executable ? 0o700 : 0o600);
       }
+    }
+    for (const [original, install] of installs) {
+      check();
+      install.directory = join(install.repository.directory, relative(install.repository.original, original));
+      install.packages = JSON.parse(await readFile(join(install.repository.directory, install.npm.lockfile.path), 'utf8')).packages;
     }
     if (installs.size) {
       const [major, minor, patch] = process.versions.node.split('.').map(Number);
@@ -113,10 +182,8 @@ export async function prepareCustomizationSources(input) {
             await rm(path);
           }
         }
-        for (const original of installs) {
-          const repository = [...repositories.values()].find(repo => original === repo.original || original.startsWith(repo.original + '/'));
-          const directory = join(repository.directory, relative(repository.original, original));
-          await run(['ci', '--ignore-scripts', '--include=dev', '--include=optional', '--include=peer', '--no-audit', '--no-fund', '--no-update-notifier'], directory);
+        for (const install of installs.values()) {
+          await run(['ci', '--ignore-scripts', '--include=dev', '--include=optional', '--include=peer', '--no-audit', '--no-fund', '--no-update-notifier'], install.directory);
         }
       } finally {
         for (const config of configs) {
@@ -125,6 +192,7 @@ export async function prepareCustomizationSources(input) {
         }
       }
     }
+    for (const install of installs.values()) await validateInstalledPackages(install.directory, install.packages, check);
     for (const repository of repositories.values()) {
       for (const file of repository.inputs.files) {
         check();

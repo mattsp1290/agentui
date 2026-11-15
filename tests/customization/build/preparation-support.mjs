@@ -32,13 +32,14 @@ export async function fixture(t) {
   const prepare = reference => prepareCustomizationSources({ reference, scratchParent });
   return { root, scratchParent, repository, prepare };
 }
-export async function tarball(f, repository, name, version) {
+export async function tarball(f, repository, name, version, manifest = {}, contents = {}) {
   const directory = join(f.root, `tar-${name}-${version}`);
   const script = "node -e \"require('fs').writeFileSync('dependency-script-ran', 'unsafe')\"";
-  await write(directory, 'package/package.json', { name, version, type: 'module', exports: './index.js', scripts: { preinstall: script, install: script, postinstall: script } });
+  await write(directory, 'package/package.json', { name, version, type: 'module', exports: './index.js', scripts: { preinstall: script, install: script, postinstall: script }, ...manifest });
   await write(directory, 'package/index.js', `export default ${JSON.stringify(`${name}@${version}`)};\n`);
+  for (const [path, bytes] of Object.entries(contents)) await write(directory, `package/${path}`, bytes);
   const archive = `vendor/${name}-${version}.tgz`;
-  await mkdir(join(repository.directory, 'vendor'), { recursive: true });
+  await mkdir(dirname(join(repository.directory, archive)), { recursive: true });
   execute('tar', ['-czf', join(repository.directory, archive), '-C', directory, 'package'], f.root);
   return { version, resolved: `file:${archive}`, integrity: 'sha512-' + createHash('sha512').update(await readFile(join(repository.directory, archive))).digest('base64'), hasInstallScript: true };
 }

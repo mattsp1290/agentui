@@ -286,6 +286,32 @@ test('contained local tarball inputs retain bytes while local escapes and mismat
   }
 });
 
+for (const [marker, value] of [['bundleDependencies', ['child']], ['bundleDependencies', true], ['bundledDependencies', ['child']], ['bundledDependencies', true], ['inBundle', true], ['inBundle', 'true']]) {
+  test(`installed lock entries reject active ${marker} ${JSON.stringify(value)} independently`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('bundled');
+    const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } };
+    await shared(repo, '', pkg);
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, { 'node_modules/value': { ...registry, [marker]: value } }));
+    await assert.rejects(f.read(reference(repo, repo.commit())), { code: 'invalid-package', message: 'Bundled npm dependencies are unsupported.' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+}
+
+test('installed lock entries retain support for inert bundle metadata', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('inert-bundle-metadata');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } };
+  await shared(repo, '', pkg);
+  for (const metadata of [{}, { bundleDependencies: false, bundledDependencies: [] }, { bundleDependencies: [], bundledDependencies: false, inBundle: false }]) {
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, { 'node_modules/value': { ...registry, ...metadata } }));
+    const result = await f.read(reference(repo, repo.commit()));
+    assert.equal(result.root.npm.kind, 'locked');
+    await result.dispose();
+  }
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('ambiguous npm owners, unsupported workspace patterns and conflicting manager pins reject', async t => {
   for (const variant of ['own-lock', 'nested-owner', 'pattern', 'overlap', 'manager']) {
     const f = await fixture(t);
