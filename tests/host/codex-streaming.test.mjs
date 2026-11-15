@@ -15,7 +15,7 @@ function fixture(t, mode, rejectAppend = () => false) {
   const logPath = join(dir, 'rpc.jsonl');
   const outputs = [];
   let host;
-  const driver = createCodexDriver({ cwd: dir, version: '0.167.2', executable: process.execPath,
+  const createDriver = () => createCodexDriver({ cwd: dir, version: '0.167.2', executable: process.execPath,
     args: [fileURLToPath(new URL('./fixtures/codex-streaming-agent.mjs', import.meta.url)), logPath, mode],
     append: (conversation, output) => {
       if (rejectAppend(conversation, output)) throw new Error('Fixture storage failure');
@@ -23,15 +23,18 @@ function fixture(t, mode, rejectAppend = () => false) {
       outputs.push({ scope: conversation, ...output });
     },
   });
+  let driver = createDriver();
   host = openLocalHost({ path: join(dir, 'host.sqlite'), projection: transcriptProjection,
     driver, budgets: defaultHostBudgets(), authorize: () => true });
   host.createConversation(scope, driver.installation);
   host.createConversation(other, driver.installation);
   t.after(() => { driver.close(); host.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { get host() { return host; }, driver, outputs, get port() { return host.conversation(scope); },
-    async reopen() {
+  return { get host() { return host; }, get driver() { return driver; }, outputs, get port() { return host.conversation(scope); },
+    async reopen(freshDriver = false) {
+      if (freshDriver) driver.close();
       host.close();
       await host.drained;
+      if (freshDriver) driver = createDriver();
       host = openLocalHost({ path: join(dir, 'host.sqlite'), projection: transcriptProjection,
         driver, budgets: defaultHostBudgets(), authorize: () => true });
     },
@@ -105,13 +108,25 @@ for (const method of ['initialize', 'thread/start', 'turn/start']) {
   });
 }
 
-test('transport loss after turn/start remains uncertain', async t => {
+test('transport loss after turn/start stores one completed uncertain notice across restart and exact retries', async t => {
   const f = fixture(t, 'lost-start');
   const send = command('lost');
   const result = await f.port.submit(send);
   assert.equal(result.receipt.state.kind, 'uncertain');
+  assert.equal(f.document().domain.currentRun, null);
+  assert.equal(f.messages().length, 1);
+  assert.equal(f.messages()[0].text, 'Codex did not confirm whether this response started. Check command recovery and any unconfirmed actions before trying again.');
+  assert.equal(f.messages()[0].complete, true);
+  assert.match(f.messages()[0].messageId, /:assistant-unconfirmed$/);
+  assert.equal(f.outputs.flatMap(output => output.runs).length, 0);
+  assert.equal(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')).length, 0);
+  const stored = f.document();
+  const requests = f.log();
   assert.deepEqual(await f.port.submit(send), result);
-  assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
+  await f.reopen();
+  assert.deepEqual(await f.port.submit(send), result);
+  assert.deepEqual(f.document(), stored);
+  assert.deepEqual(f.log(), requests);
   assert.match(f.driver.capability(command('later')).reason, /Restart the host/);
 });
 
@@ -142,26 +157,61 @@ for (const mode of ['pending-complete', 'pending-disconnect']) {
   });
 }
 
-test('a turn/start rejection stores one completed notice across restart and exact retries', async t => {
-  const f = fixture(t, 'reject-turn/start');
-  const send = command('rejected-visible');
+for (const method of ['initialize', 'thread/start', 'turn/start']) {
+  test(`a ${method} rejection stores one completed notice across restart and exact retries`, async t => {
+    const f = fixture(t, `reject-${method}`);
+    const send = command('rejected-visible');
+    const result = await f.port.submit(send);
+    assert.equal(result.receipt.state.kind, 'rejected');
+    assert.equal(f.document().domain.currentRun, null);
+    assert.equal(f.document().domain.messages.filter(message => message.role === 'user').length, method === 'turn/start' ? 1 : 0);
+    assert.equal(f.messages().length, 1);
+    assert.match(f.messages()[0].text, /Codex rejected this request: Fixture denied this request/);
+    assert.equal(f.messages()[0].complete, true);
+    assert.match(f.messages()[0].messageId, /:assistant-rejection$/);
+    assert.equal(f.outputs.flatMap(output => output.runs).length, 0);
+    assert.equal(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')).length, 0);
+    const stored = f.document();
+    const requests = f.log();
+    assert.deepEqual(await f.port.submit(send), result);
+    await f.reopen();
+    assert.deepEqual(f.document(), stored);
+    assert.deepEqual(await f.port.submit(send), result);
+    assert.deepEqual(f.document(), stored);
+    assert.deepEqual(f.log(), requests);
+    assert.equal((await f.port.submit(command('distinct-send'))).receipt.state.kind, 'completed');
+    await until(() => f.messages().some(message => message.text === 'Hello' && message.complete));
+  });
+}
+
+test('a resume rejection retains the previous completed run and messages across exact retries', async t => {
+  const f = fixture(t, 'reject-thread/resume');
+  await f.port.submit(command('first'));
+  await until(() => f.document().domain.currentRun?.kind === 'ended');
+  const previous = f.document().domain;
+  const runs = f.outputs.flatMap(output => output.runs);
+  const lifecycle = f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-'));
+  await f.reopen(true);
+  const send = command('resume-rejected');
   const result = await f.port.submit(send);
   assert.equal(result.receipt.state.kind, 'rejected');
-  assert.equal(f.document().domain.currentRun, null);
-  assert.equal(f.document().domain.messages.filter(message => message.role === 'user').length, 1);
-  assert.equal(f.messages().length, 1);
-  assert.match(f.messages()[0].text, /Codex rejected this request: Fixture denied this request/);
-  assert.equal(f.messages()[0].complete, true);
-  assert.equal(f.outputs.flatMap(output => output.runs).length, 0);
-  assert.equal(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')).length, 0);
+  assert.deepEqual(f.document().domain.currentRun, previous.currentRun);
+  assert.deepEqual(f.document().domain.messages.slice(0, -1), previous.messages);
+  assert.match(f.messages().at(-1).text, /Codex rejected this request: Fixture denied this request/);
+  assert.equal(f.messages().at(-1).complete, true);
+  assert.deepEqual(f.outputs.flatMap(output => output.runs), runs);
+  assert.deepEqual(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')), lifecycle);
   const stored = f.document();
+  const requests = f.log();
+  assert.deepEqual(await f.port.submit(send), result);
   await f.reopen();
-  assert.deepEqual(f.document(), stored);
   assert.deepEqual(await f.port.submit(send), result);
   assert.deepEqual(f.document(), stored);
-  assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
-  assert.equal((await f.port.submit(command('distinct-send'))).receipt.state.kind, 'completed');
-  await until(() => f.messages().some(message => message.text === 'Hello' && message.complete));
+  assert.deepEqual(f.log(), requests);
+  assert.equal((await f.port.submit(command('resume-new-id'))).receipt.state.kind, 'completed');
+  await until(() => f.messages().filter(message => message.text === 'Hello' && message.complete).length === 2);
+  assert.deepEqual(f.log().filter(message => message.method === 'thread/resume').map(message => message.params.threadId),
+    [runs[0].reference.opaque, runs[0].reference.opaque]);
 });
 
 for (const { mode, includes, excludes } of [
@@ -232,6 +282,34 @@ test('a failed rejection-notice append preserves the conclusive native rejection
   assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
   assert.deepEqual(f.messages().map(message => message.text),
     ['This response stopped because AgentUI could not store more output. Try a new conversation.']);
+});
+
+for (const mode of ['reject-initialize', 'reject-thread/start', 'lost-start']) {
+  test(`${mode} notice storage failure preserves its native outcome without interrupting`, async t => {
+    let attempted = 0;
+    const f = fixture(t, mode, (_scope, output) => {
+      if (!output.events.some(event => event.role === 'assistant')) return false;
+      attempted++;
+      return true;
+    });
+    const send = command('notice-storage-failure');
+    const result = await f.port.submit(send);
+    assert.equal(result.receipt.state.kind, mode === 'lost-start' ? 'uncertain' : 'rejected');
+    assert.ok(attempted > 0);
+    assert.deepEqual(await f.port.submit(send), result);
+    assert.equal(f.document().domain.currentRun, null);
+    assert.deepEqual(f.messages(), []);
+    assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
+  });
+}
+
+test('closing during initialization does not append a failed-send notice', async t => {
+  const f = fixture(t, 'ordinary');
+  const pending = f.port.submit(command('closing'));
+  f.driver.close();
+  assert.equal((await pending).receipt.state.kind, 'uncertain');
+  assert.deepEqual(f.messages(), []);
+  assert.equal(f.document().domain.currentRun, null);
 });
 
 for (const mode of ['activity-empty', 'activity-fallback']) {
