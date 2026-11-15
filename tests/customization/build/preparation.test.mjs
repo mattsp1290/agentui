@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { resolveCustomizationSources } from '@agentui/host/customization';
+import { prepareCustomizationSources } from '../../../scripts/prepare-customization-sources.mjs';
 import { files, fixture, locked, write } from './preparation-support.mjs';
 
 const imported = async node => (await import(pathToFileURL(join(node.directory, 'index.mjs')).href)).default;
@@ -90,6 +91,47 @@ test('real npm installs all dependency groups, ignores ambient configuration and
   }
 });
 
+for (const name of ['.NPMRC', '.NpMrC']) {
+  test(`real npm ignores and restores committed ${name} configuration`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('config-alias');
+    await locked(f, repo);
+    const bytes = 'dry-run=true\n';
+    const executable = name === '.NPMRC';
+    await write(repo.directory, name, bytes, executable);
+    const reference = repo.reference(repo.commit());
+    t.diagnostic(`case-insensitive configuration lookup: ${await access(join(repo.directory, '.npmrc')).then(() => true, () => false)}`);
+    const prepared = await f.prepare(reference);
+    t.after(() => prepared.dispose());
+    assert.deepEqual(await imported(prepared.root), ['value@1.0.0', 'development@1.0.0', 'optional@1.0.0', 'peer@1.0.0']);
+    assert.equal((await readdir(prepared.root.directory)).includes(name), true);
+    assert.equal(await readFile(join(prepared.root.directory, name), 'utf8'), bytes);
+    assert.equal((await stat(join(prepared.root.directory, name))).mode & 0o777, executable ? 0o700 : 0o600);
+    assert.equal(await readFile(join(repo.directory, name), 'utf8'), bytes);
+  });
+}
+
+test('real npm stays within its selected owner beneath a caller workspace and a spaced scratch path', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('ancestor-workspace');
+  await locked(f, repo);
+  const caller = join(f.root, 'caller workspace');
+  const scratchParent = join(caller, 'scratch with spaces');
+  const manifest = '{\n  "name": "caller", "private": true, "workspaces": ["**"]\n}\n';
+  const config = 'dry-run=true\n';
+  await write(caller, 'package.json', manifest);
+  await write(caller, '.npmrc', config);
+  const prepared = await prepareCustomizationSources({ reference: repo.reference(repo.commit()), scratchParent });
+  t.after(() => prepared.dispose());
+  assert.deepEqual(await imported(prepared.root), ['value@1.0.0', 'development@1.0.0', 'optional@1.0.0', 'peer@1.0.0']);
+  assert.equal(await readFile(join(caller, 'package.json'), 'utf8'), manifest);
+  assert.equal(await readFile(join(caller, '.npmrc'), 'utf8'), config);
+  await absent(join(caller, 'package-lock.json'));
+  await absent(join(caller, 'node_modules'));
+  await prepared.dispose();
+  assert.deepEqual(await readdir(scratchParent), []);
+});
+
 test('external and repeated references preserve shared nodes and conflicting installed versions', async t => {
   const f = await fixture(t);
   const child = await f.repository('child');
@@ -169,14 +211,20 @@ test('integrity failures remove their complete graph owner while preserving prev
   assert.deepEqual(await imported(successful.root), ['value@1.0.0', 'development@1.0.0', 'optional@1.0.0', 'peer@1.0.0']);
 });
 
-test('committed installations are refused even outside selected packages and empty repositories remain usable', async t => {
+for (const name of ['node_modules', 'NODE_MODULES', 'NoDe_MoDuLeS']) {
+  test(`committed ${name} installations are refused outside selected packages without npm dependencies`, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('committed-install');
+    await write(repo.directory, 'selected/package.json', { agentui: { shared: './index.mjs' } });
+    await write(repo.directory, 'selected/index.mjs', 'export default 1;\n');
+    await write(repo.directory, `unrelated/${name}/value/index.js`, 'committed installed bytes');
+    await assert.rejects(f.prepare(repo.reference(repo.commit(), 'selected')), { code: 'invalid-package' });
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+}
+
+test('empty repositories remain usable', async t => {
   const f = await fixture(t);
-  const repo = await f.repository('committed-install');
-  await write(repo.directory, 'selected/package.json', { agentui: { shared: './index.mjs' } });
-  await write(repo.directory, 'selected/index.mjs', 'export default 1;\n');
-  await write(repo.directory, 'unrelated/node_modules/value/index.js', 'committed installed bytes');
-  await assert.rejects(f.prepare(repo.reference(repo.commit(), 'selected')), { code: 'invalid-package' });
-  assert.deepEqual(await readdir(f.scratchParent), []);
   const empty = await f.repository('empty');
   const prepared = await f.prepare(empty.reference(empty.commit()));
   t.after(() => prepared.dispose());

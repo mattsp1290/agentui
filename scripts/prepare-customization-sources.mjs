@@ -56,7 +56,7 @@ export async function prepareCustomizationSources(input) {
       await mkdir(repository.directory, { mode: 0o700 });
       for (const file of repository.inputs.files) {
         check();
-        if (file.path.split('/').includes('node_modules')) {
+        if (file.path.split('/').some(segment => segment.toLowerCase() === 'node_modules')) {
           throw new CustomizationError('invalid-package', 'Committed node_modules is unsupported in customization sources.');
         }
         const source = join(repository.original, file.path);
@@ -92,7 +92,8 @@ export async function prepareCustomizationSources(input) {
       const run = async (args, cwd, version = false) => {
         check();
         try {
-          return (await execute(process.execPath, [npm, ...args], { cwd, env, encoding: 'utf8',
+          const prefix = await realpath(cwd);
+          return (await execute(process.execPath, [npm, '--prefix', prefix, ...args], { cwd: prefix, env, encoding: 'utf8',
             timeout: Math.min(version ? 10_000 : 120_000, deadline - Date.now()), maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' })).stdout;
         } catch (error) {
           if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw failure('resource-limit');
@@ -103,7 +104,7 @@ export async function prepareCustomizationSources(input) {
       const configs = [];
       try {
         for (const repository of repositories.values()) {
-          for (const file of repository.inputs.files.filter(file => file.path.split('/').at(-1) === '.npmrc')) {
+          for (const file of repository.inputs.files.filter(file => file.path.split('/').at(-1).toLowerCase() === '.npmrc')) {
             check();
             const path = join(repository.directory, file.path);
             const bytes = await readFile(path);
