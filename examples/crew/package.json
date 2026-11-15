@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@agentui/contracts": "0.0.0",
-    "@birbcrew/client": "file:../../vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/birbcrew-client-0.1.0.tgz",
+    "@birbcrew/client": "file:../../vendor/crew-client/d595188879d902a980f956591f8cd2c35d0c4f4b/birbcrew-client-0.1.0.tgz",
     "zod": "4.6.6",
     "@agentui/sdk": "0.0.0",
     "@ag-ui/client": "file:../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-client-1.0.4.tgz",
