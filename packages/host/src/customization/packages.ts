@@ -140,7 +140,7 @@ function declarations(ctx: AnalysisContext, pkg: Record<string, unknown>, groups
       if (typeof spec !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name)) throw new Error('Invalid dependency');
       const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
       const peer = group === 'peerDependencies';
-      result.push({ name, spec, peer, optional: peer && meta[name] !== undefined && record(meta[name]).optional === true });
+      result.push({ name, spec, peer, optional: peer && Object.hasOwn(meta, name) && record(meta[name]).optional === true });
     }
   }
   return result;

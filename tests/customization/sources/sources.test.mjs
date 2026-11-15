@@ -835,3 +835,29 @@ test('snapshot file transport retains Git spelling while graph requires a canoni
   await assert.rejects(f.read({ repository: url + '%', commit }), { code: 'retrieval-failed' });
   assert.deepEqual(await readdir(f.scratchParent), []);
 });
+
+test('peer metadata uses own properties for selected and installed declarations', async t => {
+  for (const installed of [false, true]) for (const malformed of [false, true]) {
+    await t.test(`${installed ? 'installed' : 'selected'} ${malformed ? 'malformed' : 'absent'} metadata`, async t => {
+      const f = await fixture(t);
+      const repo = await f.repository('peer-metadata');
+      const peer = { peerDependencies: { constructor: '1.0.0' },
+        ...(malformed ? { peerDependenciesMeta: { constructor: 'invalid' } } : {}) };
+      const pkg = { name: 'notes', version: '1.0.0', packageManager: manager,
+        ...(installed ? { dependencies: { wrapper: '1.0.0' } } : peer) };
+      await shared(repo, '', pkg);
+      await write(repo.directory, 'package-lock.json', lockFor(pkg, {
+        'node_modules/constructor': registry,
+        ...(installed ? { 'node_modules/wrapper': { ...registry, ...peer } } : {}),
+      }));
+      const ref = reference(repo, repo.commit());
+      if (malformed) await assert.rejects(f.read(ref), { code: 'invalid-package' });
+      else {
+        const graph = await f.read(ref);
+        assert.equal(graph.root.npm.kind, 'locked');
+        await graph.dispose();
+      }
+      assert.deepEqual(await readdir(f.scratchParent), []);
+    });
+  }
+});
