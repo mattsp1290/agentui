@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { join } from 'node:path';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { observeProvider } from '../../packages/host/dist/provider-stream.js';
 import { providerService, fixture, saved, send } from './provider-stream-fixture.mjs';
 import { until, snapshot as readSnapshot } from '../host/fixture.mjs';
 
@@ -118,27 +122,45 @@ test('immediate repeated resync stops until an explicit retry instead of spinnin
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(observations, 2); assert.equal(snapshots, 2);
   assert.equal((await readSnapshot(f.client.conversation(scope), 2)).cursor, saved(f).conversation.head);
-  await f.running.close(); assert.equal(observations, 2); assert.equal(snapshots, 2);
+  assert.equal((await f.client.conversation(scope).submit(send(scope, 'retry'))).receipt.state.kind, 'accepted');
+  await until(() => observations === 4);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(snapshots, 3);
+  await f.running.close(); assert.equal(observations, 4); assert.equal(snapshots, 3);
 });
 
-for (const duplicate of [false, true]) test(`${duplicate ? 'duplicate replay does not' : 'new committed event does'} allow another resync recovery`, { timeout: 15_000 }, async t => {
-  const remote = await providerService(t), a = remote.extension(), feeds = resyncable(a);
+for (const progress of ['event', 'duplicate', 'snapshot']) test(`${progress === 'event' ? 'new committed event does' : progress === 'duplicate' ? 'duplicate replay does not' : 'feed snapshot does not'} allow another resync recovery`, { timeout: 15_000 }, async t => {
+  const renews = progress === 'event';
+  const remote = await providerService(t), a = remote.extension();
   const f = await fixture(t, [a]); await f.create(); await until(() => a.calls.ready === 1);
   const binding = remote.conversations.get('chat').snapshot.binding;
   const event = remote.emit(remote.makeEvent(binding, 'Original progress', 1));
   await until(() => a.calls.ack.length === 1);
-  feeds[0].resync(); await until(() => feeds.length === 2 && a.calls.ready === 2);
-  remote.emit(duplicate ? event : remote.makeEvent(binding, 'New progress', 2), !duplicate);
-  await until(() => a.calls.ack.length === 2);
+  const original = f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations').get().original));
+  const limits = f.inspect(db => JSON.parse(db.prepare('SELECT value FROM host_limits').get().value));
+  await f.running.close();
+  const store = new SqliteStore(join(f.directory, 'host.sqlite'), transcriptProjection, limits);
+  const feeds = [], thirdOpened = Promise.withResolvers();
+  let snapshots = 0;
+  const backend = {
+    async snapshot() { snapshots++; return { kind: 'available', snapshot: structuredClone(remote.conversations.get('chat').snapshot) }; },
+    observe(input, receive) {
+      const end = Promise.withResolvers();
+      feeds.push({ input, receive, resync: () => end.resolve({ kind: 'resync', cursor: null, reason: 'Expired' }) });
+      if (feeds.length === 3) thirdOpened.resolve();
+      return { close() { end.resolve({ kind: 'closed', cursor: null, reason: 'closed' }); }, ended: end.promise };
+    },
+  };
+  const stream = await observeProvider(backend, a.presentation, original, binding, () => {}, store);
+  t.after(async () => { stream.close(); await stream.drained; store.close(); });
+  feeds[0].resync(); await until(() => feeds.length === 2);
+  await feeds[1].receive(progress === 'snapshot' ? { kind: 'snapshot', snapshot: remote.conversations.get('chat').snapshot }
+    : renews ? remote.makeEvent(binding, 'New progress', 2) : event);
   feeds[1].resync();
-  await new Promise(resolve => setImmediate(resolve));
-  if (duplicate) {
-    assert.equal(feeds.length, 2);
-    assert.equal(remote.requests.filter(request => request.path === '/snapshot').length, 2);
-  } else {
-    await until(() => feeds.length === 3 && a.calls.ready === 3);
-    assert.equal(remote.requests.filter(request => request.path === '/snapshot').length, 3);
-  }
+  const result = await Promise.race([stream.drained.then(() => 'drained'), thirdOpened.promise.then(() => 'third-feed')]);
+  assert.equal(result, renews ? 'third-feed' : 'drained');
+  assert.equal(feeds.length, renews ? 3 : 2);
+  assert.equal(snapshots, renews ? 2 : 1);
 });
 
 test('a naturally ended feed is not closed again during resync', { timeout: 15_000 }, async t => {

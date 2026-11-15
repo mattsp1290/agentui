@@ -108,7 +108,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
   const retained = new Map(), endings = new Map(), observe = a.backend.observe;
   a.backend.observe = (input, receive) => {
     const id = input.binding.creation.scope.conversationId, end = Promise.withResolvers();
-    retained.set(id, receive);
+    if (!retained.has(id)) retained.set(id, receive);
     const feed = observe(input, receive);
     endings.set(id, () => {
       end.resolve({ kind: 'resync', cursor: null, reason: 'Provider history expired' });
@@ -170,6 +170,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
   assert.equal(effects(remote, '/create').length, 2); assert.equal(effects(remote, '/submit').length, 6);
   for (const id of ['decision-a', 'decision-b']) assert.notEqual(records[0].operations.get(id).operationId, records[1].operations.get(id).operationId);
   for (const record of records) {
+    const sibling = records.find(value => value !== record), untouched = fullState(f, sibling.id);
     const snapshot = structuredClone(remote.conversations.get(record.id).snapshot);
     snapshot.cursor = remote.cursor(record.binding);
     snapshot.state.transcript.messages = [{ messageId: 'replacement', revision: 1, role: 'assistant', text: `${record.id} replacement answer`, complete: true }];
@@ -178,6 +179,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     endings.get(record.id)();
     await until(() => JSON.parse(saved(f, record.id).checkpoint.data).cursor.opaque.token === snapshot.cursor.opaque.token);
     await until(() => record.items.some(item => item.kind === 'snapshot'));
+    assert.deepEqual(fullState(f, sibling.id), untouched);
     const state = fullState(f, record.id), replacement = record.items.find(item => item.kind === 'snapshot').snapshot.document;
     assert.equal(replacement.domain.messages[0].text, `${record.id} replacement answer`);
     assert.deepEqual(replacement.receipts, document(record.before).receipts); assert.deepEqual(replacement.decisions, {});

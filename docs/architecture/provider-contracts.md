@@ -146,7 +146,9 @@ A stopped feed keeps its last committed checkpoint. Restart resumes that checkpo
 When a feed ends with `resync`, the host rejects further callbacks from that feed, drains callbacks already admitted, then requests and commits a fresh snapshot before observing from its cursor.
 Each observation acquisition permits one automatic snapshot and replacement feed without distinct committed feed event progress. A second `resync` without that progress stops observation before another snapshot request.
 A distinct feed event that advances the checkpoint revision renews this allowance. Duplicate events and snapshots do not.
+A later send, host restart or provider replacement acquires observation again with a fresh allowance.
 Snapshot refusal, unavailable results, validation errors and authorization failures stop observation while preserving saved history and receipts. They do not count as cleanup failures.
+A recovery snapshot that changes a reserved or closed decision is a validation error. Observation stops after each acquisition until the provider returns that record unchanged.
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
