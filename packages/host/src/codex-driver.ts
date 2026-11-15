@@ -9,6 +9,7 @@ import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
 import { approvalItem, approvalPrompt, bounded, rememberApprovalItem } from './codex-approval-display.js';
 import type { ApprovalDetails } from './codex-approval-display.js';
+import { messageParts } from './transcript-parts.js';
 
 export type CodexTranscriptEvent = TranscriptEvent;
 export interface CodexDriverOptions {
@@ -41,21 +42,6 @@ interface Approval {
 type Observation = NativeDispatchObservation<CommandResult<CodexTranscriptEvent>>;
 const empty = (): HostOutput<CodexTranscriptEvent> => ({ events: [], runs: [], decisions: [] });
 const scopeKey = (scope: ConversationScope) => canonicalJson(scope);
-
-function messageParts(text: string): string[] {
-  const parts: string[] = [];
-  let start = 0, offset = 0, bytes = 0;
-  for (const character of text) {
-    const cost = Buffer.byteLength(JSON.stringify(character)) - 2;
-    if (bytes + cost > 24_000) {
-      parts.push(text.slice(start, offset));
-      start = offset; bytes = 0;
-    }
-    bytes += cost; offset += character.length;
-  }
-  parts.push(text.slice(start));
-  return parts;
-}
 
 export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
   readonly installation: Installation; close(): void;

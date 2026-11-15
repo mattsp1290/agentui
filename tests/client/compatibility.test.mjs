@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkCompatibility } from '@agentui/client';
-import { PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
+import { CODEX_SDK_RUNTIME, PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 
 const nativeRuntime = { engine: 'recorded', version: '1.0.0', format: 'recorded-v1' };
 const client = { supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.2'], supportedNativeRuntimes: [nativeRuntime], expectedArtifactId: 'artifact-a' };
@@ -45,5 +45,17 @@ test('solo clients accept the exact Pi SDK chat runtime and reject other version
       nativeRuntime: { ...piHost.nativeRuntime, ...change } });
     assert.equal(result.kind, 'incompatible');
     assert.deepEqual(result.issues.map(issue => issue.dimension), ['native-runtime']);
+  }
+});
+
+test('solo clients accept the exact Codex SDK subscription runtime and reject changed native identity', () => {
+  const sdkHost = { ...host, wireVersion: 1, extensionSdkVersion: '0.0.0', nativeRuntime: {
+    engine: 'codex-sdk', version: '0.169.0', format: 'codex-sdk-chat-chatgpt-gpt-6.1-sol-v1',
+  } };
+  assert.deepEqual(CODEX_SDK_RUNTIME, sdkHost.nativeRuntime);
+  assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, sdkHost), { kind: 'compatible' });
+  for (const change of [{ version: '0.170.0' }, { format: 'codex-sdk-v2' }, { engine: 'other' }]) {
+    assert.equal(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...sdkHost,
+      nativeRuntime: { ...sdkHost.nativeRuntime, ...change } }).kind, 'incompatible');
   }
 });

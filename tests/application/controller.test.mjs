@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ServiceError } from '@agentui/contracts/service';
-import { CODEX_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
@@ -524,7 +524,7 @@ for (const blocked of ['disconnected', 'feed-ended', 'storage', 'revoked', 'inco
   });
 }
 
-for (const runtime of [CODEX_RUNTIME, PI_RUNTIME]) {
+for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME]) {
   for (const state of ['running', 'stopping', 'incomplete']) {
     test(`SDK ${runtime.engine} ${state} response blocks send while approval and cancel stay usable`, async t => {
       const f = await openCommands(t, runtime);

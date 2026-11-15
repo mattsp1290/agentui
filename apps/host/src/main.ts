@@ -4,7 +4,7 @@ import { parseArgs } from 'node:util';
 import { startBrowserHost } from './server.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
 
-const COMMANDS: Readonly<Record<string, readonly string[]>> = { 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'] };
+const COMMANDS: Readonly<Record<string, readonly string[]>> = { 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets'], 'codex-sdk': ['port', 'workspace', 'assets'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'] };
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     'data-dir': { type: 'string' }, port: { type: 'string' }, id: { type: 'string' }, after: { type: 'string' },
@@ -13,18 +13,19 @@ async function main(): Promise<void> {
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
   const allowed = command && Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
-  if (extra.length || !command || !allowed) throw new Error('Use codex, pi, browser-dev, invite, invite-native, devices or revoke');
+  if (extra.length || !command || !allowed) throw new Error('Use codex, pi, browser-dev, invite, invite-native, devices, revoke or codex-sdk');
   for (const flag of Object.keys(values)) {
     if (flag !== 'data-dir' && !allowed.includes(flag)) throw new Error(`--${flag} is not valid for ${command}`);
   }
   const directory = resolve(values['data-dir']);
-  if (command === 'browser-dev' || command === 'codex' || command === 'pi') {
+  if (command === 'browser-dev' || command === 'codex' || command === 'codex-sdk' || command === 'pi') {
     if (command === 'codex' && !values.workspace) throw new Error('Provide --workspace pointing to the directory Codex can work in');
+    if (command === 'codex-sdk' && !values.workspace) throw new Error('Provide --workspace pointing to the directory for Codex SDK conversations');
     if (command === 'pi' && !values.workspace) throw new Error('Provide --workspace pointing to the directory for Pi conversations');
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
     const host = await startBrowserHost({ directory, port, assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
-      ...((command === 'codex' || command === 'pi') && values.workspace ? { provider: { kind: command, cwd: resolve(values.workspace) } } : {}) });
+      ...((command === 'codex' || command === 'codex-sdk' || command === 'pi') && values.workspace ? { provider: { kind: command, cwd: resolve(values.workspace) } } : {}) });
     process.stdout.write(`${JSON.stringify({ mode: command === 'browser-dev' ? 'browser-development' : command, origin: host.origin, hostId: host.hostId })}\n`);
     const close = () => { void host.close().catch(() => { process.exitCode = 1; }); };
     process.once('SIGINT', close);
