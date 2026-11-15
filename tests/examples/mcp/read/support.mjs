@@ -89,8 +89,8 @@ export async function fixture(t) {
   };
   const host = openLocalHost({ path: database, projection: transcriptProjection, driver, authorize: () => true });
   const feeds = new FeedRegistry();
-  const api = createApi({ access, host, feeds, installation: installed, compatibility, agents: [{ installation: installed, availability: { kind: 'ready' } },
-    { installation: { ...installed, installationId: 'unavailable' }, availability: { kind: 'unavailable', reason: 'offline' } }],
+  const api = createApi({ access, host, feeds, compatibility, agentSelection: { kind: 'native', defaultInstallation: installed, agents: [{ installation: installed, availability: { kind: 'ready' } },
+    { installation: { ...installed, installationId: 'unavailable' }, availability: { kind: 'unavailable', reason: 'offline' } }] },
     credentialClass: 'native', isClosing: () => false });
   const operations = [];
   const endpoint = serviceEndpoint({ access, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },

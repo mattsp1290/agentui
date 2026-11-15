@@ -17,7 +17,7 @@ const running = await startBrowserHost({ directory: resolve(config.directory), p
   observability: readObservabilityConfiguration(process.env),
   assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)),
   hostArtifactDirectory: fileURLToPath(new URL('../../apps/host/dist/', import.meta.url)),
-  ...(config.nativeConfig ? { configuration: readAgentConfiguration(resolve(config.nativeConfig)) } : {}),
+  agentStartup: config.nativeConfig ? { kind: 'configured', configuration: readAgentConfiguration(resolve(config.nativeConfig)) } : { kind: 'extensions' },
   providerExtensions: [{ ...extension, installations: [{ id: 'member', instance, service: config.service,
     expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: config.credentialRevision,
       resolve: async () => (await readFile(resolve(config.tokenFile), 'utf8')).trim() } }] }] });

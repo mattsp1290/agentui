@@ -13,11 +13,12 @@ export function checkCompatibility(client: ClientCompatibility, host: HostCompat
       reason: `Host extension SDK contract ${host.extensionSdkVersion} is unsupported`,
       action: 'Install extensions supporting the host SDK contract or update the host extension runtime.' });
   }
-  if (!client.supportedNativeRuntimes.some(runtime =>
-    runtime.engine === host.nativeRuntime.engine && runtime.version === host.nativeRuntime.version &&
-    runtime.format === host.nativeRuntime.format)) {
+  const nativeRuntime = host.nativeRuntime;
+  if (nativeRuntime !== null && !client.supportedNativeRuntimes.some(runtime =>
+    runtime.engine === nativeRuntime.engine && runtime.version === nativeRuntime.version &&
+    runtime.format === nativeRuntime.format)) {
     issues.push({ dimension: 'native-runtime',
-      reason: `Native runtime ${host.nativeRuntime.engine} ${host.nativeRuntime.version} format ${host.nativeRuntime.format} is unsupported`,
+      reason: `Native runtime ${nativeRuntime.engine} ${nativeRuntime.version} format ${nativeRuntime.format} is unsupported`,
       action: 'Select a supported native engine, runtime version and session format.' });
   }
   if (host.desiredGitRevision !== host.appliedArtifact.gitRevision) {

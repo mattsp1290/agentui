@@ -55,6 +55,7 @@ activate(context: ServerExtensionContext) {
 }
 const running = await startBrowserHost({
   directory, assetsDirectory,
+  agentStartup: { kind: 'extensions' },
   providerExtensions: [{ manifest, entry, installations: [{
     id: 'service', instance: presentation.instance, service: 'https://service.example',
     expectedAuthority: 'remote-provider',
@@ -118,7 +119,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 5, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+The current integration uses wire version 6, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Durable response streams
@@ -152,7 +153,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 5, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 6, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 

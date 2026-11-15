@@ -11,7 +11,7 @@ import { createBrowserConnection } from '@agentui/client/service';
 import { entry, listenerLog, options, secret, service, startBrowserHost, turn } from './fixtures.mjs';
 
 async function paired(t, extensions) {
-  const configured = options(t), host = await startBrowserHost({ ...configured, providerExtensions: extensions.map(value => value.value) });
+  const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: extensions.map(value => value.value) });
   t.after(() => host.close());
   let cookie;
   const client = createBrowserConnection({ fetch: async (url, init) => {

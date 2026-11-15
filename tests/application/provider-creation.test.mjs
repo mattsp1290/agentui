@@ -13,6 +13,7 @@ import { createBrowserConnection } from '@agentui/client/service';
 import { createProviderRegistry } from '@agentui/host';
 import { fixture as hostFixture, scope as hostScope } from '../host/fixture.mjs';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
+import { SERVICE_WIRE_VERSION } from '@agentui/contracts/compatibility';
 import { crew, crewBackend, crewPresentation } from '../extensions/providers/contracts/crew.ts';
 import { local, localBackend, localPresentation } from '../extensions/providers/contracts/local.ts';
 
@@ -72,7 +73,7 @@ async function fixture(t, extensions) {
     return response;
   } });
   const start = async values => {
-    running = await startBrowserHost({ directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
+    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
     if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
@@ -105,7 +106,7 @@ const unavailable = promise => assert.rejects(promise, error => error.kind === '
   }) }), b = extension({ native: true });
   f = await fixture(t, [a, b]);
   const metadata = await f.client.metadata(), first = await selected(f), second = await selected(f, 'Local provider');
-  assert.equal(metadata.compatibility.wireVersion, 5); assert.notEqual(first.id, second.id);
+  assert.equal(metadata.compatibility.wireVersion, SERVICE_WIRE_VERSION); assert.notEqual(first.id, second.id);
   assert.equal(first.kind, 'provider'); assert.equal('runtime' in first, false); assert.deepEqual(first.commands, ['approve']);
   assert.doesNotMatch(JSON.stringify(metadata), /PRIVATE_CREATION|opaqueHandle|revision/);
   const nativeScope = f.scope('native'); await f.client.create(nativeScope, metadata.defaultAgentId);

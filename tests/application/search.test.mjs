@@ -17,7 +17,7 @@ test('saved history search scans past empty pages and searches only current tran
   const host = openRecordedHost({ path: join(directory, 'host.sqlite'), backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId, progressMs: 0 });
   const feeds = new FeedRegistry();
   t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); rmSync(directory, { recursive: true, force: true }); });
-  const api = createApi({ access, host, feeds, credentialClass: 'browser-development', isClosing: () => false,
+  const api = createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, credentialClass: 'browser-development', isClosing: () => false,
     compatibility: { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } });
   const principal = access.pair(access.invite('browser-development'), 'browser-development').principal;

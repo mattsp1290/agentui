@@ -402,10 +402,11 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       const { saved } = requireSaved(owner);
       if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
-      const scope = { hostId: host.hostId, conversationId: deps.createId() };
       const selected = agentId ?? host.defaultAgentId;
+      if (selected === null) throw new Error('No agent is available to start a conversation.');
       const agent = host.agents.find(agent => agent.id === selected);
       if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
+      const scope = { hostId: host.hostId, conversationId: deps.createId() };
       await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
       requireHost(owner);
       await completeCreation(owner, scope, selected);

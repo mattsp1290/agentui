@@ -61,9 +61,9 @@ const childSource = `
     const { ownDirectory } = await import(new URL('apps/host/build/tsc/ownership.js', root));
     const options = { directory, port: 0,
       assetsDirectory: fileURLToPath(new URL('apps/desktop/web-dist-browser/', root)),
-      ...(mode === 'recorded' ? {} : { provider: { kind: 'pi', cwd: process.cwd() } }) };
+      agentStartup: mode === 'recorded' ? { kind: 'recorded' } : { kind: 'provider', provider: { kind: 'pi', cwd: process.cwd() } } };
     if (mode === 'startup') {
-      await assert.rejects(startBrowserHost({ ...options, provider: { kind: 'pi', cwd: join(directory, 'missing') } }), /existing directory/);
+      await assert.rejects(startBrowserHost({ ...options, agentStartup: { kind: 'provider', provider: { kind: 'pi', cwd: join(directory, 'missing') } } }), /existing directory/);
     } else {
       const running = await startBrowserHost(options);
       globalThis.shutdownTestDriverFailure = mode === 'driver';
