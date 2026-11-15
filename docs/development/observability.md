@@ -80,13 +80,15 @@ The host owns a separate tracer provider for each running host. It does not regi
 
 Export runs in the background using OpenTelemetry's JSON serializer. The queue holds at most 128 spans and batches at most 32. Under pressure, spans may be dropped. Each HTTP attempt has an absolute 500 ms deadline and does not retry or follow redirects. Batch processing has a 750 ms timeout. Shutdown allows the bounded queued batches to export concurrently and waits at most one second before destroying telemetry connections. Export failure does not change a service response or host shutdown result. Traces are diagnostic evidence rather than durable receipts.
 
+The exporter drains its own in-flight attempts during graceful shutdown. It accepts only HTTP 200 JSON acknowledgments, bounded to 64 KiB. Malformed responses and nonzero span rejections fail the export. An acceptance warning produces a fixed diagnostic without exposing the Collector's text.
+
 ## Verify the local export path
 
 Build first, then run the receiver and bundled-host tests:
 
 ```sh
 npm run build
-node --test tests/application/observability.test.mjs
+node --test tests/application/observability.test.mjs tests/application/genai-observability.test.mjs tests/application/telemetry-export.test.mjs
 ```
 
 The tests inspect actual OTLP JSON sent by the bundled host. They check content exclusions, disabled mode, receiver failures, and Switchboard GenAI spans from a controlled native fixture. They do not attest to receipt in a live Datadog account.

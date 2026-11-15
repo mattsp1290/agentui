@@ -89,9 +89,9 @@ export function createHostObservability(configuration: ObservabilityConfiguratio
       closed = true;
       agents.close();
       closePromise ??= new Promise<void>(resolve => {
-        const finish = () => { void exporter.shutdown(); resolve(); };
+        const finish = () => { exporter.abort(); resolve(); };
         const timer = setTimeout(finish, 1000);
-        void provider.shutdown().catch(() => {}).finally(() => { clearTimeout(timer); finish(); });
+        void provider.shutdown().catch(() => {}).then(() => exporter.shutdown()).finally(() => { clearTimeout(timer); finish(); });
       });
       return closePromise;
     },
