@@ -11,6 +11,7 @@ import test from 'node:test';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { createAgentObservations } from '../../apps/host/build/tsc/agent-observations.js';
 import { readObservabilityConfiguration } from '../../apps/host/build/tsc/observability.js';
+import { nativeProcessEnvironment } from '../../apps/host/build/tsc/native-environment.js';
 
 const root = new URL('../../', import.meta.url);
 const hostRequire = createRequire(new URL('../../apps/host/package.json', import.meta.url));
@@ -56,15 +57,15 @@ test('native run observations isolate identical IDs across hosts, conversations 
     { source: 'codex', provider: 'openai', scope: { ...scope, hostId: 'private-codex-host' }, outcome: 'completed', expected: 'success' },
   ];
   for (const item of cases) {
-    o.record(item.source, item.scope, end(sharedRun, 'completed'));
-    o.record(item.source, item.scope, start(sharedRun));
-    o.record(item.source, item.scope, start(sharedRun));
+    o.recordOutput(item.source, item.scope, [end(sharedRun, 'completed')]);
+    o.recordOutput(item.source, item.scope, [start(sharedRun)]);
+    o.recordOutput(item.source, item.scope, [start(sharedRun)]);
   }
-  o.record('codex', scope, end('private-stale-run', 'failed'));
+  o.recordOutput('codex', scope, [end('private-stale-run', 'failed')]);
   assert.equal(spans().length, 0, 'unmatched ends and duplicate starts never finish a run');
   for (const item of cases.toReversed()) {
-    o.record(item.source, item.scope, end(sharedRun, item.outcome));
-    o.record(item.source, item.scope, end(sharedRun, 'failed'));
+    o.recordOutput(item.source, item.scope, [end(sharedRun, item.outcome)]);
+    o.recordOutput(item.source, item.scope, [end(sharedRun, 'failed')]);
   }
   assert.equal(spans().length, cases.length);
   for (const [index, item] of cases.toReversed().entries()) {
@@ -79,18 +80,18 @@ test('native run observations isolate identical IDs across hosts, conversations 
 
 test('native run capacity rejects excess starts, recovers after finish and closes unfinished runs once', t => {
   const { observations: o, spans } = observationFixture(t);
-  for (let index = 0; index < 129; index++) o.record('codex', scope, start(`run-${index}`));
-  o.record('codex', scope, end('run-128', 'completed'));
+  for (let index = 0; index < 129; index++) o.recordOutput('codex', scope, [start(`run-${index}`)]);
+  o.recordOutput('codex', scope, [end('run-128', 'completed')]);
   assert.equal(spans().length, 0, 'the overflow run never acquired a span');
-  o.record('codex', scope, end('run-0', 'completed'));
+  o.recordOutput('codex', scope, [end('run-0', 'completed')]);
   assert.equal(spans().length, 1);
-  o.record('codex', scope, start('replacement'));
-  o.record('codex', scope, end('replacement', 'failed'));
+  o.recordOutput('codex', scope, [start('replacement')]);
+  o.recordOutput('codex', scope, [end('replacement', 'failed')]);
   o.close();
   o.close();
-  o.record('codex', scope, end('run-1', 'completed'));
-  o.record('codex', scope, start('after-close'));
-  o.record('codex', scope, end('after-close', 'completed'));
+  o.recordOutput('codex', scope, [end('run-1', 'completed')]);
+  o.recordOutput('codex', scope, [start('after-close')]);
+  o.recordOutput('codex', scope, [end('after-close', 'completed')]);
   assert.equal(spans().length, 129, 'capacity was released and closing did not duplicate or reopen spans');
   assertAgentSpan(spans()[0], 'codex', 'openai', 'success');
   assertAgentSpan(spans()[1], 'codex', 'openai', 'error');
@@ -107,11 +108,11 @@ test('native observations tolerate a failing tracer and can observe a later heal
     return real.startSpan(...args);
   } }) });
   t.after(async () => { observations.close(); await provider.shutdown(); });
-  assert.doesNotThrow(() => observations.record('codex', scope, start('same-run')));
-  assert.doesNotThrow(() => observations.record('codex', scope, end('same-run', 'failed')));
+  assert.doesNotThrow(() => observations.recordOutput('codex', scope, [start('same-run')]));
+  assert.doesNotThrow(() => observations.recordOutput('codex', scope, [end('same-run', 'failed')]));
   broken = false;
-  observations.record('codex', scope, start('same-run'));
-  observations.record('codex', scope, end('same-run', 'completed'));
+  observations.recordOutput('codex', scope, [start('same-run')]);
+  observations.recordOutput('codex', scope, [end('same-run', 'completed')]);
   assert.equal(exporter.getFinishedSpans().length, 1);
   assertAgentSpan(exporter.getFinishedSpans()[0], 'codex', 'openai', 'success');
 });
@@ -119,7 +120,7 @@ test('native observations tolerate a failing tracer and can observe a later heal
 test('Datadog LLM Observability requires an explicit boolean option and stays absent by default', () => {
   const base = { OTEL_TRACES_EXPORTER: 'otlp' };
   const defaults = readObservabilityConfiguration(base);
-  assert.equal(Object.hasOwn(defaults, 'datadogLlmObservability'), false);
+  assert.equal(defaults.datadogLlmObservability, false);
   assert.deepEqual(readObservabilityConfiguration({ ...base, AGENTUI_DATADOG_LLMOBS: 'false' }), defaults);
   assert.deepEqual(readObservabilityConfiguration({ ...base, AGENTUI_DATADOG_LLMOBS: 'true' }), {
     ...defaults, datadogLlmObservability: true,
@@ -177,7 +178,7 @@ else {
 }
 `, { mode: 0o700 });
   const children = [];
-  const environment = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('OTEL_') && key !== 'AGENTUI_DATADOG_LLMOBS'));
+  const environment = nativeProcessEnvironment();
   const launch = args => {
     const child = spawn(process.execPath, ['apps/host/dist/main.js', ...args, '--data-dir', data], {
       cwd: root, env: { ...environment, PATH: `${bin}:${process.env.PATH ?? ''}`,

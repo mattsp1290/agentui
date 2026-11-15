@@ -1,21 +1,9 @@
 {
-  "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "dadfe09fb2f0090b46168309309ca01bb89b9a0e",
-  "sourceTree": "24f889f95efa3b36dd2f9d86e01236cc0f0fba47",
-  "artifact": "switchboard-dadfe09fb2f0090b46168309309ca01bb89b9a0e.tgz",
-  "sha256": "675957f5550d34fa8ed43de6ec16693725917c0930a013304904c2fd5ce046c5",
-  "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-codex",
   "entrypoint": "./codex",
   "nativeSdk": "0.169.0",
   "provider": "chatgpt-subscription",
   "model": "gpt-6.1-sol",
-  "license": "MIT",
-  "toolchain": {
-    "node": "24.22.3",
-    "npm": "11.19.1"
-  },
-  "limits": "Current package and controlled fixture checks only. Historical native and Apple measurements do not qualify this revision. No live native agent, Datadog backend or Apple application execution was performed for this update.",
   "historicalRecord": "historical/switchboard-codex-a5f62fc31a1b4d1d85184c8f660ddca3e8a46a0c.json",
   "qualificationRecord": "switchboard.json"
 }

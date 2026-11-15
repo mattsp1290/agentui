@@ -33,14 +33,14 @@ async function receiver(t, respond = (_incoming, outgoing) => {
 
 function observe(t, collector, headers = {}) {
   const observations = createHostObservability({ kind: 'otlp', endpoint: collector.endpoint,
-    headers, serviceName: 'agentui-export-test' });
+    headers, serviceName: 'agentui-export-test', datadogLlmObservability: false });
   t.after(() => observations.close());
   return observations;
 }
 
 function recordRequests(observations, count) {
   for (let index = 0; index < count; index++) observations.record({ operation: 'metadata',
-    credentialClass: 'native', outcome: 'ok', startTime: performance.timeOrigin + performance.now() });
+    credentialClass: 'native', outcome: 'ok', statusCode: 200, startTime: performance.timeOrigin + performance.now() });
 }
 
 async function until(predicate, message) {
@@ -122,8 +122,8 @@ for (const kind of ['requests', 'unfinished native runs']) {
       if (kind === 'requests') recordRequests(observations, count);
       else {
         const scope = { hostId: 'private-shutdown-host', conversationId: 'private-shutdown-conversation' };
-        for (let index = 0; index < count; index++) observations.recordRun('codex', scope,
-          { kind: 'run-started', runId: `private-shutdown-run-${index}`, previousRunId: null });
+        for (let index = 0; index < count; index++) observations.recordOutput('codex', scope, [
+          { kind: 'run-started', runId: `private-shutdown-run-${index}`, previousRunId: null }]);
       }
       await observations.close();
       const exported = spans(collector);

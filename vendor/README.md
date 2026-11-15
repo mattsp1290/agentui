@@ -16,7 +16,9 @@ and Claude aliases from one immutable artifact at source
 `dadfe09fb2f0090b46168309309ca01bb89b9a0e`.
 The [active pin](switchboard.json) records the source tree, source-lock SHA-256,
 artifact SHA-256, toolchain, command results, and retained logs.
-The alias pins identify their public entrypoints and native SDK versions.
+The alias pins identify their public entrypoints and native SDK versions. Their
+`qualificationRecord` references the active pin as the single artifact identity.
+Qualification limits are recorded in the active pin’s `qualification.limits`.
 The root lockfile records npm integrity separately.
 
 The public entries are core, `./agui`, `./testkit`, `./pi`, `./codex`, `./claude`,

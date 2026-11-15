@@ -2,9 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
-import { dirname, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { hostDependencyManifest, importHostDependency } from '../../host/test-support/dependencies.mjs';
+import { hostDependencyLockKey, importHostDependency } from '../../host/test-support/dependencies.mjs';
 import { contracts, createFakeFixture } from '@agentui/switchboard-qualification/testkit';
 
 const root = new URL('../../../', import.meta.url);
@@ -55,7 +53,7 @@ test('controlled qualification retains a separate development archive and produc
   assert.equal(historical.sha256, '15416f5505eb8c3f5b0e3236a48f879f873661e46d27a652ad845f08cb0b9421');
   assert.notEqual(pin.sourceRevision, historical.sourceRevision);
   assert.equal(host.dependencies['@mattsp1290/switchboard'], `file:../../vendor/${pin.artifact}`);
-  const installedPath = relative(fileURLToPath(root), dirname(hostDependencyManifest('@mattsp1290/switchboard'))).split(sep).join('/');
+  const installedPath = hostDependencyLockKey('@mattsp1290/switchboard');
   assert.equal(lock.packages[installedPath].resolved, `file:vendor/${pin.artifact}`);
 });
 

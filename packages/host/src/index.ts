@@ -19,7 +19,6 @@ export type { CodexDriverOptions, CodexTranscriptEvent } from './codex-driver.js
 export { CapacityError as HostCapacityError } from './sqlite-store.js';
 
 export { codexInstallation, codexSdkInstallation, claudeSdkInstallation, piInstallation } from './native-installations.js';
-export { nativeProcessEnvironment } from './process-environment.js';
 
 export type { ConversationInstallation, ProviderInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 export { providerInstallationKey } from './provider-creation.js';

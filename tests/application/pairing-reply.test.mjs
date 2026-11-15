@@ -1,3 +1,4 @@
+import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, ServerResponse } from 'node:http';
@@ -18,7 +19,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const code = access.invite(credentialClass);
     let injections = 0;
     let committedAtFailure = false;
-    const handler = serviceEndpoint({
+    const handler = serviceEndpoint({ observability: NO_OBSERVABILITY,
       access, credentialClass, files: new Map(), isClosing: () => false,
       api: async () => { assert.fail('Pairing must not dispatch the service API'); },
     });

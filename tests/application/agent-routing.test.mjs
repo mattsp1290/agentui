@@ -1,3 +1,4 @@
+import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
 import assert from 'node:assert/strict';
 import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -65,7 +66,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   t.after(() => rmSync(custom.directory, { recursive: true, force: true }));
   buildCustom(custom);
   const assets = readArtifactBytes(join(custom.directory, 'browser'), 'browser-development');
-  const handler = serviceEndpoint({ access, api: (principal, request) => api(principal, request), credentialClass: 'browser-development', files: assets.files, isClosing: () => false });
+  const handler = serviceEndpoint({ observability: NO_OBSERVABILITY, access, api: (principal, request) => api(principal, request), credentialClass: 'browser-development', files: assets.files, isClosing: () => false });
   const server = createServer((request, response) => { void handler(request, response); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;

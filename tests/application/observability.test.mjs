@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
+import { nativeProcessEnvironment } from '../../apps/host/build/tsc/native-environment.js';
 
 const root = new URL('../../', import.meta.url);
-const baseEnvironment = Object.fromEntries(Object.entries(process.env)
-  .filter(([key]) => !key.startsWith('OTEL_') && key !== 'AGENTUI_DATADOG_LLMOBS'));
+const baseEnvironment = nativeProcessEnvironment();
 
 async function exitWithin(child, milliseconds = 5000) {
   let forced = false;
@@ -263,7 +263,7 @@ test('response serialization failure exports a sanitized unavailable outcome aft
   const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
   const paired = access.pair(access.invite('native'), 'native');
   const privateDiagnostic = 'private-serialization-diagnostic-e88e24';
-  const observability = createHostObservability({ kind: 'otlp', endpoint: `${collector.endpoint}/v1/traces`, headers: {}, serviceName: 'agentui-host' });
+  const observability = createHostObservability({ kind: 'otlp', endpoint: `${collector.endpoint}/v1/traces`, headers: {}, serviceName: 'agentui-host', datadogLlmObservability: false });
   const handler = serviceEndpoint({ credentialClass: 'native', access, observability, isClosing: () => false,
     api: async () => ({ diagnostic: privateDiagnostic.padEnd(SERVICE_MAX_RESPONSE_BYTES, 'x') }) });
   const server = createServer((incoming, outgoing) => { void handler(incoming, outgoing).catch(() => outgoing.destroy()); });
@@ -336,7 +336,7 @@ test('observability configuration selects explicit HTTP JSON traces and validate
     { OTEL_TRACES_EXPORTER: 'invalid', OTEL_SDK_DISABLED: 'true', OTEL_EXPORTER_OTLP_HEADERS: 'invalid' }]) {
     assert.deepEqual(read(environment), { kind: 'disabled' });
   }
-  const defaults = { kind: 'otlp', endpoint: 'http://127.0.0.1:4318/v1/traces', headers: {}, serviceName: 'agentui-host' };
+  const defaults = { kind: 'otlp', endpoint: 'http://127.0.0.1:4318/v1/traces', headers: {}, serviceName: 'agentui-host', datadogLlmObservability: false };
   assert.deepEqual(read({ OTEL_TRACES_EXPORTER: 'otlp' }), defaults);
   assert.deepEqual(read({ OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: 'https://collector.example/otlp/' }),
     { ...defaults, endpoint: 'https://collector.example/otlp/v1/traces' });
@@ -344,7 +344,7 @@ test('observability configuration selects explicit HTTP JSON traces and validate
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: 'https://collector.example/custom', OTEL_SERVICE_NAME: 'my-host',
     OTEL_EXPORTER_OTLP_PROTOCOL: 'grpc', OTEL_EXPORTER_OTLP_TRACES_PROTOCOL: 'http/json',
     OTEL_EXPORTER_OTLP_HEADERS: 'x-general=value,x-token=general', OTEL_EXPORTER_OTLP_TRACES_HEADERS: 'x-token=a%3Db,x-team=two%20words' }),
-  { kind: 'otlp', endpoint: 'https://collector.example/custom', serviceName: 'my-host',
+  { kind: 'otlp', endpoint: 'https://collector.example/custom', serviceName: 'my-host', datadogLlmObservability: false,
     headers: { 'x-general': 'value', 'x-token': 'a=b', 'x-team': 'two words' } });
   for (const endpoint of ['file:///tmp/traces', 'http://user:secret@collector.example', 'http://collector.example?secret=x',
     'http://collector.example/#fragment', 'not a URL']) {

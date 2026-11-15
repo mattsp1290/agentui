@@ -3,9 +3,7 @@ import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
 import { test } from 'node:test';
 import { gunzipSync } from 'node:zlib';
-import { dirname, relative, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { hostDependencyManifest, importHostDependency } from '../../host/test-support/dependencies.mjs';
+import { hostDependencyLockKey, hostDependencyManifest, importHostDependency } from '../../host/test-support/dependencies.mjs';
 import { parseInteractionContinuation, parseSessionReference } from '@agentui/host';
 
 const root = new URL('../../../', import.meta.url);
@@ -26,7 +24,7 @@ test('host artifact and retained logs match the pin, manifest and npm integrity'
   const bytes = await readFile(new URL(`vendor/${pin.artifact}`, root));
   assert.equal(createHash('sha256').update(bytes).digest('hex'), pin.sha256);
   assert.equal(host.dependencies['@mattsp1290/switchboard'], `file:../../vendor/${pin.artifact}`);
-  const installedPath = relative(fileURLToPath(root), dirname(hostDependencyManifest('@mattsp1290/switchboard'))).split(sep).join('/');
+  const installedPath = hostDependencyLockKey('@mattsp1290/switchboard');
   const installed = lock.packages[installedPath];
   assert.equal(installed.resolved, `file:vendor/${pin.artifact}`);
   assert.equal(installed.integrity, `sha512-${createHash('sha512').update(bytes).digest('base64')}`);
@@ -37,7 +35,6 @@ test('host artifact and retained logs match the pin, manifest and npm integrity'
 });
 
 test('all runtime aliases expose the current public Switchboard entries and exact peers', async () => {
-  const pin = JSON.parse(await readFile(new URL('vendor/switchboard.json', root), 'utf8'));
   const host = JSON.parse(await readFile(new URL('packages/host/package.json', root), 'utf8'));
   const lock = JSON.parse(await readFile(new URL('package-lock.json', root), 'utf8'));
   for (const [alias, pinFile] of [
@@ -47,11 +44,12 @@ test('all runtime aliases expose the current public Switchboard entries and exac
     ['@agentui/switchboard-claude', 'switchboard-claude.json'],
   ]) {
     const adapterPin = JSON.parse(await readFile(new URL(`vendor/${pinFile}`, root), 'utf8'));
-    assert.equal(adapterPin.sourceRevision, pin.sourceRevision, alias);
-    assert.equal(adapterPin.sha256, pin.sha256, alias);
+    const qualificationRecord = pinFile === 'switchboard.json' ? pinFile : adapterPin.qualificationRecord;
+    assert.equal(qualificationRecord, 'switchboard.json', alias);
+    const pin = JSON.parse(await readFile(new URL(`vendor/${qualificationRecord}`, root), 'utf8'));
     assert.equal(host.dependencies[alias], `file:../../vendor/${pin.artifact}`, alias);
     const manifestPath = hostDependencyManifest(alias);
-    const installedPath = relative(fileURLToPath(root), dirname(manifestPath)).split(sep).join('/');
+    const installedPath = hostDependencyLockKey(alias);
     assert.equal(lock.packages[installedPath].resolved, `file:vendor/${pin.artifact}`, alias);
     const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
     assert.equal(manifest.peerDependencies['@opentelemetry/api'], host.dependencies['@opentelemetry/api']);

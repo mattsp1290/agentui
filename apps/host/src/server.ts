@@ -9,7 +9,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, createProviderRegistry, nativeProcessEnvironment, openLocalHost } from '@agentui/host';
+import { createCodexDriver, createProviderRegistry, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
@@ -34,6 +34,7 @@ import { createProviderAuthority } from './provider-credentials.js';
 import type { ProviderInstallation } from './provider-credentials.js';
 import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
+import { nativeProcessEnvironment } from './native-environment.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -128,9 +129,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       const appendFor = (source: NativeProvider['kind']): Parameters<typeof createCodexDriver>[0]['append'] => (scope, output) => {
         if (!host) throw new Error('Host is not ready to store agent output');
         host.append(scope, output);
-        for (const event of output.events) {
-          if (event.kind === 'run-started' || event.kind === 'run-ended') observability.recordRun(source, scope, event);
-        }
+        observability.recordOutput(source, scope, output.events);
       };
       const currentRunId = (scope: ConversationScope): string | null => {
         if (!host) throw new Error('Host not ready');
@@ -159,14 +158,15 @@ export async function startBrowserHost(options: BrowserHostOptions) {
                 ...(provider.executable ? { codexPathOverride: provider.executable } : {}), append, currentRunId });
               break;
             case 'codex': {
+              const env = nativeProcessEnvironment();
               let version: string;
               try {
-                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096, env: nativeProcessEnvironment() });
+                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096, env });
                 version = result.stdout.trim();
               } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
               driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
-                ...(provider.executable ? { executable: provider.executable } : {}), append });
+                ...(provider.executable ? { executable: provider.executable } : {}), env, append });
               break;
             }
           }

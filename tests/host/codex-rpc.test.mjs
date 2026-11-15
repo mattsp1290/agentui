@@ -29,6 +29,39 @@ async function until(predicate) {
   assert.fail('Timed out waiting for fixture');
 }
 
+for (const supplied of [false, true]) {
+  test(`child ${supplied ? 'uses the supplied' : 'inherits the normal process'} environment`, { timeout: 4000 }, async t => {
+    const key = 'OTEL_AGENTUI_RPC_ENVIRONMENT_TEST';
+    const previous = process.env[key];
+    process.env[key] = 'inherited-value';
+    t.after(() => {
+      if (previous === undefined) delete process.env[key];
+      else process.env[key] = previous;
+    });
+    const env = { PATH: process.env.PATH, OPENAI_API_KEY: 'explicit-provider-credential',
+      OTEL_EXPORTER_OTLP_HEADERS: 'explicit-collector-header', AGENTUI_DATADOG_LLMOBS: 'true' };
+    const rpc = new CodexRpc({
+      executable: process.execPath,
+      args: ['--input-type=module', '--eval', `
+        import { createInterface } from 'node:readline';
+        createInterface({ input: process.stdin }).on('line', line => {
+          const message = JSON.parse(line);
+          const result = Object.fromEntries(message.params.map(key => [key, process.env[key] ?? null]));
+          process.stdout.write(JSON.stringify({ id: message.id, result }) + '\\n');
+        });
+      `],
+      cwd: process.cwd(),
+      ...(supplied ? { env } : {}),
+      onNotification() {}, onRequest() {}, onClose() {},
+    });
+    t.after(() => rpc.close());
+    const keys = [key, 'PATH', 'OPENAI_API_KEY', 'OTEL_EXPORTER_OTLP_HEADERS', 'AGENTUI_DATADOG_LLMOBS'];
+    const expected = supplied ? env : process.env;
+    assert.deepEqual(await rpc.request('environment', keys),
+      Object.fromEntries(keys.map(name => [name, expected[name] ?? null])));
+  });
+}
+
 test('frames split UTF-8 and coalesced NDJSON, matching out-of-order numeric replies', { timeout: 4000 }, async t => {
   const { rpc, notifications } = connection(t);
   const first = rpc.request('reorder', { value: 'first' });

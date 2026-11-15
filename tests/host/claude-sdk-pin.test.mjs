@@ -12,10 +12,11 @@ const json = path => JSON.parse(readFileSync(new URL(path, root), 'utf8'));
 
 test('Claude host consumes the pinned public Switchboard artifact with SDK-free declarations', () => {
   const pin = json('vendor/switchboard-claude.json');
+  const artifact = json(`vendor/${pin.qualificationRecord}`);
   const host = json('packages/host/package.json');
-  const dependency = `file:../../vendor/${pin.artifact}`;
+  const dependency = `file:../../vendor/${artifact.artifact}`;
   assert.equal(host.dependencies['@agentui/switchboard-claude'], dependency);
-  assert.equal(createHash('sha256').update(readFileSync(new URL(`vendor/${pin.artifact}`, root))).digest('hex'), pin.sha256);
+  assert.equal(createHash('sha256').update(readFileSync(new URL(`vendor/${artifact.artifact}`, root))).digest('hex'), artifact.sha256);
   assert.equal(host.dependencies['@anthropic-ai/claude-agent-sdk'], pin.nativeSdk);
   const entry = fileURLToPath(resolveHostDependency('@agentui/switchboard-claude/claude'));
   assert.doesNotMatch(readFileSync(entry.replace(/\.js$/, '.d.ts'), 'utf8'), /@anthropic-ai/);

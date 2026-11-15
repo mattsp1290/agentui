@@ -83,6 +83,21 @@ async function observe(port, predicate) {
 const messages = document => document.domain.messages;
 const assistant = document => messages(document).filter(message => message.role === 'assistant');
 
+test('passes the caller environment to its Codex process', { timeout: 4000 }, async t => {
+  const dir = mkdtempSync(join(tmpdir(), 'agentui-codex-environment-'));
+  const path = join(dir, 'environment.json');
+  const env = { PATH: process.env.PATH ?? '', OPENAI_API_KEY: 'explicit-provider-credential',
+    OTEL_EXPORTER_OTLP_HEADERS: 'explicit-collector-header', AGENTUI_DATADOG_LLMOBS: 'true' };
+  const driver = createCodexDriver({ cwd: dir, version: '0.167.2', executable: process.execPath,
+    args: ['--eval', `require('node:fs').writeFileSync(process.argv[1], JSON.stringify(process.env)); setInterval(() => {}, 1000);`, path],
+    env, append() {},
+  });
+  t.after(() => { driver.close(); rmSync(dir, { recursive: true, force: true }); });
+  await until(() => existsSync(path));
+  const actual = JSON.parse(readFileSync(path, 'utf8'));
+  assert.deepEqual(Object.fromEntries(Object.keys(env).map(key => [key, actual[key]])), env);
+});
+
 test('streams before completion, reuses its thread, resumes from legacy SQLite and cancels an active turn', { timeout: 10_000 }, async t => {
   const f = fixture(t);
   const first = f.open();

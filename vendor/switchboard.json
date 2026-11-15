@@ -10,7 +10,6 @@
     "node": "24.22.3",
     "npm": "11.19.1"
   },
-  "limits": "Current package and controlled fixture checks only. Historical native and Apple measurements do not qualify this revision. No live native agent, Datadog backend or Apple application execution was performed for this update.",
   "qualification": {
     "platform": "Darwin arm64",
     "node": "v24.22.3",
