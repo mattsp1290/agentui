@@ -31,7 +31,7 @@ import { describeAgent } from './agents.js';
 import type { InstalledAgent } from './agents.js';
 import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
-import { nativeProcessEnvironment } from './native-environment.js';
+import { directCodexEnvironment } from './native-environment.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import { providerExtensionSource } from './provider-extensions.js';
 import type { BrowserProviderExtension } from './provider-extensions.js';
@@ -162,7 +162,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
                 ...(provider.executable ? { codexPathOverride: provider.executable } : {}), append, currentRunId });
               break;
             case 'codex': {
-              const env = nativeProcessEnvironment();
+              const env = directCodexEnvironment();
               let version: string;
               try {
                 const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096, env });

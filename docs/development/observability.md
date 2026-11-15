@@ -47,7 +47,7 @@ These variables apply only when starting the host. Control commands such as `inv
 
 Endpoint URLs cannot contain credentials, query strings, or fragments. Invalid configuration fails startup with a generic diagnostic that omits the supplied value. Keep Collector credentials in host environment variables. Use HTTPS when sending them across a network.
 
-The CLI reads telemetry environment settings once. The exporter sends only the endpoint and headers in that parsed configuration. Programmatic host options do not inherit ambient collector headers. The direct Codex version probe and app-server process receive an environment with host `OTEL_*` settings and `AGENTUI_DATADOG_LLMOBS` removed.
+The CLI reads telemetry environment settings once. The exporter sends only the endpoint and headers in that parsed configuration. Programmatic host options do not inherit ambient collector headers. The direct Codex version probe and app-server process receive an environment with host `OTEL_*` settings and `AGENTUI_DATADOG_LLMOBS` removed. Switchboard supplies its Codex SDK and Claude SDK children with allowlisted environments that also exclude those settings.
 
 The host supplies its own resource and sampler. It does not read `OTEL_RESOURCE_ATTRIBUTES`, detect process or machine attributes, or configure sampling from environment variables. No Datadog-specific host variables are required. Configure environment and version tags in your Collector or Agent.
 

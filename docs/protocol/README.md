@@ -65,7 +65,8 @@ The owned fixtures validate every emitted event against the retained canonical
 `Event` definition. They assert returned values and related IDs for text, tools,
 state, activity, public extensions, message content and terminal observations.
 Opaque reasoning-role messages and scoped owner references provide partial
-representation. Reasoning and subagent lifecycle mapping remain planned.
+representation. The active descriptor includes reasoning and subagent mapping.
+Dedicated lifecycle output remains unqualified and is tracked under `agentui-ckpw`.
 Compiler probes observe TypeScript assignment rules against published SDK types.
 Excess-property checking rejects unknown `multiAgent` keys on fresh literals;
 widened values can retain those keys. Both are language properties, and neither
@@ -203,6 +204,4 @@ The active [Switchboard pin](../../vendor/switchboard.json) now records the
 observability-capable runtime. The retained canonical fixtures and their original
 Linux and Mac receipts stay bound to the [historical pin](../../vendor/historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json).
 The conformance report names the active descriptor separately from that historical
-comparison. The active descriptor includes reasoning and subagent mapping.
-AgentUI's existing fixtures cover their availability descriptions, message content,
-and owner attribution. Dedicated lifecycle output remains unqualified by those fixtures.
+comparison.

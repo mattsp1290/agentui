@@ -18,21 +18,19 @@ function acknowledgement(body: Uint8Array): 'accepted' | 'warning' | 'rejected' 
   return typeof partial.errorMessage === 'string' ? 'warning' : 'rejected';
 }
 
-type Attempt = { readonly done: Promise<void>; readonly abort: () => void };
+type Attempt = { readonly result: Promise<ExportResultCode>; readonly abort: () => void };
 
-function postOnce(options: { readonly endpoint: URL; readonly headers: Readonly<Record<string, string>>; readonly body: Uint8Array;
-  readonly complete: (code: ExportResultCode) => void }): Attempt {
+function postOnce(options: { readonly endpoint: URL; readonly headers: Readonly<Record<string, string>>; readonly body: Uint8Array }): Attempt {
   const send = options.endpoint.protocol === 'https:' ? httpsRequest : httpRequest;
   let request: ClientRequest | undefined;
-  const done = new Promise<void>(resolve => {
+  const result = new Promise<ExportResultCode>(resolve => {
     let timer: ReturnType<typeof setTimeout> | undefined;
     let finished = false;
     const finish = (code: ExportResultCode) => {
       if (finished) return;
       finished = true;
       clearTimeout(timer);
-      resolve();
-      options.complete(code);
+      resolve(code);
     };
     try {
       const outgoing = send(options.endpoint, { method: 'POST', agent: false,
@@ -65,7 +63,7 @@ function postOnce(options: { readonly endpoint: URL; readonly headers: Readonly<
       finish(ExportResultCode.FAILED);
     }
   });
-  return { done, abort: () => { request?.destroy(); } };
+  return { result, abort: () => { request?.destroy(); } };
 }
 
 export function createOtlpExporter(options: { readonly endpoint: string; readonly headers: Readonly<Record<string, string>> }): SpanExporter & { abort(): void } {
@@ -73,7 +71,7 @@ export function createOtlpExporter(options: { readonly endpoint: string; readonl
   const active = new Set<Attempt>();
   let closing: Promise<void> | undefined;
   function shutdown(): Promise<void> {
-    closing ??= Promise.all([...active].map(attempt => attempt.done)).then(() => {});
+    closing ??= Promise.all([...active].map(attempt => attempt.result)).then(() => {});
     return closing;
   }
   return {
@@ -83,9 +81,9 @@ export function createOtlpExporter(options: { readonly endpoint: string; readonl
       try { body = JsonTraceSerializer.serializeRequest(spans); }
       catch { callback({ code: ExportResultCode.FAILED }); return; }
       if (!body) { callback({ code: ExportResultCode.FAILED }); return; }
-      const attempt = postOnce({ endpoint, headers: options.headers, body, complete: code => callback({ code }) });
+      const attempt = postOnce({ endpoint, headers: options.headers, body });
       active.add(attempt);
-      void attempt.done.then(() => active.delete(attempt));
+      void attempt.result.then(code => { active.delete(attempt); callback({ code }); });
     },
     shutdown,
     abort() {

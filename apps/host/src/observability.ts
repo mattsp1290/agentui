@@ -5,6 +5,7 @@ import { AlwaysOnSampler, BatchSpanProcessor, TracerProvider } from '@openteleme
 import type { ServiceFailureKind, ServiceRequest } from '@agentui/contracts/service';
 import type { CredentialClass } from './access.js';
 import { createAgentObservations } from './agent-observations.js';
+import type { AgentObservations } from './agent-observations.js';
 import { createOtlpExporter } from './otlp-exporter.js';
 import { OBSERVABILITY_BOUNDS } from './observability-bounds.js';
 
@@ -23,7 +24,7 @@ export type RequestObservation = {
 
 export interface HostObservability {
   record(observation: RequestObservation): void;
-  recordOutput: ReturnType<typeof createAgentObservations>['recordOutput'];
+  recordOutput: AgentObservations['recordOutput'];
   close(): Promise<void>;
 }
 

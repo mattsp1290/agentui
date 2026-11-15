@@ -11,7 +11,7 @@ import test from 'node:test';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { createAgentObservations } from '../../apps/host/build/tsc/agent-observations.js';
 import { readObservabilityConfiguration } from '../../apps/host/build/tsc/observability.js';
-import { nativeProcessEnvironment } from '../../apps/host/build/tsc/native-environment.js';
+import { directCodexEnvironment } from '../../apps/host/build/tsc/native-environment.js';
 
 const root = new URL('../../', import.meta.url);
 const hostRequire = createRequire(new URL('../../apps/host/package.json', import.meta.url));
@@ -178,7 +178,7 @@ else {
 }
 `, { mode: 0o700 });
   const children = [];
-  const environment = nativeProcessEnvironment();
+  const environment = directCodexEnvironment();
   const launch = args => {
     const child = spawn(process.execPath, ['apps/host/dist/main.js', ...args, '--data-dir', data], {
       cwd: root, env: { ...environment, PATH: `${bin}:${process.env.PATH ?? ''}`,

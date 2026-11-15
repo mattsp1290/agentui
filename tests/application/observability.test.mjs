@@ -6,10 +6,10 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import test from 'node:test';
-import { nativeProcessEnvironment } from '../../apps/host/build/tsc/native-environment.js';
+import { directCodexEnvironment } from '../../apps/host/build/tsc/native-environment.js';
 
 const root = new URL('../../', import.meta.url);
-const baseEnvironment = nativeProcessEnvironment();
+const baseEnvironment = directCodexEnvironment();
 
 async function exitWithin(child, milliseconds = 5000) {
   let forced = false;
@@ -196,6 +196,7 @@ test('host OTLP export contains only bounded request facts and ignores incoming 
   check(await f.call('/native/v1', { op: 'metadata' }, headers), 'admission', 'native', 'unauthorized', 401);
   check(await f.call(`/native/v1?private=${canaries[3]}`, { op: 'metadata' }, authorization), 'admission', 'native', 'invalid', 400);
   await f.call(`/?private=${canaries[3]}`, undefined, {}, 'GET');
+  assert.equal((await f.call('/favicon.ico', undefined, { Host: 'wrong-host.invalid' }, 'GET')).status, 400);
   await f.stop();
   assert.ok(collector.received.length > 0, 'SIGTERM flushes request spans to the receiver');
   const spans = [];

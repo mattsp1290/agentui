@@ -1,8 +1,8 @@
 import { canonicalJson } from '@agentui/contracts';
 import type { ConversationScope } from '@agentui/contracts';
-import type { TranscriptEvent } from '@agentui/contracts/conversation';
+import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversation';
 import { createGenAiObserver, instrumentationScope } from '@agentui/host/observability';
-import type { AgentHandle } from '@agentui/host/observability';
+import type { AgentHandle, TerminalOutcome } from '@agentui/host/observability';
 import { ROOT_CONTEXT } from '@opentelemetry/api';
 import type { TracerProvider } from '@opentelemetry/api';
 import type { NativeProvider } from './agent-config.js';
@@ -12,7 +12,19 @@ const PROVIDERS: Readonly<Record<NativeProvider['kind'], string>> = {
   codex: 'openai', 'codex-sdk': 'openai', 'claude-sdk': 'anthropic', pi: 'opencode-go',
 };
 
-export function createAgentObservations(provider: TracerProvider) {
+const OUTCOMES: Readonly<Record<RunOutcome, TerminalOutcome>> = {
+  completed: { kind: 'success' },
+  failed: { kind: 'error', category: 'unknown-error' },
+  interrupted: { kind: 'outcome-unknown' },
+  'connection-lost': { kind: 'outcome-unknown' },
+};
+
+export interface AgentObservations {
+  recordOutput(source: NativeProvider['kind'], scope: ConversationScope, events: readonly TranscriptEvent[]): void;
+  close(): void;
+}
+
+export function createAgentObservations(provider: TracerProvider): AgentObservations {
   const observer = createGenAiObserver({
     tracer: provider.getTracer(instrumentationScope.name, instrumentationScope.version),
     contentPolicy: { kind: 'none' }, allowedToolNames: [], bounds: { maxActiveSpans: OBSERVABILITY_BOUNDS.maxActiveSpans },
@@ -32,8 +44,7 @@ export function createAgentObservations(provider: TracerProvider) {
         const handle = active.get(key);
         if (!handle) continue;
         active.delete(key);
-        handle.finish(event.outcome === 'completed' ? { kind: 'success' }
-          : event.outcome === 'failed' ? { kind: 'error', category: 'unknown-error' } : { kind: 'outcome-unknown' });
+        handle.finish(OUTCOMES[event.outcome]);
       }
     },
     close(): void { observer.close(); active.clear(); },

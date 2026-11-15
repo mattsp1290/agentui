@@ -26,18 +26,12 @@ type Admission =
   | { readonly kind: 'service'; readonly principal: Principal; readonly message: Parameters<Api>[1] };
 
 function browserCookieName(hostId: string): string { return `agentui_device_${hostId}`; }
-type RequestResult = Pick<RequestObservation, 'operation' | 'outcome'> | 'asset';
+type RequestResult = Pick<RequestObservation, 'operation' | 'outcome'>;
 
 export function serviceEndpoint(options: EndpointOptions) {
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
     if (options.credentialClass === 'browser-development') {
-      const origin = `http://127.0.0.1:${request.socket.localPort}`;
-      if (request.headers.host !== new URL(origin).host) throw new Error('Host mismatch');
-      if (request.url !== '/api/v1') {
-        try { serveAsset(options.files, request, response, origin); }
-        catch (error) { writeServiceFailure(response, error); }
-        return 'asset';
-      }
+      const origin = browserOrigin(request);
       if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
     } else {
       const headers = request.headersDistinct;
@@ -68,11 +62,26 @@ export function serviceEndpoint(options: EndpointOptions) {
     }
   }
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
+    if (options.credentialClass === 'browser-development' && request.url !== '/api/v1') {
+      serveBrowserAsset(options.files, request, response);
+      return;
+    }
     const startTime = performance.timeOrigin + performance.now();
     const result = await handle(request, response).catch((error: unknown): RequestResult => ({ operation: 'admission', outcome: writeServiceFailure(response, error) }));
-    if (result !== 'asset') options.observability.record({ ...result, credentialClass: options.credentialClass, startTime,
+    options.observability.record({ ...result, credentialClass: options.credentialClass, startTime,
       statusCode: response.headersSent ? response.statusCode : null });
   };
+}
+
+function browserOrigin(request: IncomingMessage): string {
+  const origin = `http://127.0.0.1:${request.socket.localPort}`;
+  if (request.headers.host !== new URL(origin).host) throw new Error('Host mismatch');
+  return origin;
+}
+
+function serveBrowserAsset(files: ReadonlyMap<string, Buffer>, request: IncomingMessage, response: ServerResponse): void {
+  try { serveAsset(files, request, response, browserOrigin(request)); }
+  catch (error) { writeServiceFailure(response, error); }
 }
 
 async function admitBrowser(request: IncomingMessage, access: Access): Promise<Admission> {
