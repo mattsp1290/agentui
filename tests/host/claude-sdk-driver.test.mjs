@@ -82,6 +82,9 @@ for (const model of ['opus', 'sonnet']) {
     assert.equal(calls.length, 2);
     assert(calls[1].args.includes('--resume=00000000-0000-4000-8000-000000000001'));
     assert(calls.every(call => call.args.includes(`--model=${model}`)));
+    for (const flag of ['--tools=', '--setting-sources=', '--strict-mcp-config', '--permission-mode=dontAsk', '--bare']) {
+      assert(calls.every(call => call.args.includes(flag)), `Native text-only boundary must retain ${flag}`);
+    }
     await reopened.close();
     const persisted = await readFile(join(f.directory, 'host.sqlite'));
     assert.equal(persisted.includes(Buffer.from('fixture-api-key-must-never-persist')), false);

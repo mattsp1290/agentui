@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
@@ -21,4 +23,30 @@ test('Claude host consumes the pinned public Switchboard artifact with SDK-free 
   assert.equal(lock.packages['node_modules/@anthropic-ai/claude-agent-sdk'].version, pin.nativeSdk);
   assert.equal(pin.provider, 'anthropic-api-key');
   assert.deepEqual(pin.models, ['opus', 'sonnet']);
+});
+
+
+test('Claude native peer pins describe the packages resolved by the SDK', () => {
+  const pin = json('vendor/switchboard-claude.json');
+  const fromSdk = createRequire(import.meta.resolve('@anthropic-ai/claude-agent-sdk'));
+  for (const [name, entry] of [
+    ['@anthropic-ai/sdk', '@anthropic-ai/sdk'],
+    ['@modelcontextprotocol/sdk', '@modelcontextprotocol/sdk/client/index.js'],
+    ['zod', 'zod'],
+  ]) {
+    let directory = dirname(fromSdk.resolve(entry));
+    for (;;) {
+      const file = join(directory, 'package.json');
+      if (existsSync(file)) {
+        const manifest = JSON.parse(readFileSync(file, 'utf8'));
+        if (manifest.name === name) {
+          assert.equal(manifest.version, pin.nativePeers[name]);
+          break;
+        }
+      }
+      const parent = dirname(directory);
+      assert.notEqual(parent, directory, `${name} must have a package manifest`);
+      directory = parent;
+    }
+  }
 });

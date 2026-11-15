@@ -74,7 +74,7 @@ for (const model of models) {
   test(`live Claude SDK ${model} chat responds, remembers, reopens and stops through AgentUI`, {
     skip: !live, timeout: 360_000,
   }, async t => {
-    const key = process.env.AGENTUI_ANTHROPIC_API_KEY;
+    const key = process.env.AGENTUI_ANTHROPIC_API_KEY?.trim();
     assert(key?.trim(), 'Load AGENTUI_ANTHROPIC_API_KEY in the host process before this test');
     const redact = value => String(value).replaceAll(key, '[REDACTED]');
     const directory = await mkdtemp(join(tmpdir(), `agentui-claude-sdk-${model}-live-`));
@@ -207,7 +207,7 @@ for (const model of models) {
     assert.equal(typeof nativeSessionId, 'string');
     assert(nativeSessionId.length > 0, 'Native session ID must be nonempty');
     assert(beforeRestart.runs.every(run => run.reference.opaque === nativeSessionId), 'Follow-up must use the same native session');
-    report.nativeSessionId = nativeSessionId;
+    report.nativeSessionStable = true;
     host = await open(port);
     await page.reload();
     await wait(async () => await editor.isVisible() && await assistants.count() === 2, 'reopened host conversation');
@@ -222,8 +222,7 @@ for (const model of models) {
     assert.equal(await send.isDisabled(), true);
     await stop.click();
     await wait(async () => await page.getByRole('button', { name: /^(?:Stop|Stopping…)$/ }).count() === 0 &&
-      await page.locator('.progress-label').count() === 0 &&
-      persisted(directory, conversationId).document.domain.currentRun.kind === 'ended',
+      await page.locator('.progress-label').count() === 0,
       'stopped native Claude turn');
     report.checks.push('Stop interrupted active request and blocked overlapping send');
     if (evidence) await page.screenshot({ path: join(evidence, 'stopped.png'), fullPage: true });
@@ -233,12 +232,11 @@ for (const model of models) {
     assert.equal(afterRestart.runs.length, 4, 'Restart and Stop must each persist a native run');
     assert(afterRestart.runs.every(run => run.reference.opaque === nativeSessionId), 'Host restart must resume the same native session');
     report.checks.push('persisted native session ID remained unchanged across host restart');
-    if (afterRestart.actualModels.length > 0) {
-      assert(afterRestart.actualModels.every(value => value.includes(model) && !value.includes(key)),
-        'Observed Claude model must match the requested model family');
-      report.actualModels = afterRestart.actualModels;
-      report.checks.push('native acknowledgement reported the selected model family');
-    }
+    assert(afterRestart.actualModels.length > 0, 'Native acknowledgements must identify the actual model');
+    assert(afterRestart.actualModels.every(value => value.includes(model) && !value.includes(key)),
+      'Observed Claude model must match the requested model family');
+    report.actualModels = afterRestart.actualModels;
+    report.checks.push('native acknowledgement reported the selected model family');
     assert.equal(afterRestart.document.domain.currentRun.kind, 'ended');
     assert.equal(afterRestart.document.domain.currentRun.outcome, 'interrupted');
     report.checks.push('persisted native terminal outcome is interrupted');

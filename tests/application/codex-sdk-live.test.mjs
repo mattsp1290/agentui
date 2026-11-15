@@ -75,6 +75,8 @@ test('live ChatGPT subscription GPT 6.1 Sol chat responds, remembers, reopens an
   delete env.OPENCODE_API_KEY;
   delete env.OPENAI_API_KEY;
   delete env.CODEX_API_KEY;
+  delete env.ANTHROPIC_API_KEY;
+  delete env.AGENTUI_ANTHROPIC_API_KEY;
   browser = await chromium.launch({ env });
   const page = await browser.newPage();
   page.setDefaultTimeout(20_000);

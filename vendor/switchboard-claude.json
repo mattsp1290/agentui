@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "5af2137fd4353716f54e7a8ae36390bd62d0b97e",
-  "sourceTree": "61d7311d96b48019f39c9bac44eadf27f96136bc",
-  "artifact": "switchboard-5af2137fd4353716f54e7a8ae36390bd62d0b97e.tgz",
-  "sha256": "fa8e368cc9b4525761c40da0f3dc8fc81dbd6addd9c626950f7468b5273ffa9b",
+  "sourceRevision": "f075ca2e0600a7621c1540b2e340482f8ee51094",
+  "sourceTree": "40fabc6e99fea8ac921eb98389329b19e29d85ba",
+  "artifact": "switchboard-f075ca2e0600a7621c1540b2e340482f8ee51094.tgz",
+  "sha256": "84ae2b980afcaecd7b9c07306491bfd867183614ddc3fa50366edc119a591fdc",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-claude",
   "entrypoint": "./claude",
@@ -18,5 +18,10 @@
     "node": "24.22.3",
     "npm": "11.19.1"
   },
-  "limits": "Bounded SDK text chat with native session resume, streaming and Stop. No tools, external discovery, interactive approvals, LiteLLM, renewable credentials or native extension qualification. Existing core, AG-UI, Pi and Codex pins remain separate."
+  "limits": "Bounded SDK text chat with native session resume, streaming and Stop. No tools, external discovery, interactive approvals, LiteLLM, renewable credentials or native extension qualification. Existing core, AG-UI, Pi and Codex pins remain separate.",
+  "nativePeers": {
+    "@anthropic-ai/sdk": "0.129.0",
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "zod": "4.4.3"
+  }
 }

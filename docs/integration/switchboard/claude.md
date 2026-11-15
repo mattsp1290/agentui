@@ -63,3 +63,9 @@ tool approvals, LiteLLM, renewable credentials, attachments, native extension
 hooks, or iOS execution. The broader Claude integration and provider
 registration beans remain open. The live journey reports record exact built artifact identities and the native
 model IDs observed during each run.
+
+The Claude SDK requires the MCP SDK as a peer dependency even though this route
+disables MCP servers. AgentUI does not import that peer in its host chat code.
+The lockfile records the installed peer versions. The artifact pin records and
+tests the peer versions resolved from the Claude SDK's own location, including
+shared dependencies used by the other providers.
