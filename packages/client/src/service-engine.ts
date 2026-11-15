@@ -161,6 +161,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
     search: (query, after = null) => request({ op: 'search', query, after }),
     create: (scope, agentId) => request({ op: 'create', scope, agentId }),
+    providerObservation: input => request({ op: 'provider-observation', ...input }),
     conversationAgent: scope => request({ op: 'conversation-agent', scope }),
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
     conversation(value) {

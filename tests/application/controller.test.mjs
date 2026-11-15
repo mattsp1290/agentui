@@ -11,7 +11,7 @@ function fixture() {
   const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
   const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
-    search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
+    observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
       async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
@@ -31,12 +31,13 @@ function fixture() {
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION,
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value, agentId) { created.push(value); selected.push(agentId); captured.set(value.conversationId, descriptor(agentId)); await behavior.create(); return value; },
     async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
+    providerObservation: input => behavior.observation(input),
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
@@ -905,4 +906,62 @@ test('legacy pending recovery keeps host-recorded provider identity despite a di
   assert.equal(f.app.getSnapshot().saved.pendingCreation.agentId, 'original-provider');
   await f.app.recoverCreation();
   assert.deepEqual(f.selected, ['original-provider', 'original-provider']);
+});
+
+test('observation reads are serial, preserve active identity, and native not-applicable ends polling', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const gate = deferred(), calls = [];
+  f.behavior.observation = input => { calls.push(input); return gate.promise; };
+  await f.app.start(); const active = f.app.getSnapshot().active;
+  t.mock.timers.tick(10_000); assert.equal(calls.length, 1);
+  gate.resolve({ kind: 'observing' }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().active, active);
+  assert.deepEqual(f.app.getSnapshot().observation, { status: { kind: 'observing' }, retrying: false });
+  f.behavior.observation = async input => { calls.push(input); return { kind: 'not-applicable' }; };
+  t.mock.timers.tick(2000); await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(10_000); assert.equal(calls.length, 2);
+});
+
+test('observation retry stays local, joins duplicate clicks, and ignores late selection and disposed results', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const retry = deferred(), calls = [];
+  f.behavior.observation = input => {
+    calls.push(input);
+    return input.action === 'retry' ? retry.promise : Promise.resolve(input.scope.conversationId === scope.conversationId
+      ? { kind: 'stopped', reason: 'provider-disconnected' } : { kind: 'not-applicable' });
+  };
+  await f.app.start(); const active = f.app.getSnapshot().active;
+  await active.store.setDraft('Retain draft');
+  const actions = f.app.conversationActions(active), first = actions.retryObservation(), second = actions.retryObservation();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true); assert.equal(f.app.getSnapshot().observation.retrying, true);
+  assert.equal(calls.filter(value => value.action === 'retry').length, 1);
+  await f.app.open({ ...scope, conversationId: 'other' });
+  retry.resolve({ kind: 'observing' }); await Promise.all([first, second]);
+  assert.equal(f.app.getSnapshot().active.scope.conversationId, 'other');
+  assert.equal(f.app.getSnapshot().observation.status.kind, 'not-applicable');
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Retain draft');
+  assert.deepEqual(f.submitted, []);
+  const read = deferred(); f.behavior.observation = () => read.promise;
+  await f.app.open(scope); await f.app.dispose(); const disposed = f.app.getSnapshot();
+  read.resolve({ kind: 'stopped', reason: 'cleanup-failed' }); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot(), disposed);
+});
+
+test('observation transport failure is local unknown status, and revoked access follows the protected path', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.behavior.observation = async () => { throw new Error('SECRET_STATUS_TRANSPORT'); };
+  await f.app.start(); const active = f.app.getSnapshot().active;
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.deepEqual(f.app.getSnapshot().observation, { status: { kind: 'unknown' }, retrying: false });
+  assert.equal(f.app.getSnapshot().error, ''); assert.equal(f.app.getSnapshot().active, active);
+  f.behavior.observation = async () => { throw new ServiceError('unauthorized', 'Revoked'); };
+  t.mock.timers.tick(2000); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+  assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
 });

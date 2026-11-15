@@ -84,6 +84,10 @@ for (const failure of ['close-throws', 'drain-rejects', 'internal-close-throws']
     if (failure === 'internal-close-throws') {
       await assert.rejects(a.calls.receive({ kind: 'event', invalid: true }));
       await new Promise(resolve => setImmediate(resolve));
+      const expected = { kind: 'stopped', reason: 'cleanup-failed' }, scope = f.scope('other');
+      assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), expected);
+      assert.deepEqual(await f.client.providerObservation({ scope, action: 'retry' }), expected);
+      assert.equal(a.calls.observe.length, 2);
     }
     const b = remote.extension();
     assert.deepEqual(await replace(f, [b]), { kind: 'failed', failure: 'cleanup', recovery: 'restart' });

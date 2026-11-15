@@ -1,9 +1,9 @@
 import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
-import { sameScope } from '@agentui/contracts';
+import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
-import type { ConversationScope, SubmitResult } from '@agentui/contracts';
+import type { ConversationScope, SubmitResult, ProviderObservationStatus } from '@agentui/contracts';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
@@ -23,6 +23,10 @@ export interface OpenConversation {
   readonly scope: ConversationScope;
   readonly store: ConversationStore<Transcript>;
 }
+export interface ConversationObservation {
+  readonly status: ProviderObservationStatus | { readonly kind: 'unknown' };
+  readonly retrying: boolean;
+}
 export interface ApplicationSnapshot {
   readonly host: HostState;
   readonly catalog: Page<ConversationCatalogEntry>;
@@ -30,6 +34,7 @@ export interface ApplicationSnapshot {
   readonly savedViews: Page<string>;
   readonly savedViewNotice: string;
   readonly active: OpenConversation | null;
+  readonly observation: ConversationObservation | null;
   readonly error: string;
   readonly storageFailure: string;
   readonly busy: boolean;
@@ -38,6 +43,7 @@ export interface ConversationActions {
   readonly commands: ConversationCommands;
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
+  retryObservation(): Promise<void>;
 }
 export interface ApplicationController {
   getSnapshot(): ApplicationSnapshot;
@@ -63,8 +69,8 @@ type ApplicationFailure =
 interface Session { view: OwnedView | null; readonly connection: ServiceConnection }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  active: null, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'active' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+  active: null, observation: null, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'active' | 'observation' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -92,12 +98,15 @@ export function createApplicationController(deps: {
   let session: Session | null = null;
   let disposal: Promise<void> | null = null;
   const listeners = new Set<() => void>();
+  let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved'>>): void {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW });
     for (const listener of listeners) listener();
   }
+  function stopObservation(): void { observationPoll?.stop(); observationPoll = null; }
   function disconnectActive(): void {
+    stopObservation();
     unsubscribeActive?.();
     unsubscribeActive = null;
     state.active?.store.disconnect();
@@ -105,7 +114,7 @@ export function createApplicationController(deps: {
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
     if (failure.kind === 'access-revoked') {
-      state.active?.store.disconnect();
+      disconnectActive();
       publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
     } else {
       if (phase === 'handshake') publish({ host: { kind: 'unavailable' }, error: failure.error });
@@ -120,7 +129,7 @@ export function createApplicationController(deps: {
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
     if (session !== owner || (owner.view?.storage ?? null) !== storage) return;
     publish({ storageFailure: message(cause) });
-    state.active?.store.disconnect();
+    disconnectActive();
   }
   function local(owner: Session): OwnedViewStorage {
     if (session !== owner || !owner.view || state.storageFailure) throw new Error(state.storageFailure || 'Local storage is not ready.');
@@ -153,6 +162,46 @@ export function createApplicationController(deps: {
       publish({});
     } catch (cause) { failStorage(owner, view.storage, cause); throw cause; }
   }
+  function observeActive(owner: Session, target: OpenConversation): void {
+    stopObservation();
+    let timer: ReturnType<typeof setTimeout> | undefined, stopped = false;
+    let pending: Promise<void> | null = null, retrying = false;
+    const current = () => !stopped && session === owner && state.active?.store === target.store && state.host.kind === 'ready';
+    publish({ observation: null });
+    function schedule(): void {
+      if (current() && !retrying && state.observation?.status.kind !== 'not-applicable') timer = setTimeout(() => { void read('read'); }, 2_000);
+    }
+    function read(action: 'read' | 'retry'): Promise<void> {
+      const task = (async () => {
+        try {
+          const status = await owner.connection.providerObservation({ scope: target.scope, action });
+          if (current()) publish({ observation: { status, retrying } });
+        } catch (cause) {
+          if (!current()) return;
+          if (cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
+          else publish({ observation: { status: { kind: 'unknown' }, retrying } });
+        }
+      })();
+      pending = task;
+      return task.finally(() => { if (pending === task) pending = null; schedule(); });
+    }
+    observationPoll = {
+      stop() { stopped = true; clearTimeout(timer); },
+      async retry() {
+        if (!current() || retrying || !state.observation || state.observation.status.kind === 'unknown' || !canRetryObservation(state.observation.status)) return;
+        retrying = true;
+        publish({ observation: { ...state.observation, retrying: true } });
+        clearTimeout(timer);
+        await pending;
+        if (!current()) return;
+        await read('retry');
+        retrying = false;
+        if (current() && state.observation) publish({ observation: { ...state.observation, retrying: false } });
+        schedule();
+      },
+    };
+    void read('read');
+  }
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
     const found = await current(owner, owner.connection.conversationAgent(scope));
@@ -160,6 +209,7 @@ export function createApplicationController(deps: {
     const agent = compatibleAgent(found);
     if (state.active && sameScope(state.active.scope, scope)) {
       publish({ active: { ...state.active, agent } });
+      observeActive(owner, state.active);
       await current(owner, state.active.store.connect()); return;
     }
     disconnectActive();
@@ -168,7 +218,9 @@ export function createApplicationController(deps: {
       drafts: storage.drafts(failed), createCommandId: deps.createId });
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
-    publish({ active: { scope, store, agent, viewId: storage.viewId } });
+    const active = { scope, store, agent, viewId: storage.viewId };
+    publish({ active });
+    observeActive(owner, active);
     unsubscribeActive = store.subscribe(() => {
       if (session !== owner || state.active?.store !== store) return;
       const snapshot = store.getSnapshot();
@@ -199,6 +251,7 @@ export function createApplicationController(deps: {
     }
   }
   async function refresh(owner: Session): Promise<void> {
+    stopObservation();
     const storage = local(owner);
     publish({ host: { kind: 'loading' } });
     try {
@@ -400,6 +453,9 @@ export function createApplicationController(deps: {
         return operation();
       });
       return {
+        async retryObservation() {
+          if (owner && session === owner && state.active === target) await observationPoll?.retry();
+        },
         commands: {
           send: text => invoke('send', () => {
             if (typeof text !== 'string') throw new Error('An explicit message is required.');

@@ -12,7 +12,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
   const agent = { id: 'recorded', label: 'Recorded', runtime: RECORDED_RUNTIME, commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: {
-    wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME, desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
+    wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME, desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   globalThis.nativeCalls = [];
   let access = { kind: 'ready', observation: 'initial', hostId: 'host', principalId: 'principal' };
   globalThis.__TAURI_INTERNALS__ = { async invoke(name, { command }) {

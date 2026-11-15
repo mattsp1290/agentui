@@ -1,4 +1,4 @@
-import { observeProvider } from './provider-stream.js';
+import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson } from '@agentui/contracts';
@@ -56,7 +56,7 @@ interface BoundProvider {
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
   captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
   executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
-  observe(original: StoredCreation, store: ProviderStreamStore): Promise<ProviderStream>;
+  observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream>;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
@@ -137,20 +137,23 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         intent: { kind: 'create', operationId: randomUUID(), scope,
           agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId } } }, scope);
     },
-    async observe(original, store) {
+    async observe(original, store, freshSnapshot) {
       const authorize = () => {
-        const granted = validate(original.installation);
-        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+        if (closing || !authorization) throw new ObservationFailure('original-provider-unavailable');
+        try { authorization.assertAuthorized(); }
+        catch { throw new ObservationFailure('original-credentials-unavailable'); }
+        if (original.installation.expectedAuthority !== authorization.expectedAuthority ||
+          canonicalJson(original.credential) !== canonicalJson(authorization.credential)) throw new ObservationFailure('original-credentials-unavailable');
       };
       authorize();
-      if (original.observation?.kind !== 'confirmed') throw new Error('Provider creation unavailable');
+      if (original.observation?.kind !== 'confirmed') throw new ObservationFailure('original-binding-unavailable');
       const intent = creationIntent(original.intent, original.installation, instance);
       const binding = creationBinding(original.observation.binding, intent, original.installation);
       const connected = await connect();
       authorize();
-      if (!capability(connected.capabilities.observe)) throw new Error('Provider observation unavailable');
+      if (!capability(connected.capabilities.observe)) throw new ObservationFailure('unsupported');
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
-        credential: original.credential }, binding, authorize, store);
+        credential: original.credential }, binding, authorize, store, freshSnapshot);
     },
     captureCommand(original, action, operationId) {
       const granted = validate(original.installation);
@@ -283,7 +286,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     closing = Promise.resolve().then(async () => {
       await Promise.allSettled(pending);
       for (const stream of draining) stop(stream);
-      const results = await Promise.allSettled([...draining].map(stream => stream.drained));
+      const results: PromiseSettledResult<unknown>[] = await Promise.allSettled([...draining].map(stream => stream.drained));
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
       results.push(...await authorityResults);
       results.push(...await Promise.allSettled(lifetimes.map(lifetime => Promise.resolve().then(() => lifetime.dispose()))));
@@ -371,11 +374,12 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
       return binding.captureCommand(original, action, operationId);
     },
-    observe(original: StoredCreation, store: ProviderStreamStore): Promise<ProviderStream> {
+    observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
-        if (phase !== 'active' || !binding) throw new Error('Provider unavailable');
-        const stream = await binding.observe(original, store);
+        if (cleanupFailed) throw new ObservationFailure('cleanup-failed');
+        if (phase !== 'active' || !binding) throw new ObservationFailure('original-provider-unavailable');
+        const stream = await binding.observe(original, store, freshSnapshot);
         streams.add(stream);
         void stream.drained.then(() => streams.delete(stream), () => { cleanupFailed = true; streams.delete(stream); });
         if (phase !== 'active') { retiring?.add(stream); stop(stream); }
