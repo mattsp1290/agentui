@@ -117,3 +117,27 @@ test('builder and locked preparation share the supported Node boundary and diagn
     await clean(f);
   }
 });
+
+test('preserves the ABI and committed artifact bytes after a caller changes working directory', async t => {
+  const f = await setup(t);
+  const reference = f.repo.reference(f.repo.commit());
+  const abi = new URL('../../../scripts/server-customization-abi.mjs', import.meta.url).href;
+  const builder = new URL('../../../scripts/server-customization.mjs', import.meta.url).href;
+  const program = `import assert from 'node:assert/strict';
+    import {readFile} from 'node:fs/promises';
+    import {join} from 'node:path';
+    import {serverCustomizationAbi} from ${JSON.stringify(abi)};
+    import {buildServerCustomization} from ${JSON.stringify(builder)};
+    const reference=${JSON.stringify(reference)};
+    const beforeAbi=await serverCustomizationAbi();
+    const before=await buildServerCustomization({reference,out:${JSON.stringify(join(f.root, 'before'))}});
+    process.chdir(${JSON.stringify(f.root)});
+    const afterAbi=await serverCustomizationAbi();
+    const after=await buildServerCustomization({reference,out:${JSON.stringify(join(f.root, 'after'))}});
+    assert.equal(afterAbi.identity,beforeAbi.identity);
+    assert.equal(after.manifest.artifactId,before.manifest.artifactId);
+    for(const path of ['customization.json',...before.manifest.assets.map(asset=>asset.path)]) {
+      assert.deepEqual(await readFile(join(after.directory,path)),await readFile(join(before.directory,path)));
+    }`;
+  execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8', stdio: 'pipe' });
+});

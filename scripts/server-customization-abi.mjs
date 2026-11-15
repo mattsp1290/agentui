@@ -7,13 +7,14 @@ import { build } from 'esbuild';
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
 export async function serverCustomizationAbi() {
+  const root = fileURLToPath(new URL('../', import.meta.url));
   const sdk = import.meta.resolve('@agentui/sdk');
-  const result = await build({ entryPoints: [fileURLToPath(sdk)], bundle: true, write: false, metafile: true,
+  const result = await build({ absWorkingDir: root, entryPoints: [fileURLToPath(sdk)], bundle: true, write: false, metafile: true,
     platform: 'node', format: 'esm', treeShaking: false, logLevel: 'silent' });
   const graph = [];
   const files = [];
   for (const path of Object.keys(result.metafile.inputs)) {
-    const absolute = resolve(path);
+    const absolute = resolve(root, path);
     let owner = dirname(absolute), pkg;
     while (!pkg) {
       try { pkg = JSON.parse(await readFile(join(owner, 'package.json'), 'utf8')); }
