@@ -90,7 +90,7 @@ After a stale-handle failure, the caller rereads status. `Absent` confirms no lo
 `Ready` means a replacement exists or prior removal failed. The caller must not blindly discard it.
 Failures distinguish storage state, stale handles, pairing failure, network failure, and unauthorized responses using fixed, secret-free categories.
 
-Only `Invalid` and `UnsupportedVersion` permit discard. Other faults return `None` and require unlock, restored service, or restored access, never deletion.
+Only `Unreadable` observations permit discard. `Blocked(StorageBlock)` returns no fault handle and requires unlock, restored service, or restored access, never deletion.
 The native owner binds each usable fault handle to the exact raw observed record, its expected revision, and the owner lifetime.
 If the raw record identity cannot be established, read and status return `Blocked(Unavailable)` without a revision or discard handle.
 The owner obtains explicit user confirmation before discard, including the downgrade risk of deleting an unsupported version.
