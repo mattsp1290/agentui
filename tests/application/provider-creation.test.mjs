@@ -105,8 +105,8 @@ const unavailable = promise => assert.rejects(promise, error => error.kind === '
   }) }), b = extension({ native: true });
   f = await fixture(t, [a, b]);
   const metadata = await f.client.metadata(), first = await selected(f), second = await selected(f, 'Local provider');
-  assert.equal(metadata.compatibility.wireVersion, 3); assert.notEqual(first.id, second.id);
-  assert.equal(first.kind, 'provider'); assert.equal('runtime' in first, false); assert.deepEqual(first.commands, []);
+  assert.equal(metadata.compatibility.wireVersion, 4); assert.notEqual(first.id, second.id);
+  assert.equal(first.kind, 'provider'); assert.equal('runtime' in first, false); assert.deepEqual(first.commands, ['approve']);
   assert.doesNotMatch(JSON.stringify(metadata), /PRIVATE_CREATION|opaqueHandle|revision/);
   const nativeScope = f.scope('native'); await f.client.create(nativeScope, metadata.defaultAgentId);
   const nativeBytes = f.inspect(db => db.prepare('SELECT installation,document FROM conversations WHERE conversation=?').get('native'));

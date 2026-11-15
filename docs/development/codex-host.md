@@ -1,5 +1,7 @@
 # Run the local Codex app
 
+For automatic local or SSH setup without pairing, use [the desktop launcher](launcher.md). The instructions below run an independently managed host with browser pairing.
+
 Install Codex CLI 0.167.2 and sign in with `codex login` before starting the host. Check the installed version with `codex --version`.
 
 From the repository root, build the host and browser app.

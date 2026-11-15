@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. The local Codex app supports paired conversations, streamed replies and explicit approvals. The desktop launcher can open its loopback host with `--host-url`; this native launch option still needs a macOS smoke test. The same screens work in a browser. Read [local Codex setup](docs/development/codex-host.md) to connect your existing login.
+The macOS launcher starts the host and desktop client together. Run the host locally or on an SSH-accessible Mac or Linux machine. The launcher provisions the matching runtime, connects automatically, and opens the conversation UI without a pairing code or Keychain access. Read [launcher setup](docs/development/launcher.md) for local and remote workspaces. The separate iOS client still starts disconnected.
 
 To choose among configured agents when creating a chat, read [agent choice setup](docs/development/agent-choice.md). Saved chats keep their original agent.
 
@@ -43,16 +43,35 @@ On macOS, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequis
 ./agentui
 ```
 
-The launcher selects the pinned Node and npm versions, installs locked dependencies, builds the macOS bundle, and opens a fresh app instance. A failed install or build stops the launch. You can also invoke the script by its absolute path from another directory.
+The launcher builds the app, starts a local Codex host in your current directory, and opens the client. Keep the terminal running. Select **New conversation** to begin.
 
-For development with a live server, use the pinned toolchain and run:
+To run the host on another machine, pass its SSH destination:
+
+```sh
+./agentui --ssh lunus@100.102.195.3
+./agentui --ssh infra-admin@100.82.43.93
+./agentui --ssh punk1290@100.69.236.34
+```
+
+The launcher detects the remote operating system and architecture, provisions private tools and the built host, and connects through an SSH tunnel. The remote workspace defaults to that user's home directory. Add `--workspace /absolute/remote/project` to choose a project. Files stay on the selected host.
+
+To use Pi with GLM 5.3, export `OPENCODE_GO_API_KEY` and select Pi:
+
+```sh
+./agentui --agent pi
+./agentui --ssh infra-admin@100.82.43.93 --agent pi
+```
+
+[Launcher setup](docs/development/launcher.md) covers provider credentials, persistent history, troubleshooting, and repeatable local and remote verification. The launcher trusts the selected user and connection. It does not require AgentUI enrollment.
+
+For development with a live frontend server, use the pinned toolchain:
 
 ```sh
 npm ci
 npm run desktop:dev
 ```
 
-The bundle loads embedded assets without a development server. This is a local build, without distribution signing or notarization. Read the [desktop packaging guide](docs/qualification/desktop-macos.md) for checks and limitations.
+The macOS bundle is a local build without distribution signing or notarization. Read the [desktop packaging guide](docs/qualification/desktop-macos.md) for packaging checks.
 
 ## Launch the iOS app
 
