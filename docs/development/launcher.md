@@ -18,7 +18,7 @@ To install on an SSH target, add its destination:
 ./agentui setup --agent codex --ssh user@host
 ```
 
-Setup supports macOS and Linux on ARM64 or x64. SSH must already connect without an interactive password prompt. Normal SSH host-key verification remains enabled. Setup needs Node on the client, but it does not need `npm ci`, application build artifacts, or provider credentials.
+Setup supports macOS and Linux on ARM64 or x64. SSH must already connect without an interactive password prompt. Normal SSH host-key verification remains enabled. Setup uses the repository's pinned Node runtime on the client, but it does not need `npm ci`, application build artifacts, or provider credentials.
 
 Setup installs a matching Node runtime when needed, verifies a new Node archive against its recorded SHA-256 digest, and installs the selected harness under `~/.local/share/agentui/tools`. It disables npm lifecycle scripts and uses private npm configuration files. For Claude, setup verifies the selected native package and links its executable without running the package's installer script. A completed installation publishes atomically. Repeating setup reuses a harness that passes its package and executable version checks. A failed install does not replace an existing published harness.
 

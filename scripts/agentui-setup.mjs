@@ -31,19 +31,13 @@ export function parseSetupArgs(args) {
 }
 
 export async function harnessSpecifications() {
-  const [source, manifest] = await Promise.all([
-    readFile(join(root, 'packages/contracts/src/compatibility.ts'), 'utf8'),
-    readFile(join(root, 'packages/host/package.json'), 'utf8'),
-  ]);
-  const codexVersion = /export const CODEX_RUNTIME = Object\.freeze\(\{ engine: 'codex', version: '([0-9]+\.[0-9]+\.[0-9]+)'/u.exec(source)?.[1];
-  const dependencies = JSON.parse(manifest).dependencies;
-  if (!codexVersion || dependencies['@anthropic-ai/claude-agent-sdk'] !== claudeCli.sdkVersion ||
-      !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(dependencies['@earendil-works/pi-coding-agent'])) {
+  const { CODEX_RUNTIME, PI_RUNTIME, CLAUDE_SDK_RUNTIMES } = await import('../packages/contracts/src/compatibility.ts');
+  if (Object.values(CLAUDE_SDK_RUNTIMES).some(runtime => runtime.version !== claudeCli.sdkVersion)) {
     throw new Error('Harness installation pins need to be updated for the current runtime contracts.');
   }
   return {
-    codex: { id: 'codex', packageName: '@openai/codex', version: codexVersion, executable: 'codex', expectedVersion: `codex-cli ${codexVersion}` },
-    pi: { id: 'pi', packageName: '@earendil-works/pi-coding-agent', version: dependencies['@earendil-works/pi-coding-agent'], executable: 'pi', expectedVersion: dependencies['@earendil-works/pi-coding-agent'] },
+    codex: { id: 'codex', packageName: '@openai/codex', version: CODEX_RUNTIME.version, executable: 'codex', expectedVersion: `codex-cli ${CODEX_RUNTIME.version}` },
+    pi: { id: 'pi', packageName: '@earendil-works/pi-coding-agent', version: PI_RUNTIME.version, executable: 'pi', expectedVersion: PI_RUNTIME.version },
     claude: { id: 'claude', packageName: '@anthropic-ai/claude-code', version: claudeCli.version, executable: 'claude', expectedVersion: `${claudeCli.version} (Claude Code)` },
   };
 }

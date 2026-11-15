@@ -148,6 +148,20 @@ test('wrapper installs before dependencies or build artifacts exist', async t =>
   await assert.rejects(readdir(join(f.directory, 'node_modules')), { code: 'ENOENT' });
 });
 
+test('source formatting does not change installation pins before dependencies exist', async t => {
+  const f = await fixture(t);
+  for (const name of ['scripts/agentui-setup.mjs', 'scripts/agentui-runtime.mjs', 'packages/contracts/src/compatibility.ts', '.node-version', 'agentui']) {
+    await mkdir(dirname(join(f.directory, name)), { recursive: true });
+    await copyFile(join(root, name), join(f.directory, name));
+  }
+  const filename = join(f.directory, 'packages/contracts/src/compatibility.ts');
+  const source = await readFile(filename, 'utf8');
+  await writeFile(filename, source.replace("engine: 'codex'", 'engine: "codex"'));
+  const result = spawnSync('/bin/sh', [join(f.directory, 'agentui'), 'setup', '--agent', 'codex'], { env: f.env, encoding: 'utf8', timeout: 5000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(result.stdout).version, CODEX_RUNTIME.version);
+});
+
 for (const architecture of ['x86_64', 'aarch64']) test(`Linux ${architecture} target metadata uses the same installer operation`, async t => {
   const f = await fixture(t), specifications = await harnessSpecifications();
   await writeFile(join(f.bin, 'uname'), `#!/bin/sh\nif [ "$1" = -s ]; then echo Linux; else echo ${architecture}; fi\n`, { mode: 0o755 });
