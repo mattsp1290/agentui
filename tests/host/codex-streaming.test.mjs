@@ -233,3 +233,59 @@ test('a failed rejection-notice append preserves the conclusive native rejection
   assert.deepEqual(f.messages().map(message => message.text),
     ['This response stopped because AgentUI could not store more output. Try a new conversation.']);
 });
+
+for (const mode of ['activity-empty', 'activity-fallback']) {
+  test(`${mode} retains scoped command observations, bounded output and late terminal callbacks across reopening`, async t => {
+    const f = fixture(t, mode);
+    await f.port.submit(command('activity'));
+    await until(() => f.document().domain.activities?.[0]?.output === 'early🙂delta');
+    assert.equal(f.document().domain.activities[0].status.kind, 'running');
+    const firstId = f.document().domain.activities[0].activityId;
+    f.trigger('finish');
+    await until(() => f.document().domain.activities?.[2]?.status.kind === 'declined');
+    await until(() => mode === 'activity-empty' || f.document().domain.activities[0].output.endsWith('after-close'));
+    const domain = f.document().domain;
+    assert.equal(domain.activities.length, 3);
+    assert.equal(domain.activities[0].activityId, firstId);
+    assert.deepEqual(domain.activities[0].status, { kind: 'completed', exitCode: 3 });
+    assert.equal(domain.activities[0].output, mode === 'activity-empty' ? '' : 'early🙂deltalateafter-close');
+    assert.deepEqual(domain.activities[1].status, { kind: 'failed', exitCode: 7 });
+    assert.ok(domain.activities[1].outputTruncated);
+    assert.ok(Buffer.byteLength(JSON.stringify(domain.activities[1].output)) - 2 <= 8_000);
+    assert.equal(domain.currentRun.kind, 'ended');
+    assert.ok(f.outputs.flatMap(value => value.events).filter(event => event.kind === 'command-updated').every(event => Buffer.byteLength(JSON.stringify(event)) < 64_000));
+    await f.reopen();
+    assert.deepEqual(f.document().domain, domain);
+  });
+}
+
+
+for (const rejectLate of [false, true]) {
+  test(`late command completion ${rejectLate ? 'capacity failure' : 'success'} cannot affect a newer turn`, async t => {
+    let attempted = 0;
+    const f = fixture(t, 'activity-late-context', (_scope, output) => {
+      if (output.events.some(event => event.kind === 'command-updated' && event.activity.status.kind === 'completed')) {
+        attempted++;
+        return rejectLate;
+      }
+      return false;
+    });
+    await f.port.submit(command('old'));
+    await until(() => f.document().domain.activities?.length === 1);
+    f.trigger('finish');
+    await until(() => f.document().domain.currentRun?.kind === 'ended');
+    await f.port.submit(command('new'));
+    await until(() => f.messages().some(message => message.text === 'Current turn remains live'));
+    const current = f.document().domain.currentRun;
+    f.trigger('late');
+    await until(() => attempted > 0);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const domain = f.document().domain;
+    assert.deepEqual(domain.currentRun, current);
+    assert.equal(current.kind, 'running');
+    assert.equal(domain.activities[0].status.kind, rejectLate ? 'running' : 'completed');
+    assert.equal(domain.activities[0].output, rejectLate ? '' : 'Late final output');
+    assert.ok(f.messages().some(message => message.text === 'Current turn remains live'));
+    assert.ok(f.messages().every(message => !message.text.includes('Old assistant text')));
+  });
+}

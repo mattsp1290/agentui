@@ -109,7 +109,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const { principal, secret } = f.enroll(), auth = f.auth(secret);
     const scope = { hostId: f.access.hostId, conversationId: 'revoked-admitted-pull' };
     assert.equal((await f.send({ op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
-    const { value: { feedId } } = await (await f.send({ op: 'watch', scope, after: null, projectionVersion: 1 }, auth)).json();
+    const { value: { feedId } } = await (await f.send({ op: 'watch', scope, after: null, projectionVersion: 2 }, auth)).json();
     const { value: page } = await (await f.send({ op: 'pull', feedId, ack: null }, auth)).json();
     const started = f.nextGate(2);
     const pending = f.send({ op: 'pull', feedId, ack: page.page }, auth);

@@ -120,7 +120,12 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
         while (phase === 'active') {
           const result = await request({ op: 'pull', feedId, ack: lastPage }, controller.signal);
           if (phase !== 'active') return;
-          if (result.kind === 'ended') { finish(result.end); return; }
+          if (result.kind === 'ended') {
+            const end = result.end;
+            finish(end.kind === 'refused' && end.reason === 'unknown-scope-or-incompatible-projection'
+              ? { ...end, reason: 'Unknown conversation or incompatible projection. Update the app and host together.' } : end);
+            return;
+          }
           if (result.kind === 'heartbeat') continue;
           const nextIdentity = canonicalJson(result.item);
           if (lastPage !== null && result.page === lastPage) {

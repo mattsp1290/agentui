@@ -97,6 +97,7 @@ export interface ConversationPort<E, P> {
 export interface Projection<E, P> {
   readonly version: number;
   initial(): P;
+  reserveBytes?(state: P): number;
   decodeEvent(value: unknown): E;
   decodeState(value: unknown): P;
   apply(state: P, event: E): P;
@@ -249,7 +250,7 @@ export function parseFeedItem<E, P>(value: unknown, projection: Pick<Projection<
       const scope = parseScope(snapshot.scope);
       checkFeedScope(scope, expectedScope);
       const projectionVersion = count(snapshot.projectionVersion);
-      if (projectionVersion !== projection.version) throw new FeedMismatchError('Projection version mismatch; update the client or select a compatible host');
+      if (projectionVersion !== projection.version) throw new FeedMismatchError('Projection version mismatch; update the app and host together');
       const cursor = count(snapshot.cursor);
       const document = parseDocument(snapshot.document, value => projection.decodeState(value), scope, cursor);
       return { kind: 'snapshot', snapshot: { scope, projectionVersion, cursor, document } };

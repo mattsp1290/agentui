@@ -5,7 +5,7 @@ import { createBrowserConnection, ServiceError } from '@agentui/client/service';
 import { parseServiceRequest, parseServiceResponse, parseServicePull, SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
-const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 1, cursor: 0,
+const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 2, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, commands: ['send'], availability: { kind: 'ready' } };
 const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
@@ -24,7 +24,7 @@ test('canonical service schema rejects unknown operations, fields, and out of ra
   assert.deepEqual(parseServiceRequest({ op: 'submit', command }), { op: 'submit', command });
   for (const input of [ { op: 'create', scope }, { op: 'unknown' }, { op: 'metadata', code: 'extra' }, { op: 'pair', code: '' },
     { op: 'catalog', after: null, limit: 101 }, { op: 'catalog', after: null, limit: 0 },
-    { op: 'watch', scope, after: -1, projectionVersion: 1 }, { op: 'pull', feedId: 'feed', ack: 0.5 },
+    { op: 'watch', scope, after: -1, projectionVersion: 2 }, { op: 'pull', feedId: 'feed', ack: 0.5 },
     { op: 'submit', command: { ...command, body: { kind: 'send', text: 'x'.repeat(64_001) } } } ]) {
     assert.throws(() => parseServiceRequest(input));
   }
@@ -129,7 +129,7 @@ test('feed ACK waits for receiver and duplicate pages are delivered once', async
     acks.push(body.ack);
     return reply(results.shift());
   } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async item => {
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => {
     received.push(item);
     if (received.length === 1) await gate.promise;
   });
@@ -151,7 +151,7 @@ test('feed failure releases server feed and reports last delivered cursor', asyn
     if (++pulls === 1) return reply(page(1));
     throw new Error('Disconnected');
   } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => {});
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => {});
   assert.deepEqual(await feed.ended, { kind: 'failed', cursor: 0, reason: 'Disconnected' });
   await until(() => closed === 1);
   assert.equal(pulls, 2);
@@ -169,7 +169,7 @@ test('closing feed aborts active pull and posts close once', async () => {
       reject(new Error('Aborted'));
     }, { once: true }));
   } });
-  const feed = connection.conversation(scope).watch({ after: 5, projectionVersion: 1 }, async () => assert.fail('Unexpected delivery'));
+  const feed = connection.conversation(scope).watch({ after: 5, projectionVersion: 2 }, async () => assert.fail('Unexpected delivery'));
   await until(() => pulling);
   feed.close();
   feed.close();
@@ -188,7 +188,7 @@ test('closing before watch opens releases its eventual server feed', async () =>
     pulls++;
     assert.fail('Closed watch must not pull');
   } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => {});
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => {});
   feed.close();
   assert.equal((await feed.ended).kind, 'closed');
   opening.resolve(reply({ feedId: 'feed' }));
@@ -204,7 +204,7 @@ test('changed duplicate pages fail without redelivery or acknowledgement', async
     if (body.op === 'close') return reply(null);
     return reply(++pulls === 1 ? page(1) : page(1, { kind: 'events', events: [] }));
   } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => { received++; });
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => { received++; });
   assert.match((await feed.ended).reason, /changed an acknowledged page/);
   assert.equal(received, 1);
   assert.equal(pulls, 2);
@@ -219,7 +219,7 @@ test('receiver rejection does not ACK the failed page', async () => {
     acks.push(body.ack);
     return reply(page(1));
   } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => { throw new Error('Persistence failed'); });
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => { throw new Error('Persistence failed'); });
   assert.equal((await feed.ended).reason, 'Persistence failed');
   assert.deepEqual(acks, [null]);
 });
@@ -239,7 +239,7 @@ test('malformed frames and first-page gaps request a new baseline', async () => 
       const body = JSON.parse(init.body);
       return reply(body.op === 'watch' ? { feedId: 'feed' } : body.op === 'close' ? null : result);
     } });
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 1 }, async () => assert.fail('Invalid page delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid page delivered'));
     const end = await feed.ended;
     assert.equal(end.kind, 'resync');
     assert.equal(end.cursor, 8);
@@ -267,7 +267,7 @@ test('deadlines cover a missing response and a response whose body never complet
 test('watch opening has a bounded deadline and failed cleanup cannot delay feed ending', async () => {
   let watch = 0;
   const connection = createBrowserConnection({ requestTimeoutMs: 10, fetch: async () => { watch++; return new Promise(() => {}); } });
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => {});
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => {});
   assert.equal((await feed.ended).kind, 'failed');
   assert.equal(watch, 1);
 });

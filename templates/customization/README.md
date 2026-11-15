@@ -38,6 +38,8 @@ The command verifies the selected artifact and stages its retained bytes. It dis
 
 Selecting this artifact gives its code full trust inside the protected app. Hashes verify the selected bytes, not the safety of that code. The manifest continues to describe the browser-development asset build; it does not certify a Mac build, distribution signing, or notarization.
 
+When updating a local development build, keep the old app until the new package builds successfully. Before opening a different local build, use the current app's Settings → Forget local pairing → Forget pairing, quit it, then open and pair the new build. Chats and drafts are retained, and relaunching the same build keeps its pairing.
+
 ## Supported inputs
 
 `package.json.agentui.extension` is the existing SDK manifest. `sources` maps each declared runtime module to one committed source file. The runtime module path, such as `./dist/desktop.js`, is an identity in the manifest and does not need to exist in Git. The builder selects the desktop source and bundles it with AgentUI. Other platform declarations are preserved without building those targets. An absent package, absent `agentui`, or absent desktop entry leaves the default application available.

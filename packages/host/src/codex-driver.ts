@@ -9,6 +9,7 @@ import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
 import { approvalItem, approvalPrompt, bounded, rememberApprovalItem } from './codex-approval-display.js';
 import type { ApprovalDetails } from './codex-approval-display.js';
+import { createCommandActivity } from './codex-command-activity.js';
 import { messageParts } from './transcript-parts.js';
 
 export type CodexTranscriptEvent = TranscriptEvent;
@@ -26,6 +27,7 @@ interface ActiveTurn {
   readonly messages: Map<string, string>;
   readonly approvalDetails: Map<string, ApprovalDetails>;
   readonly rendered: Extract<TranscriptEvent, { kind: 'message-updated' }>[];
+  commands: ReturnType<typeof createCommandActivity> | null;
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   revision: number;
@@ -49,6 +51,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
   const installation = codexInstallation(options.cwd, options.version);
   const cwd = installation.binding.authorizedScope;
   const active = new Map<string, ActiveTurn>();
+  const closedTurns = new Map<string, { readonly runId: string; readonly commands: ReturnType<typeof createCommandActivity> }>();
   const busy = new Set<string>();
   const loaded = new Set<string>();
   const approvals = new Map<string, Approval>();
@@ -66,7 +69,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         try { interrupted(turn, 'Codex disconnected. This turn was interrupted. Restart the host to connect again.'); }
         catch { outputFailed(turn); }
       }
-      active.clear(); busy.clear();
+      active.clear(); closedTurns.clear(); busy.clear();
     },
   });
   let initialization: Promise<void> | null = null;
@@ -84,6 +87,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
   function renderMessage(turn: ActiveTurn) {
     clearTimeout(turn.timer); turn.timer = undefined;
     if (!turn.run) return;
+    turn.commands?.flush();
     const parts = messageParts([...turn.messages.values()].join('\n\n'));
     const count = Math.max(parts.length, turn.rendered.length);
     for (let index = 0; index < count; index++) {
@@ -100,6 +104,9 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
   function message(turn: ActiveTurn, id: string, text: string) {
     if (turn.complete) return;
     turn.messages.set(id, text);
+    schedule(turn);
+  }
+  function schedule(turn: ActiveTurn) {
     turn.timer ??= setTimeout(() => {
       try { renderMessage(turn); } catch { outputFailed(turn); }
     }, 150);
@@ -167,12 +174,16 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     if (turn.run && turn.run.identity.runId !== turnId) throw new Error('Unexpected Codex turn');
     if (!turn.run) {
       turn.run = value;
+      const scope = turn.scope;
+      turn.commands = createCommandActivity(turnId, event => {
+        if (!closing) options.append(scope, { events: [event], runs: [], decisions: [] });
+      });
       publish(turn, [{ kind: 'run-started', runId: turnId, previousRunId: turn.previousRunId }], [], [value]);
     }
     return value;
   }
   function notification(method: string, value: unknown): void {
-    if (closing || !['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/started', 'item/completed', 'serverRequest/resolved', 'error'].includes(method)) return;
+    if (closing || !['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/commandExecution/outputDelta', 'item/started', 'item/completed', 'serverRequest/resolved', 'error'].includes(method)) return;
     const params = object(value);
     if (method === 'serverRequest/resolved') {
       const approval = approvals.get(canonicalJson(params.requestId));
@@ -183,12 +194,26 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       }
       return;
     }
-    const turn = active.get(nonempty(params.threadId));
+    const threadId = nonempty(params.threadId);
+    const turn = active.get(threadId);
+    if ((!turn || turn.run?.identity.runId !== params.turnId) &&
+      (method === 'item/completed' || method === 'item/commandExecution/outputDelta')) {
+      const closed = closedTurns.get(threadId);
+      if (closed && closed.runId === params.turnId) {
+        try { closed.commands.observe(method, params); closed.commands.flush(); }
+        catch { process.emitWarning('Could not retain late Codex command output', { code: 'AGENTUI_CODEX_LATE_OUTPUT' }); }
+      }
+      return;
+    }
     if (!turn) return;
     if (method === 'turn/started') {
       const turnId = nonempty(object(params.turn).id);
       if (turn.complete || turn.previousRunId === turnId || (turn.run && turn.run.identity.runId !== turnId)) return;
       run(turn, turnId);
+    } else if (method === 'item/commandExecution/outputDelta') {
+      if (turn.run?.identity.runId !== params.turnId) return;
+      turn.commands?.observe(method, params);
+      schedule(turn);
     } else if (method === 'item/agentMessage/delta') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const id = nonempty(params.itemId);
@@ -197,6 +222,11 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     } else if (method === 'item/started' || method === 'item/completed') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const item = object(params.item);
+      if (item.type === 'commandExecution') {
+        turn.commands?.observe(method, params);
+        if (item.status === 'inProgress') schedule(turn);
+        else turn.commands?.flush();
+      }
       const remembered = approvalItem(item);
       if (remembered) rememberApprovalItem(turn.approvalDetails, remembered);
       if (method === 'item/completed' && item.type === 'agentMessage') {
@@ -213,6 +243,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       turn.complete = true;
       renderMessage(turn);
       endRun(turn, completed.status === 'interrupted' ? 'interrupted' : completed.status === 'failed' ? 'failed' : 'completed');
+      if (turn.commands && turn.run) closedTurns.set(turn.threadId, { runId: turn.run.identity.runId, commands: turn.commands });
       active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
     } else if (method === 'error' && params.willRetry !== true) {
       status(turn, 'Codex reported an error while responding.');
@@ -270,7 +301,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
+      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);
@@ -374,7 +405,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
           try { interrupted(turn, 'Codex stopped when the host closed. You can send another message after reconnecting.'); }
           catch { outputFailed(turn); }
         }
-        active.clear(); busy.clear();
+        active.clear(); closedTurns.clear(); busy.clear();
       }
       finally { closing = true; rpc.close(); }
     },
