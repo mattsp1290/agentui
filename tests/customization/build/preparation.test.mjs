@@ -265,6 +265,46 @@ test('external and repeated references preserve shared nodes and conflicting ins
   assert.deepEqual(await imported(one), ['value@2.0.0', 'development@2.0.0', 'optional@2.0.0', 'peer@2.0.0']);
 });
 
+test('real npm prepares distinct owners in one acquisition with repeated selections and a shared diamond', async t => {
+  const f = await fixture(t);
+  const leaf = await f.repository('shared-leaf');
+  await write(leaf.directory, 'package.json', { agentui: { shared: './index.mjs' } });
+  await write(leaf.directory, 'index.mjs', 'export default 73;\n');
+  const leafReference = leaf.reference(leaf.commit());
+  const repo = await f.repository('standalone-owners');
+  for (const [name, version] of [['left', '1.0.0'], ['right', '2.0.0']]) {
+    const directory = join(repo.directory, name);
+    const { pkg } = await locked(f, { directory }, version);
+    await write(directory, 'package.json', { ...pkg, agentui: { ...pkg.agentui, extensions: [leafReference] } });
+  }
+  const commit = repo.commit();
+  const references = ['left', 'right', 'left'].map(name => repo.reference(commit, name));
+  const aggregate = await f.repository('aggregate');
+  await write(aggregate.directory, 'package.json', { agentui: { extensions: references } });
+  const prepared = await f.prepare(aggregate.reference(aggregate.commit()));
+  t.after(() => prepared.dispose());
+  const [left, right, repeated] = prepared.root.extensions;
+  assert.equal(left, repeated);
+  assert.equal(left.extensions[0], right.extensions[0]);
+  assert.equal(left.repositoryDirectory, right.repositoryDirectory);
+  assert.notEqual(left.repositoryDirectory, repo.directory);
+  assert.equal(left.directory, join(left.repositoryDirectory, 'left'));
+  assert.equal(right.directory, join(left.repositoryDirectory, 'right'));
+  assert.notEqual(left.npm.identity, right.npm.identity);
+  assert.equal(left.npm.directory, left.directory);
+  assert.equal(right.npm.directory, right.directory);
+  assert.notEqual(left.npm.directory, right.npm.directory);
+  assert.deepEqual(await imported(left), ['value@1.0.0', 'development@1.0.0', 'optional@1.0.0', 'peer@1.0.0']);
+  assert.deepEqual(await imported(right), ['value@2.0.0', 'development@2.0.0', 'optional@2.0.0', 'peer@2.0.0']);
+  assert.equal(await imported(left.extensions[0]), 73);
+  const paths = await files(f.scratchParent);
+  const logs = await Promise.all(paths.filter(path => path.endsWith('debug-0.log')).map(path => readFile(path, 'utf8')));
+  assert.equal(logs.filter(log => /verbose title npm ci\b/u.test(log)).length, 2);
+  await prepared.dispose();
+  await Promise.all([prepared.root.directory, left.repositoryDirectory, left.directory, right.directory, left.extensions[0].directory].map(absent));
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('real npm preserves scoped nested packages and explicit alias identities', async t => {
   const f = await fixture(t);
   const repo = await f.repository('scoped-nested-alias');

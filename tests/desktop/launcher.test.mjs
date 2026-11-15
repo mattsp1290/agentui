@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import test from 'node:test';
-import { mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -9,20 +9,8 @@ import { parseLaunchArgs } from '../../scripts/agentui-launch.mjs';
 
 const launcher = fileURLToPath(new URL('../../agentui', import.meta.url));
 const entry = fileURLToPath(new URL('../../scripts/agentui-launch.mjs', import.meta.url));
-const invalid = [
-  ['--host-url'], ['--other'], ['--host-url', 'bad-url'],
-  ['--host-url', 'https://127.0.0.1:8123/browser.html'],
-  ['--host-url', 'http://example.com:8123/browser.html'],
-  ['--host-url', 'http://localhost:8123/browser.html'],
-  ['--host-url', 'http://127.0.0.1:8123/other.html'],
-  ['--host-url', 'http://user:pass@127.0.0.1:8123/browser.html'],
-  ['--host-url', 'http://127.0.0.1:8123/browser.html?token=x'],
-  ['--host-url', 'http://127.0.0.1:8123/browser.html#fragment'],
-  ['--host-url', 'http://127.0.0.1:8123/browser.html?'],
-  ['--host-url', 'http://127.0.0.1:8123/browser.html#'],
-  ['--host-url', 'http://127.0.0.1:99999/browser.html'],
-  ['--host-url', 'http://127.0.0.1:8123/browser.html', '--extra'],
-];
+const cases = JSON.parse(readFileSync(new URL('./host-url-cases.json', import.meta.url), 'utf8'));
+const invalid = cases.filter(({ accepted }) => !accepted).map(({ args }) => args);
 
 function launch(t, args) {
   const dir = mkdtempSync(join(tmpdir(), 'agentui-launcher-'));
@@ -46,11 +34,14 @@ for (const args of invalid) {
   });
 }
 
-for (const args of [[], ['--host-url', 'http://127.0.0.1:8123/browser.html'], ['--host-url', 'http://127.0.0.1/browser.html']]) {
+for (const { args, normalized } of cases.filter(({ accepted }) => accepted)) {
   test(`launcher validation accepts ${JSON.stringify(args)} without opening the app`, () => {
     const result = parseLaunchArgs(args);
     assert.equal(result.kind, args.length === 0 ? 'local' : 'existing');
-    if (args.length !== 0) assert.equal(result.url, args[1]);
+    if (args.length !== 0) {
+      assert.equal(result.url, args[1]);
+      assert.equal(new URL(result.url).href, normalized);
+    } else assert.equal(normalized, null);
   });
 }
 
