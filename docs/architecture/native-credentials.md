@@ -33,12 +33,14 @@ Only the native owner calls these operations. `read` may return a secret inside 
 
 ```text
 read(key) -> StoreState
-replace(key, expectedRevision, credential) -> Committed(newGeneration) | MutationFailure
+replace(key, expectedRevision, nativeCredential) -> Committed(newGeneration) | MutationFailure
 remove(key, expectedRevision) -> Removed | MutationFailure
 MutationFailure = Conflict | NoWrite(reason) | CommitUnknown
 ```
 
-`replace` validates the entire record, its version, and its exact binding before mutation.
+`replace` validates the native pairing credential and its exact binding before mutation.
+The adapter constructs the complete versioned record and allocates its fresh generation.
+The committed result returns that same durable generation.
 The adapter replaces the complete record atomically. A partial record must never become usable.
 `replace` and `remove` check the expected revision under the same ownership as the mutation.
 A conflict changes nothing. Locked, unavailable, malformed, unsupported, and denied reads never become absence.
@@ -72,7 +74,9 @@ forget(selection, expectedSession) -> Forgotten | ForgetFailure
 `selection` refers to native-validated application, profile, host, and endpoint configuration.
 `expectedSession` identifies the current session, or explicit absence when no session exists.
 Forgetting also invalidates pending enrollment when the slot is absent. A stale session cannot remove a replacement credential.
-Status may restore a fresh owner-lifetime session from a validated stored record. `Ready` reports local admission readiness, not host authorization.
+Status restores a session from a validated stored record and reuses it for that generation within the owner lifetime.
+Repeated status calls preserve existing valid handles. `Ready` reports local admission readiness, not host authorization.
+Repeating a completed forget with its retired handle returns a fixed stale-handle failure. Forgetting explicit absence returns `Forgotten` and invalidates pending enrollment.
 Failures distinguish storage state, stale handles, pairing failure, network failure, and unauthorized responses using fixed, secret-free categories.
 
 The native IPC boundary validates every input independently of JavaScript validation and rejects unknown fields.
