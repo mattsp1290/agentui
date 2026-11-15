@@ -29,6 +29,21 @@ Approval cards offer **Approve once** only when Crew marks the call's public arg
 
 The provider imports the retained `@birbcrew/client/agui` observer and the frozen AG-UI client/core/encoder/proto archives. No vendor bytes or wire, SDK, projection, or npm versions change. `examples/crew/tests/provider.test.mjs` exercises the public HTTP/SSE boundary, SQLite reopen, approvals, Stop, callback drain, and GET-only uncertainty recovery. Controlled responses do not qualify a production Crew deployment.
 
+## Trace the host and Crew worker
+
+The launcher reads the same [host observability settings](../../docs/development/observability.md) as the normal host CLI. To export AgentUI request spans to a local OTLP HTTP JSON receiver, run:
+
+```sh
+OTEL_TRACES_EXPORTER=otlp \
+OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
+OTEL_SERVICE_NAME=agentui-host \
+node examples/crew/run.mjs /absolute/private/crew-provider.json
+```
+
+Pair the browser, select the Crew member, and send a message. The `agentui-host` service records admitted host requests. Tracing is disabled unless `OTEL_TRACES_EXPORTER=otlp` is set. Invalid enabled settings stop the launcher before host startup. Collector failure does not change a command result.
+
+Configure the remote Crew worker separately using [the Crew tracing guide](../../docs/development/observability.md#configure-the-crew-worker). AgentUI does not start that worker or forward its collector settings. Crew owns actual native invocation spans. Remote conversation snapshots do not produce AgentUI `invoke_agent` spans. The two services have separate traces, without propagated trace headers or shared exported identifiers.
+
 ## Legacy standalone HTTP helper
 
 This standalone integration example attaches an AgentUI conversation to an existing Crew conversation and member through the packed `@birbcrew/client` HTTP SDK. Crew remains the remote authority. The example does not create members, start native engines, register a provider SDK extension, or implement a server provider lifecycle. The registered provider above does not use this helper or its separate journal.
