@@ -55,6 +55,7 @@ activate(context: ServerExtensionContext) {
 }
 const running = await startBrowserHost({
   directory, assetsDirectory,
+  agentStartup: { kind: 'extensions' },
   providerExtensions: [{ manifest, entry, installations: [{
     id: 'service', instance: presentation.instance, service: 'https://service.example',
     expectedAuthority: 'remote-provider',
