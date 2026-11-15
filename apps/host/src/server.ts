@@ -181,7 +181,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       const page = host.listConversations(access.hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
-        if ('kind' in installation) { after = scope.conversationId; continue; }
+        if ('kind' in installation) { await host.observeProvider(scope); after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
           recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);

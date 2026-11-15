@@ -263,7 +263,7 @@ test('browser chooser opens an empty provider conversation, disables Send, and r
   refuse = false; await chooseProvider();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), false);
-  assert.match(await page.locator('.composer-footer').textContent(), /Messaging is not available yet/);
+  assert.match(await page.locator('.composer-footer').textContent(), /Messaging is not available for this provider/);
   assert.equal(await page.getByRole('button', { name: 'Harness, Provider', exact: true }).count(), 1);
   await page.getByRole('button', { name: `Model, ${agent.label}`, exact: true }).click();
   assert.equal(await page.getByRole('button', { name: `${agent.label}, current model`, exact: true }).isDisabled(), true);

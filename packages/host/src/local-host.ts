@@ -1,3 +1,4 @@
+import type { ProviderStream } from './provider-stream.js';
 import { canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
@@ -26,6 +27,7 @@ export interface LocalHost<E, P> {
   createConversation(scope: ConversationScope, target: Installation): void;
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ReturnType<typeof createProviderRegistry>): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
+  observeProvider(scope: ConversationScope): Promise<void>;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
   installation(scope: ConversationScope): ConversationInstallation | null;
   inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> };
@@ -46,6 +48,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   let active = 0;
   const dispatching = new Set<string>();
   const creating = new Map<string, Promise<CreationObservation>>();
+  const observing = new Map<string, Promise<ProviderStream | null>>();
   let resolveDrained!: () => void;
   let rejectDrained!: (error: unknown) => void;
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
@@ -68,8 +71,27 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
   };
+  const observeProvider = async (scope: ConversationScope): Promise<void> => {
+    authorized(scope);
+    const key = canonicalJson(scope);
+    let starting = observing.get(key);
+    if (!starting) {
+      const original = store.creation(scope), registry = options.providers;
+      if (original?.observation?.kind !== 'confirmed' || !registry) return;
+      starting = inFlight(async () => {
+        try {
+          const stream = await registry.observe(original, store);
+          if (closed) stream.close();
+          return stream;
+        } catch { return null; }
+      });
+      observing.set(key, starting);
+    }
+    await starting;
+  };
   const host: LocalHost<E, P> = {
     drained,
+    observeProvider,
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
@@ -81,7 +103,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (prior && providerInstallationKey(prior.installation) !== providerInstallationKey(target)) throw new Error('Creation agent is immutable');
       const key = canonicalJson(scope), leased = creating.get(key);
       if (leased) return leased;
-      if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) return prior.observation;
+      if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) {
+        if (prior.observation.kind === 'confirmed') await observeProvider(scope);
+        return prior.observation;
+      }
       let original: ProviderCreation;
       if (prior) original = { installation: prior.installation, intent: prior.intent, credential: prior.credential };
       else {
@@ -94,7 +119,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           authorized(scope);
           if (!prior) store.attemptCreation(original);
         });
-        return store.settleCreation(original, observed);
+        const settled = store.settleCreation(original, observed);
+        if (settled.kind === 'confirmed' && !closed) await observeProvider(scope);
+        return settled;
       });
       creating.set(key, task);
       try { return await task; } finally { creating.delete(key); }
@@ -128,6 +155,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
+          if (provider) { await observeProvider(scope); authorized(scope); }
           const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry && command.body.kind === 'send' ? (original, operation) => {
@@ -184,7 +212,12 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (closed) return;
       closed = true;
       journal.close();
-      finishClosing();
+      if (!observing.size) { finishClosing(); return; }
+      void inFlight(async () => {
+        const streams = (await Promise.all(observing.values())).filter(stream => stream !== null);
+        for (const stream of streams) stream.close();
+        await Promise.allSettled(streams.map(stream => stream.drained));
+      });
     },
   };
   registerFrontendToolsHost(host, {

@@ -3,7 +3,7 @@ import type { ConversationScope, Json, RunIdentity } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { ConversationRef, ProviderConversation } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
-import type { ProviderCreation } from './provider-creation.js';
+import type { ProviderCreation, ProviderInstallation } from './provider-creation.js';
 import type { SettlementObservation } from './settlement.js';
 
 export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 'credential'> {
@@ -33,14 +33,18 @@ export function providerTarget(value: unknown, scope: ConversationScope): Provid
   return { kind: 'provider', installation: original.installation, credential: original.credential,
     operation: { kind: 'send', operationId, binding: creationBinding(binding, original.intent, original.installation), request: copyJson(operation.request) } };
 }
-export function providerRun(value: unknown, target: ProviderTarget): ProviderRun {
+export function providerReference<K extends 'run' | 'decision' | 'choice'>(value: unknown,
+  original: ProviderConversation<string>, selected: ProviderInstallation, kind: K): ConversationRef<string, K> {
   const input = record(value, ['binding', 'ref']), ref = record(input.ref, ['kind', 'instance', 'opaqueId']);
-  const binding = creationBinding(input.binding, target.operation.binding.creation, target.installation);
-  if (canonicalJson(binding) !== canonicalJson(target.operation.binding) || ref.kind !== 'run' ||
-    canonicalJson(providerIdentity(ref.instance)) !== canonicalJson(target.installation.instance)) throw new Error('Foreign provider run');
-  const opaqueId = identifier(ref.opaqueId);
-  return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope, runId: opaqueId, authority: binding.authority }),
-    reference: { binding, ref: { kind: 'run', instance: target.installation.instance, opaqueId } } };
+  const binding = creationBinding(input.binding, original.creation, selected);
+  if (canonicalJson(binding) !== canonicalJson(original) || ref.kind !== kind ||
+    canonicalJson(providerIdentity(ref.instance)) !== canonicalJson(selected.instance)) throw new Error('Foreign provider reference');
+  return { binding, ref: { kind, instance: selected.instance, opaqueId: identifier(ref.opaqueId) } };
+}
+export function providerRun(value: unknown, binding: ProviderConversation<string>, selected: ProviderInstallation): ProviderRun {
+  const reference = providerReference(value, binding, selected, 'run');
+  return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope,
+    runId: reference.ref.opaqueId, authority: binding.authority }), reference };
 }
 export function providerObservation(value: unknown, target: ProviderTarget): ProviderObservation {
   const input = record(value);
@@ -55,7 +59,7 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
   let run: ProviderRun | null = null;
   if (source.run !== null) {
     const stored = record(source.run, ['kind', 'identity', 'reference']);
-    run = providerRun(stored.reference, target);
+    run = providerRun(stored.reference, target.operation.binding, target.installation);
     if (canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
   }
   const parsed = { correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
@@ -79,7 +83,7 @@ export function providerOutcome(value: unknown, target: ProviderTarget, fresh: b
     record(input, ['kind', 'value', 'evidence']);
     const effect = record(input.value, ['kind', 'run', 'state']);
     if (effect.kind !== 'send' || (effect.state !== 'accepted' && effect.state !== 'completed')) throw new Error('Invalid send effect');
-    run = providerRun(effect.run, target);
+    run = providerRun(effect.run, target.operation.binding, target.installation);
     kind = effect.state === 'accepted' ? 'accepted' : 'conclusive';
     if (kind === 'conclusive') result = { kind: 'receipt-completed' };
   } else if (input.kind === 'pending') { record(input, ['kind', 'evidence']); kind = 'pending'; }
