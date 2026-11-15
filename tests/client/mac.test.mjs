@@ -1,8 +1,50 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { ServiceProtocolError } from '@agentui/client/service';
+import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 import { createMacConnection, macAccess } from '@agentui/client/mac';
 import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+
+test('native access failures give safe recovery for the reported category on status and execution', async () => {
+  const secret = 'private-token-and-profile-path';
+  const generic = 'Native connection unavailable. Reconnect, or restart AgentUI if the problem continues. Local work is retained.';
+  const guidance = [
+    ['forbidden', /installed AgentUI app/],
+    ['profile-unavailable', /local profile.*access/i],
+    ...['keychain-locked', 'keychain-denied', 'keychain-unavailable'].map(cause => [cause, /Restore Keychain access/]),
+    ...[secret, new Error(secret), { message: secret }, `keychain-denied ${secret}`, null].map(cause => [cause, generic]),
+  ];
+  for (const [cause, expected] of guidance) {
+    const invoke = async () => { throw cause; };
+    const connection = createMacConnection({ kind: 'ready', observation: 'current', hostId: 'host', principalId: 'principal' }, invoke);
+    for (const run of [() => macAccess({ kind: 'status' }, invoke), () => connection.metadata()]) {
+      await assert.rejects(run, error => {
+        assert.ok(error instanceof ServiceError);
+        assert.equal(error.kind, 'unavailable');
+        if (typeof expected === 'string') assert.equal(error.message, expected);
+        else assert.match(error.message, expected);
+        if (!String(cause).startsWith('keychain-') || typeof expected === 'string') assert.doesNotMatch(error.message, /Keychain/);
+        assert.doesNotMatch(error.message, new RegExp(secret));
+        return true;
+      });
+    }
+  }
+});
+
+test('invalid native responses report a protocol problem without Keychain recovery or response contents', async () => {
+  const secret = 'private-token-and-profile-path';
+  await assert.rejects(macAccess({ kind: 'status' }, async () => ({ kind: secret, observation: 'current' })), error => {
+    assert.match(error.message, /Invalid native.*response/);
+    assert.doesNotMatch(error.message, /Keychain|private-token-and-profile-path/);
+    return true;
+  });
+  const connection = createMacConnection({ kind: 'ready', observation: 'current', hostId: 'host', principalId: 'principal' },
+    async () => ({ status: 600, body: secret }));
+  await assert.rejects(connection.metadata(), error => {
+    assert.match(error.message, /Invalid native.*response/);
+    assert.doesNotMatch(error.message, /Keychain|private-token-and-profile-path/);
+    return true;
+  });
+});
 
 test('Mac adapter uses immutable native observations through the real shared engine including search and chooser', async () => {
   const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];

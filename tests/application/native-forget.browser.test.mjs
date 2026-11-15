@@ -18,6 +18,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   globalThis.__TAURI_INTERNALS__ = { async invoke(name, { command }) {
     if (name !== 'native_access') throw new Error('Unexpected native command');
     globalThis.nativeCalls.push(command);
+    if (globalThis.nativeFailure) throw globalThis.nativeFailure;
     if (globalThis.heldAction === command.kind) {
       globalThis.heldAction = null;
       await new Promise((resolve, reject) => { globalThis.releaseNative = resolve; globalThis.rejectNative = reject; });
@@ -63,6 +64,24 @@ async function fixture(t) {
   t.after(() => assert.deepEqual(errors, []));
   return page;
 }
+
+test('native connection controls show category-specific recovery without exposing unknown causes', async t => {
+  const page = await fixture(t);
+  for (const [cause, guidance] of [
+    ['forbidden', /installed AgentUI app/],
+    ['profile-unavailable', /local profile.*access/i],
+    ['keychain-denied', /Restore Keychain access/],
+    ['private-token-and-profile-path', /Native connection unavailable\. Reconnect/],
+  ]) {
+    await page.evaluate(value => { globalThis.nativeFailure = value; }, cause);
+    await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+    const alert = page.getByRole('alert').filter({ hasText: guidance });
+    await alert.waitFor();
+    const text = await alert.textContent();
+    if (cause !== 'keychain-denied') assert.doesNotMatch(text, /Keychain/);
+    assert.doesNotMatch(text, /private-token-and-profile-path/);
+  }
+});
 
 test('native Forget asks visibly, cancels with focus, and confirms once without changing saved drafts', async t => {
   const page = await fixture(t);
