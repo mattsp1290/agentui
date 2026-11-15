@@ -14,6 +14,7 @@ import { createServerExtensions } from '@agentui/host/extensions';
 import { entry } from '../host/extensions/fixtures.mjs';
 import { fixture as hostFixture, scope as hostScope, snapshot } from '../host/fixture.mjs';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
+import { SERVICE_WIRE_VERSION } from '@agentui/contracts/compatibility';
 import { crew, crewBackend, crewPresentation } from '../extensions/providers/contracts/crew.ts';
 import { local, localBackend, localPresentation } from '../extensions/providers/contracts/local.ts';
 
@@ -79,7 +80,7 @@ async function fixture(t, extensions) {
     return response;
   } });
   const start = async values => {
-    running = await startBrowserHost({ directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
+    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
     if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
@@ -114,7 +115,7 @@ test('authenticated send commits exact target before HTTP effect, persists accep
     return (await fetch(service, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(operation) })).json();
   }) }), b = extension({ native: true, submit: (operation, { effect }) => effect(operation, 'completed') });
   f = await fixture(t, [a, b]);
-  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, 5);
+  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, SERVICE_WIRE_VERSION);
   for (const agent of metadata.agents.filter(agent => agent.kind === 'provider')) assert.deepEqual(agent.commands, agent.label === 'Local provider' ? ['send', 'cancel', 'approve'] : ['send', 'approve']);
   const scope = await create(f, 'remote'), local = await create(f, 'local', 'Local provider');
   const native = f.scope('native'); await f.client.create(native, metadata.defaultAgentId);

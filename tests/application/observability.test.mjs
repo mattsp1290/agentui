@@ -32,9 +32,9 @@ async function fixture(t, environment = {}, direct = false) {
     if (process.argv[2] === 'lifecycle') {
       const { readObservabilityConfiguration } = await import('./apps/host/build/tsc/observability.js');
       options.observability = readObservabilityConfiguration(process.env);
-      await assert.rejects(startBrowserHost({ ...options, assetsDirectory: process.argv[1] + '/missing-assets' }));
+      await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options, assetsDirectory: process.argv[1] + '/missing-assets' }));
     }
-    const host = await startBrowserHost(options);
+    const host = await startBrowserHost({ ...options, agentStartup: { kind: 'recorded' } });
     process.stdout.write(JSON.stringify({ origin: host.origin, hostId: host.hostId }) + '\\n');
     process.once('SIGTERM', () => {
       const closing = host.close();

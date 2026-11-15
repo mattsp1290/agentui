@@ -37,7 +37,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </option>);
   const searchConnection = app.host.kind === 'ready' && !app.storageFailure
     ? JSON.stringify([app.host.metadata.hostId, app.host.metadata.principalId]) : null;
-  const runtime = (app.active ? ('runtime' in app.active.agent ? app.active.agent.runtime : app.active.agent) : null) ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
+  const displayedAgent = app.active?.agent ?? selected;
+  const runtime = displayedAgent ? ('runtime' in displayedAgent ? displayedAgent.runtime : displayedAgent) : metadata?.compatibility.nativeRuntime ?? null;
   const { agent, presentation } = agentPresentation(runtime);
   const conversation = app.active
     ? <ConversationView
@@ -48,7 +49,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
-        <p>Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.</p>
+        <p>{app.host.kind === 'ready' && !selected ? 'No agents are available to start a conversation.' : 'Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.'}</p>
         <div className="composer empty-composer"><p>Choose your chat settings.</p><ComposerAgentControls agents={choices} agent={selected ?? null} hasConversation={false} enabled={enabled && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} /></div>
       </section>;
   const controls = <div className="application-controls">

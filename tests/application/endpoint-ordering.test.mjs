@@ -26,7 +26,7 @@ async function fixture(t, credentialClass) {
   let closing = false;
   let observeGate = () => {};
   const isClosing = () => { observeGate(); return closing; };
-  const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing });
+  const api = createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, credentialClass, isClosing });
   const handler = serviceEndpoint(credentialClass === 'native' ? { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing }
     : { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing, files: new Map([['browser.html', Buffer.from('test asset')]]) });
   const server = createServer((req, res) => { void handler(req, res).catch(() => res.destroy()); });

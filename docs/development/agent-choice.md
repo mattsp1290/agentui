@@ -28,3 +28,5 @@ An agent that cannot start appears as unavailable. If the default is unavailable
 A creation whose reply was lost keeps its original chat and agent. **Recover creation** checks that saved choice. For an older pending creation without a saved agent, recovery first checks for the existing chat. If absent, select **Agent for pending creation** explicitly and recover again.
 
 The `codex`, `codex-sdk`, `claude-sdk`, `pi`, and `browser-dev` commands remain available. The Codex and Claude shortcuts also accept `--executable /absolute/path`. This setup does not replace global CLI installations or change native login.
+
+Provider-only hosts can run `node apps/host/dist/main.js serve --extensions /absolute/extensions.json --data-dir /absolute/private/agentui`. Add `--trusted` for trusted browser access. See the [server extension guide](../architecture/extension-sdk.md#select-installed-server-extensions-with-the-cli) for the selection file. The host chooses the ready provider with the smallest stable ID from each current catalog. With no ready providers it has no default, disables creation, and keeps saved conversations readable.
