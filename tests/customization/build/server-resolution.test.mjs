@@ -4,7 +4,7 @@ import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import test from 'node:test';
-import { assertSupportedNode, supportedNodeMinimum, supportedNodeRange } from '@agentui/host/customization';
+import { assertSupportedNode } from '@agentui/host/customization';
 import { classifyHostSpecifier, serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { serverCatalogLinkage } from '../../../scripts/server-catalog-loader.mjs';
 import { locked, tarball } from './preparation-support.mjs';
@@ -102,7 +102,7 @@ test('builder and locked preparation share the supported Node boundary and diagn
   const reference = f.repo.reference(f.repo.commit());
   const builder = new URL('../../../scripts/server-customization.mjs', import.meta.url).href;
   const preparation = new URL('../../../scripts/prepare-customization-sources.mjs', import.meta.url).href;
-  assert.doesNotThrow(() => assertSupportedNode(supportedNodeMinimum.join('.')));
+  assert.doesNotThrow(() => assertSupportedNode('24.22.3'));
   assert.doesNotThrow(() => assertSupportedNode('24.23.0'));
   for (const version of ['23.99.0', '24.21.99', '24.22.2', '25.0.0']) {
     const program = `import {buildServerCustomization} from ${JSON.stringify(builder)};
@@ -116,7 +116,7 @@ test('builder and locked preparation share the supported Node boundary and diagn
       }
       process.stdout.write(JSON.stringify(errors));`;
     const errors = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8' }));
-    assert.deepEqual(errors, Array(2).fill({ code: 'toolchain-mismatch', message: `Customization requires Node ${supportedNodeRange}.` }));
+    assert.deepEqual(errors, Array(2).fill({ code: 'toolchain-mismatch', message: 'Customization requires Node >=24.22.3 <25.' }));
     await clean(f);
   }
 });
