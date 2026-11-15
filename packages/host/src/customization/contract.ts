@@ -38,7 +38,7 @@ function hasControl(value: string): boolean {
 
 export function repositoryLocation(value: unknown): string {
   const invalid = () => new CustomizationError('invalid-input', 'Expected a local path or file, SSH, or HTTPS repository without embedded credentials.');
-  if (typeof value !== 'string' || !value || value.startsWith('-') || (/\s/u.test(value) || hasControl(value))) throw invalid();
+  if (typeof value !== 'string' || !value || value.startsWith('-') || value.includes('\\') || (/\s/u.test(value) || hasControl(value))) throw invalid();
   if (value.includes('://')) {
     let url: URL;
     try { url = new URL(value); } catch { throw invalid(); }
@@ -98,15 +98,14 @@ function dependencies(packageJson: Record<string, unknown>, lockValue: unknown):
 export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>, lock?: unknown): CustomizationSource | undefined {
   try {
     const packageJson = record(input);
-    dependencies(packageJson, lock);
     if (packageJson.agentui === undefined) return undefined;
     const metadata = fields(packageJson.agentui, ['extension', 'sources', 'shared', 'extensions']);
     let local: CustomizationSource['local'];
     if (metadata.extension !== undefined || metadata.sources !== undefined) {
       const manifest = parseExtensionManifest(metadata.extension);
       const mapping = record(metadata.sources);
-      const outputs = manifest.entries.map(entry => entry.module);
-      if (Object.keys(mapping).length !== outputs.length || Object.keys(mapping).some(key => !outputs.includes(key))) {
+      const outputs = new Set(manifest.entries.map(entry => entry.module));
+      if (Object.keys(mapping).length !== outputs.size || Object.keys(mapping).some(key => !outputs.has(key))) {
         throw new Error('Expected exactly one source mapping per manifest module');
       }
       const sources = new Map<string, string>();
@@ -135,6 +134,7 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
+    dependencies(packageJson, lock);
     return { ...(local ? { local } : {}), ...(shared === undefined ? {} : { shared }), extensions };
   } catch (error) {
     if (error instanceof CustomizationError) throw error;

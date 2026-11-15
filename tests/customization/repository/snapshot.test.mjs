@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { cp, mkdir, mkdtemp, readFile, readdir, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { test } from 'node:test';
 import { CustomizationError, readCustomizationSnapshot } from '@agentui/host/customization';
@@ -44,6 +44,51 @@ test('empty commit and minimal package yield defaults and own disposable private
   assert.equal(minimal.customization, undefined);
   await minimal.dispose();
   assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('relative scratch parents keep all artifacts inside the disposable snapshot', async t => {
+  for (const scratchParent of ['cache/sources', '../sources']) {
+    const f = await fixture(t);
+    const caller = join(f.root, 'caller');
+    await mkdir(caller);
+    await writeFile(join(f.repo, 'value'), 'committed');
+    const commit = f.commit();
+    const parent = resolve(caller, scratchParent);
+    await mkdir(parent, { recursive: true });
+    const before = (await readdir(f.root, { recursive: true })).sort();
+    const previous = process.cwd();
+    let snapshot;
+    try {
+      process.chdir(caller);
+      snapshot = await readCustomizationSnapshot({ repository: f.repo, commit, scratchParent });
+      assert.deepEqual(await readdir(dirname(snapshot.directory)), ['source']);
+      assert.equal(isAbsolute(snapshot.directory), true);
+      assert.equal(await readFile(join(snapshot.directory, 'value'), 'utf8'), 'committed');
+      process.chdir(f.root);
+      await snapshot.dispose();
+      assert.deepEqual((await readdir(f.root, { recursive: true })).sort(), before);
+      process.chdir(caller);
+      await assert.rejects(readCustomizationSnapshot({ repository: f.repo, commit: 'a'.repeat(40), scratchParent }),
+        error => error instanceof CustomizationError && ['unknown-commit', 'retrieval-failed'].includes(error.code));
+      assert.deepEqual(await readdir(parent), []);
+      assert.deepEqual((await readdir(f.root, { recursive: true })).sort(), before);
+    } finally {
+      process.chdir(previous);
+      await snapshot?.dispose();
+    }
+  }
+});
+
+test('backslash repository input is rejected without creating scratch artifacts', async t => {
+  const f = await fixture(t);
+  await assert.rejects(readCustomizationSnapshot({ repository: 'https://ghp_SECRET\\@github.com/me/repo',
+    commit: 'a'.repeat(40), scratchParent: f.scratchParent }), error => {
+    assert.equal(error.code, 'invalid-input');
+    assert.equal(error.message, 'Expected a local path or file, SSH, or HTTPS repository without embedded credentials.');
+    assert.equal('cause' in error || 'stderr' in error, false);
+    return true;
+  });
+  assert.deepEqual(await readdir(f.root), ['repo']);
 });
 
 test('exact raw committed bytes exclude dirty/untracked files and preserve caller state', async t => {

@@ -82,8 +82,9 @@ export async function readCustomizationSnapshot(input: {
   const commit = commitId(input.commit);
   const repository = repositoryLocation(input.repository);
   const location = repository.includes(':') || isAbsolute(repository) ? repository : resolve(repository);
-  await mkdir(input.scratchParent, { recursive: true, mode: 0o700 });
-  const privateDirectory = await mkdtemp(join(input.scratchParent, 'agentui-source-'));
+  const scratchParent = resolve(input.scratchParent);
+  await mkdir(scratchParent, { recursive: true, mode: 0o700 });
+  const privateDirectory = await mkdtemp(join(scratchParent, 'agentui-source-'));
   const directory = join(privateDirectory, 'source');
   const objects = join(privateDirectory, 'objects.git');
   const dispose = () => rm(privateDirectory, { recursive: true, force: true });
