@@ -3,6 +3,7 @@ import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
+import { secretResolver } from '@agentui/host';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { Access } from '../../apps/host/build/tsc/access.js';
 import { createProviderAuthority } from '../../apps/host/build/tsc/provider-credentials.js';
@@ -123,6 +124,83 @@ test('resolver and callback failures never expose private exception text', async
     await assert.rejects(authority.credentials.use({ credential, service }, async () => { throw new Error(secret); }), error => {
       assert.equal(error.message, 'Provider credential use refused'); assert.equal(error.cause, undefined); return true;
     });
+    await authority.close();
+  }
+});
+
+test('custom secret providers resolve current values only for admitted authority uses without persisting material', async t => {
+  const { path, state } = database(t);
+  const reference = 'production/crew/api-key';
+  const values = new Map([[reference, secret]]);
+  let reads = 0;
+  const provider = { async resolve(key) { reads++; return values.get(key); } };
+  const authority = createProviderAuthority(state, instance.namespace, [{ ...installation,
+    authentication: { kind: 'secret', revision: 'provider-selection-1', resolve: secretResolver({ provider, reference }) } }]);
+  const credential = authority.issue('service', instance).credential;
+  assert.equal(reads, 0, 'issuing a grant does not read the backend');
+  assert.equal(await authority.credentials.use({ credential, service }, async value => value), secret);
+  const rotated = `${secret}_ROTATED`;
+  values.set(reference, rotated);
+  assert.equal(await authority.credentials.use({ credential, service }, async value => value), rotated);
+  assert.equal(reads, 2, 'each admitted use reads the selected provider again');
+  authority.revoke(credential.opaqueHandle);
+  await assert.rejects(authority.credentials.use({ credential, service }, async () => assert.fail('revoked use reached action')), /credential use refused/);
+  assert.equal(reads, 2, 'revocation prevents backend reads');
+  const grant = state.database.prepare('SELECT * FROM service_provider_credentials').get();
+  assert.equal(grant.revision, 'provider-selection-1', 'backend rotation does not rewrite the admitted credential revision');
+  await authority.close();
+  state.database.close();
+  const databaseBytes = readFileSync(path);
+  for (const material of [reference, secret, rotated]) assert.equal(databaseBytes.includes(Buffer.from(material)), false);
+});
+
+test('secret-provider failures and malformed material cannot reach actions or leak backend errors', async t => {
+  const { state } = database(t);
+  t.after(() => state.database.close());
+  for (const invalid of [undefined, null, '', ' \n\t', 42, { value: secret }]) {
+    let actions = 0;
+    const resolve = secretResolver({ provider: { resolve: async () => invalid }, reference: 'api-key' });
+    await assert.rejects(resolve(), { message: 'Secret resolution refused' });
+    const authority = createProviderAuthority(state, instance.namespace, [{ ...installation,
+      authentication: { ...installation.authentication, resolve } }]);
+    const credential = authority.issue('service', instance).credential;
+    await assert.rejects(authority.credentials.use({ credential, service }, async () => { actions++; }), /^Error: Provider credential use refused$/);
+    assert.equal(actions, 0);
+    await authority.close();
+  }
+  const resolve = secretResolver({ provider: { async resolve() { throw new Error(secret, { cause: secret }); } }, reference: 'api-key' });
+  await assert.rejects(resolve(), error => {
+    assert.equal(error.message, 'Secret resolution refused');
+    assert.equal(error.cause, undefined);
+    assert.equal(JSON.stringify(error).includes(secret), false);
+    return true;
+  });
+  for (const reference of ['', '  ', undefined, 23]) {
+    assert.throws(() => secretResolver({ provider: { resolve: async () => secret }, reference }), /^Error: Secret resolution refused$/);
+  }
+});
+
+test('secret-provider reads retain authority revocation and close-drain behavior', async t => {
+  const { state } = database(t);
+  t.after(() => state.database.close());
+  for (const closing of [false, true]) {
+    const entered = Promise.withResolvers(), material = Promise.withResolvers();
+    const provider = { async resolve() { entered.resolve(); return material.promise; } };
+    const authority = createProviderAuthority(state, instance.namespace, [{ ...installation,
+      authentication: { kind: 'secret', revision: `read-${closing}`, resolve: secretResolver({ provider, reference: 'api-key' }) } }]);
+    const credential = authority.issue('service', instance).credential;
+    const use = authority.credentials.use({ credential, service }, async () => assert.fail('retired read reached action'));
+    const rejected = assert.rejects(use, /^Error: Provider credential use refused$/);
+    await entered.promise;
+    let drained = false;
+    const done = closing ? authority.close().then(() => { drained = true; }) : Promise.resolve();
+    if (!closing) authority.revoke(credential.opaqueHandle);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(drained, false);
+    material.resolve(secret);
+    await rejected;
+    await done;
+    assert.equal(drained, closing);
     await authority.close();
   }
 });

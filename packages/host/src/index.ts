@@ -6,6 +6,7 @@ export type {
 export type { ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
 
 export const hostRuntime = 'node';
+export { secretResolver } from './secret-provider.js';
 export { createProviderRegistry, providerIdentity } from './providers.js';
 export type { ProviderConversationOperations, ProviderCreationOperations, ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider } from './providers.js';
 export { openLocalHost } from './local-host.js';

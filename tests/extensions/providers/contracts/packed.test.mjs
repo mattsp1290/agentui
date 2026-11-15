@@ -29,6 +29,9 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     const prefix = sources.map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
     await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix, cases: [
       ["export const constructed: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew; export const dynamic: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');", null],
+      ["export const secretProvider: SDK.SecretProvider = { async resolve(reference) { return reference === 'production/api-key' ? 'synthetic-key' : Promise.reject(new Error('Unavailable')); } }; export const material: Promise<string> = secretProvider.resolve('production/api-key');", null],
+      ["export const invalid: SDK.SecretProvider = { async resolve() { return 7; } };", /not assignable/u],
+      ["export const invalid: SDK.SecretProvider = {};", /'resolve' is missing/u],
       ["export function activate(context: SDK.ServerExtensionContext) { context.providers.add('crew', crew, crewPresentation); context.providers.add('local', local, localPresentation); const dynamic = createCrewFixture<string>({ namespace: 'dynamic', installationId: 'runtime', generation: '1', protocolVersion: '1' }); context.providers.add('dynamic', dynamic.crew, dynamic.crewPresentation); }", null],
       ["export const refs: SDK.PresentationRefs<'crew-personal'> = { run(ref) { return { conversation: ref.binding.creation.scope, authority: ref.binding.authority, runId: ref.ref.opaqueId }; } }; export const applied = crewPresentation.apply({ messages: ['previous'] }, { kind: 'message', text: 'next' }, refs);", null],
       ["export const invalid: SDK.ProviderPresentation<CrewModel | LocalModel, 'crew-personal'> = crewPresentation;", /not assignable/u],
