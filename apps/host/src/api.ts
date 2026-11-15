@@ -34,7 +34,7 @@ export function createApi(options: {
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -67,6 +67,7 @@ export function createApi(options: {
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
       })) satisfies ServiceValueMap['catalog'];
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
+      case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);
       case 'conversation-agent': {
         const providerAgents = providerChoices();
         const installation = host.creation(request.scope)?.installation ?? host.installation(request.scope);

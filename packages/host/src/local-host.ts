@@ -1,7 +1,8 @@
+import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
-import { canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
+import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
+import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -28,6 +29,8 @@ export interface LocalHost<E, P> {
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
   observeProvider(scope: ConversationScope): Promise<void>;
+  observationStatus(scope: ConversationScope): ProviderObservationStatus;
+  retryObservation(scope: ConversationScope): Promise<ProviderObservationStatus>;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
   installation(scope: ConversationScope): ConversationInstallation | null;
   inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> };
@@ -48,7 +51,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   let active = 0;
   const dispatching = new Set<string>();
   const creating = new Map<string, Promise<CreationObservation>>();
-  const observing = new Map<string, Promise<ProviderStream | null>>();
+  type Observation = { state:
+    | { readonly kind: 'starting'; readonly task: Promise<void> }
+    | { readonly kind: 'live'; readonly stream: ProviderStream }
+    | Extract<ProviderObservationStatus, { kind: 'stopped' }> };
+  const observing = new Map<string, Observation>();
   let resolveDrained!: () => void;
   let rejectDrained!: (error: unknown) => void;
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
@@ -72,29 +79,51 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
   };
-  const observeProvider = async (scope: ConversationScope): Promise<void> => {
+  const observationStatus = (scope: ConversationScope): ProviderObservationStatus => {
     authorized(scope);
-    const key = canonicalJson(scope);
-    let starting = observing.get(key);
-    if (!starting) {
-      const original = store.creation(scope), registry = options.providers;
-      if (original?.observation?.kind !== 'confirmed' || !registry) return;
-      starting = inFlight(async () => {
-        try {
-          const stream = await registry.observe(original, store);
-          return stream;
-        } catch { return null; }
-      });
-      observing.set(key, starting);
-      const current = starting;
-      const forget = () => { if (observing.get(key) === current) observing.delete(key); };
-      void current.then(stream => { if (stream) void stream.drained.then(forget, () => { observationCleanupFailed = true; forget(); }); else forget(); }, forget);
-    }
-    await starting;
+    const target = store.findInstallation(scope), original = store.creation(scope);
+    if (!original && target && !('kind' in target)) return { kind: 'not-applicable' };
+    if (original?.observation?.kind !== 'confirmed') return { kind: 'stopped', reason: 'original-binding-unavailable' };
+    const state = observing.get(canonicalJson(scope))?.state;
+    if (state?.kind === 'starting') return { kind: 'recovering' };
+    if (state?.kind === 'live') return { kind: 'observing' };
+    return state ?? { kind: 'stopped', reason: options.providers ? 'recovery-failed' : 'original-provider-unavailable' };
+  };
+  const observeProvider = async (scope: ConversationScope, freshSnapshot = false): Promise<void> => {
+    authorized(scope);
+    const key = canonicalJson(scope), previous = observing.get(key);
+    if (previous?.state.kind === 'starting') return previous.state.task;
+    if (previous?.state.kind === 'live' || previous?.state.reason === 'cleanup-failed') return;
+    const original = store.creation(scope), registry = options.providers;
+    if (original?.observation?.kind !== 'confirmed' || !registry) return;
+    const entry: Observation = { state: { kind: 'stopped', reason: 'recovery-failed' } };
+    const task = inFlight(async () => {
+      try {
+        const stream = await Promise.resolve().then(() => registry.observe(original, store, freshSnapshot));
+        entry.state = { kind: 'live', stream };
+        void stream.drained.then(reason => {
+          if (observing.get(key) === entry) entry.state = { kind: 'stopped', reason: reason === 'closed' ? 'provider-disconnected' : reason };
+        }, () => {
+          observationCleanupFailed = true;
+          if (observing.get(key) === entry) entry.state = { kind: 'stopped', reason: 'cleanup-failed' };
+        });
+      } catch (error) {
+        if (observing.get(key) === entry) entry.state = { kind: 'stopped', reason: observationFailure(error, 'recovery-failed') };
+      }
+    });
+    entry.state = { kind: 'starting', task };
+    observing.set(key, entry);
+    await task;
   };
   const host: LocalHost<E, P> = {
     drained,
     observeProvider,
+    observationStatus,
+    async retryObservation(scope) {
+      const status = observationStatus(scope);
+      if (status.kind === 'recovering' || canRetryObservation(status)) await observeProvider(scope, true);
+      return observationStatus(scope);
+    },
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
@@ -214,7 +243,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       journal.close();
       if (!observing.size) { finishClosing(); return; }
       void inFlight(async () => {
-        const streams = (await Promise.all(observing.values())).filter(stream => stream !== null);
+        const entries = [...observing.values()];
+        await Promise.all(entries.map(entry => entry.state.kind === 'starting' ? entry.state.task : undefined));
+        const streams = entries.flatMap(entry => entry.state.kind === 'live' ? [entry.state.stream] : []);
         for (const stream of streams) {
           try { stream.close(); } catch { observationCleanupFailed = true; }
         }

@@ -38,7 +38,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const paired = access.pair(access.invite('browser-development'), 'browser-development');
   const { principal } = paired;
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
-    compatibility: { wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
+    compatibility: { wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   let api = createApi({ ...options, host, installation: a, agents: [
     { installation: a, name: 'Project A', availability: { kind: 'ready' } }, { installation: b, availability: { kind: 'ready' } },

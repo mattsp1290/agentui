@@ -8,7 +8,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
   const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];
   const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [descriptor], defaultAgentId: 'agent', hostId: 'host', principalId: 'principal', compatibility: {
-    wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
+    wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' },
   } };
   const old = Promise.withResolvers();
@@ -19,7 +19,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
     if (command.observation === 'old') return old.promise;
     const request = command.request;
     const value = request.op === 'metadata' ? metadata : request.op === 'search' ? { items: [{ scope, preview: 'Hello', excerpt: 'Message match' }], after: null }
-      : request.op === 'create' ? scope : request.op === 'conversation-agent' ? descriptor : [];
+      : request.op === 'provider-observation' ? { kind: 'stopped', reason: 'provider-disconnected' } : request.op === 'create' ? scope : request.op === 'conversation-agent' ? descriptor : [];
     return { status: 200, body: JSON.stringify({ ok: true, value }) };
   };
   const previous = createMacConnection(await macAccess({ kind: 'status' }, nativeInvoke), nativeInvoke, { onUnauthorized: () => oldNotifications++ });
@@ -30,6 +30,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
   assert.equal((await next.search('match')).items[0].excerpt, 'Message match');
   assert.deepEqual(await next.create(scope, descriptor.id), scope);
   assert.deepEqual(await next.conversationAgent(scope), descriptor);
+  for (const action of ['read', 'retry']) assert.deepEqual(await next.providerObservation({ scope, action }), { kind: 'stopped', reason: 'provider-disconnected' });
   old.resolve({ status: 401, body: JSON.stringify({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }) });
   await assert.rejects(pending, error => error.kind === 'unauthorized');
   assert.equal(oldNotifications, 1); assert.equal(newNotifications, 0);

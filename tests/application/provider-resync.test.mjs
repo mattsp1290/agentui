@@ -121,6 +121,8 @@ test('immediate repeated resync stops until an explicit retry instead of spinnin
   await until(() => observations === 2);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(observations, 2); assert.equal(snapshots, 2);
+  for (let i = 0; i < 3; i++) assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'stopped', reason: 'retry-exhausted' });
+  assert.equal(observations, 2); assert.equal(snapshots, 2);
   assert.equal((await readSnapshot(f.client.conversation(scope), 2)).cursor, saved(f).conversation.head);
   assert.equal((await f.client.conversation(scope).submit(send(scope, 'retry'))).receipt.state.kind, 'accepted');
   await until(() => observations === 4);

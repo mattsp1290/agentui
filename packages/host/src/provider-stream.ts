@@ -1,5 +1,5 @@
 import { canonicalJson, copyJson, parseDecision } from '@agentui/contracts';
-import type { Json, PendingDecision } from '@agentui/contracts';
+import type { Json, PendingDecision, ObservationStopReason } from '@agentui/contracts';
 import { count, identifier, record } from '@agentui/contracts/decode';
 import { parseTranscript, parseTranscriptEvent } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
@@ -50,7 +50,13 @@ export interface ProviderStreamStore {
   commitProvider(original: ProviderCreation, expected: number | null,
     event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange): ProviderCheckpoint;
 }
-export interface ProviderStream { close(): void; readonly drained: Promise<void> }
+export interface ProviderStream { close(): void; readonly drained: Promise<ObservationStopReason | 'closed'> }
+export class ObservationFailure extends Error {
+  constructor(readonly reason: ObservationStopReason) { super(reason); }
+}
+export function observationFailure(error: unknown, fallback: ObservationStopReason): ObservationStopReason {
+  return error instanceof ObservationFailure ? error.reason : fallback;
+}
 export function providerCheckpoint(value: unknown): ProviderCheckpoint {
   const input = record(value, ['revision', 'projectionVersion', 'state', 'cursor']);
   const revision = count(input.revision), projectionVersion = count(input.projectionVersion);
@@ -60,9 +66,11 @@ export function providerCheckpoint(value: unknown): ProviderCheckpoint {
 
 export async function observeProvider<M extends ProviderModel, I extends string>(connected: ConnectedProvider<M, I>,
   presentation: ProviderPresentation<M, I>, original: ProviderCreation, binding: ProviderConversation<I>,
-  authorize: () => void, store: ProviderStreamStore): Promise<ProviderStream> {
+  authorize: () => void, store: ProviderStreamStore, freshSnapshot = false): Promise<ProviderStream> {
   const storedBinding = creationBinding(binding, original.intent, original.installation);
-  let committed = store.providerCheckpoint(original);
+  let committed: ProviderCheckpoint | null;
+  try { committed = store.providerCheckpoint(original); }
+  catch { throw new ObservationFailure('invalid-projection'); }
   let stopping = false;
   const ensureRunning = () => {
     if (stopping) throw new Error('Provider stream closed');
@@ -87,7 +95,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
   const restore = () => {
     if (committed) { decode(presentation.decodeState, committed.state); cursor(committed.cursor); }
   };
-  restore();
+  try { restore(); } catch { throw new ObservationFailure('invalid-projection'); }
   const apply = (value: unknown, source: 'snapshot' | 'feed') => {
     if (source === 'snapshot') ensureRunning();
     const item = record(bounded(value));
@@ -142,15 +150,19 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     restore();
     return event !== null && committed.revision > (revision ?? 0);
   };
-  if (!committed) {
+  const snapshot = async () => {
     ensureRunning();
-    const result = await connected.snapshot(binding);
+    let result: Awaited<ReturnType<typeof connected.snapshot>>;
+    try { result = await connected.snapshot(binding); }
+    catch { throw new ObservationFailure('snapshot-unavailable'); }
     ensureRunning();
-    if (result.kind !== 'available') throw new Error('Provider snapshot unavailable');
-    apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot');
-  }
-  if (!committed) throw new Error('Provider baseline missing');
-  let failed = false;
+    if (result.kind !== 'available') throw new ObservationFailure(result.kind === 'unsupported' ? 'unsupported' : 'snapshot-unavailable');
+    try { apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot'); }
+    catch (error) { throw new ObservationFailure(observationFailure(error, 'invalid-projection')); }
+  };
+  if (!committed || freshSnapshot) await snapshot();
+  if (!committed) throw new ObservationFailure('invalid-projection');
+  let failed: ObservationStopReason | null = null;
   let cleanupError: Error | undefined;
   let rejectClose!: (error: Error) => void;
   const closeFailure = new Promise<never>((_resolve, reject) => { rejectClose = reject; });
@@ -161,7 +173,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     stopping = true;
     closeAttempt();
   };
-  const fail = () => { failed = true; try { close(); } catch {} };
+  const fail = (error: unknown) => { failed ??= observationFailure(error, 'invalid-projection'); try { close(); } catch {} };
   const openAttempt = () => {
     ensureRunning();
     if (!committed) throw new Error('Provider baseline missing');
@@ -190,7 +202,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
       try {
         copied = bounded(value); ensureRunning();
         if (!accepting()) throw new Error('Provider stream closed');
-      } catch { fail(); return Promise.reject(new Error('Invalid provider item')); }
+      } catch (error) { fail(error); return Promise.reject(new Error('Invalid provider item')); }
       const task = tail.then(() => {
         if (failed) throw new Error('Provider stream failed');
         if (apply(copied, 'feed')) progressed = true;
@@ -204,30 +216,28 @@ export async function observeProvider<M extends ProviderModel, I extends string>
   };
   let first: ReturnType<typeof openAttempt>;
   try { first = openAttempt(); }
-  catch (error) { failed = true; stopping = true; await tail; throw error; }
-  const drained = (async () => {
+  catch (error) { stopping = true; await tail; throw new ObservationFailure(observationFailure(error, 'provider-disconnected')); }
+  const drained = (async (): Promise<ObservationStopReason | 'closed'> => {
     let attempt = first, recoverySpent = false;
     try {
       while (true) {
         const end = await Promise.race([attempt.ended, closeFailure]);
         await tail;
-        if (stopping || failed || end.kind !== 'resync') return;
+        if (failed) return failed;
+        if (stopping) return 'closed';
+        if (end.kind !== 'resync') return 'provider-disconnected';
         if (attempt.progressed()) recoverySpent = false;
-        if (recoverySpent) return;
+        if (recoverySpent) return 'retry-exhausted';
         recoverySpent = true;
         try {
-          ensureRunning();
-          const result = await connected.snapshot(binding);
-          ensureRunning();
-          if (result.kind !== 'available') return;
-          apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot');
+          await snapshot();
           attempt = openAttempt();
-        } catch { return; }
+        } catch (error) { return stopping ? 'closed' : observationFailure(error, 'recovery-failed'); }
       }
     } finally {
       stopping = true;
       await tail;
     }
-  })().then(() => { if (cleanupError) throw cleanupError; }, error => { throw cleanupError ?? error; });
+  })().then(reason => { if (cleanupError) throw cleanupError; return reason; }, error => { throw cleanupError ?? error; });
   return { close, drained };
 }

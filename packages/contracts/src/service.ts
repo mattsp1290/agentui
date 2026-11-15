@@ -1,3 +1,5 @@
+import { parseProviderObservationStatus } from './observation.js';
+import type { ProviderObservationStatus } from './observation.js';
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
@@ -30,6 +32,7 @@ export type ServiceRequest =
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
   | { readonly op: 'conversation-agent'; readonly scope: ConversationScope }
+  | { readonly op: 'provider-observation'; readonly scope: ConversationScope; readonly action: 'read' | 'retry' }
   | { readonly op: 'submit'; readonly command: ClientCommand }
   | { readonly op: 'receipt' | 'reconcile'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
@@ -73,6 +76,7 @@ export interface ServiceValueMap {
   readonly catalog: readonly ConversationCatalogEntry[];
   readonly search: ConversationSearchPage;
   readonly 'conversation-agent': AgentDescriptor | null;
+  readonly 'provider-observation': ProviderObservationStatus;
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -94,6 +98,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
   conversationAgent(scope: ConversationScope): Promise<AgentDescriptor | null>;
+  providerObservation(input: { readonly scope: ConversationScope; readonly action: 'read' | 'retry' }): Promise<ProviderObservationStatus>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
@@ -121,6 +126,10 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
     }
     case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
+    case 'provider-observation':
+      exact(input, ['op', 'scope', 'action']);
+      if (input.action !== 'read' && input.action !== 'retry') throw new Error('Invalid observation action');
+      return { op: 'provider-observation', scope: parseScope(input.scope), action: input.action };
     case 'create': exact(input, ['op', 'scope', 'agentId']); return { op: 'create', scope: parseScope(input.scope), agentId: identifier(input.agentId) };
     case 'submit': {
       exact(input, ['op', 'command']);
@@ -241,6 +250,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     });
     return { items: entries, after: input.after === null ? null : identifier(input.after) };
   },
+  'provider-observation': parseProviderObservationStatus,
   'conversation-agent': value => value === null ? null : agentDescriptor(value),
   create: parseScope,
   submit(value) {
