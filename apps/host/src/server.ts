@@ -4,12 +4,14 @@ import { stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
-import { CODEX_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
+import type { ConversationScope } from '@agentui/contracts';
+import { CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
+import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from './access.js';
 import type { CredentialClass } from './access.js';
@@ -29,6 +31,7 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?:
     | { readonly kind: 'codex'; readonly cwd: string }
+    | { readonly kind: 'codex-sdk'; readonly cwd: string }
     | { readonly kind: 'pi'; readonly cwd: string };
 }
 function piApiKey(): string {
@@ -43,7 +46,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const owner = ownDirectory(options.directory);
   let access: Access | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
-  let driver: ReturnType<typeof createCodexDriver> | Awaited<ReturnType<typeof createPiDriver>> | undefined;
+  let driver: ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | Awaited<ReturnType<typeof createPiDriver>> | undefined;
   let feeds: FeedRegistry | undefined;
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
@@ -82,7 +85,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     if (provider) {
       if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) {
-        throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind === 'codex' ? 'Codex' : 'Pi'}.`);
+        throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind === 'pi' ? 'Pi' : 'Codex'}.`);
       }
     }
     if (provider?.kind === 'codex') {
@@ -103,13 +106,25 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         if (!host) throw new Error('Host is not ready to store agent output');
         host.append(scope, output);
       };
-      driver = provider.kind === 'pi'
-        ? await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append,
-          currentRunId(scope) {
-            if (!host) throw new Error('Host not ready');
-            return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
-          } })
-        : createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version, append });
+      const currentRunId = (scope: ConversationScope): string | null => {
+        if (!host) throw new Error('Host not ready');
+        return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
+      };
+      switch (provider.kind) {
+        case 'pi':
+          driver = await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd,
+            sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append, currentRunId });
+          break;
+        case 'codex-sdk': {
+          const sdkDriver = (await import('@agentui/host/codex-sdk')).createCodexSdkDriver({ cwd: provider.cwd, append, currentRunId });
+          driver = sdkDriver;
+          await sdkDriver.ready();
+          break;
+        }
+        case 'codex':
+          driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version, append });
+          break;
+      }
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
         driver, authorize: scope => scope.hostId === hostId });
@@ -120,8 +135,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     }
     const registry = new FeedRegistry();
     feeds = registry;
+    const runtimes = { codex: CODEX_RUNTIME, 'codex-sdk': CODEX_SDK_RUNTIME, pi: PI_RUNTIME };
     const compatibility = provider ? { ...artifact.compatibility,
-      nativeRuntime: provider.kind === 'codex' ? CODEX_RUNTIME : PI_RUNTIME } : artifact.compatibility;
+      nativeRuntime: runtimes[provider.kind] } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
       access, host, compatibility, feeds: registry, installation: driver?.installation ?? recordedInstallation,
       isClosing: () => closing,

@@ -9,6 +9,7 @@ import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { createPiRuntime } from '@agentui/switchboard-pi/pi';
 import type { PiEvent, PiSession, PiTerminal } from '@agentui/switchboard-pi/pi';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
+import { createTranscriptWriter } from './transcript-writer.js';
 
 export interface PiDriverOptions {
   readonly cwd: string;
@@ -21,9 +22,8 @@ interface Turn {
   readonly scope: ConversationScope;
   readonly session: PiSession;
   readonly run: NativeRun;
-  readonly rendered: { text: string; complete: boolean; revision: number }[];
+  readonly transcript: ReturnType<typeof createTranscriptWriter>;
   text: string;
-  revision: number;
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   ended: boolean;
@@ -33,21 +33,6 @@ interface Turn {
 }
 type Observation = NativeDispatchObservation<CommandResult<TranscriptEvent>>;
 const empty = (): HostOutput<TranscriptEvent> => ({ events: [], runs: [], decisions: [] });
-
-function parts(text: string): string[] {
-  const result: string[] = [];
-  let start = 0, offset = 0, bytes = 0;
-  for (const character of text) {
-    const cost = Buffer.byteLength(JSON.stringify(character)) - 2;
-    if (bytes + cost > 24_000) {
-      result.push(text.slice(start, offset));
-      start = offset; bytes = 0;
-    }
-    bytes += cost; offset += character.length;
-  }
-  result.push(text.slice(start));
-  return result;
-}
 
 export async function createPiDriver(options: PiDriverOptions): Promise<ProviderDriver<TranscriptEvent> & {
   readonly installation: Installation; close(): Promise<void>;
@@ -70,29 +55,11 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
   }
   function render(turn: Turn, complete: boolean) {
     clearTimeout(turn.timer); turn.timer = undefined;
-    const text = parts(turn.text);
-    for (let index = 0; index < Math.max(text.length, turn.rendered.length); index++) {
-      const value = text[index] ?? '';
-      const previous = turn.rendered[index];
-      if (previous?.complete || !complete && previous?.text === value) continue;
-      const revision = ++turn.revision;
-      publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
-        revision, role: 'assistant', text: value, complete }]);
-      turn.rendered[index] = { text: value, complete, revision };
-    }
+    turn.transcript.write(turn.text, complete);
   }
   function sealSaved(turn: Turn) {
-    for (const [index, previous] of turn.rendered.entries()) {
-      if (previous.complete) continue;
-      const revision = previous.revision + 1;
-      try {
-        publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
-          revision, role: 'assistant', text: previous.text, complete: true }]);
-        turn.rendered[index] = { ...previous, revision, complete: true };
-        turn.revision = Math.max(turn.revision, revision);
-      } catch {
-        process.emitWarning('Could not finish stored Pi output. Start a new conversation.', { code: 'AGENTUI_PI_STORAGE' });
-      }
+    if (!turn.transcript.sealSaved()) {
+      process.emitWarning('Could not finish stored Pi output. Start a new conversation.', { code: 'AGENTUI_PI_STORAGE' });
     }
   }
   function registerReference(turn: Turn) {
@@ -204,7 +171,9 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
             authority: { kind: 'agentui-host', hostId: command.scope.hostId,
               binding: { namespace: 'pi-sdk-session', installationId: installation.installationId, opaqueSessionId: opaque } } },
             reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque } };
-          turn = { scope: command.scope, session, run, rendered: [], text: '', revision: 0,
+          turn = { scope: command.scope, session, run, text: '',
+            transcript: createTranscriptWriter({ messageIdPrefix: `${runId}:assistant`,
+              publish: events => options.append(command.scope, { ...empty(), events }) }),
             timer: undefined, stopCommandId: null, ended: false, storageFailed: false, registered: false, admitted: false };
           active.set(key, turn);
           options.append(command.scope, { events: [

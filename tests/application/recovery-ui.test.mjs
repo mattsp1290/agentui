@@ -79,7 +79,7 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await send.isDisabled(), true);
 });
 
-for (const agent of ['codex', 'pi']) {
+for (const agent of ['codex', 'codex-sdk', 'pi']) {
 test(`${agent} Stop follows the persisted run, guards rapid clicks, preserves drafts and retains recovery after a lost reply`, async t => {
   const bundle = await build({ stdin: { contents: `import React from 'react';
     import { createRoot } from 'react-dom/client';
@@ -120,6 +120,10 @@ test(`${agent} Stop follows the persisted run, guards rapid clicks, preserves dr
     assert.equal(await page.getByPlaceholder('Write to Pi…').count(), 1);
     assert.match(await page.locator('.composer-footer').textContent(), /Pi · GLM 5.3 · OpenCode Go · Chat only · No tools/);
     assert.equal(await page.getByRole('heading', { name: 'Approval required' }).count(), 0);
+  }
+  if (agent === 'codex-sdk') {
+    assert.equal(await page.getByPlaceholder('Write to Codex…').count(), 1);
+    assert.match(await page.locator('.composer-footer').textContent(), /Codex · GPT-6.1 Sol · ChatGPT subscription · Read-only · No interactive approvals/);
   }
   const send = page.getByRole('button', { name: 'Send', exact: true });
   assert.equal(await send.isDisabled(), true);
