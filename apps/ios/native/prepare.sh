@@ -1,6 +1,11 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")"
+# shellcheck source=common.sh
+source ./common.sh
+ios_acquire_work_lock
+trap ios_release_work_lock EXIT
+printf '%s\n' "$$" > "$ios_work_lock/pid"
 node ../../../scripts/check-toolchain.mjs
 [[ "$(pod --version)" == 1.16.2 ]] || { echo 'Use CocoaPods 1.16.2.' >&2; exit 1; }
 mkdir -p .work
@@ -10,7 +15,7 @@ npm --prefix ../../.. run build --workspace=@agentui/theme --workspace=@agentui/
 npm ci --no-audit --no-fund
 node normalize-hermes.cjs
 cp ios/Podfile.lock ios/Podfile.lock.expected
-trap 'rm -f ios/Podfile.lock.expected' EXIT
+trap 'if [[ "$ios_interrupted" == 0 ]]; then rm -f ios/Podfile.lock.expected; fi; ios_release_work_lock' EXIT
 (cd ios && pod install --deployment)
 diff -u ios/Podfile.lock.expected ios/Podfile.lock >&2 || {
   cp ios/Podfile.lock.expected ios/Podfile.lock
