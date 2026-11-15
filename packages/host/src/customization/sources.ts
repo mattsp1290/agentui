@@ -1,9 +1,9 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { fileURLToPath, pathToFileURL } from 'node:url';
-import { isAbsolute, join, resolve } from 'node:path';
-import { commitId, containedPath, CustomizationError, repositoryLocation, type CustomizationSource, type GitExtensionReference } from './contract.js';
+import { join, resolve } from 'node:path';
+import { commitId, containedPath, CustomizationError, repositoryAddress, identity, type CustomizationSource, type GitExtensionReference } from './contract.js';
 import { selectPackage, type NpmInputs } from './packages.js';
-import { identity, readCommittedRepository, type CommittedInputs, type RepositoryTree } from './repository.js';
+import { SourceBudget } from './budget.js';
+import { readCommittedRepository, type CommittedInputs, type RepositoryTree } from './repository.js';
 
 export interface ResolvedCustomizationPackage {
   readonly identity: string;
@@ -30,7 +30,7 @@ export async function resolveCustomizationSources(input: {
 }): Promise<ResolvedCustomizationSources> {
   const cwd = process.cwd();
   const scratchParent = resolve(cwd, input.scratchParent);
-  const allowance = { files: 50_000, bytes: 256 * 1024 * 1024, deadline: Date.now() + 600_000 };
+  const budget = SourceBudget.graph();
   const repositories = new Map<string, RepositoryTree>();
   const packages = new Map<string, ResolvedCustomizationPackage>();
   const active = new Set<string>();
@@ -41,17 +41,17 @@ export async function resolveCustomizationSources(input: {
   const owner = await mkdtemp(join(scratchParent, 'agentui-sources-'));
   const dispose = () => rm(owner, { recursive: true, force: true });
   const visit = async (reference: GitExtensionReference, depth: number, external: boolean): Promise<ResolvedCustomizationPackage> => {
-    if (depth > 32 || Date.now() >= allowance.deadline) throw new CustomizationError('resource-limit', 'Customization source traversal limit exceeded.');
+    budget.check();
+    if (depth > 32) throw new CustomizationError('resource-limit', 'Customization source traversal limit exceeded.');
     const commit = commitId(reference.commit);
-    const repository = repositoryLocation(reference.repository);
-    const location = repository.startsWith('file://') ? resolve(fileURLToPath(repository)) : isAbsolute(repository) || !repository.includes(':') ? resolve(cwd, repository) : repository;
-    const transport = isAbsolute(location) ? pathToFileURL(location).href : repository;
+    const location = repositoryAddress(reference.repository, cwd);
+    if (location.address === undefined) throw new CustomizationError('retrieval-failed', 'Could not resolve committed customization sources.');
     const subdirectory = reference.subdirectory === undefined ? '' : containedPath(reference.subdirectory);
-    const address = JSON.stringify([location, commit]);
+    const address = JSON.stringify([location.address, commit]);
     let tree = repositories.get(address);
     if (!tree) {
       if (++acquisitions > 16) throw new CustomizationError('resource-limit', 'Customization source repository limit exceeded.');
-      tree = await readCommittedRepository({ repository: transport, commit, scratchParent: owner, allowance });
+      tree = await readCommittedRepository({ transport: location.transport, commit, scratchParent: owner, budget });
       repositories.set(address, tree);
     }
     const key = JSON.stringify([address, subdirectory]);
@@ -61,15 +61,14 @@ export async function resolveCustomizationSources(input: {
     if (previous) return previous;
     if (++nodes > 64) throw new CustomizationError('resource-limit', 'Customization source package limit exceeded.');
     active.add(packageIdentity);
-    const selected = await selectPackage(tree, subdirectory, allowance);
-    if (Date.now() >= allowance.deadline) throw new CustomizationError('resource-limit', 'Customization source deadline exceeded.');
+    const selected = await selectPackage(tree, subdirectory, budget);
     if (external && !selected.customization) throw new CustomizationError('invalid-package', 'External sources require committed customization metadata.');
     const extensions: ResolvedCustomizationPackage[] = [];
     for (const child of selected.customization?.extensions ?? []) {
       if (++edges > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       extensions.push(await visit(child, depth + 1, true));
     }
-    const result: ResolvedCustomizationPackage = Object.freeze({ ...selected, identity: packageIdentity, commit: tree.commit,
+    const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, customization: selected.customization, npm: selected.npm, identity: packageIdentity, commit: tree.commit,
       subdirectory, inputs: tree.inputs, extensions: Object.freeze(extensions) });
     active.delete(packageIdentity);
     packages.set(key, result);

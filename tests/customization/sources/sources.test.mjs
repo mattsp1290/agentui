@@ -7,6 +7,7 @@ import { basename, dirname, join, relative } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
 import { CustomizationError, readCustomizationSnapshot, resolveCustomizationSources } from '@agentui/host/customization';
+import { SourceBudget } from '../../../packages/host/dist/customization/budget.js';
 
 const manager = 'npm@11.19.1';
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -525,11 +526,11 @@ test('package-analysis deadline applies inside workspace and lock loops over a r
     else pkg.dependencies = { value: '1' };
     await shared(repo, '', pkg);
     if (variant === 'lock') await write(repo.directory, 'package-lock.json', lockFor(pkg, Object.fromEntries(Array.from({ length: 100 }, (_, index) => [`node_modules/p${index}`, registry]))));
-    const tree = await readCommittedRepository({ ...reference(repo, repo.commit()), scratchParent: f.scratchParent });
+    const tree = await readCommittedRepository({ transport: pathToFileURL(repo.directory).href, commit: repo.commit(), scratchParent: f.scratchParent, budget: SourceBudget.snapshot() });
     try {
       let checks = 0;
-      const allowance = { get deadline() { return ++checks < 40 ? Infinity : 0; } };
-      await assert.rejects(selectPackage(tree, '', allowance), { code: 'resource-limit' });
+      const budget = SourceBudget.graph(() => ++checks < 40 ? 0 : 600_000);
+      await assert.rejects(selectPackage(tree, '', budget), { code: 'resource-limit' });
       assert.ok(checks >= 40);
     } finally { await tree.dispose(); }
     assert.deepEqual(await readdir(f.scratchParent), []);
@@ -755,13 +756,82 @@ test('Git failures after the graph deadline report a fixed resource-limit and re
   const prior = process.env.PATH;
   try {
     process.env.PATH = `${binaries}:${prior}`;
-    await assert.rejects(readCommittedRepository({ repository: '.', commit: 'a'.repeat(40), scratchParent: f.scratchParent,
-      allowance: { files: 1, bytes: 1, deadline: Date.now() + 1000 } }), error => {
+    let now = 0;
+    const budget = SourceBudget.graph(() => now);
+    const expiration = setTimeout(() => { now = 600_000; }, 1000);
+    t.after(() => clearTimeout(expiration));
+    await assert.rejects(readCommittedRepository({ transport: pathToFileURL(process.cwd()).href, commit: 'a'.repeat(40), scratchParent: f.scratchParent, budget }), error => {
       assert.equal(error.code, 'resource-limit');
       assert.equal(error.message.includes('HOST_CREDENTIAL_SECRET'), false);
       assert.equal('cause' in error || 'stderr' in error, false);
       return true;
     });
   } finally { process.env.PATH = prior; }
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('noninstalled lock sources retain their distinct capture and integrity rules', async t => {
+  for (const resolved of ['file:missing.tgz', registry.resolved]) await t.test(resolved, async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('noninstalled-source');
+    const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1' } };
+    await shared(repo, '', pkg);
+    const lock = lockFor(pkg, { 'node_modules/value': registry });
+    lock.packages[''].resolved = resolved;
+    await write(repo.directory, 'package-lock.json', lock);
+    const graph = await f.read(reference(repo, repo.commit()));
+    assert.equal(graph.root.npm.kind, 'locked');
+    assert.deepEqual(graph.root.npm.localInputs, []);
+    await graph.dispose();
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('absent optional local peers still capture their declared committed inputs', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('optional-local-peer');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager,
+    peerDependencies: { value: 'file:optional.tgz' }, peerDependenciesMeta: { value: { optional: true } } };
+  await shared(repo, '', pkg);
+  await write(repo.directory, 'optional.tgz', 'committed input');
+  await write(repo.directory, 'package-lock.json', lockFor(pkg));
+  const graph = await f.read(reference(repo, repo.commit()));
+  assert.deepEqual(graph.root.npm.localInputs.map(file => file.path), ['optional.tgz']);
+  await graph.dispose();
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('source budget factories enforce aggregate resources and the injected deadline', () => {
+  for (const [budget, files] of [[SourceBudget.snapshot(), 20_000], [SourceBudget.graph(), 50_000]]) {
+    budget.takeFiles(files);
+    assert.throws(() => budget.takeFiles(1), { code: 'resource-limit' });
+    budget.takeBytes(256 * 1024 * 1024);
+    assert.throws(() => budget.takeBytes(1), { code: 'resource-limit' });
+  }
+  let now = 10;
+  const budget = SourceBudget.graph(() => now);
+  assert.equal(budget.timeout(30_000), 30_000);
+  now = 600_009;
+  budget.check();
+  assert.equal(budget.timeout(30_000), 1);
+  now++;
+  for (const operation of [() => budget.check(), () => budget.timeout(30_000)]) {
+    assert.throws(operation, { code: 'resource-limit', message: 'Customization source deadline exceeded.' });
+  }
+});
+
+test('snapshot file transport retains Git spelling while graph requires a canonical address', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('encoded-separator');
+  await shared(repo);
+  const commit = repo.commit();
+  const url = pathToFileURL(repo.directory).href;
+  const repository = url.replace('/encoded-separator', '%2Fencoded-separator');
+  const snapshot = await readCustomizationSnapshot({ repository, commit, scratchParent: f.scratchParent });
+  assert.equal(snapshot.customization.shared, './source.ts');
+  await snapshot.dispose();
+  await assert.rejects(f.read({ repository, commit }), { code: 'retrieval-failed' });
+  await assert.rejects(readCustomizationSnapshot({ repository: url + '%', commit, scratchParent: f.scratchParent }), { code: 'access' });
+  await assert.rejects(f.read({ repository: url + '%', commit }), { code: 'retrieval-failed' });
   assert.deepEqual(await readdir(f.scratchParent), []);
 });

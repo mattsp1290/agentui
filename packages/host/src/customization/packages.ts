@@ -1,8 +1,9 @@
 import { record } from '@agentui/contracts/decode';
 import { readFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
-import { containedPath, CustomizationError, dependencyGroups, parseCustomizationPackage, validateNpmManifest } from './contract.js';
-import { identity, type RepositoryTree, type SourceFile } from './repository.js';
+import { containedPath, CustomizationError, dependencyGroups, hasDependencies, parseCustomizationPackage, validateNpmManifest, npmLocalPath, parentDirectory, byPath, identity, type CustomizationSource } from './contract.js';
+import { SourceBudget } from './budget.js';
+import type { RepositoryTree, SourceFile } from './repository.js';
 
 export type NpmInputs = { readonly kind: 'absent' } | {
   readonly kind: 'locked';
@@ -14,17 +15,28 @@ export type NpmInputs = { readonly kind: 'absent' } | {
   readonly workspaces: readonly SourceFile[];
   readonly localInputs: readonly SourceFile[];
 };
-interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
-
-function localPath(base: string, value: string): string {
-  if (!value || value.startsWith('/') || /[\\:]/u.test(value) || [...value].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) || value.split('/').some(part => part === '~' || part.toLowerCase() === '.git')) {
-    throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
-  }
-  const path = posix.normalize(posix.join(base, value));
-  if (path === '..' || path.startsWith('../')) throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
-  return path === '.' ? '' : containedPath(path);
+export interface SelectedPackage { readonly directory: string; readonly customization: CustomizationSource | undefined; readonly npm: NpmInputs }
+interface Member { readonly path: string; readonly file: SourceFile; readonly manifest: Record<string, unknown> }
+interface NpmOwner { readonly root: Member; readonly members: ReadonlyMap<string, Member>; readonly lockfile: SourceFile | undefined }
+interface Directory { readonly files: SourceFile[]; readonly children: Set<string> }
+interface AnalysisContext {
+  readonly tree: RepositoryTree;
+  readonly budget: SourceBudget;
+  readonly files: ReadonlyMap<string, SourceFile>;
+  readonly directories: ReadonlyMap<string, Directory>;
+  readonly manifests: Map<string, Member>;
+  declarations: number;
 }
-function safeRemote(value: unknown): boolean {
+interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
+interface Declaration { readonly name: string; readonly spec: string; readonly peer: boolean; readonly optional: boolean }
+type LockSource = { readonly kind: 'workspace'; readonly target: string } | { readonly kind: 'tarball'; readonly archive: string }
+  | { readonly kind: 'remote'; readonly url: string; readonly integrityValid: boolean } | { readonly kind: 'none' };
+interface LockEntry { readonly source: LockSource; readonly context: DeclarationContext; readonly declarations: readonly Declaration[] }
+const manifestPath = (path: string) => posix.join(path, 'package.json');
+const isInstalledPath = (path: string) => path.split('/').includes('node_modules');
+const filePayload = (value: unknown) => typeof value === 'string' && value.startsWith('file:') ? value.slice(5) : undefined;
+const readJson = async (ctx: AnalysisContext, path: string): Promise<unknown> => JSON.parse(await readFile(join(ctx.tree.directory, path), 'utf8'));
+function safeRemote(value: unknown): value is string {
   if (typeof value !== 'string') return false;
   try {
     const url = new URL(value);
@@ -34,230 +46,229 @@ function safeRemote(value: unknown): boolean {
 function integrity(value: unknown): boolean {
   return typeof value === 'string' && /^(?:sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2})(?:\s+sha(?:256|384|512)-[A-Za-z0-9+/]+={0,2})*$/u.test(value);
 }
-
-export async function selectPackage(tree: RepositoryTree, subdirectory: string, allowance = { deadline: Infinity }) {
-  const check = () => {
-    if (Date.now() >= allowance.deadline) throw new CustomizationError('resource-limit', 'Customization source analysis limit exceeded.');
-  };
-  let declarations = 0;
-  const boundDeclarations = (pkg: Record<string, unknown>) => {
-    for (const group of dependencyGroups) {
-      check();
-      declarations += pkg[group] === undefined ? 0 : Object.keys(record(pkg[group])).length;
-      if (declarations > 50_000) throw new CustomizationError('resource-limit', 'Customization source declaration limit exceeded.');
+function analysisContext(tree: RepositoryTree, budget: SourceBudget): AnalysisContext {
+  const files = new Map<string, SourceFile>();
+  const directories = new Map<string, Directory>();
+  const ctx: AnalysisContext = { tree, budget, files, directories, manifests: new Map(), declarations: 0 };
+  for (const file of tree.inputs.files) {
+    ctx.budget.check();
+    files.set(file.path, file);
+    let path = parentDirectory(file.path);
+    if (!directories.has(path)) directories.set(path, { files: [], children: new Set() });
+    directories.get(path)?.files.push(file);
+    while (path) {
+      ctx.budget.check();
+      const parent = parentDirectory(path);
+      if (!directories.has(parent)) directories.set(parent, { files: [], children: new Set() });
+      const children = directories.get(parent)?.children;
+      if (children?.has(path)) break;
+      children?.add(path);
+      path = parent;
     }
-  };
+  }
+  return ctx;
+}
+function boundDeclarations(ctx: AnalysisContext, pkg: Record<string, unknown>): void {
+  for (const group of dependencyGroups) {
+    ctx.budget.check();
+    ctx.declarations += pkg[group] === undefined ? 0 : Object.keys(record(pkg[group])).length;
+    if (ctx.declarations > 50_000) throw new CustomizationError('resource-limit', 'Customization source declaration limit exceeded.');
+  }
+}
+async function member(ctx: AnalysisContext, file: SourceFile): Promise<Member> {
+  const path = parentDirectory(file.path);
+  const existing = ctx.manifests.get(path);
+  if (existing) return existing;
+  ctx.budget.check();
+  const manifest = record(await readJson(ctx, file.path));
+  boundDeclarations(ctx, manifest);
+  const result = { path, file, manifest };
+  ctx.manifests.set(path, result);
+  return result;
+}
+function workspaceFiles(ctx: AnalysisContext, root: Member): Map<string, SourceFile> {
+  const members = new Map<string, SourceFile>();
+  if (root.manifest.workspaces === undefined) return members;
+  const patterns = Array.isArray(root.manifest.workspaces) ? root.manifest.workspaces : record(root.manifest.workspaces).packages;
+  if (!Array.isArray(patterns)) throw new Error('Unsupported workspace declarations');
+  if (patterns.length > 256) throw new CustomizationError('resource-limit', 'Customization source workspace pattern limit exceeded.');
+  const seen = new Set<string>();
+  for (const pattern of patterns) {
+    ctx.budget.check();
+    if (typeof pattern !== 'string' || seen.has(pattern) || /[?!{}[\]]|[+@]\(/u.test(pattern)) throw new Error('Unsupported workspace pattern');
+    seen.add(pattern);
+    const wildcard = pattern.endsWith('/*');
+    const literal = wildcard ? pattern.slice(0, -2) : pattern;
+    if (literal.includes('*')) throw new Error('Unsupported workspace pattern');
+    const prefix = posix.join(root.path, containedPath(literal));
+    for (const path of wildcard ? ctx.directories.get(prefix)?.children ?? [] : [prefix]) {
+      ctx.budget.check();
+      const file = ctx.files.get(manifestPath(path));
+      if (!file) { if (wildcard) continue; throw new Error('Missing workspace'); }
+      if (members.has(path)) throw new Error('Overlapping workspaces');
+      members.set(path, file);
+    }
+  }
+  return new Map([...members].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0));
+}
+async function npmOwner(ctx: AnalysisContext, selected: Member): Promise<NpmOwner> {
+  const owners: { root: Member; files: Map<string, SourceFile> }[] = [];
+  let ancestor = selected.path;
+  while (ancestor) {
+    ctx.budget.check();
+    ancestor = parentDirectory(ancestor);
+    const file = ctx.files.get(manifestPath(ancestor));
+    if (!file) continue;
+    const root = await member(ctx, file);
+    const files = workspaceFiles(ctx, root);
+    if (files.has(selected.path)) owners.push({ root, files });
+  }
+  if (owners.length > 1 || (owners.length && ctx.files.has(posix.join(selected.path, 'package-lock.json')))) throw new Error('Ambiguous npm ownership');
+  const { root, files } = owners[0] ?? { root: selected, files: workspaceFiles(ctx, selected) };
+  if ([root.path, selected.path].some(path => ctx.files.has(posix.join(path, 'npm-shrinkwrap.json')))) {
+    throw new CustomizationError('invalid-package', 'Committed npm-shrinkwrap.json is unsupported in the selected npm context.');
+  }
+  const members = new Map<string, Member>();
+  for (const [path, file] of files) members.set(path, await member(ctx, file));
+  return { root, members, lockfile: ctx.files.get(posix.join(root.path, 'package-lock.json')) };
+}
+function declarations(ctx: AnalysisContext, pkg: Record<string, unknown>, groups: readonly string[]): Declaration[] {
+  const result: Declaration[] = [];
+  for (const group of groups) {
+    for (const [name, spec] of Object.entries(pkg[group] === undefined ? {} : record(pkg[group]))) {
+      ctx.budget.check();
+      if (typeof spec !== 'string' || !/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name)) throw new Error('Invalid dependency');
+      const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
+      const peer = group === 'peerDependencies';
+      result.push({ name, spec, peer, optional: peer && meta[name] !== undefined && record(meta[name]).optional === true });
+    }
+  }
+  return result;
+}
+function lockSource(owner: NpmOwner, entry: Record<string, unknown>, installed: boolean): LockSource {
+  if (entry.link === true) {
+    if (typeof entry.resolved !== 'string') throw new Error('Invalid local link');
+    const target = npmLocalPath(owner.root.path, entry.resolved);
+    if (!owner.members.has(target)) throw new Error('Local links require a declared workspace');
+    return { kind: 'workspace', target };
+  }
+  if (installed && (typeof entry.version !== 'string' || !entry.version)) throw new Error('Invalid locked version');
+  const archive = filePayload(entry.resolved);
+  if (archive !== undefined) return { kind: 'tarball', archive: npmLocalPath(owner.root.path, archive) };
+  const integrityValid = integrity(entry.integrity);
+  if (safeRemote(entry.resolved) && (!installed || integrityValid)) return { kind: 'remote', url: entry.resolved, integrityValid };
+  if (!installed && entry.resolved === undefined) return { kind: 'none' };
+  throw new Error('Unsupported locked source');
+}
+function lockEntries(ctx: AnalysisContext, owner: NpmOwner, lock: unknown, targets: Set<string>): ReadonlyMap<string, LockEntry> {
+  const entries = Object.entries(record(record(lock).packages));
+  if (entries.length > 10_000) throw new CustomizationError('resource-limit', 'Customization source lock entry limit exceeded.');
+  const result = new Map<string, LockEntry>();
+  for (const [path, value] of entries) {
+    ctx.budget.check();
+    const installed = isInstalledPath(path);
+    const workspace = owner.members.get(posix.join(owner.root.path, path));
+    if (path.startsWith('../') || (path && !installed && (!workspace || posix.relative(owner.root.path, workspace.path) !== path))) throw new Error('Separate npm contexts are unsupported');
+    const directory = npmLocalPath(owner.root.path, path || '.');
+    const entry = record(value);
+    boundDeclarations(ctx, entry);
+    if (entry.hasShrinkwrap !== undefined && entry.hasShrinkwrap !== false) throw new CustomizationError('invalid-package', 'Nested npm shrinkwrap contexts are unsupported.');
+    const source = lockSource(owner, entry, installed);
+    const sourceDirectory = source.kind === 'workspace' ? source.target : source.kind === 'tarball' ? parentDirectory(source.archive) : directory;
+    if (source.kind === 'workspace') targets.add(source.target);
+    if (installed && source.kind === 'tarball') targets.add(source.archive);
+    result.set(path, { source, context: { lookupPath: path, sourceDirectory }, declarations: declarations(ctx, entry, ['dependencies', 'optionalDependencies', 'peerDependencies']) });
+  }
+  return result;
+}
+function lockedDependency(ctx: AnalysisContext, entries: ReadonlyMap<string, LockEntry>, path: string, declaration: Declaration): LockEntry | undefined {
+  let search = declaration.peer && isInstalledPath(path) ? path.slice(0, path.lastIndexOf('node_modules/')).replace(/\/$/u, '') : path;
+  while (true) {
+    ctx.budget.check();
+    const entry = posix.basename(search) === 'node_modules' ? undefined : entries.get(posix.join(search, 'node_modules', declaration.name));
+    if (entry !== undefined || !search) return entry;
+    search = parentDirectory(search);
+  }
+}
+function validateDeclarations(ctx: AnalysisContext, entries: ReadonlyMap<string, LockEntry>, context: DeclarationContext, values: readonly Declaration[], targets: Set<string>): void {
+  for (const declaration of values) {
+    ctx.budget.check();
+    const { spec, optional } = declaration;
+    const found = lockedDependency(ctx, entries, context.lookupPath, declaration);
+    const payload = filePayload(spec);
+    const localTarget = payload === undefined ? undefined : npmLocalPath(context.sourceDirectory, payload);
+    if (localTarget !== undefined) targets.add(localTarget);
+    else if (/[:/]/u.test(spec) && !spec.startsWith('npm:') && !safeRemote(spec)) throw new Error('Unsupported dependency source');
+    if (found === undefined) { if (optional) continue; throw new Error('Missing locked dependency'); }
+    const source = found.source;
+    if (localTarget !== undefined) {
+      if (source.kind !== 'workspace' && source.kind !== 'tarball') throw new CustomizationError('invalid-package', 'Local lock target has an incompatible source kind.');
+      if ((source.kind === 'workspace' ? source.target : source.archive) !== localTarget) throw new CustomizationError('invalid-package', 'Local lock target disagrees with its declaration.');
+    }
+    if (safeRemote(spec) && (source.kind !== 'remote' || source.url !== spec || !source.integrityValid)) throw new Error('Unpinned remote tarball');
+  }
+}
+function capture(ctx: AnalysisContext, owner: NpmOwner, targets: ReadonlySet<string>): SourceFile[] {
+  const files = new Map<string, SourceFile>();
+  const captured = new Set<string>();
+  for (const target of targets) {
+    const file = ctx.files.get(target);
+    if (file) { files.set(target, file); continue; }
+    if (!owner.members.has(target)) throw new Error('Local directories require a declared workspace');
+    const pending = [target];
+    for (const path of pending) {
+      ctx.budget.check();
+      if (captured.has(path)) continue;
+      captured.add(path);
+      const directory = ctx.directories.get(path);
+      if (!directory) throw new Error('Missing local npm input');
+      pending.push(...directory.children);
+      for (const file of directory.files) { ctx.budget.check(); files.set(file.path, file); }
+    }
+  }
+  return [...files.values()].sort(byPath);
+}
+async function npmInputs(ctx: AnalysisContext, selected: Member, owner: NpmOwner): Promise<NpmInputs> {
+  const lock = owner.lockfile ? await readJson(ctx, owner.lockfile.path) : undefined;
+  const packages = [owner.root, ...owner.members.values()];
+  if (!owner.members.size && !packages.some(member => hasDependencies(member.manifest))) return { kind: 'absent' };
+  if (!owner.lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  const targets = new Set<string>();
+  const entries = lockEntries(ctx, owner, lock, targets);
+  for (const { path, manifest } of packages) {
+    ctx.budget.check();
+    if (manifest.packageManager !== undefined && manifest.packageManager !== owner.root.manifest.packageManager) throw new CustomizationError('invalid-package', 'Conflicting npm package manager pin.');
+    validateNpmManifest(manifest, { lock, packagePath: posix.relative(owner.root.path, path), packageManager: owner.root.manifest.packageManager });
+    validateDeclarations(ctx, entries, { lookupPath: posix.relative(owner.root.path, path), sourceDirectory: path }, declarations(ctx, manifest, dependencyGroups), targets);
+  }
+  for (const entry of entries.values()) validateDeclarations(ctx, entries, entry.context, entry.declarations, targets);
+  const workspaces = [...owner.members.values()].map(member => member.file);
+  const localInputs = capture(ctx, owner, targets);
+  ctx.budget.check();
+  return Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(ctx.tree.directory, owner.root.path),
+    identity: identity(['agentui-npm-v1', ctx.tree.inputs.identity, owner.root.path, selected.file, owner.root.file, owner.lockfile, workspaces, localInputs]),
+    packageJson: owner.root.file, lockfile: owner.lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
+}
+export async function selectPackage(tree: RepositoryTree, subdirectory: string, budget: SourceBudget): Promise<SelectedPackage> {
   try {
-    const inventory = new Map<string, SourceFile>();
-    const directories = new Map<string, { files: SourceFile[]; children: Set<string> }>();
-    for (const file of tree.inputs.files) {
-      check();
-      inventory.set(file.path, file);
-      let path = posix.dirname(file.path);
-      if (path === '.') path = '';
-      if (!directories.has(path)) directories.set(path, { files: [], children: new Set() });
-      directories.get(path)?.files.push(file);
-      while (path) {
-        check();
-        const parent = posix.dirname(path) === '.' ? '' : posix.dirname(path);
-        if (!directories.has(parent)) directories.set(parent, { files: [], children: new Set() });
-        const children = directories.get(parent)?.children;
-        if (children?.has(path)) break;
-        children?.add(path);
-        path = parent;
-      }
-    }
-    const manifestPath = (path: string) => posix.join(path, 'package.json');
-    const selectedFile = inventory.get(manifestPath(subdirectory));
-    if (!selectedFile) {
-      if (subdirectory) throw new Error('Missing selected package');
-      return { directory: tree.directory, customization: undefined, npm: { kind: 'absent' } satisfies NpmInputs };
-    }
-    const readJson = async (path: string): Promise<unknown> => JSON.parse(await readFile(join(tree.directory, path), 'utf8'));
-    const selected = record(await readJson(manifestPath(subdirectory)));
-    const metadata = selected.agentui === undefined ? {} : record(selected.agentui);
-    if (Object.keys(metadata).every(key => key === 'extensions' && Array.isArray(metadata.extensions) && !metadata.extensions.length)) {
-      return { directory: join(tree.directory, subdirectory), customization: undefined, npm: { kind: 'absent' } satisfies NpmInputs };
-    }
-    boundDeclarations(selected);
-    const manifests = new Map<string, Record<string, unknown>>([[subdirectory, selected]]);
-    const manifest = async (path: string) => {
-      const existing = manifests.get(path);
-      if (existing) return existing;
-      check();
-      const value = record(await readJson(manifestPath(path)));
-      boundDeclarations(value);
-      manifests.set(path, value);
-      return value;
-    };
-    const workspacePaths = (root: string, pkg: Record<string, unknown>): string[] => {
-      if (pkg.workspaces === undefined) return [];
-      const patterns = Array.isArray(pkg.workspaces) ? pkg.workspaces : record(pkg.workspaces).packages;
-      if (!Array.isArray(patterns)) throw new Error('Unsupported workspace declarations');
-      if (patterns.length > 256) throw new CustomizationError('resource-limit', 'Customization source workspace pattern limit exceeded.');
-      const seen = new Set<string>();
-      const members = new Set<string>();
-      for (const pattern of patterns) {
-        check();
-        if (typeof pattern !== 'string' || seen.has(pattern) || /[?!{}[\]]|[+@]\(/u.test(pattern)) throw new Error('Unsupported workspace pattern');
-        seen.add(pattern);
-        const wildcard = pattern.endsWith('/*');
-        const literal = wildcard ? pattern.slice(0, -2) : pattern;
-        if (literal.includes('*')) throw new Error('Unsupported workspace pattern');
-        const prefix = posix.join(root, containedPath(literal));
-        const matches = wildcard ? directories.get(prefix)?.children ?? [] : [prefix];
-        for (const path of matches) {
-          check();
-          if (!inventory.has(manifestPath(path))) {
-            if (wildcard) continue;
-            throw new Error('Missing workspace');
-          }
-          if (members.has(path)) throw new Error('Overlapping workspaces');
-          members.add(path);
-        }
-      }
-      return [...members].sort();
-    };
-    const owners: { path: string; members: string[] }[] = [];
-    let ancestor = subdirectory;
-    while (ancestor) {
-      check();
-      ancestor = posix.dirname(ancestor);
-      if (ancestor === '.') ancestor = '';
-      if (!inventory.has(manifestPath(ancestor))) continue;
-      const members = workspacePaths(ancestor, await manifest(ancestor));
-      if (members.includes(subdirectory)) owners.push({ path: ancestor, members });
-    }
-    if (owners.length > 1 || (owners.length && inventory.has(posix.join(subdirectory, 'package-lock.json')))) {
-      throw new Error('Ambiguous npm ownership');
-    }
-    const owner = owners[0] ?? { path: subdirectory, members: workspacePaths(subdirectory, selected) };
-    if ([owner.path, subdirectory].some(path => inventory.has(posix.join(path, 'npm-shrinkwrap.json')))) {
-      throw new CustomizationError('invalid-package', 'Committed npm-shrinkwrap.json is unsupported in the selected npm context.');
-    }
-    const members = new Set(owner.members);
-    const workspaceKeys = new Set(owner.members.map(path => posix.relative(owner.path, path)));
-    const root = await manifest(owner.path);
-    const lockfile = inventory.get(posix.join(owner.path, 'package-lock.json'));
+    const ctx = analysisContext(tree, budget);
+    const file = ctx.files.get(manifestPath(subdirectory));
+    if (!file && subdirectory) throw new Error('Missing selected package');
+    const manifest = file ? record(await readJson(ctx, file.path)) : {};
     const relativeFiles = new Set<string>();
-    for (const path of inventory.keys()) {
-      check();
+    for (const path of ctx.files.keys()) {
+      ctx.budget.check();
       if (!subdirectory || path.startsWith(`${subdirectory}/`)) relativeFiles.add(subdirectory ? path.slice(subdirectory.length + 1) : path);
     }
-    const lock = lockfile ? await readJson(lockfile.path) : undefined;
-    const context = { lock, packagePath: posix.relative(owner.path, subdirectory), packageManager: root.packageManager };
-    const customization = parseCustomizationPackage(selected, relativeFiles, context);
-    if (!customization) return { directory: join(tree.directory, subdirectory), customization, npm: { kind: 'absent' } satisfies NpmInputs };
-    const packages = [{ path: owner.path, pkg: root }];
-    for (const path of owner.members) packages.push({ path, pkg: await manifest(path) });
-    const needsLock = owner.members.length > 0 || packages.some(({ pkg }) => dependencyGroups.some(key => pkg[key] !== undefined && Object.keys(record(pkg[key])).length > 0));
-    if (!needsLock) return { directory: join(tree.directory, subdirectory), customization, npm: { kind: 'absent' } satisfies NpmInputs };
-    if (!lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
-    const entries = record(record(lock).packages);
-    const lockEntries = Object.entries(entries);
-    if (lockEntries.length > 10_000) throw new CustomizationError('resource-limit', 'Customization source lock entry limit exceeded.');
-    for (const [, value] of lockEntries) boundDeclarations(record(value));
-    const localFiles = new Map<string, SourceFile>();
-    const captured = new Set<string>();
-    const capture = (path: string) => {
-      const file = inventory.get(path);
-      if (file) { localFiles.set(path, file); return; }
-      if (!members.has(path)) throw new Error('Local directories require a declared workspace');
-      const pending = [path];
-      for (const path of pending) {
-        check();
-        if (captured.has(path)) continue;
-        captured.add(path);
-        const directory = directories.get(path);
-        if (!directory) throw new Error('Missing local npm input');
-        pending.push(...directory.children);
-        for (const file of directory.files) { check(); localFiles.set(file.path, file); }
-      }
-    };
-    for (const { path, pkg } of packages) {
-      check();
-      if (pkg.packageManager !== undefined && pkg.packageManager !== root.packageManager) throw new CustomizationError('invalid-package', 'Conflicting npm package manager pin.');
-      validateNpmManifest(pkg, { lock, packagePath: posix.relative(owner.path, path), packageManager: root.packageManager });
+    const customization = parseCustomizationPackage(manifest, relativeFiles);
+    let npm: NpmInputs = { kind: 'absent' };
+    if (customization && file) {
+      boundDeclarations(ctx, manifest);
+      const selected = { path: subdirectory, file, manifest };
+      ctx.manifests.set(subdirectory, selected);
+      npm = await npmInputs(ctx, selected, await npmOwner(ctx, selected));
     }
-    const lockedDependency = (path: string, name: string, peer: boolean): unknown => {
-      if (!/^(?:@[a-z0-9._-]+\/)?[a-z0-9._-]+$/iu.test(name)) throw new Error('Invalid dependency name');
-      let search = peer && path.split('/').includes('node_modules') ? path.slice(0, path.lastIndexOf('node_modules/')).replace(/\/$/u, '') : path;
-      while (true) {
-        check();
-        const entry = posix.basename(search) === 'node_modules' ? undefined : entries[posix.join(search, 'node_modules', name)];
-        if (entry !== undefined || !search) return entry;
-        search = posix.dirname(search);
-        if (search === '.') search = '';
-      }
-    };
-    const declarationContext = (lookupPath: string, entry: Record<string, unknown>): DeclarationContext => {
-      const sourceDirectory = entry.link === true && typeof entry.resolved === 'string' ? localPath(owner.path, entry.resolved)
-        : typeof entry.resolved === 'string' && entry.resolved.startsWith('file:') ? posix.dirname(localPath(owner.path, entry.resolved.slice(5)))
-        : localPath(owner.path, lookupPath || '.');
-      return { lookupPath, sourceDirectory: sourceDirectory === '.' ? '' : sourceDirectory };
-    };
-    const validateDeclarations = (context: DeclarationContext, pkg: Record<string, unknown>, groups: readonly string[]) => {
-      for (const group of groups) {
-        const values = pkg[group] === undefined ? {} : record(pkg[group]);
-        for (const [name, spec] of Object.entries(values)) {
-          check();
-          if (typeof spec !== 'string') throw new Error('Invalid dependency');
-          const found = lockedDependency(context.lookupPath, name, group === 'peerDependencies');
-          const meta = pkg.peerDependenciesMeta === undefined ? {} : record(pkg.peerDependenciesMeta);
-          const optional = group === 'peerDependencies' && meta[name] !== undefined && record(meta[name]).optional === true;
-          const localTarget = spec.startsWith('file:') ? localPath(context.sourceDirectory, spec.slice(5)) : undefined;
-          if (localTarget !== undefined) capture(localTarget);
-          else if (/[:/]/u.test(spec) && !spec.startsWith('npm:') && !safeRemote(spec)) throw new Error('Unsupported dependency source');
-          if (found === undefined) {
-            if (optional) continue;
-            throw new Error('Missing locked dependency');
-          }
-          const entry = record(found);
-          if (localTarget !== undefined) {
-            if (typeof entry.resolved !== 'string' || (entry.link !== true && !entry.resolved.startsWith('file:'))) throw new CustomizationError('invalid-package', 'Local lock target has an incompatible source kind.');
-            if (localPath(owner.path, entry.link === true ? entry.resolved : entry.resolved.slice(5)) !== localTarget) throw new CustomizationError('invalid-package', 'Local lock target disagrees with its declaration.');
-          }
-          if (safeRemote(spec) && (entry.resolved !== spec || !integrity(entry.integrity))) throw new Error('Unpinned remote tarball');
-        }
-      }
-    };
-    for (const [path, value] of lockEntries) {
-      check();
-      if (path.startsWith('../') || (path && !path.split('/').includes('node_modules') && !workspaceKeys.has(path))) throw new Error('Separate npm contexts are unsupported');
-      if (path) localPath(owner.path, path);
-      const entry = record(value);
-      if (entry.hasShrinkwrap !== undefined && entry.hasShrinkwrap !== false) throw new CustomizationError('invalid-package', 'Nested npm shrinkwrap contexts are unsupported.');
-      if (entry.link === true) {
-        if (typeof entry.resolved !== 'string') throw new Error('Invalid local link');
-        const target = localPath(owner.path, entry.resolved);
-        if (!members.has(target)) throw new Error('Local links require a declared workspace');
-        capture(target);
-      } else if (path.split('/').includes('node_modules')) {
-        if (typeof entry.version !== 'string' || !entry.version) throw new Error('Invalid locked version');
-        if (typeof entry.resolved === 'string' && entry.resolved.startsWith('file:')) capture(localPath(owner.path, entry.resolved.slice(5)));
-        else if (!safeRemote(entry.resolved) || !integrity(entry.integrity)) throw new Error('Unsupported locked source');
-      }
-      validateDeclarations(declarationContext(path, entry), entry, ['dependencies', 'optionalDependencies', 'peerDependencies']);
-      if (entry.resolved !== undefined && (typeof entry.resolved !== 'string' ||
-        (entry.link !== true && !entry.resolved.startsWith('file:') && !safeRemote(entry.resolved)))) throw new Error('Invalid resolved source');
-    }
-    for (const { path, pkg } of packages) {
-      check();
-      validateDeclarations({ lookupPath: posix.relative(owner.path, path), sourceDirectory: path }, pkg, dependencyGroups);
-    }
-    const rootFile = inventory.get(manifestPath(owner.path));
-    if (!rootFile) throw new Error('Missing npm root');
-    const workspaces = owner.members.map(path => {
-      check();
-      const file = inventory.get(manifestPath(path));
-      if (!file) throw new Error('Missing workspace');
-      return file;
-    });
-    check();
-    const localInputs = [...localFiles.values()].sort((a, b) => a.path < b.path ? -1 : a.path > b.path ? 1 : 0);
-    const npm: NpmInputs = Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(tree.directory, owner.path),
-      identity: identity(['agentui-npm-v1', tree.inputs.identity, owner.path, selectedFile, rootFile, lockfile, workspaces, localInputs]),
-      packageJson: rootFile, lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
+    budget.check();
     return { directory: join(tree.directory, subdirectory), customization, npm };
   } catch (error) {
     if (error instanceof CustomizationError) throw error;

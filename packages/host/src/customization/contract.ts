@@ -1,3 +1,6 @@
+import { createHash } from 'node:crypto';
+import { isAbsolute, posix, resolve } from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 
@@ -52,12 +55,36 @@ export function repositoryLocation(value: unknown): string {
   return value;
 }
 
+export function repositoryAddress(value: unknown, cwd: string): { readonly address: string | undefined; readonly transport: string } {
+  const repository = repositoryLocation(value);
+  let address: string;
+  try {
+    address = repository.startsWith('file://') ? resolve(fileURLToPath(repository)) : isAbsolute(repository) || !repository.includes(':') ? resolve(cwd, repository) : repository;
+  } catch {
+    // Git can retrieve file URLs that cannot form a canonical graph cache address.
+    return { address: undefined, transport: repository };
+  }
+  return { address, transport: isAbsolute(address) ? pathToFileURL(address).href : repository };
+}
+function unsafeSegment(part: string): boolean { return part.toLowerCase() === '.git' || hasControl(part) || /[\\:]/u.test(part); }
+export function npmLocalPath(base: string, value: string): string {
+  if (!value || value.startsWith('/') || value.split('/').some(part => part === '~' || unsafeSegment(part))) {
+    throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
+  }
+  const path = posix.normalize(posix.join(base, value));
+  if (path === '..' || path.startsWith('../')) throw new CustomizationError('path', 'Npm inputs must remain inside the committed repository.');
+  return path === '.' ? '' : containedPath(path);
+}
+export function parentDirectory(path: string): string { const parent = posix.dirname(path); return parent === '.' ? '' : parent; }
+export function byPath(a: { readonly path: string }, b: { readonly path: string }): number { return a.path < b.path ? -1 : a.path > b.path ? 1 : 0; }
+export function identity(value: unknown): string { return createHash('sha256').update(JSON.stringify(value)).digest('hex'); }
+
 export function containedPath(value: unknown, source = false): string {
   if (typeof value !== 'string' || !value || (source && !value.startsWith('./'))) {
     throw new CustomizationError('path', 'Expected a contained repository path.');
   }
   const path = value.startsWith('./') ? value.slice(2) : value;
-  if ((/[\\:]/u.test(path) || hasControl(path)) || path.split('/').some(part => !part || part === '.' || part === '..' || part.toLowerCase() === '.git')) {
+  if (path.split('/').some(part => !part || part === '.' || part === '..' || unsafeSegment(part))) {
     throw new CustomizationError('path', 'Repository paths must be relative and cannot traverse directories or contain .git.');
   }
   return path;
@@ -70,6 +97,9 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
 }
 
 export const dependencyGroups = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
+export function hasDependencies(pkg: Record<string, unknown>): boolean {
+  return dependencyGroups.some(key => pkg[key] !== undefined && Object.keys(record(pkg[key])).length > 0);
+}
 export interface NpmContext { readonly lock: unknown; readonly packagePath: string; readonly packageManager: unknown }
 export function validateNpmManifest(packageJson: Record<string, unknown>, context: NpmContext): void {
   if (context.lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
@@ -87,12 +117,13 @@ export function validateNpmManifest(packageJson: Record<string, unknown>, contex
   }
   if (entry.version !== packageJson.version) throw new CustomizationError('invalid-package', 'Lockfile version disagrees with package.json.');
   const link = record(lock.packages)[`node_modules/${String(packageJson.name)}`];
-  const linkedName = context.packagePath && link !== undefined && record(link).link === true && record(link).resolved === context.packagePath;
-  if (context.packagePath && !linkedName) throw new CustomizationError('invalid-package', 'Workspace requires a matching canonical lockfile link.');
+  const workspace = context.packagePath !== '';
+  const linkedName = workspace && link !== undefined && record(link).link === true && record(link).resolved === context.packagePath;
+  if (workspace && !linkedName) throw new CustomizationError('invalid-package', 'Workspace requires a matching canonical lockfile link.');
   if (entry.name !== packageJson.name && !(entry.name === undefined && linkedName)) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
 }
 
-export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>, npm?: NpmContext): CustomizationSource | undefined {
+export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>): CustomizationSource | undefined {
   try {
     const packageJson = record(input);
     if (packageJson.agentui === undefined) return undefined;
@@ -122,8 +153,8 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
     }
     const extensions: GitExtensionReference[] = [];
     if (metadata.extensions !== undefined) {
-      if (Array.isArray(metadata.extensions) && metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       if (!Array.isArray(metadata.extensions)) throw new Error('Expected external reference array');
+      if (metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       for (const value of metadata.extensions) {
         const reference = fields(value, ['repository', 'commit', 'subdirectory']);
         const repository = repositoryLocation(reference.repository);
@@ -132,9 +163,6 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
-    if (dependencyGroups.some(key => packageJson[key] !== undefined && Object.keys(record(packageJson[key])).length > 0)) {
-      validateNpmManifest(packageJson, npm ?? { lock: undefined, packagePath: '', packageManager: packageJson.packageManager });
-    }
     return { ...(local ? { local } : {}), ...(shared === undefined ? {} : { shared }), extensions };
   } catch (error) {
     if (error instanceof CustomizationError) throw error;

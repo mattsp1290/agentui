@@ -1,13 +1,12 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { parseCustomizationPackage as parsePackage, repositoryLocation } from '../../../packages/host/dist/customization/contract.js';
+import { parseCustomizationPackage, repositoryLocation, validateNpmManifest } from '../../../packages/host/dist/customization/contract.js';
 
 const oid = 'a'.repeat(40);
 const files = new Set(['desktop.tsx', 'shared.ts']);
 const manifest = { namespace: 'personal', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './dist/desktop.js' }] };
 const local = { extension: manifest, sources: { './dist/desktop.js': './desktop.tsx' } };
-const parseCustomizationPackage = (input, files, lock) => parsePackage(input, files, { lock, packagePath: '', packageManager: input.packageManager });
-const parse = (agentui, lock) => parseCustomizationPackage({ agentui }, files, lock);
+const parse = agentui => parseCustomizationPackage({ agentui }, files);
 
 test('absent metadata and empty metadata retain shipped defaults', () => {
   assert.equal(parseCustomizationPackage({}, files), undefined);
@@ -69,17 +68,19 @@ test('source maps and shared inputs must identify contained committed regular fi
   ]) assert.throws(() => parse(agentui));
 });
 
+test('metadata parsing does not inspect npm declarations', () => {
+  for (const agentui of [local, { shared: './shared.ts' }, { extensions: [{ repository: '/repo', commit: oid }] }]) {
+    assert.ok(parseCustomizationPackage({ agentui, dependencies: 'unrelated' }, files));
+  }
+});
+
 test('dependency declarations need agreeing npm v3 lock root metadata', () => {
   const pkg = { name: 'notes', version: '1.0.0', packageManager: 'npm@11.19.1', dependencies: { marked: '1.0.0' }, agentui: local };
   const lock = { lockfileVersion: 3, packages: { '': { name: 'notes', version: '1.0.0', dependencies: { marked: '1.0.0' } } } };
-  assert.ok(parseCustomizationPackage(pkg, files, lock));
-  assert.throws(() => parseCustomizationPackage(pkg, files));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, lockfileVersion: 2 }));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, packages: { '': { ...lock.packages[''], dependencies: { marked: '^2' } } } }));
-  assert.throws(() => parseCustomizationPackage({ ...pkg, packageManager: 'pnpm@9' }, files, lock));
-  assert.throws(() => parseCustomizationPackage(pkg, files, { ...lock, packages: { '': { ...lock.packages[''], devDependencies: { x: '1' } } } }));
-  for (const agentui of [{ shared: './shared.ts' }, { extensions: [{ repository: '/repo', commit: oid }] }]) {
-    assert.throws(() => parseCustomizationPackage({ ...pkg, agentui }, files), { code: 'invalid-package' });
-    assert.ok(parseCustomizationPackage({ ...pkg, agentui }, files, lock));
-  }
+  validateNpmManifest(pkg, { lock, packagePath: '', packageManager: pkg.packageManager });
+  for (const invalid of [undefined, { ...lock, lockfileVersion: 2 },
+    { ...lock, packages: { '': { ...lock.packages[''], dependencies: { marked: '^2' } } } },
+    { ...lock, packages: { '': { ...lock.packages[''], devDependencies: { x: '1' } } } },
+  ]) assert.throws(() => validateNpmManifest(pkg, { lock: invalid, packagePath: '', packageManager: pkg.packageManager }), { code: 'invalid-package' });
+  assert.throws(() => validateNpmManifest({ ...pkg, packageManager: 'pnpm@9' }, { lock, packagePath: '', packageManager: 'pnpm@9' }), { code: 'invalid-package' });
 });
