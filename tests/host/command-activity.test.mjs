@@ -172,3 +172,56 @@ test('normalizer bounds metadata and pre-full deltas before buffering without de
   assert.ok(Buffer.byteLength(JSON.stringify(events[0].activity.cwd)) - 2 <= 1000);
   assert.equal(events[1].activity.output, 'samesame');
 });
+
+for (const overflow of ['🙂', '\nfoo', '\u001b']) {
+  test(`normalizer retains a true prefix after ${JSON.stringify(overflow)} crosses the byte boundary`, () => {
+    const events = [], stream = createCommandActivity('run', event => events.push(event));
+    const full = (status, aggregatedOutput = null) => ({ item: { type: 'commandExecution', id: 'native', command: 'echo', cwd: '/', status, aggregatedOutput } });
+    const delta = text => stream.observe('item/commandExecution/outputDelta', { itemId: 'native', delta: text });
+    stream.observe('item/started', full('inProgress'));
+    const prefix = 'a'.repeat(7999);
+    delta(prefix); delta(overflow); delta('x');
+    stream.observe('item/completed', full('completed'));
+    delta('late');
+    stream.flush();
+    assert.equal(events.at(-1).activity.output, prefix);
+    assert.equal(events.at(-1).activity.outputTruncated, true);
+    assert.ok((prefix + overflow + 'xlate').startsWith(events.at(-1).activity.output));
+    stream.observe('item/completed', full('completed', 'Authoritative aggregate 🙂'));
+    stream.flush();
+    assert.equal(events.at(-1).activity.output, 'Authoritative aggregate 🙂');
+    assert.equal(events.at(-1).activity.outputTruncated, false);
+  });
+}
+
+test('early output cannot resume a truncated prefix after shared capacity is released or full metadata arrives', () => {
+  const events = [], stream = createCommandActivity('run', event => events.push(event));
+  const full = id => ({ item: { type: 'commandExecution', id, command: 'echo', cwd: '/', status: 'inProgress' } });
+  const delta = (id, text) => stream.observe('item/commandExecution/outputDelta', { itemId: id, delta: text });
+  delta('first', 'a'.repeat(8000));
+  delta('second', 'b'.repeat(7000));
+  const prefix = 'c'.repeat(999);
+  delta('target', prefix); delta('target', '🙂');
+  stream.observe('item/started', full('first'));
+  delta('target', 'x');
+  stream.observe('item/started', full('target'));
+  delta('target', 'y');
+  stream.flush();
+  const target = events.find(event => event.activity.output.startsWith('c')).activity;
+  assert.equal(target.output, prefix);
+  assert.equal(target.outputTruncated, true);
+});
+
+test('failed V2 opening with malformed installation JSON leaves every raw V1 table unchanged', async t => {
+  const f = fixture(t), host = f.open({ projection: transcriptProjection });
+  host.createConversation(scope, installed); host.createConversation(other, installed);
+  append(host, [started]);
+  host.close(); await host.drained;
+  legacy(f.path);
+  const db = new DatabaseSync(f.path);
+  db.prepare("UPDATE conversations SET installation='{' WHERE conversation=?").run(other.conversationId);
+  db.close();
+  const before = tables(f.path);
+  assert.throws(() => f.open({ projection: transcriptProjection }), /Corrupt stored JSON/);
+  assert.deepEqual(tables(f.path), before);
+});

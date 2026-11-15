@@ -10,7 +10,7 @@ export function createCommandActivity(runId: string, publish: (event: Transcript
   const early = new Map<string, { text: string; truncated: boolean }>();
   function delta(itemId: string, text: string): void {
     const entry = entries.get(itemId);
-    if (entry?.authoritative) return;
+    if (entry?.authoritative || entry?.activity.outputTruncated) return;
     if (entry) {
       const retained = retainText(text, COMMAND_OUTPUT_BYTES - escapedBytes(entry.activity.output));
       entry.activity = { ...entry.activity, output: entry.activity.output + retained.text,
@@ -18,6 +18,7 @@ export function createCommandActivity(runId: string, publish: (event: Transcript
     } else {
       if (!early.has(itemId) && early.size >= 8) return;
       const previous = early.get(itemId) ?? { text: '', truncated: false };
+      if (previous.truncated) return;
       const total = [...early.values()].reduce((bytes, value) => bytes + escapedBytes(value.text), 0);
       const retained = retainText(text, Math.min(COMMAND_OUTPUT_BYTES - escapedBytes(previous.text), 16_000 - total));
       early.set(itemId, { text: previous.text + retained.text, truncated: previous.truncated || retained.truncated });

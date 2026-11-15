@@ -29,9 +29,9 @@ export class SqliteStore<E, P> {
         if (persisted && persisted.value !== configured) throw new Error('Incompatible persistent host budgets');
         if (!persisted) this.db.prepare('INSERT INTO host_limits(id, value) VALUES (1, ?)').run(configured);
       });
+      if (this.db.prepare('SELECT 1 FROM conversations WHERE NOT json_valid(document) OR NOT json_valid(installation) LIMIT 1').get()) throw new Error('Corrupt stored JSON');
       if (projection === transcriptProjection) migrateTranscriptDatabase(this.db);
       if (this.db.prepare('SELECT 1 FROM conversations WHERE version<>? LIMIT 1').get(projection.version)) throw new Error('Incompatible projection');
-      if (this.db.prepare('SELECT 1 FROM conversations WHERE NOT json_valid(document) OR NOT json_valid(installation) LIMIT 1').get()) throw new Error('Corrupt stored JSON');
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
