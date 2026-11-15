@@ -7,13 +7,16 @@ import { commitId, containedPath, CustomizationError, identity } from './contrac
 import { treeIdentity, type CommittedInputs, type SourceFile } from './repository.js';
 import { npmIdentity, type NpmInputs } from './packages.js';
 import { packageIdentity } from './sources.js';
+import { customizationPreorder } from './traversal.js';
+
+export type ServerArtifactNpm = Extract<NpmInputs, { kind: 'absent' }> | Omit<Extract<NpmInputs, { kind: 'locked' }>, 'directory'>;
 
 export interface ServerArtifactPackage {
   readonly identity: string;
   readonly commit: string;
   readonly subdirectory: string;
   readonly inputs: CommittedInputs;
-  readonly npm: NpmInputs;
+  readonly npm: ServerArtifactNpm;
   readonly local: { readonly manifest: ExtensionManifest; readonly sources: readonly { readonly module: string; readonly source: string }[] } | null;
   readonly shared: string | null;
   readonly extensions: readonly { readonly packageIdentity: string; readonly commit: string }[];
@@ -38,7 +41,7 @@ export interface ServerArtifactExpectation {
   readonly nodeModules: string;
   readonly abiIdentity: string;
 }
-const invalid = () => new Error('Invalid server customization artifact.');
+const invalid = () => CustomizationError.fixed('invalid-artifact');
 const digest = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
 function array<T>(value: unknown, parse: (item: unknown) => T, max = 16_384): T[] {
   if (!Array.isArray(value) || value.length > max) throw invalid();
@@ -55,6 +58,35 @@ function file(value: unknown): SourceFile {
   return { path: containedPath(input.path), sha256: hex(input.sha256, 64), executable: input.executable };
 }
 const files = (value: unknown) => sorted(array(value, file), value => value.path);
+function parseNpm(value: unknown, committed: ReadonlyMap<string, SourceFile>, treeId: string, packageJsonPath: string): ServerArtifactNpm {
+  const rawNpm = record(value);
+  if (rawNpm.kind === 'absent') { record(rawNpm, ['kind']); return { kind: 'absent' }; }
+  record(rawNpm, ['kind', 'identity', 'packageManager', 'path', 'packageJson', 'lockfile', 'workspaces', 'localInputs']);
+  if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== 'npm@11.19.1') throw invalid();
+  const npm: ServerArtifactNpm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: 'npm@11.19.1', path: directory(rawNpm.path),
+    packageJson: file(rawNpm.packageJson), lockfile: file(rawNpm.lockfile), workspaces: files(rawNpm.workspaces), localInputs: files(rawNpm.localInputs) };
+  const selected = committed.get(packageJsonPath);
+  if (!selected || npmIdentity({ ...npm, treeId, selected }) !== npm.identity) throw invalid();
+  for (const captured of [npm.packageJson, npm.lockfile, ...npm.workspaces, ...npm.localInputs]) {
+    const file = committed.get(captured.path);
+    if (!file || file.sha256 !== captured.sha256 || file.executable !== captured.executable) throw invalid();
+  }
+  return npm;
+}
+function parseLocal(value: unknown, committed: ReadonlyMap<string, SourceFile>, packagePath: (path: string) => string): ServerArtifactPackage['local'] {
+  if (value === null) return null;
+  const rawLocal = record(value, ['manifest', 'sources']);
+  const manifest = parseExtensionManifest(rawLocal.manifest);
+  const sources = sorted(array(rawLocal.sources, value => {
+    const source = record(value, ['module', 'source']);
+    return { module: `./${containedPath(source.module, true)}`, source: `./${containedPath(source.source, true)}` };
+  }), value => value.module);
+  const modules = new Set(manifest.entries.map(entry => entry.module));
+  if (sources.length !== modules.size) throw invalid();
+  if (sources.some(source => !modules.has(source.module))) throw invalid();
+  if (sources.some(source => !committed.has(packagePath(source.source)))) throw invalid();
+  return { manifest, sources };
+}
 function parsePackage(value: unknown): ServerArtifactPackage {
   const input = record(value, ['identity', 'commit', 'subdirectory', 'inputs', 'npm', 'local', 'shared', 'extensions']);
   const rawInputs = record(input.inputs, ['identity', 'files']);
@@ -64,35 +96,8 @@ function parsePackage(value: unknown): ServerArtifactPackage {
   const committed = new Map(inputs.files.map(file => [file.path, file]));
   const packagePath = (path: string) => [subdirectory, path.replace(/^\.\//u, '')].filter(Boolean).join('/');
   if (treeIdentity(inputs.files) !== inputs.identity || packageIdentity(inputs.identity, subdirectory) !== id) throw invalid();
-  let npm: ServerArtifactPackage['npm'];
-  const rawNpm = record(input.npm);
-  if (rawNpm.kind === 'absent') { record(rawNpm, ['kind']); npm = { kind: 'absent' }; }
-  else {
-    record(rawNpm, ['kind', 'identity', 'packageManager', 'directory', 'packageJson', 'lockfile', 'workspaces', 'localInputs']);
-    if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== 'npm@11.19.1') throw invalid();
-    npm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: 'npm@11.19.1', directory: directory(rawNpm.directory),
-      packageJson: file(rawNpm.packageJson), lockfile: file(rawNpm.lockfile), workspaces: files(rawNpm.workspaces), localInputs: files(rawNpm.localInputs) };
-    const selected = committed.get(packagePath('package.json'));
-    if (!selected || npmIdentity({ ...npm, treeId: inputs.identity, selected }) !== npm.identity) throw invalid();
-    for (const captured of [npm.packageJson, npm.lockfile, ...npm.workspaces, ...npm.localInputs]) {
-      const file = committed.get(captured.path);
-      if (!file || file.sha256 !== captured.sha256 || file.executable !== captured.executable) throw invalid();
-    }
-  }
-  let local: ServerArtifactPackage['local'] = null;
-  if (input.local !== null) {
-    const rawLocal = record(input.local, ['manifest', 'sources']);
-    const manifest = parseExtensionManifest(rawLocal.manifest);
-    const sources = sorted(array(rawLocal.sources, value => {
-      const source = record(value, ['module', 'source']);
-      return { module: `./${containedPath(source.module, true)}`, source: `./${containedPath(source.source, true)}` };
-    }), value => value.module);
-    const modules = new Set(manifest.entries.map(entry => entry.module));
-    if (sources.length !== modules.size) throw invalid();
-    if (sources.some(source => !modules.has(source.module))) throw invalid();
-    if (sources.some(source => !committed.has(packagePath(source.source)))) throw invalid();
-    local = { manifest, sources };
-  }
+  const npm = parseNpm(input.npm, committed, inputs.identity, packagePath('package.json'));
+  const local = parseLocal(input.local, committed, packagePath);
   const shared = input.shared === null ? null : `./${containedPath(input.shared, true)}`;
   if (shared && !committed.has(packagePath(shared))) throw invalid();
   const extensions = array(input.extensions, value => {
@@ -107,38 +112,29 @@ export interface ServerCatalog {
   readonly manifests: readonly ExtensionManifest[];
 }
 export function serverCatalog(packages: readonly ServerArtifactPackage[], sdkVersion: string): ServerCatalog {
-  const invalidGraph = () => CustomizationError.server('invalid-graph');
+  const invalidGraph = () => CustomizationError.fixed('invalid-graph');
   const root = packages[0];
   const lookup = new Map(packages.map(pkg => [pkg.identity, pkg]));
   if (!root || packages.length > 64 || lookup.size !== packages.length) throw invalidGraph();
-  const ordered: ServerArtifactPackage[] = [], active = new Set<string>(), seen = new Set<string>(), namespaces = new Set<string>();
-  const representatives = new Set<string>();
+  const ordered = customizationPreorder({ packageIdentity: root.identity, commit: root.commit }, edge => edge.packageIdentity, edge => {
+    const pkg = lookup.get(edge.packageIdentity);
+    if (!pkg || pkg.commit !== edge.commit) throw invalidGraph();
+    return pkg.extensions;
+  }).map(edge => lookup.get(edge.packageIdentity)!);
+  const namespaces = new Set<string>();
   const entries: ServerCustomizationArtifact['entries'][number][] = [];
   const manifests: ExtensionManifest[] = [];
-  const visit = (id: string): void => {
-    if (active.has(id)) throw invalidGraph();
-    if (seen.has(id)) return;
-    const pkg = lookup.get(id);
-    if (!pkg) throw invalidGraph();
-    seen.add(id); active.add(id); ordered.push(pkg);
-    if (pkg.local) {
-      const { manifest } = pkg.local;
-      if (manifest.sdkVersion !== sdkVersion || namespaces.has(manifest.namespace)) throw invalidGraph();
-      namespaces.add(manifest.namespace);
-      for (const entry of manifest.entries.filter(entry => entry.kind === 'server')) {
-        entries.push({ packageIdentity: id, module: entry.module, index: entries.length });
-        manifests.push(manifest);
-      }
+  for (const pkg of ordered) {
+    if (!pkg.local) continue;
+    const { manifest } = pkg.local;
+    if (manifest.sdkVersion !== sdkVersion || namespaces.has(manifest.namespace)) throw invalidGraph();
+    namespaces.add(manifest.namespace);
+    for (const entry of manifest.entries.filter(entry => entry.kind === 'server')) {
+      entries.push({ packageIdentity: pkg.identity, module: entry.module, index: entries.length });
+      manifests.push(manifest);
     }
-    for (const child of pkg.extensions) {
-      if (lookup.get(child.packageIdentity)?.commit === child.commit) representatives.add(child.packageIdentity);
-      visit(child.packageIdentity);
-    }
-    active.delete(id);
-  };
-  visit(root.identity);
+  }
   if (ordered.length !== packages.length || !entries.length || entries.length > 64) throw invalidGraph();
-  if (ordered.some(pkg => pkg !== root && !representatives.has(pkg.identity))) throw invalidGraph();
   return { packages: ordered, entries, manifests };
 }
 function freeze<T>(value: T): T {

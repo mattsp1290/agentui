@@ -3,11 +3,11 @@ import { execFileSync } from 'node:child_process';
 import { access, cp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { CustomizationError, serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
+import { CustomizationError, parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
 import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { qualifyServerCatalog } from '../../../scripts/server-customization-qualifier.mjs';
 import { execute, locked, tarball } from './preparation-support.mjs';
-import { clean, valueFromCatalog, setup, extension, expectation, validSource, write } from './server-support.mjs';
+import { clean, resigned, valueFromCatalog, setup, extension, expectation, validSource, write } from './server-support.mjs';
 
 test('builds stable committed server bytes, excludes dirty files, and retains verified assets', async t => {
   const f = await setup(t);
@@ -65,10 +65,7 @@ test('deduplicates external diamond and selected monorepo siblings in determinis
   assert.deepEqual(result.manifest.packages.map(pkg => pkg.local.manifest.namespace), ['fixture', 'left', 'leaf', 'right']);
   assert.deepEqual(result.manifest.packages[0].extensions[0], result.manifest.packages[0].extensions[2]);
   assert.deepEqual(result.manifest.entries.map(entry => entry.index), [0, 1, 2, 3]);
-  const reordered = structuredClone(result.manifest);
-  [reordered.packages[1], reordered.packages[2]] = [reordered.packages[2], reordered.packages[1]];
-  const { artifactId: _, ...body } = reordered;
-  reordered.artifactId = serverCustomizationArtifactId(body);
+  const reordered = resigned(result.manifest, value => { [value.packages[1], value.packages[2]] = [value.packages[2], value.packages[1]]; });
   assert.throws(() => parseServerCustomizationArtifact(reordered), /Invalid server customization artifact/u);
 });
 
@@ -97,10 +94,7 @@ test('retains every pinned commit while compiling identical child content once',
   assert.notEqual(initial.manifest.artifactId, built.manifest.artifactId);
   const verified = await readServerCustomizationArtifact({ directory: built.directory, expected: expectation(built.manifest) });
   assert.deepEqual(verified.manifest, built.manifest);
-  const changed = structuredClone(built.manifest);
-  changed.packages[0].extensions[1].commit = first;
-  const { artifactId: _, ...body } = changed;
-  changed.artifactId = serverCustomizationArtifactId(body);
+  const changed = resigned(built.manifest, value => { value.packages[0].extensions[1].commit = first; });
   assert.notEqual(changed.artifactId, built.manifest.artifactId);
   assert.deepEqual(parseServerCustomizationArtifact(changed), changed);
 
@@ -118,10 +112,7 @@ test('retains every pinned commit while compiling identical child content once',
     ['missing representative edge', value => { value.packages[0].extensions[0].commit = second; }],
   ]) {
     await t.test(name, () => {
-      const invalid = structuredClone(built.manifest);
-      mutate(invalid);
-      const { artifactId: _, ...body } = invalid;
-      invalid.artifactId = serverCustomizationArtifactId(body);
+      const invalid = resigned(built.manifest, mutate);
       assert.throws(() => parseServerCustomizationArtifact(invalid), /Invalid server customization artifact/u);
     });
   }
@@ -231,7 +222,7 @@ test('bundles locked workspace imports across external members and qualifies rel
   await write(f.repo.directory, 'package.json', { agentui: extension('fixture', { extensions: ['one', 'two'].map(name => repo.reference(commit, `packages/${name}`)) }) });
   const built = await f.build();
   const selected = built.manifest.packages.slice(1);
-  assert.equal(selected[0].npm.directory, '');
+  assert.equal(selected[0].npm.path, '');
   assert.equal(selected[0].npm.lockfile.sha256, selected[1].npm.lockfile.sha256);
   assert.notEqual(selected[0].npm.identity, selected[1].npm.identity);
   assert.match(await readFile(join(built.directory, 'entries.mjs'), 'utf8'), /@fixture\/child@1\.0\.0/u);
@@ -240,7 +231,7 @@ test('bundles locked workspace imports across external members and qualifies rel
   await rm(f.repo.directory, { recursive: true });
   await rm(repo.directory, { recursive: true });
   await rm(built.directory, { recursive: true });
-  await qualifyServerCatalog({ directory: await realpath(relocated), manifest: built.manifest, manifests: serverCatalog(built.manifest.packages, built.manifest.sdkVersion).manifests, abi: await serverCustomizationAbi() });
+  await qualifyServerCatalog({ directory: await realpath(relocated), manifest: built.manifest, abi: await serverCustomizationAbi() });
 });
 
 test('preserves canonical source errors through build and CLI boundaries', async t => {
@@ -287,4 +278,46 @@ test('rejects unsupported native addons and lazy CommonJS builtin loading', asyn
     await write(f.repo.directory, 'addon.node', 'not a native module');
     await assert.rejects(f.build(), { code: 'build-failed' });
   }
+});
+
+test('first depth-first edge owns the compiled representative when breadth-first order differs', async t => {
+  const f = await setup(t, validSource.replace('return {dispose(){}}', 'return {value:globalThis.childLoads,dispose(){}}'));
+  const child = await f.repository('shared-child');
+  await write(child.directory, 'package.json', { agentui: extension('shared-child') });
+  await write(child.directory, 'index.ts', `globalThis.childLoads=(globalThis.childLoads??0)+1; ${validSource}`);
+  const first = child.commit(), later = child.commit();
+  const parent = await f.repository('parent');
+  await write(parent.directory, 'package.json', { agentui: extension('parent', { extensions: [child.reference(first)] }) });
+  await write(parent.directory, 'index.ts', validSource);
+  await write(f.repo.directory, 'package.json', { agentui: extension('fixture', { extensions: [parent.reference(parent.commit()), child.reference(later)] }) });
+  const rootCommit = f.repo.commit();
+  const built = await f.build(rootCommit);
+  const [root, intermediate, representative] = built.manifest.packages;
+  assert.deepEqual(built.manifest.packages.map(pkg => pkg.local.manifest.namespace), ['fixture', 'parent', 'shared-child']);
+  assert.equal(root.commit, rootCommit);
+  assert.equal(representative.commit, first);
+  assert.deepEqual(intermediate.extensions, [{ packageIdentity: representative.identity, commit: first }]);
+  assert.deepEqual(root.extensions[1], { packageIdentity: representative.identity, commit: later });
+  assert.equal(await valueFromCatalog(built), 1);
+  const breadthFirst = resigned(built.manifest, value => { value.packages[2].commit = later; });
+  assert.throws(() => parseServerCustomizationArtifact(breadthFirst), { code: 'invalid-artifact' });
+});
+
+test('serializes nested npm paths without prepared absolute directories', async t => {
+  const f = await setup(t);
+  const path = 'nested/owner';
+  const nested = { directory: join(f.repo.directory, path) };
+  const { pkg } = await locked(f, nested);
+  pkg.agentui = extension('nested');
+  await write(nested.directory, 'package.json', pkg);
+  await write(nested.directory, 'index.ts', validSource);
+  const { buildServerCustomization } = await import('../../../scripts/server-customization.mjs');
+  const built = await buildServerCustomization({ reference: f.repo.reference(f.repo.commit(), path), out: join(f.root, 'nested-artifact') });
+  const npm = built.manifest.packages[0].npm;
+  assert.equal(npm.path, path);
+  assert.equal(Object.hasOwn(npm, 'directory'), false);
+  const absolute = resigned(built.manifest, value => { value.packages[0].npm.directory = nested.directory; });
+  assert.throws(() => parseServerCustomizationArtifact(absolute), { code: 'invalid-artifact' });
+  const changed = resigned(built.manifest, value => { value.packages[0].npm.path = ''; });
+  assert.throws(() => parseServerCustomizationArtifact(changed), { code: 'invalid-artifact' });
 });

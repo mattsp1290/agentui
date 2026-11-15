@@ -370,3 +370,28 @@ test('empty repositories remain usable', async t => {
   assert.deepEqual(await readdir(prepared.root.directory), []);
   assert.deepEqual(prepared.root.npm, { kind: 'absent' });
 });
+
+test('nested npm provenance stays relative while resolved and prepared repository roots remap independently', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('nested-owner');
+  const path = 'nested/owner';
+  await locked(f, { directory: join(repo.directory, path) });
+  const reference = repo.reference(repo.commit(), path);
+  const resolved = await resolveCustomizationSources({ reference, scratchParent: f.scratchParent });
+  const prepared = await f.prepare(reference);
+  t.after(() => Promise.all([resolved.dispose(), prepared.dispose()]));
+  assert.deepEqual(Object.keys(prepared).sort(), ['dispose', 'root']);
+  for (const { root } of [resolved, prepared]) {
+    assert.equal(root.npm.path, path);
+    assert.equal(root.directory, join(root.repositoryDirectory, path));
+    assert.equal(root.npm.directory, join(root.repositoryDirectory, root.npm.path));
+    assert.equal(root.npm.lockfile.path, `${path}/package-lock.json`);
+    for (const file of root.inputs.files) await access(join(root.repositoryDirectory, file.path));
+  }
+  assert.notEqual(resolved.root.repositoryDirectory, prepared.root.repositoryDirectory);
+  assert.equal(resolved.root.npm.identity, prepared.root.npm.identity);
+  assert.equal(resolved.root.identity, prepared.root.identity);
+  assert.deepEqual(resolved.root.customization, prepared.root.customization);
+  await resolved.dispose();
+  assert.deepEqual(await imported(prepared.root), ['value@1.0.0', 'development@1.0.0', 'optional@1.0.0', 'peer@1.0.0']);
+});

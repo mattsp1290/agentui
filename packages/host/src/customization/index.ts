@@ -1,10 +1,11 @@
 export { readCustomizationSnapshot } from './repository.js';
 export type { CustomizationSnapshot } from './repository.js';
-export { CustomizationError } from './contract.js';
+export { CustomizationError, assertSupportedNode, supportedNodeMinimum, supportedNodeRange, supportedNpmVersion } from './contract.js';
 export type { CustomizationErrorCode, CustomizationSource, GitExtensionReference } from './contract.js';
 export { resolveCustomizationSources } from './sources.js';
 export type { ResolvedCustomizationPackage, ResolvedCustomizationSources } from './sources.js';
 export type { CommittedInputs, SourceFile } from './repository.js';
 export type { NpmInputs } from './packages.js';
 export { serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from './server-artifact.js';
-export type { VerifiedServerCustomizationArtifact, ServerCatalog, ServerCustomizationArtifact, ServerArtifactPackage, ServerArtifactExpectation } from './server-artifact.js';
+export type { VerifiedServerCustomizationArtifact, ServerCatalog, ServerCustomizationArtifact, ServerArtifactPackage, ServerArtifactNpm, ServerArtifactExpectation } from './server-artifact.js';
+export { customizationPreorder } from './traversal.js';

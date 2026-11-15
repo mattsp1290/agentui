@@ -11,6 +11,7 @@ export interface ResolvedCustomizationPackage {
   readonly identity: string;
   readonly commit: string;
   readonly directory: string;
+  readonly repositoryDirectory: string;
   readonly subdirectory: string;
   readonly customization: CustomizationSource | undefined;
   readonly inputs: CommittedInputs;
@@ -70,7 +71,7 @@ export async function resolveCustomizationSources(input: {
       if (++edges > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       extensions.push(await visit(child, depth + 1, true));
     }
-    const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, customization: selected.customization, npm: selected.npm, identity: id, commit: tree.commit,
+    const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, repositoryDirectory: tree.directory, customization: selected.customization, npm: selected.npm, identity: id, commit: tree.commit,
       subdirectory, inputs: tree.inputs, extensions: Object.freeze(extensions) });
     active.delete(id);
     packages.set(key, result);

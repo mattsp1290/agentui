@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { tarball } from './preparation-support.mjs';
+import { assertSupportedNode, supportedNodeMinimum, supportedNodeRange } from '@agentui/host/customization';
+import { locked, tarball } from './preparation-support.mjs';
 import { clean, valueFromCatalog, setup, extension, validSource, write } from './server-support.mjs';
 
 async function dependencies(f, definitions) {
@@ -87,7 +88,32 @@ test('rejects unsupported Node before reserving dependency-free output', async t
       try { await buildServerCustomization(${JSON.stringify({ reference: f.repo.reference(commit), out })}); process.exit(1); }
       catch(error) { process.stdout.write(JSON.stringify({code:error.code,message:error.message})); }`;
     const result = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8' }));
-    assert.deepEqual(result, { code: 'toolchain-mismatch', message: 'Server customization requires Node >=24.22.3 <25.' });
+    assert.deepEqual(result, { code: 'toolchain-mismatch', message: 'Customization requires Node >=24.22.3 <25.' });
     await clean(f, `unsupported-${version}`);
+  }
+});
+
+test('builder and locked preparation share the supported Node boundary and diagnostic', async t => {
+  const f = await setup(t);
+  await locked(f, f.repo);
+  const reference = f.repo.reference(f.repo.commit());
+  const builder = new URL('../../../scripts/server-customization.mjs', import.meta.url).href;
+  const preparation = new URL('../../../scripts/prepare-customization-sources.mjs', import.meta.url).href;
+  assert.doesNotThrow(() => assertSupportedNode(supportedNodeMinimum.join('.')));
+  assert.doesNotThrow(() => assertSupportedNode('24.23.0'));
+  for (const version of ['23.99.0', '24.21.99', '24.22.2', '25.0.0']) {
+    const program = `import {buildServerCustomization} from ${JSON.stringify(builder)};
+      import {prepareCustomizationSources} from ${JSON.stringify(preparation)};
+      Object.defineProperty(process.versions,'node',{value:${JSON.stringify(version)}});
+      const errors=[];
+      for(const run of [()=>buildServerCustomization(${JSON.stringify({ reference, out: join(f.root, 'bad') })}),
+        ()=>prepareCustomizationSources(${JSON.stringify({ reference, scratchParent: f.scratchParent })})]) {
+        try { const result=await run(); await result.dispose?.(); process.exit(1); }
+        catch(error) { errors.push({code:error.code,message:error.message}); }
+      }
+      process.stdout.write(JSON.stringify(errors));`;
+    const errors = JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8' }));
+    assert.deepEqual(errors, Array(2).fill({ code: 'toolchain-mismatch', message: `Customization requires Node ${supportedNodeRange}.` }));
+    await clean(f);
   }
 });

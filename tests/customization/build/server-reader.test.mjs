@@ -2,8 +2,8 @@ import assert from 'node:assert/strict';
 import { cp, mkdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
-import { setup, expectation } from './server-support.mjs';
+import { parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
+import { setup, expectation, resigned } from './server-support.mjs';
 
 const reverseKeys = value => Array.isArray(value) ? value.map(reverseKeys) : value && typeof value === 'object'
   ? Object.fromEntries(Object.entries(value).reverse().map(([key, child]) => [key, reverseKeys(child)])) : value;
@@ -25,7 +25,7 @@ test('reader rejects altered inventory, links, compatibility, and caller pins wi
       const directory = join(f.root, name.replaceAll(' ', '-'));
       await cp(built.directory, directory, { recursive: true });
       await mutate(directory);
-      await assert.rejects(read(directory), /Invalid server customization artifact/u);
+      await assert.rejects(read(directory), { name: 'CustomizationError', code: 'invalid-artifact', message: 'Invalid server customization artifact.' });
     });
   }
   for (const field of ['artifactId', 'sdkVersion', 'nodeVersion', 'nodeModules', 'abiIdentity']) {
@@ -53,16 +53,10 @@ test('parser validates provenance, graph order, entry map and canonical artifact
     value => { value.assets[0].path = '../escape'; },
     value => { value.extra = true; },
   ]) {
-    const changed = structuredClone(manifest);
-    mutate(changed);
-    const { artifactId: _, ...body } = changed;
-    changed.artifactId = serverCustomizationArtifactId(body);
-    assert.throws(() => parseServerCustomizationArtifact(changed));
+    const changed = resigned(manifest, mutate);
+    assert.throws(() => parseServerCustomizationArtifact(changed), { code: 'invalid-artifact' });
   }
-  const changed = structuredClone(manifest);
-  changed.packages[0].commit = '0'.repeat(40);
-  const { artifactId: _, ...body } = changed;
-  changed.artifactId = serverCustomizationArtifactId(body);
+  const changed = resigned(manifest, value => { value.packages[0].commit = '0'.repeat(40); });
   await writeFile(join(f.root, 'artifact', 'customization.json'), JSON.stringify(changed));
   await assert.rejects(readServerCustomizationArtifact({ directory: join(f.root, 'artifact'), expected: expectation(manifest) }));
 });

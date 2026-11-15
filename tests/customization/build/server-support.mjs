@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { access, readdir } from 'node:fs/promises';
-import { pathToFileURL } from 'node:url';
+import { serverCustomizationArtifactId } from '@agentui/host/customization';
+import { serverCatalogLinkage } from '../../../scripts/server-catalog-loader.mjs';
 import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { join } from 'node:path';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
@@ -28,11 +29,17 @@ export async function clean(f, output = 'bad') {
 export async function valueFromCatalog(built) {
   const abi = await serverCustomizationAbi();
   const hook = new URL('../../../scripts/server-catalog-loader.mjs', import.meta.url).href;
-  const catalog = pathToFileURL(join(built.directory, built.manifest.catalog)).href;
-  const allowed = [...abi.files, ...built.manifest.assets.map(asset => pathToFileURL(join(built.directory, asset.path)).href)];
+  const { catalog, ...linkage } = serverCatalogLinkage({ directory: built.directory, manifest: built.manifest, abi });
   const program = `import {registerServerCatalogHooks} from ${JSON.stringify(hook)};
-    registerServerCatalogHooks(${JSON.stringify({ imports: abi.imports, allowed })});
+    registerServerCatalogHooks(${JSON.stringify(linkage)});
     const {entries}=await import(${JSON.stringify(catalog)});
     process.stdout.write(JSON.stringify(entries[0].activate().value));`;
   return JSON.parse(execFileSync(process.execPath, ['--input-type=module', '-e', program], { cwd: built.directory, encoding: 'utf8' }));
+}
+
+export function resigned(manifest, mutate) {
+  const changed = structuredClone(manifest);
+  mutate(changed);
+  const { artifactId: _, ...body } = changed;
+  return { ...body, artifactId: serverCustomizationArtifactId(body) };
 }

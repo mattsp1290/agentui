@@ -10,15 +10,16 @@ export type NpmInputs = { readonly kind: 'absent' } | {
   readonly identity: string;
   readonly packageManager: 'npm@11.19.1';
   readonly directory: string;
+  readonly path: string;
   readonly packageJson: SourceFile;
   readonly lockfile: SourceFile;
   readonly workspaces: readonly SourceFile[];
   readonly localInputs: readonly SourceFile[];
 };
 export function npmIdentity(input: {
-  readonly treeId: string; readonly directory: string; readonly selected: SourceFile;
+  readonly treeId: string; readonly path: string; readonly selected: SourceFile;
 } & Pick<Extract<NpmInputs, { kind: 'locked' }>, 'packageJson' | 'lockfile' | 'workspaces' | 'localInputs'>): string {
-  return identity(['agentui-npm-v1', input.treeId, input.directory, input.selected, input.packageJson, input.lockfile, input.workspaces, input.localInputs]);
+  return identity(['agentui-npm-v1', input.treeId, input.path, input.selected, input.packageJson, input.lockfile, input.workspaces, input.localInputs]);
 }
 export interface SelectedPackage { readonly directory: string; readonly customization: CustomizationSource | undefined; readonly npm: NpmInputs }
 interface Member { readonly path: string; readonly file: SourceFile; readonly manifest: Record<string, unknown> }
@@ -263,8 +264,8 @@ async function npmInputs(ctx: AnalysisContext, selected: Member, owner: NpmOwner
   const workspaces = [...owner.members.values()].map(member => member.file);
   const localInputs = capture(ctx, owner, targets);
   ctx.budget.check();
-  return Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(ctx.tree.directory, owner.root.path),
-    identity: npmIdentity({ treeId: ctx.tree.inputs.identity, directory: owner.root.path, selected: selected.file, packageJson: owner.root.file, lockfile, workspaces, localInputs }),
+  return Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(ctx.tree.directory, owner.root.path), path: owner.root.path,
+    identity: npmIdentity({ treeId: ctx.tree.inputs.identity, path: owner.root.path, selected: selected.file, packageJson: owner.root.file, lockfile, workspaces, localInputs }),
     packageJson: owner.root.file, lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
 }
 export async function selectPackage(tree: RepositoryTree, subdirectory: string, budget: SourceBudget): Promise<SelectedPackage> {
