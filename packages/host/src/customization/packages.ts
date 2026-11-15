@@ -1,14 +1,14 @@
 import { record } from '@agentui/contracts/decode';
 import { readFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
-import { containedPath, CustomizationError, dependencyGroups, hasDependencies, parseCustomizationPackage, npmLockPackages, manifestMatchesLockEntry, npmLocalPath, parentDirectory, byPath, identity, type CustomizationSource } from './contract.js';
+import { supportedPackageManager, containedPath, CustomizationError, dependencyGroups, hasDependencies, parseCustomizationPackage, npmLockPackages, manifestMatchesLockEntry, npmLocalPath, parentDirectory, byPath, identity, type CustomizationSource } from './contract.js';
 import { SourceBudget } from './budget.js';
 import type { RepositoryTree, SourceFile } from './repository.js';
 
 export type NpmInputs = { readonly kind: 'absent' } | {
   readonly kind: 'locked';
   readonly identity: string;
-  readonly packageManager: 'npm@11.19.1';
+  readonly packageManager: typeof supportedPackageManager;
   readonly directory: string;
   readonly path: string;
   readonly packageJson: SourceFile;
@@ -264,7 +264,7 @@ async function npmInputs(ctx: AnalysisContext, selected: Member, owner: NpmOwner
   const workspaces = [...owner.members.values()].map(member => member.file);
   const localInputs = capture(ctx, owner, targets);
   ctx.budget.check();
-  return Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(ctx.tree.directory, owner.root.path), path: owner.root.path,
+  return Object.freeze({ kind: 'locked', packageManager: supportedPackageManager, directory: join(ctx.tree.directory, owner.root.path), path: owner.root.path,
     identity: npmIdentity({ treeId: ctx.tree.inputs.identity, path: owner.root.path, selected: selected.file, packageJson: owner.root.file, lockfile, workspaces, localInputs }),
     packageJson: owner.root.file, lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
 }

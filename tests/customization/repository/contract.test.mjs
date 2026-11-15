@@ -1,4 +1,6 @@
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
+import { createHash } from 'node:crypto';
+import { sourceFile, treeIdentity } from '../../../packages/host/dist/customization/repository.js';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { parseCustomizationPackage, repositoryLocation, npmLockPackages, manifestMatchesLockEntry } from '../../../packages/host/dist/customization/contract.js';
@@ -94,4 +96,14 @@ test('manifest comparison requires agreeing dependency groups and version', () =
     { ...pkg, optionalDependencies: { x: '1' } }, { ...pkg, peerDependencies: { x: '1' } },
     { ...pkg, version: '2.0.0' },
   ]) assert.throws(() => manifestMatchesLockEntry(pkg, entry), { code: 'invalid-package' });
+});
+
+
+test('source files retain the legacy identity field order regardless of caller key order', () => {
+  const file = sourceFile({ executable: true, sha256: 'a'.repeat(64), path: 'index.ts' });
+  assert.deepEqual(Object.keys(file), ['path', 'sha256', 'executable']);
+  const legacy = { path: 'index.ts', sha256: 'a'.repeat(64), executable: true };
+  const expected = createHash('sha256').update(JSON.stringify(['agentui-tree-v1', [legacy]])).digest('hex');
+  assert.equal(treeIdentity([file]), expected);
+  assert.equal(Object.isFrozen(file), true);
 });

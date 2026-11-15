@@ -7,6 +7,8 @@ import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 export const supportedNodeMinimum = [24, 22, 3] as const;
 export const supportedNodeRange = `>=${supportedNodeMinimum.join('.')} <${supportedNodeMinimum[0] + 1}`;
 export const supportedNpmVersion = '11.19.1';
+export const supportedPackageManager = `npm@${supportedNpmVersion}` as const;
+export const serverCatalogFile = 'entries.mjs';
 const diagnostics = {
   'output-exists': 'Server customization output must be a fresh directory.',
   'invalid-graph': 'Server customization requires unique namespaces and compatible server entries.',
@@ -131,7 +133,7 @@ export function hasDependencies(pkg: Record<string, unknown>): boolean {
 }
 export function npmLockPackages(lock: unknown, packageManager: unknown): Record<string, unknown> {
   if (lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
-  if (packageManager !== 'npm@11.19.1') throw new CustomizationError('invalid-package', 'Dependencies require npm@11.19.1.');
+  if (packageManager !== supportedPackageManager) throw new CustomizationError('invalid-package', `Dependencies require ${supportedPackageManager}.`);
   const value = record(lock);
   if (value.lockfileVersion !== 3) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
   return record(value.packages);

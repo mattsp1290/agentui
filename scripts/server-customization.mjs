@@ -1,26 +1,17 @@
 import { createHash } from 'node:crypto';
 import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:fs/promises';
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
-import { isBuiltin } from 'node:module';
 import { build, version as esbuildVersion } from 'esbuild';
 import { fileURLToPath } from 'node:url';
 import { parseSync } from 'vite';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import { CustomizationError, assertSupportedNode, customizationPreorder, serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
+import { CustomizationError, assertSupportedNode, planServerCatalog, serverCatalogFile, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
 import { prepareCustomizationSources } from './prepare-customization-sources.mjs';
-import { serverCustomizationAbi } from './server-customization-abi.mjs';
+import { classifyHostSpecifier, serverCustomizationAbi } from './server-customization-abi.mjs';
 import { qualificationChild, qualifyServerCatalog } from './server-customization-qualifier.mjs';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 const inside = (root, path) => { const part = relative(root, path); return part === '' || part !== '..' && !part.startsWith('../') && !isAbsolute(part); };
-function provenance(node) {
-  const { directory: _directory, ...npm } = node.npm;
-  return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs,
-    npm,
-    local: node.customization?.local ? { manifest: node.customization.local.manifest,
-      sources: [...node.customization.local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : 1) } : null,
-    shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
-}
 function rejectRuntimeLookups(text, file) {
   const parsed = parseSync(file, text, { sourceType: 'module' });
   if (parsed.errors.length) throw CustomizationError.fixed('build-failed');
@@ -37,13 +28,13 @@ function rejectRuntimeLookups(text, file) {
   };
   visit(parsed.program);
 }
-const hostImport = (abi, specifier) => Object.hasOwn(abi.imports, specifier) || isBuiltin(specifier);
 function preparedResolutionPlugin(roots, abi) {
   const approved = path => roots.some(root => inside(root, path));
   return { name: 'prepared-customization', setup(builder) {
     builder.onResolve({ filter: /.*/ }, async args => {
-      if (args.path === 'module' || args.path === 'node:module') throw CustomizationError.fixed('build-failed');
-      if (hostImport(abi, args.path)) return { path: args.path, external: true };
+      const kind = classifyHostSpecifier(abi.imports, args.path);
+      if (kind === 'forbidden') throw CustomizationError.fixed('build-failed');
+      if (kind === 'sdk' || kind === 'builtin') return { path: args.path, external: true };
       if (args.path.startsWith('@agentui/') || args.path.includes(':') && !isAbsolute(args.path)) throw CustomizationError.fixed('build-failed');
       if (args.pluginData?.resolving) return;
       const result = await builder.resolve(args.path, { importer: args.importer, resolveDir: args.resolveDir, kind: args.kind,
@@ -60,22 +51,22 @@ function preparedResolutionPlugin(roots, abi) {
     });
   } };
 }
-async function compileCatalog({ nodes, entries, directory, abi, repositoryDirectory }) {
+async function compileCatalog({ roots, sources, directory, abi, repositoryDirectory }) {
   try {
-    const roots = await Promise.all([...new Set(nodes.map(node => node.repositoryDirectory))].map(path => realpath(path)));
+    const canonicalRoots = await Promise.all(roots.map(path => realpath(path)));
     const root = await realpath(repositoryDirectory);
-    const contents = entries.map((entry, index) => `import entry${index} from ${JSON.stringify(join(entry.node.directory, entry.source))};`).join('\n') +
-      `\nexport const entries = [${entries.map((_, index) => `entry${index}`).join(',')}];\n`;
+    const contents = sources.map((source, index) => `import entry${index} from ${JSON.stringify(source)};`).join('\n') +
+      `\nexport const entries = [${sources.map((_, index) => `entry${index}`).join(',')}];\n`;
     const result = await build({ stdin: { contents, sourcefile: 'agentui-server-catalog.mjs', resolveDir: root, loader: 'js' },
-      absWorkingDir: root, outfile: join(directory, 'entries.mjs'), bundle: true, splitting: false, format: 'esm', platform: 'node',
+      absWorkingDir: root, outfile: join(directory, serverCatalogFile), bundle: true, splitting: false, format: 'esm', platform: 'node',
       target: `node${process.versions.node}`, conditions: ['node'], mainFields: ['main'],
       tsconfigRaw: { compilerOptions: { experimentalDecorators: false, useDefineForClassFields: true, jsx: 'transform' } },
       jsx: 'transform', sourcemap: false, legalComments: 'none', charset: 'utf8', minify: false,
-      write: false, metafile: true, logLevel: 'silent', plugins: [preparedResolutionPlugin(roots, abi)] });
+      write: false, metafile: true, logLevel: 'silent', plugins: [preparedResolutionPlugin(canonicalRoots, abi)] });
     if (result.warnings.length) throw CustomizationError.fixed('build-failed');
     // Audit emitted imports as well as resolution because bundling can introduce runtime lookups.
     for (const output of Object.values(result.metafile.outputs)) {
-      if (output.imports.some(item => item.kind === 'require-call' || !item.external || !hostImport(abi, item.path))) throw CustomizationError.fixed('build-failed');
+      if (output.imports.some(item => item.kind === 'require-call' || !item.external || !['sdk', 'builtin'].includes(classifyHostSpecifier(abi.imports, item.path)))) throw CustomizationError.fixed('build-failed');
     }
     const assets = [];
     for (const output of result.outputFiles) {
@@ -133,16 +124,11 @@ export async function buildServerCustomization({ reference, out }) {
   return publishFresh(out, async (staged, owner) => {
     const prepared = await prepareCustomizationSources({ reference, scratchParent: owner });
     try {
-      const nodes = new Map(customizationPreorder(prepared.root, node => node.identity, node => node.extensions).map(node => [node.identity, node]));
-      const catalog = serverCatalog([...nodes.values()].map(provenance), EXTENSION_SDK_VERSION);
-      const entries = catalog.entries.map(entry => {
-        const node = nodes.get(entry.packageIdentity);
-        return { node, source: node.customization.local.sources.get(entry.module) };
-      });
-      const assets = await compileCatalog({ nodes: [...nodes.values()], entries, directory: staged, abi, repositoryDirectory: prepared.root.repositoryDirectory });
+      const { catalog, ...compilation } = planServerCatalog(prepared.root, EXTENSION_SDK_VERSION);
+      const assets = await compileCatalog({ ...compilation, directory: staged, abi });
       const body = { schemaVersion: 1, kind: 'server-customization', root: prepared.root.identity, packages: catalog.packages, sdkVersion: EXTENSION_SDK_VERSION,
         builder,
-        runtime: { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity }, catalog: 'entries.mjs',
+        runtime: { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity }, catalog: serverCatalogFile,
         entries: catalog.entries, assets };
       const manifest = parseServerCustomizationArtifact({ ...body, artifactId: serverCustomizationArtifactId(body) });
       await writeFile(join(staged, 'customization.json'), JSON.stringify(manifest) + '\n', { flag: 'wx', mode: 0o600 });

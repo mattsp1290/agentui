@@ -3,10 +3,10 @@ import { lstat, readFile, readdir } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { count, hex, nonempty, record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
-import { commitId, containedPath, CustomizationError, identity } from './contract.js';
-import { treeIdentity, type CommittedInputs, type SourceFile } from './repository.js';
+import { commitId, containedPath, CustomizationError, identity, serverCatalogFile, supportedPackageManager } from './contract.js';
+import { sourceFile, treeIdentity, type CommittedInputs, type SourceFile } from './repository.js';
 import { npmIdentity, type NpmInputs } from './packages.js';
-import { packageIdentity } from './sources.js';
+import { packageIdentity, type ResolvedCustomizationPackage } from './sources.js';
 import { customizationPreorder } from './traversal.js';
 
 export type ServerArtifactNpm = Extract<NpmInputs, { kind: 'absent' }> | Omit<Extract<NpmInputs, { kind: 'locked' }>, 'directory'>;
@@ -29,7 +29,7 @@ export interface ServerCustomizationArtifact {
   readonly sdkVersion: string;
   readonly builder: { readonly identity: string; readonly esbuildVersion: string };
   readonly runtime: { readonly engine: 'node'; readonly version: string; readonly modules: string; readonly abiIdentity: string };
-  readonly catalog: 'entries.mjs';
+  readonly catalog: typeof serverCatalogFile;
   readonly entries: readonly { readonly packageIdentity: string; readonly module: string; readonly index: number }[];
   readonly assets: readonly { readonly path: string; readonly sha256: string; readonly size: number }[];
   readonly artifactId: string;
@@ -55,15 +55,15 @@ function sorted<T>(values: readonly T[], key: (value: T) => string): readonly T[
 function file(value: unknown): SourceFile {
   const input = record(value, ['path', 'sha256', 'executable']);
   if (typeof input.executable !== 'boolean') throw invalid();
-  return { path: containedPath(input.path), sha256: hex(input.sha256, 64), executable: input.executable };
+  return sourceFile({ path: containedPath(input.path), sha256: hex(input.sha256, 64), executable: input.executable });
 }
 const files = (value: unknown) => sorted(array(value, file), value => value.path);
 function parseNpm(value: unknown, committed: ReadonlyMap<string, SourceFile>, treeId: string, packageJsonPath: string): ServerArtifactNpm {
   const rawNpm = record(value);
   if (rawNpm.kind === 'absent') { record(rawNpm, ['kind']); return { kind: 'absent' }; }
   record(rawNpm, ['kind', 'identity', 'packageManager', 'path', 'packageJson', 'lockfile', 'workspaces', 'localInputs']);
-  if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== 'npm@11.19.1') throw invalid();
-  const npm: ServerArtifactNpm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: 'npm@11.19.1', path: directory(rawNpm.path),
+  if (rawNpm.kind !== 'locked' || rawNpm.packageManager !== supportedPackageManager) throw invalid();
+  const npm: ServerArtifactNpm = { kind: 'locked', identity: hex(rawNpm.identity, 64), packageManager: supportedPackageManager, path: directory(rawNpm.path),
     packageJson: file(rawNpm.packageJson), lockfile: file(rawNpm.lockfile), workspaces: files(rawNpm.workspaces), localInputs: files(rawNpm.localInputs) };
   const selected = committed.get(packageJsonPath);
   if (!selected || npmIdentity({ ...npm, treeId, selected }) !== npm.identity) throw invalid();
@@ -137,6 +137,33 @@ export function serverCatalog(packages: readonly ServerArtifactPackage[], sdkVer
   if (ordered.length !== packages.length || !entries.length || entries.length > 64) throw invalidGraph();
   return { packages: ordered, entries, manifests };
 }
+export interface ServerCatalogPlan {
+  readonly catalog: ServerCatalog;
+  readonly repositoryDirectory: string;
+  readonly roots: readonly string[];
+  readonly sources: readonly string[];
+}
+export function planServerCatalog(root: ResolvedCustomizationPackage, sdkVersion: string): ServerCatalogPlan {
+  const nodes = customizationPreorder(root, node => node.identity, node => node.extensions);
+  const sources: string[] = [];
+  const packages = nodes.map((node): ServerArtifactPackage => {
+    let npm: ServerArtifactNpm = node.npm;
+    if (node.npm.kind === 'locked') { const { directory: _directory, ...locked } = node.npm; npm = locked; }
+    const local = node.customization?.local;
+    for (const entry of local?.manifest.entries ?? []) {
+      if (entry.kind !== 'server') continue;
+      const source = local?.sources.get(entry.module);
+      if (!source) throw CustomizationError.fixed('invalid-graph');
+      sources.push(resolve(node.directory, source));
+    }
+    return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs, npm,
+      local: local ? { manifest: local.manifest,
+        sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : 0) } : null,
+      shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
+  });
+  return { catalog: serverCatalog(packages, sdkVersion), repositoryDirectory: root.repositoryDirectory,
+    roots: [...new Set(nodes.map(node => node.repositoryDirectory))], sources };
+}
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { for (const child of Object.values(value)) freeze(child); Object.freeze(value); }
   return value;
@@ -152,7 +179,7 @@ export function serverCustomizationArtifactId(value: Omit<ServerCustomizationArt
 export function parseServerCustomizationArtifact(value: unknown): ServerCustomizationArtifact {
   try {
     const input = record(value, ['schemaVersion', 'kind', 'root', 'packages', 'sdkVersion', 'builder', 'runtime', 'catalog', 'entries', 'assets', 'artifactId']);
-    if (input.schemaVersion !== 1 || input.kind !== 'server-customization' || input.catalog !== 'entries.mjs') throw invalid();
+    if (input.schemaVersion !== 1 || input.kind !== 'server-customization' || input.catalog !== serverCatalogFile) throw invalid();
     const builder = record(input.builder, ['identity', 'esbuildVersion']);
     const runtime = record(input.runtime, ['engine', 'version', 'modules', 'abiIdentity']);
     if (runtime.engine !== 'node' || typeof runtime.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(runtime.version) || typeof runtime.modules !== 'string' || !/^\d+$/u.test(runtime.modules)) throw invalid();
@@ -174,10 +201,10 @@ export function parseServerCustomizationArtifact(value: unknown): ServerCustomiz
       if (path === 'customization.json') throw invalid();
       return { path, sha256: hex(asset.sha256, 64), size: count(asset.size) };
     }), value => value.path);
-    if (!assets.some(asset => asset.path === 'entries.mjs')) throw invalid();
+    if (!assets.some(asset => asset.path === serverCatalogFile)) throw invalid();
     const body: Omit<ServerCustomizationArtifact, 'artifactId'> = { schemaVersion: 1, kind: 'server-customization', root, packages, sdkVersion,
       builder: { identity: hex(builder.identity, 64), esbuildVersion: nonempty(builder.esbuildVersion) },
-      runtime: { engine: 'node', version: runtime.version, modules: runtime.modules, abiIdentity: hex(runtime.abiIdentity, 64) }, catalog: 'entries.mjs', entries, assets };
+      runtime: { engine: 'node', version: runtime.version, modules: runtime.modules, abiIdentity: hex(runtime.abiIdentity, 64) }, catalog: serverCatalogFile, entries, assets };
     const artifactId = hex(input.artifactId, 64);
     if (serverCustomizationArtifactId(body) !== artifactId) throw invalid();
     return freeze({ ...body, artifactId });
@@ -186,6 +213,33 @@ export function parseServerCustomizationArtifact(value: unknown): ServerCustomiz
 export interface VerifiedServerCustomizationArtifact {
   readonly manifest: ServerCustomizationArtifact;
   readAsset(path: string): Buffer;
+}
+async function readVerifiedInventory(directory: string, inventory: ServerCustomizationArtifact['assets']): Promise<Map<string, Buffer>> {
+  const assets = new Map(inventory.map(asset => [asset.path, asset]));
+  const retained = new Map<string, Buffer>();
+  let total = 0;
+  const walk = async (parent: string): Promise<void> => {
+    for (const name of await readdir(join(directory, parent))) {
+      const path = parent ? `${parent}/${name}` : name;
+      const metadata = await lstat(join(directory, path));
+      if (metadata.isDirectory()) {
+        if (![...assets.keys()].some(asset => asset.startsWith(`${path}/`))) throw invalid();
+        await walk(path);
+      } else {
+        if (!metadata.isFile()) throw invalid();
+        if (path === 'customization.json') continue;
+        const asset = assets.get(path);
+        total += metadata.size;
+        if (!asset || metadata.size !== asset.size || total > 64 * 1024 * 1024) throw invalid();
+        const bytes = await readFile(join(directory, path));
+        if (bytes.length !== asset.size || digest(bytes) !== asset.sha256) throw invalid();
+        retained.set(path, bytes);
+      }
+    }
+  };
+  await walk('');
+  if (retained.size !== assets.size) throw invalid();
+  return retained;
 }
 export async function readServerCustomizationArtifact(input: {
   readonly directory: string; readonly expected: ServerArtifactExpectation;
@@ -200,30 +254,7 @@ export async function readServerCustomizationArtifact(input: {
     const expected = input.expected;
     if (manifest.artifactId !== expected.artifactId || manifest.sdkVersion !== expected.sdkVersion || manifest.runtime.version !== expected.nodeVersion ||
       manifest.runtime.modules !== expected.nodeModules || manifest.runtime.abiIdentity !== expected.abiIdentity) throw invalid();
-    const assets = new Map(manifest.assets.map(asset => [asset.path, asset]));
-    const retained = new Map<string, Buffer>();
-    let total = 0;
-    const walk = async (parent: string): Promise<void> => {
-      for (const name of await readdir(join(directory, parent))) {
-        const path = parent ? `${parent}/${name}` : name;
-        const metadata = await lstat(join(directory, path));
-        if (metadata.isDirectory()) {
-          if (![...assets.keys()].some(asset => asset.startsWith(`${path}/`))) throw invalid();
-          await walk(path);
-        } else {
-          if (!metadata.isFile()) throw invalid();
-          if (path === 'customization.json') continue;
-          const asset = assets.get(path);
-          total += metadata.size;
-          if (!asset || metadata.size !== asset.size || total > 64 * 1024 * 1024) throw invalid();
-          const bytes = await readFile(join(directory, path));
-          if (bytes.length !== asset.size || digest(bytes) !== asset.sha256) throw invalid();
-          retained.set(path, bytes);
-        }
-      }
-    };
-    await walk('');
-    if (retained.size !== assets.size) throw invalid();
+    const retained = await readVerifiedInventory(directory, manifest.assets);
     return Object.freeze({ manifest, readAsset(path: string) {
       const bytes = retained.get(path);
       if (!bytes) throw invalid();

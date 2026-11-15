@@ -1,6 +1,5 @@
 import { CustomizationError } from './contract.js';
 
-/** The first depth-first encounter owns each content identity's representative. */
 export function customizationPreorder<T>(root: T, identity: (node: T) => string, children: (node: T) => readonly T[]): readonly T[] {
   const ordered: T[] = [], active = new Set<string>(), seen = new Set<string>();
   const visit = (node: T): void => {

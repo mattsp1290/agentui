@@ -3,7 +3,8 @@ import { execFileSync } from 'node:child_process';
 import { access, cp, mkdir, readFile, realpath, rm, symlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
-import { CustomizationError, parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
+import { CustomizationError, planServerCatalog, resolveCustomizationSources, parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
+import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { qualifyServerCatalog } from '../../../scripts/server-customization-qualifier.mjs';
 import { execute, locked, tarball } from './preparation-support.mjs';
@@ -61,7 +62,19 @@ test('deduplicates external diamond and selected monorepo siblings in determinis
   const commit = mono.commit();
   const refs = ['left', 'right', 'left'].map(name => mono.reference(commit, name));
   await write(f.repo.directory, 'package.json', { type: 'module', agentui: extension('fixture', { extensions: refs }) });
-  const result = await f.build();
+  const rootCommit = f.repo.commit();
+  const resolved = await resolveCustomizationSources({ reference: f.repo.reference(rootCommit), scratchParent: f.scratchParent });
+  try {
+    const root = resolved.root;
+    const plan = planServerCatalog(root, EXTENSION_SDK_VERSION);
+    const [left, right] = root.extensions;
+    assert.equal(plan.repositoryDirectory, root.repositoryDirectory);
+    assert.deepEqual(plan.roots, [root.repositoryDirectory, left.repositoryDirectory, left.extensions[0].repositoryDirectory]);
+    assert.equal(right.repositoryDirectory, left.repositoryDirectory);
+    assert.deepEqual(plan.sources, [root, left, left.extensions[0], right].map(node => join(node.directory, 'index.ts')));
+    assert.deepEqual(plan.catalog.entries.map(entry => entry.packageIdentity), [root, left, left.extensions[0], right].map(node => node.identity));
+  } finally { await resolved.dispose(); }
+  const result = await f.build(rootCommit);
   assert.deepEqual(result.manifest.packages.map(pkg => pkg.local.manifest.namespace), ['fixture', 'left', 'leaf', 'right']);
   assert.deepEqual(result.manifest.packages[0].extensions[0], result.manifest.packages[0].extensions[2]);
   assert.deepEqual(result.manifest.entries.map(entry => entry.index), [0, 1, 2, 3]);
@@ -137,6 +150,7 @@ for (const [name, source, code] of [
   ['bounded top level await', 'await new Promise(r=>setInterval(r,60000));' + validSource, 'entry-validation'],
   ['compile error', 'export default {', 'build-failed'],
   ['ambient dependency', "import 'esbuild';" + validSource, 'build-failed'],
+  ['unknown host package', "import '@agentui/contracts';" + validSource, 'build-failed'],
   ['SDK subpath', "import '@agentui/sdk/tools';" + validSource, 'build-failed'],
   ['nonliteral dynamic import', "const name='esbuild'; await import(name);" + validSource, 'build-failed'],
 ]) {

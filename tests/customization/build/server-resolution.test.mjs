@@ -2,8 +2,11 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import test from 'node:test';
 import { assertSupportedNode, supportedNodeMinimum, supportedNodeRange } from '@agentui/host/customization';
+import { classifyHostSpecifier, serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
+import { serverCatalogLinkage } from '../../../scripts/server-catalog-loader.mjs';
 import { locked, tarball } from './preparation-support.mjs';
 import { clean, valueFromCatalog, setup, extension, validSource, write } from './server-support.mjs';
 
@@ -140,4 +143,28 @@ test('preserves the ABI and committed artifact bytes after a caller changes work
       assert.deepEqual(await readFile(join(after.directory,path)),await readFile(join(before.directory,path)));
     }`;
   execFileSync(process.execPath, ['--input-type=module', '-e', program], { encoding: 'utf8', stdio: 'pipe' });
+});
+
+
+test('uses the same host specifier policy in real catalog hooks', async t => {
+  const f = await setup(t, `import {basename} from 'node:path'; ${validSource.replace('return {dispose(){}}', "return {value:basename('/fixture/allowed'),dispose(){}}")}`);
+  const built = await f.build();
+  const abi = await serverCustomizationAbi();
+  for (const [specifier, kind] of [['@agentui/sdk', 'sdk'], ['fs', 'builtin'], ['node:path', 'builtin'],
+    ['module', 'forbidden'], ['node:module', 'forbidden'], ['@agentui/contracts', 'package'], ['node:unknown', 'package'], ['ordinary', 'package']]) {
+    assert.equal(classifyHostSpecifier(abi.imports, specifier), kind);
+  }
+  await write(f.root, 'outside.mjs', 'throw new Error("must not execute");');
+  const forbidden = ['module', 'node:module', pathToFileURL(join(f.root, 'outside.mjs')).href];
+  const { catalog, ...linkage } = serverCatalogLinkage({ directory: built.directory, manifest: built.manifest, abi });
+  const hook = new URL('../../../scripts/server-catalog-loader.mjs', import.meta.url).href;
+  const program = `import assert from 'node:assert/strict';
+    import {registerServerCatalogHooks} from ${JSON.stringify(hook)};
+    registerServerCatalogHooks(${JSON.stringify(linkage)});
+    const {entries}=await import(${JSON.stringify(catalog)});
+    assert.equal(entries[0].activate().value,'allowed');
+    for (const specifier of ${JSON.stringify(forbidden)}) {
+      await assert.rejects(import(specifier), {code:'ERR_UNSUPPORTED_CATALOG_IMPORT',message:'Unsupported catalog import'});
+    }`;
+  execFileSync(process.execPath, ['--input-type=module', '-e', program], { cwd: built.directory, encoding: 'utf8', stdio: 'pipe' });
 });

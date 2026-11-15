@@ -60,6 +60,7 @@ function treeFiles(tree: Buffer, budget: SourceBudget): TreeFile[] {
 }
 
 export interface SourceFile { readonly path: string; readonly sha256: string; readonly executable: boolean }
+export function sourceFile({ path, sha256, executable }: SourceFile): SourceFile { return Object.freeze({ path, sha256, executable }); }
 export function treeIdentity(files: readonly SourceFile[]): string { return identity(['agentui-tree-v1', files]); }
 export interface CommittedInputs { readonly identity: string; readonly files: readonly SourceFile[] }
 export interface RepositoryTree {
@@ -102,7 +103,7 @@ export async function readCommittedRepository(input: {
     for (const entry of entries) {
       const blob = await git(['--git-dir', objects, 'cat-file', 'blob', entry.object], privateDirectory, env, budget);
       budget.takeBytes(blob.length);
-      files.push(Object.freeze({ path: entry.path, sha256: createHash('sha256').update(blob).digest('hex'), executable: entry.executable }));
+      files.push(sourceFile({ path: entry.path, sha256: createHash('sha256').update(blob).digest('hex'), executable: entry.executable }));
       const destination = join(directory, entry.path);
       await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
       await writeFile(destination, blob, { flag: 'wx', mode: entry.executable ? 0o700 : 0o600 });
