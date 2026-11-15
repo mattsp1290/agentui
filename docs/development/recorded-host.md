@@ -54,7 +54,7 @@ The absolute data-directory path plus `/control.sock` must fit within 103 UTF-8 
 
 HTTP/1.1 browsers share a small connection pool across tabs on one origin. Long polls return within two seconds to leave room for commands; opening many simultaneous views can still delay requests.
 
-Production Tauri keeps its network-denying CSP and disconnected entry. Native desktop and iOS need their own protected credential storage and transport adapters. Browser results do not qualify a packaged macOS or iOS application.
+Production Tauri keeps its network-denying CSP and disconnected entry. The [native protected-credential contract](../architecture/native-credentials.md) specifies future storage and ownership requirements. Native desktop and iOS storage and transport adapters remain unimplemented. Browser results do not qualify a packaged macOS or iOS application.
 
 Builds emit `artifact.json` for the executed host bundle and browser assets. The host bundle includes its contracts, durable host, and Switchboard dependencies, with only Node builtin imports remaining. Startup verifies both installed file sets and their hashes before listening. Manifests distinguish the applied source revision, local source changes, dependency lock, artifact bytes, and runtime. The browser shows its own artifact identity. These checks establish artifact consistency; they are not release signatures or Apple qualification.
 
@@ -76,6 +76,6 @@ The result contains the host ID and a 32-character, 192-bit invitation code. Cod
 
 The shared connection engine takes a `ServiceExecutor` that returns a fetch `Response`. The engine owns bounded JSON and UTF-8 decoding, HTTP status classification, envelope validation, and observation resynchronization. The engine serializes and bounds each request once, then passes its validated body to the browser or private test executor.
 
-The engine advances its credential generation after a successful pairing request. The browser's cookie update and that generation change are not atomic. The inherited window remains deferred until a production adapter defines coordinated credential ownership. The native test fixture enrolls before constructing the engine and holds one immutable credential; it does not exercise credential replacement.
+The engine advances its credential generation after a successful pairing request. The browser's cookie update and that generation change are not atomic. The browser development path retains this window. Future native adapters avoid it by binding each connection to one immutable observation under the [native credential owner contract](../architecture/native-credentials.md). The native test fixture enrolls before constructing the engine and holds one immutable credential; it does not exercise credential replacement.
 
 The application test uses a private in-memory credential in separate client processes and the same connection engine as the browser. It proves protocol pairing, observation, client-exit recovery, and one outcome for the original command ID. It is not a production JavaScript bearer adapter. Production credentials still require Rust or Swift ownership and protected storage. This prerequisite does not qualify native IPC, installed macOS or iOS apps, TLS, LAN access, or remote phone access. Loopback host IDs are enrollment checks, not cryptographic server authentication.
