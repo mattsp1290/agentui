@@ -72,25 +72,38 @@ function displayText(value: unknown, limit: number): string | null {
   return typeof value === 'string' && value.trim() ? bounded(value, limit) : null;
 }
 
+interface FileChangeDisplay {
+  readonly path: string;
+  readonly kind: 'add' | 'update' | 'delete' | null;
+  readonly movedTo: string | null;
+  readonly diff: string | null;
+}
+
+function fileChange(entry: unknown): FileChangeDisplay | null {
+  if (entry === null || typeof entry !== 'object' || !('path' in entry)) return null;
+  const path = displayText(entry.path, 2_000);
+  if (!path) return null;
+  const kind = 'kind' in entry ? entry.kind : null;
+  const nativeKind = kind !== null && typeof kind === 'object' && 'type' in kind ? kind.type : null;
+  return { path, kind: nativeKind === 'add' || nativeKind === 'update' || nativeKind === 'delete' ? nativeKind : null,
+    movedTo: kind !== null && typeof kind === 'object' && 'move_path' in kind ? displayText(kind.move_path, 2_000) : null,
+    diff: 'diff' in entry ? displayText(entry.diff, 2_000) : null };
+}
+
 function fileSummary(value: unknown): string {
   const missing = 'Codex did not provide file details.';
   if (!Array.isArray(value) || value.length === 0) return missing;
-  let summary = '';
+  let paths = '', patches = '';
   for (const entry of value) {
-    let detail = missing;
-    if (entry !== null && typeof entry === 'object' && 'path' in entry && 'kind' in entry) {
-      const path = displayText(entry.path, 2_000), kind = entry.kind;
-      if (path && kind !== null && typeof kind === 'object' && 'type' in kind &&
-        (kind.type === 'add' || kind.type === 'update' || kind.type === 'delete')) {
-        const movedTo = 'move_path' in kind ? displayText(kind.move_path, 2_000) : null;
-        const diff = 'diff' in entry ? displayText(entry.diff, 2_000) : null;
-        detail = `${path} (${kind.type})${movedTo ? ` → ${movedTo}` : ''}${diff ? `\n${diff}` : ''}`;
-      }
+    const change = fileChange(entry);
+    const detail = change ? `${change.path} (${change.kind ?? 'changed'})${change.movedTo ? ` → ${change.movedTo}` : ''}${change.kind ? '' : ` ${missing}`}` : missing;
+    paths += `${paths ? '\n' : ''}${detail}`;
+    if (change?.diff && Buffer.byteLength(JSON.stringify(patches)) <= 4_000) {
+      patches += `${patches ? '\n\n' : ''}${change.path}\n${change.diff}`;
     }
-    summary += `${summary ? '\n\n' : ''}${detail}`;
-    if (Buffer.byteLength(JSON.stringify(summary)) > 8_000) break;
+    if (Buffer.byteLength(JSON.stringify(paths)) > 4_000) break;
   }
-  return bounded(summary, 8_000);
+  return patches ? `${bounded(paths, 4_000)}\n\n${bounded(patches, 4_000)}` : bounded(paths, 4_000);
 }
 
 export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
@@ -348,23 +361,26 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       const nativeRun = run(turn, nonempty(object(result.turn).id));
       return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
     } catch (error) {
+      const rejection = error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : null;
       if (turn) {
         try {
-          if (error instanceof CodexRpcError && method === 'turn/start' && !turn.run) {
+          if (rejection && method === 'turn/start' && !turn.run) {
             publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:assistant-rejection`,
-              revision: 1, role: 'assistant', complete: true, text: `Codex rejected this request: ${bounded(error.message, 1_000)}` }]);
+              revision: 1, role: 'assistant', complete: true, text: rejection }]);
+            turn.complete = true;
+          } else {
+            interrupted(turn, rejection ?? 'Codex could not start this response. Check command recovery before trying again.');
           }
-          interrupted(turn, error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : 'Codex could not start this response. Check command recovery before trying again.');
         }
         catch { outputFailed(turn); }
         active.delete(turn.threadId);
       }
       busy.delete(key);
-      if (error instanceof CodexRpcError) return { kind: 'conclusive', evidence: {
+      if (rejection && error instanceof CodexRpcError) return { kind: 'conclusive', evidence: {
         identity: target.identity, source: 'native-acknowledgement', nativeOperation: null,
         observation: { namespace: 'codex-app-server', schemaVersion: 2,
           data: { processId: rpc.processId, command: command.body.kind, method, phase: 'native-request-rejected', code: error.code } },
-      }, result: { kind: 'rejected', reason: `Codex rejected this request: ${bounded(error.message, 1_000)}` } };
+      }, result: { kind: 'rejected', reason: rejection } };
       throw error;
     }
   }

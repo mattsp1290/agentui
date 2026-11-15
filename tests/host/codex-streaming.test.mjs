@@ -136,6 +136,29 @@ for (const mode of ['file-approval', 'command-approval', 'fallback-approval']) {
   });
 }
 
+test('many-file-approval lists every path before bounded diffs and preserves confirmation', async t => {
+  const f = fixture(t, 'many-file-approval');
+  await f.port.submit(command('send'));
+  await until(() => Object.keys(f.document().decisions).length === 1);
+  const decision = Object.values(f.document().decisions)[0];
+  const firstDiff = decision.prompt.indexOf('+++');
+  assert.ok(firstDiff >= 0, 'bounded diffs remain visible');
+  for (let index = 0; index < 6; index++) {
+    const path = `/workspace/file-${index}.ts (update)`;
+    const position = decision.prompt.indexOf(path);
+    assert.ok(position >= 0, `${path} is visible`);
+  }
+  for (let index = 0; index < 6; index++) {
+    assert.ok(decision.prompt.indexOf(`/workspace/file-${index}.ts (update)`) < firstDiff, `path ${index} precedes diffs`);
+  }
+  assert.match(decision.prompt, /Further details omitted/);
+  assert.ok(Buffer.byteLength(JSON.stringify(decision.prompt)) < 9_000);
+  const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
+  assert.equal(result.receipt.state.kind, 'completed');
+  await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
+  assert.deepEqual(f.document().decisions, {});
+});
+
 for (const mode of ['expire-complete', 'expire-resolved', 'expire-disconnect', 'expire-close']) {
   test(`${mode} removes stale approvals before a cached click can enter Codex`, async t => {
     const f = fixture(t, mode);
@@ -213,23 +236,25 @@ for (const mode of ['item-command-approval', 'explicit-command-approval', 'unmat
   });
 }
 
-for (const mode of ['unknown-file-approval', 'empty-file-approval', 'malformed-file-approval']) {
+for (const mode of ['unknown-file-approval', 'unknown-kind-file-approval', 'empty-file-approval', 'malformed-file-approval', 'non-array-file-approval']) {
   test(`${mode} keeps approval live with explicit missing details and its typed native ID`, async t => {
     const f = fixture(t, mode);
     await f.port.submit(command('send'));
     await until(() => Object.keys(f.document().decisions).length === 1);
     const decision = Object.values(f.document().decisions)[0];
     assert.match(decision.prompt, /Codex did not provide file details/);
+    if (mode === 'unknown-file-approval' || mode === 'unknown-kind-file-approval') {
+      assert.match(decision.prompt, /\/workspace\/x \(changed\)/);
+    }
     assert.equal(f.document().domain.currentRun.kind, 'running');
     assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
     const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
     assert.equal(result.receipt.state.kind, 'completed');
     await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
     assert.deepEqual(f.document().decisions, {});
-    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, mode === 'empty-file-approval' ? 0 : '0');
+    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, mode === 'empty-file-approval' || mode === 'non-array-file-approval' ? 0 : '0');
   });
 }
-
 
 test('a rejected follow-up preserves the previous native run', async t => {
   const f = fixture(t, 'reject-followup');
@@ -247,7 +272,7 @@ test('a rejected follow-up preserves the previous native run', async t => {
 });
 
 test('a failed rejection-notice append preserves the conclusive native rejection', async t => {
-  const f = fixture(t, 'reject-turn/start', (_scope, output) => output.events.some(event => /Codex rejected this request/.test(event.text)));
+  const f = fixture(t, 'reject-turn/start', (_scope, output) => output.events.some(event => event.kind === 'message-updated' && /Codex rejected this request/.test(event.text)));
   const send = command('rejected-storage');
   const result = await f.port.submit(send);
   assert.equal(result.receipt.state.kind, 'rejected');
@@ -255,6 +280,8 @@ test('a failed rejection-notice append preserves the conclusive native rejection
   assert.equal(f.document().domain.currentRun, null);
   assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
   assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
+  assert.deepEqual(f.messages().map(message => message.text),
+    ['This response stopped because AgentUI could not store more output. Try a new conversation.']);
 });
 
 for (const mode of ['bounded-command-approval', 'evicted-command-approval']) {

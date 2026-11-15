@@ -8,6 +8,48 @@ const notify = (method, params) => send({ method, params });
 const turns = new Map();
 let threadCount = 0, turnCount = 0, rejected = false;
 
+const commandItem = { id: 'tool', type: 'commandExecution', command: 'printf from-item', cwd: '/workspace/item' };
+const standardApproval = { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } };
+const scopedFirstApproval = { requestId: 'other-command-request', file: false, items: [commandItem], params: {} };
+const approvalScenarios = {
+  'command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: { cwd: '/workspace/subdirectory', command: 'printf hello' } },
+  'fallback-approval': { requestId: 0, file: false, items: [], params: { cwd: '/workspace/subdirectory' } },
+  'item-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: {} },
+  'explicit-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: { cwd: '/workspace/explicit', command: 'printf explicit' } },
+  'unmatched-command-approval': { requestId: 'command-request', file: false, items: [{ ...commandItem, id: 'different-tool' }], params: {} },
+  'scoped-command-approval': { requestId: 'command-request', file: false, items: [], params: {} },
+  'bounded-command-approval': { requestId: 'command-request', file: false,
+    items: [{ ...commandItem, command: '🙂汉'.repeat(10_000), cwd: '/workspace/' + '子'.repeat(5_000) }], params: {} },
+  'evicted-command-approval': { requestId: 'command-request', file: false,
+    items: [commandItem, ...Array.from({ length: 64 }, (_, index) => ({
+      id: `later-${index}`, type: 'commandExecution', command: 'printf later', cwd: '/later',
+    }))], params: {} },
+  'file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange', changes: [
+    { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
+    { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
+  ] }], params: { grantRoot: '/workspace' } },
+  'many-file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange',
+    changes: Array.from({ length: 6 }, (_, index) => ({
+      path: `/workspace/file-${index}.ts`, kind: { type: 'update' }, diff: '+++' + 'x'.repeat(2_497),
+    })) }], params: { grantRoot: '/workspace' } },
+  'unknown-file-approval': { requestId: '0', file: true, items: [{ id: 'tool', type: 'fileChange',
+    changes: [{ path: '/workspace/x', kind: 'new-protocol-kind', diff: '+x' }] }], params: { grantRoot: '/workspace' } },
+  'unknown-kind-file-approval': { requestId: '0', file: true, items: [{ id: 'tool', type: 'fileChange',
+    changes: [{ path: '/workspace/x', kind: { type: 'new-protocol-kind' }, diff: '+x' }] }], params: { grantRoot: '/workspace' } },
+  'empty-file-approval': { requestId: 0, file: true,
+    items: [{ id: 'tool', type: 'fileChange', changes: [] }], params: { grantRoot: '/workspace' } },
+  'malformed-file-approval': { requestId: '0', file: true,
+    items: [{ id: 'tool', type: 'fileChange', changes: [{ path: null, kind: null }] }], params: { grantRoot: '/workspace' } },
+  'non-array-file-approval': { requestId: 0, file: true,
+    items: [{ id: 'tool', type: 'fileChange', changes: null }], params: { grantRoot: '/workspace' } },
+  'pending-complete': standardApproval,
+  'pending-disconnect': standardApproval,
+  'expire-complete': standardApproval,
+  'expire-resolved': standardApproval,
+  'expire-disconnect': standardApproval,
+  'expire-close': standardApproval,
+};
+
 function finish(turn, status = 'completed') {
   clearInterval(turn.timer);
   notify('turn/completed', { threadId: turn.threadId, turn: { id: turn.id, status } });
@@ -47,38 +89,17 @@ createInterface({ input: process.stdin }).on('line', line => {
       if (mode === 'lost-start') { process.exit(0); return; }
       reply({ turn: { id: turn.id } });
       notify('turn/started', { threadId: turn.threadId, turn: { id: turn.id } });
+      const approval = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? scopedFirstApproval : approvalScenarios[mode];
       setTimeout(() => {
         if (mode === 'long' || mode === 'short-correction') {
           for (let offset = 0; offset < longText.length; offset += 80) {
             notify('item/agentMessage/delta', { threadId: turn.threadId, turnId: turn.id, itemId: 'answer', delta: longText.slice(offset, offset + 80) });
           }
-        } else if (mode.includes('approval') || mode.startsWith('pending-') || mode.startsWith('expire-')) {
-          turn.requestId = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? 'other-command-request' : mode.includes('command-approval') ? 'command-request' : mode === 'unknown-file-approval' || mode === 'malformed-file-approval' ? '0' : 0;
-          const file = mode.includes('file-approval');
-          if (mode.includes('command-approval') && (mode !== 'scoped-command-approval' || turn.threadId === 'thread-1')) {
-            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-              item: { id: mode === 'unmatched-command-approval' ? 'different-tool' : 'tool', type: 'commandExecution', command: 'printf from-item', cwd: '/workspace/item' } });
-          }
-          if (mode === 'bounded-command-approval') {
-            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-              item: { id: 'tool', type: 'commandExecution', command: '🙂汉'.repeat(10_000), cwd: '/workspace/' + '子'.repeat(5_000) } });
-          }
-          if (mode === 'evicted-command-approval') {
-            for (let index = 0; index < 64; index++) notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-              item: { id: `later-${index}`, type: 'commandExecution', command: 'printf later', cwd: '/later' } });
-          }
-          if (mode === 'unknown-file-approval' || mode === 'empty-file-approval' || mode === 'malformed-file-approval') {
-            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-              item: { id: 'tool', type: 'fileChange', changes: mode === 'empty-file-approval' ? [] : mode === 'malformed-file-approval' ? [{ path: null, kind: null }] : [{ path: '/workspace/x', kind: 'new-protocol-kind', diff: '+x' }] } });
-          }
-          if (mode === 'file-approval') notify('item/started', { threadId: turn.threadId, turnId: turn.id,
-            item: { id: 'tool', type: 'fileChange', changes: [
-              { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
-              { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
-            ] } });
-          send({ id: turn.requestId, method: file ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval',
-            params: { threadId: turn.threadId, turnId: turn.id, itemId: 'tool', reason: 'Fixture permission',
-              ...(file ? { grantRoot: '/workspace' } : mode === 'explicit-command-approval' ? { cwd: '/workspace/explicit', command: 'printf explicit' } : mode.includes('command-approval') && mode !== 'command-approval' ? {} : { cwd: '/workspace/subdirectory', ...(mode === 'fallback-approval' ? {} : { command: 'printf hello' }) }) } });
+        } else if (approval) {
+          turn.requestId = approval.requestId;
+          for (const item of approval.items) notify('item/started', { threadId: turn.threadId, turnId: turn.id, item });
+          send({ id: turn.requestId, method: approval.file ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval',
+            params: { threadId: turn.threadId, turnId: turn.id, itemId: 'tool', reason: 'Fixture permission', ...approval.params } });
         } else {
           completedItem(turn, 'Hello');
           finish(turn);
