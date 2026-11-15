@@ -6,7 +6,7 @@ import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { ConversationCatalogEntry, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { conversationResponding } from './responding.js';
@@ -46,6 +46,7 @@ export interface ApplicationController {
   reconnect(): Promise<void>;
   reopenView(viewId: string): Promise<void>;
   moreConversations(): Promise<void>;
+  search(query: string, after: string | null, signal: AbortSignal): Promise<ConversationSearchPage>;
   moreSavedViews(): Promise<void>;
   create(): Promise<void>;
   recoverCreation(): Promise<void>;
@@ -285,6 +286,22 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       if (state.catalog.after !== null) await readCatalog(owner, host.hostId, state.catalog.after);
     }),
+    async search(query, after, signal) {
+      const owner = session;
+      if (!owner) throw new Error('This application has closed.');
+      const { hostId, principalId } = requireHost(owner);
+      try {
+        const page = await current(owner, owner.connection.search(query, after));
+        const host = requireHost(owner);
+        if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
+        if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');
+        if (page.after !== null && after !== null && page.after <= after) throw new Error('Search did not advance.');
+        return page;
+      } catch (cause) {
+        if (!signal.aborted && cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
+        throw cause;
+      }
+    },
     moreSavedViews: () => run(async owner => {
       const host = requireHost(owner);
       if (state.savedViews.after !== null) await readSavedViews(owner, host.hostId, state.savedViews.after);

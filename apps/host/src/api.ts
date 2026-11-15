@@ -8,6 +8,7 @@ import { recordedInstallation } from '@agentui/host/recorded';
 import type { Access, CredentialClass, Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
+import { searchConversations } from './conversation-search.js';
 
 type Request = Exclude<ServiceRequest, { op: 'pair' }>;
 export function createApi(options: {
@@ -21,7 +22,7 @@ export function createApi(options: {
     switch (request.op) {
       case 'submit': return request.command.scope;
       case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
-      case 'pull': case 'close': case 'metadata': case 'catalog': return null;
+      case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
@@ -30,6 +31,7 @@ export function createApi(options: {
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
       })) satisfies ServiceValueMap['catalog'];
+      case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
       case 'create': host.createConversation(request.scope, options.installation ?? recordedInstallation); return request.scope satisfies ServiceValueMap['create'];
       case 'submit': return host.conversation(request.command.scope).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
       case 'receipt': return host.conversation(request.scope).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;

@@ -458,6 +458,108 @@ test('saved chat labels follow first prompts through new chats, reopening and re
   }
 });
 
+test('saved chat search finds old message text, selects with keys and preserves active recovery state', { timeout: 60_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.evaluate(async hostId => {
+    const call = async body => {
+      const response = await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      if (!response.ok) throw new Error('Search setup failed');
+    };
+    for (let index = 0; index < 105; index++) await call({ op: 'create', scope: { hostId, conversationId: `search-${String(index).padStart(3, '0')}` } });
+    for (const [id, text] of [
+      ['search-103', `Search project alpha ${'planning '.repeat(25)}Lavender treasure`],
+      ['search-104', 'Search project beta'],
+    ]) await call({ op: 'submit', command: { version: 1, scope: { hostId, conversationId: id }, clientCommandId: `seed-${id}`, body: { kind: 'send', text } } });
+  }, host.hostId);
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  const original = await page.locator('.scope-label').textContent();
+  let drop = true, failSearch = true;
+  const oldEntered = Promise.withResolvers(), oldReply = Promise.withResolvers();
+  const oldFinished = Promise.withResolvers();
+  const searched = [];
+  await page.route('**/api/v1', async route => {
+    const request = route.request().postDataJSON();
+    if (drop && request.op === 'submit') { drop = false; await route.fetch(); await route.abort('connectionfailed'); return; }
+    if (request.op === 'search') {
+      searched.push(request);
+      if (request.query === 'delayed lavender' && request.after === null) {
+        const response = await route.fetch(); oldEntered.resolve(); await oldReply.promise;
+        await route.fulfill({ response }); oldFinished.resolve(); return;
+      }
+      if (request.query === 'unavailable query' && failSearch) {
+        await route.fulfill({ status: 503, contentType: 'application/json', body: JSON.stringify({ ok: false, error: { kind: 'unavailable', message: 'Search temporarily unavailable' } }) }); return;
+      }
+    }
+    await route.continue();
+  });
+  await draft(page, 'Recover this original command');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => page.getByRole('button', { name: 'Retry original command', exact: true }).isEnabled(), 'original command retained');
+  await draft(page, 'My active unsent draft');
+  const editor = await page.getByRole('textbox', { name: 'Message', exact: true }).elementHandle();
+  const recovery = await page.getByRole('region', { name: 'Command recovery' }).textContent();
+  const query = page.getByRole('combobox', { name: 'Search chats', exact: true });
+  const results = page.getByRole('listbox', { name: 'Search results' });
+  const unchanged = async () => {
+    assert.equal(await page.locator('.scope-label').textContent(), original);
+    assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'My active unsent draft');
+    assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).evaluate((node, old) => node === old, editor), true);
+    assert.equal(await page.getByRole('region', { name: 'Command recovery' }).textContent(), recovery);
+    assert.equal(await page.getByRole('button', { name: 'Retry original command', exact: true }).isEnabled(), true);
+  };
+  await query.fill('LAVENDER');
+  await page.getByRole('status').filter({ hasText: '1 matching chat.' }).waitFor();
+  assert.match(await results.getByRole('option').textContent(), /Lavender treasure/);
+  assert.ok(searched.some(request => request.query === 'LAVENDER' && request.after !== null), 'search scans beyond the first hundred chats');
+  await unchanged();
+  await query.fill('recorded response complete');
+  await page.getByRole('status').filter({ hasText: '3 matching chats.' }).waitFor();
+  await unchanged();
+  await query.fill('not present anywhere');
+  await page.getByText('No matching chats.', { exact: true }).waitFor();
+  await unchanged();
+  await query.fill('delayed lavender'); await oldEntered.promise;
+  await query.fill('beta');
+  await page.getByRole('status').filter({ hasText: '1 matching chat.' }).waitFor();
+  oldReply.resolve(); await oldFinished.promise;
+  await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  assert.match(await results.getByRole('option').textContent(), /Search project beta/);
+  await query.fill(' beta ');
+  await page.getByRole('status').filter({ hasText: '1 matching chat.' }).waitFor();
+  assert.match(await results.getByRole('option').textContent(), /Search project beta/);
+  assert.equal(searched.filter(request => request.query === 'delayed lavender').length, 1, 'stale search does not fetch another page');
+  await query.fill('unavailable query');
+  await page.getByRole('alert').filter({ hasText: 'Search temporarily unavailable' }).waitFor();
+  await unchanged();
+  failSearch = false;
+  await page.getByRole('button', { name: 'Retry search' }).click();
+  await page.getByText('No matching chats.', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Clear search' }).click();
+  await unchanged();
+  await query.fill('Search project');
+  await page.getByRole('status').filter({ hasText: '2 matching chats.' }).waitFor();
+  await query.press('ArrowDown'); await query.press('ArrowDown'); await query.press('ArrowUp'); await query.press('Enter');
+  await wait(async () => await page.locator('.scope-label').textContent() === 'search-103', 'keyboard result selected');
+  await connected(page);
+  await query.press('Escape');
+  const catalog = page.getByRole('navigation', { name: 'Host conversations', exact: true });
+  await catalog.getByRole('button', { name: new RegExp(`Open conversation ${original}$`) }).click();
+  await wait(async () => await page.locator('.scope-label').textContent() === original, 'original chat restored');
+  await connected(page);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'My active unsent draft');
+  await query.fill('Search project');
+  await page.getByRole('status').filter({ hasText: '2 matching chats.' }).waitFor();
+  await page.reload(); await connected(page);
+  assert.equal(await query.inputValue(), '');
+  assert.equal(await page.locator('.scope-label').textContent(), original);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'My active unsent draft');
+  await page.getByRole('button', { name: 'Retry original command', exact: true }).waitFor();
+  assert.deepEqual(errors, []);
+});
+
 test('browser catalog reads every page and opens a conversation beyond the first hundred', { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.evaluate(async hostId => {
@@ -547,6 +649,16 @@ test('committed custom artifact sends one exact prompt, retains drafts and resto
   await connected(page);
   await page.getByRole('heading', { name: 'Plan review', exact: true }).waitFor();
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'A different draft');
+  const customEditor = await page.getByRole('textbox', { name: 'Message', exact: true }).elementHandle();
+  const search = page.getByRole('combobox', { name: 'Search chats', exact: true });
+  await search.fill('unmatched custom search');
+  await page.getByText('No matching chats.', { exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Review the plan', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).evaluate((node, old) => node === old, customEditor), true);
+  await search.fill('Review our current plan');
+  await page.getByRole('status').filter({ hasText: '2 matching chats.' }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Review the plan', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: 'Clear search' }).click();
   await page.setViewportSize({ width: 360, height: 480 });
   await page.getByRole('button', { name: 'Review the plan', exact: true }).scrollIntoViewIfNeeded();
   await page.getByRole('button', { name: 'approve', exact: true }).scrollIntoViewIfNeeded();

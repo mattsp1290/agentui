@@ -47,6 +47,27 @@ test('catalog entries keep bounded display previews separate from scope identity
   assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [scope] }));
 });
 
+test('search wire values are bounded and use the authenticated browser service', async () => {
+  const page = { items: [{ scope, preview: 'Garden', excerpt: 'Water the herbs' }], after: 'scanned-through' };
+  let sent;
+  const connection = createBrowserConnection({ fetch: async (url, init) => {
+    sent = { url, credentials: init.credentials, body: JSON.parse(init.body) };
+    return reply(page);
+  } });
+  assert.deepEqual(await connection.search('  water\n herbs  '), page);
+  assert.deepEqual(sent, { url: '/api/v1', credentials: 'same-origin', body: { op: 'search', query: 'water herbs', after: null } });
+  for (const input of [
+    { query: '' }, { query: ' \n ' }, { query: 'x'.repeat(201) }, { query: 1 }, { query: 'ok', after: '' },
+    { query: 'ok', credential: 'private' },
+  ]) assert.throws(() => parseServiceRequest({ op: 'search', after: null, ...input }));
+  for (const invalid of [
+    { ...page, items: Array(101).fill(page.items[0]) }, { ...page, after: '' },
+    { ...page, items: [{ ...page.items[0], excerpt: 'x'.repeat(161) }] },
+    { ...page, items: [{ ...page.items[0], privateReceipt: {} }] },
+    { ...page, items: [{ ...page.items[0], preview: 'x'.repeat(81) }] },
+  ]) assert.throws(() => parseServiceResponse({ op: 'search' }, { ok: true, value: invalid }));
+});
+
 test('browser uses same origin JSON endpoint and returns only validated domain values', async () => {
   const calls = [];
   const connection = createBrowserConnection({ fetch: async (url, init) => {

@@ -183,3 +183,14 @@
 .customization-panel { flex: none; max-height: 35%; overflow: auto; padding: 8px 0; width: 100%; box-sizing: border-box; overflow-wrap: anywhere; }
 .customization-panel h2 { font-size: 16px; margin-top: 0; }
 .customization-modules { border: 1px solid var(--aui-color-border); border-radius: 12px; padding: 1rem; margin: 0; min-width: 0; }
+
+.chat-search { margin: 0 4px 16px; min-width: 0; }
+.chat-search label, .search-status { display: block; font-size: 12px; color: var(--aui-color-muted); }
+.chat-search input { box-sizing: border-box; width: 100%; min-width: 0; padding: 9px 8px; margin-top: 6px; border: 1px solid var(--aui-color-border); border-radius: 8px; background: var(--aui-color-canvas); color: inherit; font: inherit; }
+.chat-search > button { font-size: 12px; }
+.chat-search [role="listbox"] { display: flex; flex-direction: column; gap: 4px; }
+.chat-search [role="listbox"][hidden] { display: none; }
+.chat-search [role="option"] { width: 100%; overflow-wrap: anywhere; }
+.chat-search [role="option"][aria-selected="true"] { background: var(--aui-color-raised); outline: 1px solid var(--aui-color-accent); outline-offset: -1px; }
+.chat-search [role="option"] span, .chat-search [role="option"] small { display: block; white-space: normal; }
+.chat-search [role="option"] small { margin-top: 4px; color: var(--aui-color-muted); font-size: 11px; }

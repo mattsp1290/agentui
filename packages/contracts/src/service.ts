@@ -13,6 +13,8 @@ export const SERVICE_MAX_COMMAND_BYTES = DEFAULT_MAX_COMMAND_BYTES;
 export const SERVICE_MAX_REQUEST_BYTES = SERVICE_MAX_COMMAND_BYTES * JSON_STRING_ESCAPE_EXPANSION + SERVICE_REQUEST_ENVELOPE_HEADROOM_BYTES;
 const SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES = 100_000;
 export const SERVICE_CATALOG_PAGE = CORE_CATALOG_PAGE;
+export const SERVICE_SEARCH_QUERY_LENGTH = 200;
+export const SERVICE_SEARCH_EXCERPT_LENGTH = 160;
 export const SERVICE_EVENT_PAGE = Object.freeze({ events: HOST_DEFAULT_PAGE_EVENTS, bytes: HOST_DEFAULT_PAGE_BYTES });
 export const SERVICE_SNAPSHOT_BYTES = HOST_DEFAULT_SNAPSHOT_BYTES;
 export const SERVICE_MAX_RESPONSE_BYTES = SERVICE_SNAPSHOT_BYTES + SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES;
@@ -25,6 +27,7 @@ export type ServiceRequest =
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'metadata' }
   | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
+  | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope }
   | { readonly op: 'submit'; readonly command: ClientCommand }
   | { readonly op: 'receipt' | 'reconcile'; readonly scope: ConversationScope; readonly id: string }
@@ -44,10 +47,18 @@ export interface ConversationCatalogEntry {
   readonly scope: ConversationScope;
   readonly preview: string | null;
 }
+export interface ConversationSearchEntry extends ConversationCatalogEntry {
+  readonly excerpt: string | null;
+}
+export interface ConversationSearchPage {
+  readonly items: readonly ConversationSearchEntry[];
+  readonly after: string | null;
+}
 export interface ServiceValueMap {
   readonly pair: null;
   readonly metadata: ServiceMetadata;
   readonly catalog: readonly ConversationCatalogEntry[];
+  readonly search: ConversationSearchPage;
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -66,6 +77,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
+  search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope): Promise<ConversationScope>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
@@ -81,6 +93,12 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
   switch (input.op) {
     case 'pair': exact(input, ['op', 'code']); return { op: 'pair', code: identifier(input.code) };
     case 'metadata': exact(input, ['op']); return { op: 'metadata' };
+    case 'search': {
+      exact(input, ['op', 'query', 'after']);
+      const query = identifier(input.query, SERVICE_SEARCH_QUERY_LENGTH).replace(/\s+/gu, ' ').trim();
+      if (!query) throw new Error('Enter a search query');
+      return { op: 'search', query, after: input.after === null ? null : identifier(input.after) };
+    }
     case 'catalog': {
       exact(input, ['op', 'after', 'limit']);
       const limit = count(input.limit);
@@ -168,6 +186,19 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
       }
       return { scope: parseScope(entry.scope), preview: entry.preview };
     });
+  },
+  search(value) {
+    const input = record(value, ['items', 'after']);
+    if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
+    const entries = input.items.map(value => {
+      const entry = record(value, ['scope', 'preview', 'excerpt']);
+      const [catalog] = valueParsers.catalog([{ scope: entry.scope, preview: entry.preview }]);
+      if (!catalog) throw new Error('Missing search entry');
+      if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
+        entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');
+      return { ...catalog, excerpt: entry.excerpt };
+    });
+    return { items: entries, after: input.after === null ? null : identifier(input.after) };
   },
   create: parseScope,
   submit(value) {
