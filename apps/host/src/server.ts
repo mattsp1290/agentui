@@ -9,7 +9,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, createProviderRegistry, openLocalHost } from '@agentui/host';
+import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
@@ -29,9 +29,10 @@ import { providerInstallation } from './agent-config.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { describeAgent } from './agents.js';
 import type { InstalledAgent } from './agents.js';
-import type { ExtensionManifest, ServerExtensionEntry } from '@agentui/sdk';
-import { createProviderAuthority } from './provider-credentials.js';
-import type { ProviderInstallation } from './provider-credentials.js';
+import { createServerExtensions } from '@agentui/host/extensions';
+import { providerExtensionSource } from './provider-extensions.js';
+import type { BrowserProviderExtension } from './provider-extensions.js';
+export type { BrowserProviderExtension } from './provider-extensions.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -40,8 +41,7 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
-  readonly providerExtensions?: readonly { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry;
-    readonly installations: readonly ProviderInstallation[] }[];
+  readonly providerExtensions?: readonly BrowserProviderExtension[];
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -69,7 +69,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
-  let providers: ReturnType<typeof createProviderRegistry> | undefined;
+  const providers = createServerExtensions();
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
@@ -79,7 +79,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       closing = true;
       feeds?.dispose();
       const driverResults = await Promise.allSettled([
-        Promise.resolve().then(() => providers?.close()),
+        providers.close(),
         ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
       ]);
       const driverFailed = driverResults.some(result => result.status === 'rejected');
@@ -169,12 +169,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
-    providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
-      manifest: extension.manifest, entry: extension.entry,
-      authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
-    })));
-    await providers.activate();
-    await providers.discover();
+    const replacement = await providers.replace(providerExtensionSource(accessDatabase, options.providerExtensions ?? []));
+    if (replacement.kind === 'failed') {
+      const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
+        activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+      throw new Error(messages[replacement.failure]);
+    }
+    if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
@@ -217,7 +218,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing);
-    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover };
+    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
+      extensionStatus: providers.status,
+      replaceProviderExtensions: (selected: readonly BrowserProviderExtension[]) => providers.replace(providerExtensionSource(accessDatabase, selected)),
+    };
   } catch (error) {
     await close();
     throw error;
