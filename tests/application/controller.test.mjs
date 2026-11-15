@@ -682,7 +682,7 @@ test('absent pending creation replaces a removed saved agent only after an expli
 });
 
 test('invalid or unavailable recovery choices preserve legacy and captured pending intents', async t => {
-  for (const agentId of [null, 'gone']) {
+  for (const agentId of [null, 'gone', 'default']) {
     const f = fixture(); t.after(() => f.app.dispose());
     const pending = { scope, agentId };
     f.views.set('original-view/host', { ...empty(), pendingCreation: pending });

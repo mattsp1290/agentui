@@ -338,11 +338,15 @@ export function createApplicationController(deps: {
       const { saved } = requireSaved(owner);
       const pending = saved.pendingCreation;
       if (!pending) return;
-      let agentId = pending.agentId;
-      if (agentId === null) {
-        const existing = await current(owner, owner.connection.conversationAgent(pending.scope));
-        agentId = existing?.id ?? selected ?? null;
-        if (agentId === null) throw new Error('This older pending creation has no saved agent. Choose an agent explicitly to continue.');
+      const existing = await current(owner, owner.connection.conversationAgent(pending.scope));
+      const agentId = existing?.id ?? selected ?? pending.agentId;
+      if (agentId === null) throw new Error('This older pending creation has no saved agent. Choose an agent explicitly to continue.');
+      if (!existing && selected !== undefined) {
+        const host = await current(owner, owner.connection.metadata());
+        const agent = host.agents.find(agent => agent.id === selected);
+        if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
+      }
+      if (agentId !== pending.agentId) {
         await save(owner, { ...saved, pendingCreation: { scope: pending.scope, agentId } });
       }
       await completeCreation(owner, pending.scope, agentId);

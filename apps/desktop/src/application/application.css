@@ -198,4 +198,4 @@
 .agent-choice { display: grid; gap: .4rem; min-width: 0; font-size: .8rem; }
 .agent-choice select { width: 100%; min-width: 0; max-width: 100%; padding: .5rem; border: 1px solid var(--aui-color-border); border-radius: .5rem; background: var(--aui-color-surface); color: inherit; font: inherit; }
 .agent-choice select:focus-visible { outline: 2px solid var(--aui-color-accent); outline-offset: 3px; }
-.agent-label { margin: .4rem 0 0; color: var(--aui-color-muted); font-size: .8rem; }
+.agent-label { margin: 0; color: var(--aui-color-muted); font-size: .8rem; }

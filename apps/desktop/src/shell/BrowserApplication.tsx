@@ -17,7 +17,10 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
-  const [recoveryAgent, setRecoveryAgent] = useState<string | null>(null);
+  const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
+  const pendingScope = app.saved.pendingCreation?.scope;
+  const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
+  const recoveryAgent = recoveryChoice?.scopeKey === pendingScopeKey ? recoveryChoice.agentId : undefined;
   const enabled = applicationEnabled(app);
   const metadata = 'metadata' in app.host ? app.host.metadata : null;
   const choices = metadata?.agents ?? [];
@@ -55,9 +58,9 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       </div>
       {selected?.availability.kind === 'unavailable' && <p role="note">{selected.availability.reason}</p>}
       {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
-        {app.saved.pendingCreation.agentId === null && <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryAgent(event.target.value || null)}>
+        <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
           <option value="">Check the saved chat first</option>{options}
-        </select></label>}
+        </select></label>
         <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
       </div>}
       <ConversationSearch controller={controller} connectionKey={searchConnection} enabled={enabled} active={app.active?.scope ?? null}>
