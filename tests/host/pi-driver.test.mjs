@@ -18,6 +18,7 @@ async function fixture(t) {
   const requests = [];
   let release;
   let held = false;
+  let withholdFirstText = false;
   let failFirstAppend = false;
   let rejectOutput = null;
   const original = globalThis.fetch;
@@ -27,7 +28,7 @@ async function fixture(t) {
     requests.push(JSON.parse(init.body));
     return new Response(new ReadableStream({ start(controller) {
       const emit = value => controller.enqueue(new TextEncoder().encode(value));
-      emit(frame('Hello from Pi'));
+      if (!withholdFirstText) emit(frame('Hello from Pi'));
       if (!held) { emit(frame(null, 'stop')); emit('data: [DONE]\n\n'); controller.close(); return; }
       release = () => { emit(frame(null, 'stop')); emit('data: [DONE]\n\n'); controller.close(); };
       init.signal?.addEventListener('abort', () => controller.error(new DOMException('Aborted', 'AbortError')), { once: true });
@@ -61,7 +62,7 @@ async function fixture(t) {
     globalThis.fetch = original;
     await rm(directory, { recursive: true, force: true });
   });
-  return { directory, requests, open, failOutput: predicate => { rejectOutput = predicate; }, failBeforePrompt: () => { failFirstAppend = true; }, hold: () => { held = true; }, finish: () => release() };
+  return { directory, requests, open, failOutput: predicate => { rejectOutput = predicate; }, failBeforePrompt: () => { failFirstAppend = true; }, hold: () => { held = true; }, holdWithoutText: () => { held = true; withholdFirstText = true; }, finish: () => release() };
 }
 
 test('Pi host streams with one dispatch per command, follows up, resumes and preserves native Stop outcome', { timeout: 15_000 }, async t => {
@@ -276,4 +277,21 @@ test('the host core imports without evaluating the Pi SDK', async () => {
     assert.equal(typeof core.openLocalHost, 'function');
   `], { cwd: new URL('../../', import.meta.url), encoding: 'utf8' });
   assert.equal(result.status, 0, result.stderr);
+});
+
+
+test('Pi Stop works during first-token latency immediately after send admission', { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const current = await f.open();
+  current.host.createConversation(scope, current.driver.installation);
+  f.holdWithoutText();
+  const submitted = await current.port.submit(command('held-before-text'));
+  assert.equal(submitted.receipt.state.kind, 'completed');
+  await until(() => f.requests.length === 1);
+  const runId = current.host.inspect(scope).snapshot.document.domain.currentRun.runId;
+  const stop = await current.port.submit(command('stop-before-text', { kind: 'cancel', runId }));
+  assert.equal(stop.kind, 'receipt');
+  assert.equal(stop.receipt.state.kind, 'completed');
+  await until(() => current.host.inspect(scope).snapshot.document.domain.currentRun.kind === 'ended');
+  assert.equal(current.host.inspect(scope).snapshot.document.domain.currentRun.outcome, 'interrupted');
 });

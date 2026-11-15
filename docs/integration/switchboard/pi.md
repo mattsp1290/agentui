@@ -27,7 +27,7 @@ reference pairs the native session ID with an owned journal filename. Reopening
 must preserve both values. Missing or mismatched journals fail without creating
 a replacement session.
 
-A completed send receipt records Pi SDK's `preflight-started` acknowledgement.
+A completed send receipt records Pi SDK's `started-and-journaled` acknowledgement.
 It does not assert that the upstream model completed or accepted a network
 request. The transcript run ends separately from the native assistant outcome.
 Stop records its request before calling the SDK, then retains partial text.

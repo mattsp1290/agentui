@@ -1,6 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { existsSync, realpathSync } from 'node:fs';
-import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
 import { PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { identifier, record } from '@agentui/contracts/decode';
 import { canonicalJson } from '@agentui/contracts';
@@ -30,6 +29,7 @@ interface Turn {
   ended: boolean;
   storageFailed: boolean;
   registered: boolean;
+  admitted: boolean;
 }
 type Observation = NativeDispatchObservation<CommandResult<TranscriptEvent>>;
 const empty = (): HostOutput<TranscriptEvent> => ({ events: [], runs: [], decisions: [] });
@@ -81,7 +81,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
     }
   }
   function registerReference(turn: Turn) {
-    if (turn.registered || !existsSync(join(options.sessionDirectory, turn.session.sessionFile))) return;
+    if (turn.registered || !turn.admitted) return;
     options.append(turn.scope, { ...empty(), runs: [turn.run] });
     turn.registered = true;
   }
@@ -190,7 +190,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
               binding: { namespace: 'pi-sdk-session', installationId: installation.installationId, opaqueSessionId: opaque } } },
             reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque } };
           turn = { scope: command.scope, session, run, rendered: [], text: '', revision: 0,
-            timer: undefined, stopCommandId: null, ended: false, storageFailed: false, registered: false };
+            timer: undefined, stopCommandId: null, ended: false, storageFailed: false, registered: false, admitted: false };
           active.set(key, turn);
           options.append(command.scope, { events: [
             { kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`, revision: 1,
@@ -199,10 +199,11 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
           ], runs: [], decisions: [] });
           const current = turn;
           const admitted = await session.prompt(command.body.text, event => receive(current, event));
+          current.admitted = true;
           void admitted.finished.then(result => finish(current, result),
             () => finish(current, { kind: 'ended', outcome: 'failed' }));
           registerReference(current);
-          return evidence(command, target, session, 'preflight-started');
+          return evidence(command, target, session, 'started-and-journaled');
         } catch {
           if (turn) finish(turn, { kind: 'ended', outcome: 'failed' });
           if (!turn) busy.delete(key);
