@@ -16,6 +16,7 @@ main { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
 .introduction > p[data-variant="muted"] { max-width: 36ch; font-size: 1.1rem; }
 .connection-card { margin-top: 2.5rem; padding: 1.5rem; border-radius: 1rem; }
 .connection-card p { margin-bottom: 0; }
+.connect-host { margin-top: 1.25rem; }
 .connection-heading { display: flex; align-items: center; gap: .75rem; }
 .connection-heading h2 { margin: 0; }
 .status-dot { width: .5rem; height: .5rem; border-radius: 50%; background: var(--aui-color-muted); flex: none; }
