@@ -19,9 +19,9 @@ async function enroll() {
 }
 const credential = input.credential ?? await enroll();
 if (!input.credential) process.send({ kind: 'paired', credential });
-const connection = createServiceConnection((request, { signal }) => fetch(`${input.origin}/native/v1`, {
+const connection = createServiceConnection((body, { signal }) => fetch(`${input.origin}/native/v1`, {
   method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credential.secret}` },
-  body: JSON.stringify(request),
+  body,
 }), transcriptProjection);
 const metadata = await connection.metadata();
 assert.equal(metadata.hostId, input.hostId);

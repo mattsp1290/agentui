@@ -74,7 +74,7 @@ The result contains the host ID and a 32-character, 192-bit invitation code. Cod
 
 `POST /native/v1` accepts the existing closed service requests except `pair`, with exactly one `Authorization: Bearer <secret>` header. The `Bearer` scheme is case-sensitive. Both native routes require exactly `Content-Type: application/json` with no parameters, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Browser and native invitations and credentials cannot substitute for one another. Revocation uses the existing device command and wakes pending observations.
 
-The shared connection engine takes a `ServiceExecutor` that returns a fetch `Response`. The engine owns bounded JSON and UTF-8 decoding, HTTP status classification, envelope validation, and observation resynchronization. Browser and private test executors only send requests.
+The shared connection engine takes a `ServiceExecutor` that returns a fetch `Response`. The engine owns bounded JSON and UTF-8 decoding, HTTP status classification, envelope validation, and observation resynchronization. The engine serializes and bounds each request once, then passes its validated body to the browser or private test executor.
 
 The engine advances its credential generation after a successful pairing request. The browser's cookie update and that generation change are not atomic. The inherited window remains deferred until a production adapter defines coordinated credential ownership. The native test fixture enrolls before constructing the engine and holds one immutable credential; it does not exercise credential replacement.
 

@@ -8,8 +8,7 @@ import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
 import { FeedRegistry } from './feed-registry.js';
-import { browserHandler } from './http-handler.js';
-import { nativeHandler } from './native-handler.js';
+import { serviceEndpoint } from './service-endpoint.js';
 import { startControl } from './control.js';
 
 export interface BrowserHostOptions {
@@ -56,8 +55,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const api = createApi({ access, host, compatibility: artifact.compatibility, feeds: registry,
       credentialClass: 'browser-development', isClosing: () => closing });
-    const handler = browserHandler({ access, api, files: browser.files, isClosing: () => closing });
-    const native = nativeHandler({ access, api: createApi({ access, host, compatibility: artifact.compatibility,
+    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api, files: browser.files, isClosing: () => closing });
+    const native = serviceEndpoint({ credentialClass: 'native', access, api: createApi({ access, host, compatibility: artifact.compatibility,
       feeds: registry, credentialClass: 'native', isClosing: () => closing }), isClosing: () => closing });
     http.on('request', (request, response) => {
       const route = request.url?.startsWith('/native/') ? native : handler;

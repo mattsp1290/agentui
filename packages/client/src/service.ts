@@ -1,4 +1,3 @@
-import { canonicalJson } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { ServiceConnection } from '@agentui/contracts/service';
 import { createServiceConnection } from './service-engine.js';
@@ -13,7 +12,7 @@ export interface BrowserConnectionOptions {
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  return createServiceConnection((request, { signal }) => fetch('/api/v1', { method: 'POST', credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json' }, body: canonicalJson(request), signal, keepalive: request.op === 'close' }),
+  return createServiceConnection((body, { op, signal }) => fetch('/api/v1', { method: 'POST', credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json' }, body, signal, keepalive: op === 'close' }),
     transcriptProjection, options);
 }

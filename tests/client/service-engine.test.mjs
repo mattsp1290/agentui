@@ -19,13 +19,12 @@ const until = async predicate => {
 
 test('shared engine bounds an executor that ignores abort and ignores its late unauthorized reply', async () => {
   const pending = Promise.withResolvers();
-  let signal, timeout, notifications = 0;
-  const connection = createServiceConnection(async (_request, context) => {
-    signal = context.signal; timeout = context.timeoutMs;
+  let signal, notifications = 0;
+  const connection = createServiceConnection(async (_body, context) => {
+    signal = context.signal;
     return pending.promise;
   }, transcriptProjection, { requestTimeoutMs: 10, onUnauthorized: () => notifications++ });
   await assert.rejects(connection.metadata(), error => error instanceof ServiceError && /timed out/.test(error.message));
-  assert.equal(timeout, 10);
   assert.equal(signal.aborted, true);
   pending.resolve(unauthorized());
   await setImmediate();
@@ -36,7 +35,8 @@ test('shared engine fences old unauthorized envelopes and adapter errors across 
   for (const adapterError of [false, true]) {
     const pending = Promise.withResolvers();
     let notifications = 0, calls = 0;
-    const connection = createServiceConnection(async request => {
+    const connection = createServiceConnection(async encoded => {
+      const request = JSON.parse(encoded);
       if (request.op === 'pair') return reply(null);
       return ++calls === 1 ? pending.promise : unauthorized();
     }, transcriptProjection, { onUnauthorized: () => notifications++ });
@@ -52,8 +52,8 @@ test('shared engine fences old unauthorized envelopes and adapter errors across 
 });
 
 test('shared engine validates before execution and never retries a failed command', async () => {
-  let calls = 0;
-  const connection = createServiceConnection(async () => { calls++; throw new Error('Lost reply'); }, transcriptProjection);
+  let calls = 0, sent;
+  const connection = createServiceConnection(async (body, context) => { sent = { body, op: context.op }; calls++; throw new Error('Lost reply'); }, transcriptProjection);
   const port = connection.conversation(scope);
   const command = { version: 1, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Hello' } };
   const invalid = await port.submit({ ...command, body: { kind: 'send', text: '🙂'.repeat(20000) } });
@@ -61,6 +61,9 @@ test('shared engine validates before execution and never retries a failed comman
   assert.equal(calls, 0);
   await assert.rejects(port.submit(command), /Lost reply/);
   assert.equal(calls, 1);
+  assert.equal(typeof sent.body, 'string');
+  assert.equal(sent.op, 'submit');
+  assert.deepEqual(JSON.parse(sent.body), { op: 'submit', command });
   const malformed = createServiceConnection(async () => reply({}), transcriptProjection);
   await assert.rejects(malformed.metadata(), error => error instanceof ServiceProtocolError);
 });
@@ -69,7 +72,8 @@ test('shared feed applies before ACK, deduplicates pages, and refuses a sequence
   const applying = Promise.withResolvers(), acks = [], received = [];
   let closed = 0;
   const pages = [1, 1, 3];
-  const connection = createServiceConnection(async request => {
+  const connection = createServiceConnection(async encoded => {
+    const request = JSON.parse(encoded);
     if (request.op === 'watch') return reply({ feedId: 'feed' });
     if (request.op === 'close') { closed++; return reply(null); }
     acks.push(request.ack);
@@ -91,7 +95,8 @@ test('shared feed close cancels an uncooperative pull and never ACKs after close
   for (const duringApply of [false, true]) {
     const gate = Promise.withResolvers();
     let signal, pulls = 0, applying = false, closed = 0;
-    const connection = createServiceConnection(async (request, context) => {
+    const connection = createServiceConnection(async (encoded, context) => {
+      const request = JSON.parse(encoded);
       if (request.op === 'watch') return reply({ feedId: 'feed' });
       if (request.op === 'close') { closed++; return reply(null); }
       pulls++; signal = context.signal;
@@ -111,10 +116,10 @@ test('shared feed close cancels an uncooperative pull and never ACKs after close
   }
 });
 
-
 test('shared engine decodes an independent projection before delivery and ACK', async () => {
   const items = [textSnapshot(0, 'start'), events([1, ' next'])], acks = [], received = [];
-  const connection = createServiceConnection(async request => {
+  const connection = createServiceConnection(async encoded => {
+    const request = JSON.parse(encoded);
     if (request.op === 'watch') return reply({ feedId: 'feed' });
     if (request.op === 'close') return reply(null);
     acks.push(request.ack);
@@ -137,7 +142,8 @@ for (const [name, mutate, kind] of [
     const item = structuredClone(snapshot), acks = [];
     mutate(item);
     let closed = 0;
-    const connection = createServiceConnection(async request => {
+    const connection = createServiceConnection(async encoded => {
+      const request = JSON.parse(encoded);
       if (request.op === 'watch') return reply({ feedId: 'feed' });
       if (request.op === 'close') { closed++; return reply(null); }
       acks.push(request.ack);
@@ -172,7 +178,8 @@ for (const [name, body, headers] of [
 ]) {
   test(`shared engine resynchronizes ${name} failure without delivery or ACK`, async () => {
     const acks = [];
-    const connection = createServiceConnection(async request => {
+    const connection = createServiceConnection(async encoded => {
+      const request = JSON.parse(encoded);
       if (request.op === 'watch') return reply({ feedId: 'feed' });
       if (request.op === 'close') return reply(null);
       acks.push(request.ack);

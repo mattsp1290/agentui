@@ -2,7 +2,7 @@ import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope } from '@ag
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
 import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
-import type { ServiceConnection, ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
+import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
 
 export class ServiceProtocolError extends Error {}
 class ServiceRequestRejected extends Error {}
@@ -41,9 +41,9 @@ interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly onUnauthorized?: () => void;
 }
-type ServiceExecutor = (request: ServiceRequest, context: {
+type ServiceExecutor = (body: string, context: {
+  readonly op: ServiceRequest['op'];
   readonly signal: AbortSignal;
-  readonly timeoutMs: number;
 }) => Promise<Response>;
 export function createServiceConnection<E, P>(execute: ServiceExecutor,
   projection: Pick<Projection<E, P>, 'version' | 'decodeState' | 'decodeEvent'>,
@@ -53,10 +53,10 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
   async function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
     timeoutMs = requestTimeoutMs): Promise<ServiceValueMap[K]> {
-    let normalized: ServiceRequest;
+    let body: string;
     try {
-      normalized = parseServiceRequest(value);
-      if (utf8Bytes(canonicalJson(normalized)) > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
+      body = canonicalJson(parseServiceRequest(value));
+      if (utf8Bytes(body) > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
     } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
     if (signal?.aborted) throw new ServiceError('unavailable', 'Service request interrupted');
     const controller = new AbortController();
@@ -69,8 +69,8 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       signal?.addEventListener('abort', abort, { once: true });
     });
     const perform = async (): Promise<ServiceValueMap[K]> => {
-      const response = await execute(normalized, { signal: controller.signal, timeoutMs });
-      let result;
+      const response = await execute(body, { op: value.op, signal: controller.signal });
+      let result: ServiceResponse<ServiceValueMap[K]>;
       try {
         const raw = await readServiceResponseBody(response);
         try { result = parseServiceResponse<K>(value, raw); }

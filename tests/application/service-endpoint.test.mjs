@@ -11,8 +11,7 @@ import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../apps/host/build/tsc/feed-registry.js';
-import { browserHandler } from '../../apps/host/build/tsc/http-handler.js';
-import { nativeHandler } from '../../apps/host/build/tsc/native-handler.js';
+import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
 
 for (const credentialClass of ['browser-development', 'native']) {
   test(`${credentialClass} framing failures stay unavailable after dispatch without reflecting diagnostics`, async t => {
@@ -24,7 +23,7 @@ for (const credentialClass of ['browser-development', 'native']) {
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
     let closing = false;
     const options = { access, api: createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => closing }), isClosing: () => closing };
-    const handler = credentialClass === 'native' ? nativeHandler(options) : browserHandler({ ...options, files: new Map() });
+    const handler = serviceEndpoint(credentialClass === 'native' ? { ...options, credentialClass } : { ...options, credentialClass, files: new Map() });
     const server = createServer((request, response) => { void handler(request, response).catch(() => response.destroy()); });
     t.after(async () => {
       await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
