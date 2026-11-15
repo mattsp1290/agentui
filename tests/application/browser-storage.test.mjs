@@ -12,12 +12,82 @@ async function fixture(t) {
     Object.assign(globalThis, { BrowserViewStorage, createConversationStore, transcriptProjection });`, resolveDir: root }, bundle: true, write: false, format: 'iife' });
   const browser = await chromium.launch();
   t.after(() => browser.close());
-  const page = await browser.newPage();
+  const context = await browser.newContext();
+  const page = await context.newPage();
   await page.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Saved view storage</title>' }));
   await page.goto('http://localhost/storage');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   return page;
 }
+
+async function holdNativeView(page) {
+  const holder = await page.context().newPage();
+  await holder.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Previous native document</title>' }));
+  await holder.goto('http://localhost/previous');
+  await holder.evaluate(async () => {
+    const acquired = Promise.withResolvers();
+    void navigator.locks.request('agentui-view:native-mac-default', () => new Promise(release => {
+      globalThis.releaseView = release;
+      acquired.resolve();
+    }));
+    await acquired.promise;
+  });
+  return holder;
+}
+
+test('native initial view waits for the previous document and retains its exact route and draft', { timeout: 10_000 }, async t => {
+  const page = await fixture(t);
+  const scope = { hostId: 'host', conversationId: 'native-reload' };
+  await page.evaluate(async scope => {
+    const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {});
+    await owner.saveView('host', { version: 2, route: scope, pendingCreation: null });
+    await owner.drafts(() => {}).save({ scope, draft: 'Keep the native reload draft' });
+    await owner.close();
+  }, scope);
+  const holder = await holdNativeView(page);
+  const occupied = await page.evaluate(async () => {
+    try { await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}); }
+    catch (error) { return error.message; }
+  });
+  assert.match(occupied, /already open/);
+  const [, result] = await Promise.all([
+    holder.evaluate(async () => {
+      const deadline = Date.now() + 5000;
+      while (!(await navigator.locks.query()).pending.some(lock => lock.name === 'agentui-view:native-mac-default')) {
+        if (Date.now() > deadline) throw new Error('Native view did not wait for the previous document');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      globalThis.releaseView();
+    }),
+    page.evaluate(async scope => {
+      const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true);
+      const result = { viewId: owner.viewId, sessionViewId: sessionStorage.getItem('agentui.viewId'),
+        saved: await owner.readView('host'), draft: await owner.drafts(() => {}).load(scope) };
+      await owner.close();
+      return result;
+    }, scope),
+  ]);
+  assert.equal(result.viewId, 'native-mac-default');
+  assert.equal(result.sessionViewId, 'native-mac-default');
+  assert.deepEqual(result.saved, { version: 2, route: scope, pendingCreation: null });
+  assert.deepEqual(result.draft, { scope, draft: 'Keep the native reload draft' });
+});
+
+test('native initial view refuses a lock that stays held without inventing another view', { timeout: 10_000 }, async t => {
+  const page = await fixture(t);
+  const holder = await holdNativeView(page);
+  const result = await page.evaluate(async () => {
+    let failure;
+    try { await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true); }
+    catch (error) { failure = error.message; }
+    const lockAvailable = await navigator.locks.request('agentui-view:native-mac-default', { ifAvailable: true }, lock => lock !== null);
+    return { failure, lockAvailable, sessionViewId: sessionStorage.getItem('agentui.viewId') };
+  });
+  await holder.evaluate(() => globalThis.releaseView());
+  assert.match(result.failure, /already open/);
+  assert.equal(result.lockAvailable, false);
+  assert.equal(result.sessionViewId, null);
+});
 
 test('saved views reject noncanonical records without overwriting local data or deleting foreign records', async t => {
   const page = await fixture(t);

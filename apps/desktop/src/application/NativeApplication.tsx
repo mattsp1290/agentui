@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
+import { invoke } from '@tauri-apps/api/core';
 import { macAccess, createMacConnection } from '@agentui/client/mac';
-import type { MacAccess } from '@agentui/client/mac';
+import type { MacAccess, MacNativeInvoke } from '@agentui/client/mac';
 import { ThemeScope, Surface } from '@agentui/ui-primitives/desktop';
 import { BrowserApplication } from '../shell/BrowserApplication.js';
 import { createApplicationController } from './application-controller.js';
@@ -9,6 +10,7 @@ import { BrowserViewStorage } from './browser-storage.js';
 import { record } from '@agentui/contracts/decode';
 
 type Session = { readonly id: string; readonly access: MacAccess; readonly controller: ApplicationController };
+const nativeInvoke: MacNativeInvoke = command => invoke('native_access', { command });
 export function NativeApplication() {
   const [session, setSession] = useState<Session | null>(null);
   const current = useRef<Session | null>(null);
@@ -21,12 +23,12 @@ export function NativeApplication() {
     if (pending.current) return;
     pending.current = true; setBusy(true); setError('');
     try {
-      const action = command.kind === 'status' ? command : { ...command, observation: (await macAccess({ kind: 'status' })).observation };
-      const access = await macAccess(action);
+      const action = command.kind === 'status' ? command : { ...command, observation: (await macAccess({ kind: 'status' }, nativeInvoke)).observation };
+      const access = await macAccess(action, nativeInvoke);
       await current.current?.controller.dispose();
       if (!alive.current) return;
-      const controller = createApplicationController({ createConnection: options => createMacConnection(access, options), createId: () => crypto.randomUUID(),
-        ownedViewStorage: { open: failure => BrowserViewStorage.reopen('native-mac-default', failure), reopen: BrowserViewStorage.reopen } });
+      const controller = createApplicationController({ createConnection: options => createMacConnection(access, nativeInvoke, options), createId: () => crypto.randomUUID(),
+        ownedViewStorage: { open: failure => BrowserViewStorage.reopen('native-mac-default', failure, true), reopen: BrowserViewStorage.reopen } });
       current.current = { id: crypto.randomUUID(), access, controller };
       setSession(current.current);
     } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Native access unavailable. Restore Keychain access, then reconnect.'); }

@@ -1,7 +1,6 @@
-import { invoke } from '@tauri-apps/api/core';
 import { record, identifier, count } from '@agentui/contracts/decode';
-import { ServiceError } from '@agentui/contracts/service';
-import type { ServiceConnection } from '@agentui/contracts/service';
+import { parseServiceRequest, ServiceError } from '@agentui/contracts/service';
+import type { ServiceConnection, ServiceRequest } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { createServiceConnection } from './service-engine.js';
 import type { ServiceConnectionOptions } from './service-engine.js';
@@ -11,6 +10,9 @@ export type MacAccess =
   | { readonly kind: 'absent' | 'unreadable'; readonly observation: string };
 type AccessCommand = { readonly kind: 'status' } | { readonly kind: 'pair'; readonly observation: string; readonly invitation: unknown }
   | { readonly kind: 'forget'; readonly observation: string };
+export type MacNativeInvoke = (command: AccessCommand | {
+  readonly kind: 'execute'; readonly observation: string; readonly request: ServiceRequest;
+}) => Promise<unknown>;
 const recovery = 'Restore Keychain access, then reconnect. Restart AgentUI if access stays unavailable. Pair again after expiry or revocation. Local work is retained.';
 function failure(cause: unknown): ServiceError {
   const reason = cause === 'profile-in-use' ? 'Close the other AgentUI instance before reconnecting.'
@@ -21,9 +23,9 @@ function failure(cause: unknown): ServiceError {
             : cause === 'network-failed' ? 'The local host request did not complete. Reconnect or inspect command recovery before retrying.' : recovery;
   return new ServiceError('unavailable', reason);
 }
-export async function macAccess(command: AccessCommand): Promise<MacAccess> {
+export async function macAccess(command: AccessCommand, nativeInvoke: MacNativeInvoke): Promise<MacAccess> {
   let value: unknown;
-  try { value = await invoke('native_access', { command }); } catch (cause) { throw failure(cause); }
+  try { value = await nativeInvoke(command); } catch (cause) { throw failure(cause); }
   const input = record(value);
   const observation = identifier(input.observation);
   if (input.kind === 'ready') {
@@ -34,11 +36,11 @@ export async function macAccess(command: AccessCommand): Promise<MacAccess> {
   if (input.kind !== 'absent' && input.kind !== 'unreadable') throw new Error(recovery);
   return { kind: input.kind, observation };
 }
-export function createMacConnection(access: MacAccess, options: ServiceConnectionOptions = {}): ServiceConnection {
+export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeInvoke, options: ServiceConnectionOptions = {}): ServiceConnection {
   const connection = createServiceConnection(async body => {
     if (access.kind !== 'ready') throw new ServiceError('unauthorized', 'Pair this Mac with the local host.');
     let value: unknown;
-    try { value = await invoke('native_access', { command: { kind: 'execute', observation: access.observation, request: JSON.parse(body) } }); }
+    try { value = await nativeInvoke({ kind: 'execute', observation: access.observation, request: parseServiceRequest(JSON.parse(body)) }); }
     catch (cause) { throw failure(cause); }
     const reply = record(value, ['status', 'body']), status = count(reply.status);
     if (status < 200 || status > 599 || typeof reply.body !== 'string' || reply.body.length > 4_100_000) throw new Error(recovery);

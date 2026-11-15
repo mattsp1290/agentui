@@ -81,9 +81,9 @@ export class BrowserViewStorage implements OwnedViewStorage {
     } catch (error) { release(); throw error; }
   }
 
-  static async reopen(viewId: string, onFailure: (error: unknown) => void): Promise<BrowserViewStorage> {
+  static async reopen(viewId: string, onFailure: (error: unknown) => void, waitForPreviousDocument = false): Promise<BrowserViewStorage> {
     if (!globalThis.indexedDB || !navigator.locks) throw new Error('This browser cannot safely save an exclusive view. IndexedDB and Web Locks are required.');
-    const release = await claim(viewId);
+    const release = await claim(viewId, waitForPreviousDocument);
     if (!release) throw new Error('This saved view is already open in another tab.');
     let db: IDBDatabase | undefined;
     try {
