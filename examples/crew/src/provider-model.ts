@@ -14,7 +14,7 @@ export const messageSchema = z.strictObject({ messageId: id, role: z.enum(['user
   text: z.string().max(262144), revision: z.int().positive(), complete: z.boolean() });
 export const runSchema = z.strictObject({ requestId: z.uuid(), status: z.enum([
   'accepted', 'waiting', 'running', 'cancellation_requested', 'completed', 'cancelled', 'failed', 'uncertain']),
-  cancellation: requestReceiptResponseSchema.options[0].shape.cancellation.unwrap().nullable().default(null) });
+  cancellation: requestReceiptResponseSchema.options[0].shape.cancellation.unwrap().nullable().exactOptional() });
 const instanceSchema = z.strictObject({ namespace: id, installationId: id, generation: id, protocolVersion: id });
 export const bindingSchema = z.strictObject({ kind: z.literal('agentui-created'),
   creation: z.strictObject({ kind: z.literal('create'), operationId: z.uuid(),
@@ -46,7 +46,7 @@ export const choiceLabels: Record<z.infer<typeof choiceSchema>, string> = {
   approve: 'Approve once', deny: 'Deny', inspect: 'Inspect', test: 'Test',
   allow_conversation: 'Allow for this conversation', allow_always: 'Always allow for this member',
 };
-export function runOutcome(run: z.input<typeof runSchema>) {
+export function runOutcome(run: z.input<typeof runSchema> | z.infer<typeof requestReceiptResponseSchema>) {
   return run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed'
     : run.status === 'cancelled' || run.cancellation?.nativeTermination === 'confirmed' ? 'interrupted' : null;
 }

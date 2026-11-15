@@ -508,9 +508,58 @@ for (const mismatch of ['approvalId', 'decision']) test(`Crew mismatched ${misma
 test('Crew historical uncertain run checkpoint decodes without inventing termination evidence', async t => {
   const remote = await service(t), { backend, binding, presentation } = await direct(remote);
   t.after(() => backend.close());
-  const state = presentation.decodeState({ binding, messages: [], run: { requestId: randomUUID(), status: 'uncertain' } });
-  assert.equal(state.run.status, 'uncertain');
-  assert.equal(state.run.cancellation, null);
+  const historical = { binding, messages: [], run: { requestId: randomUUID(), status: 'uncertain' } };
+  const state = presentation.decodeState(historical);
+  assert.equal(JSON.stringify(state), JSON.stringify(historical));
+  assert.equal(Object.hasOwn(state.run, 'cancellation'), false);
   assert.deepEqual(presentation.snapshot(state, { run: () => ({ runId: 'original-run' }) }),
     { messages: [], currentRun: { kind: 'running', runId: 'original-run' } });
+});
+
+
+test('Crew legacy checkpoint without cancellation restores before a fresh confirmed-stop snapshot and drains normally', { timeout: 15_000 }, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  receipt.status = 'uncertain'; conversation.state.phase = 'idle'; remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.status === 'uncertain');
+  const runId = JSON.parse(saved(f).conversation.document).domain.currentRun.runId;
+  await f.running.close();
+  const historical = JSON.parse(saved(f).checkpoint.data);
+  delete historical.state.run.cancellation;
+  f.inspect(db => db.prepare('UPDATE provider_checkpoints SET data=? WHERE conversation=?').run(JSON.stringify(historical), scope.conversationId));
+  assert.deepEqual(JSON.parse(saved(f).checkpoint.data).state.run, { requestId, status: 'uncertain' });
+  assert.deepEqual(JSON.parse(saved(f).conversation.document).domain.currentRun, { kind: 'running', runId });
+  const original = saved(f).commands.find(row => row.id === 'send');
+  receipt.cancellation = { receiptId: randomUUID(), delivery: 'delivered', nativeTermination: 'confirmed', effects: 'not_assessed' };
+  await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== historical.cursor.opaque.epoch);
+  const restored = saved(f), checkpoint = JSON.parse(restored.checkpoint.data);
+  assert.equal(checkpoint.projectionVersion, historical.projectionVersion);
+  assert.deepEqual(checkpoint.state.run, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
+  assert.deepEqual(JSON.parse(restored.conversation.document).domain.currentRun, { kind: 'ended', runId, outcome: 'interrupted' });
+  assert.deepEqual(JSON.parse(restored.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
+  const recoveryStart = remote.calls.length;
+  assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'completed');
+  assert.equal(saved(f).commands.find(row => row.id === 'send').target, original.target);
+  assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET' && call.path.endsWith(requestId)));
+  assert(remote.calls.slice(recoveryStart).length > 0);
+  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source.data;
+  assert.deepEqual(evidence, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('An unsent draft after legacy restore');
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: /Harness,/ }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check pending command', exact: true }).count(), 0);
+  assert.equal(remote.receipts.size, 1);
+  await page.close(); await f.running.close();
+  await until(() => remote.streams.size === 0);
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel') || call.path.endsWith('/human')).length, 0);
 });
