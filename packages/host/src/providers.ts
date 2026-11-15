@@ -1,12 +1,21 @@
+import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
+import type { ConversationScope, RunAuthority } from '@agentui/contracts';
+import { providerTarget, providerOutcome } from './provider-commands.js';
+import type { ProviderTarget, ProviderObservation } from './provider-commands.js';
+import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
+import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
-  ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
+  ProviderCommand, ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
-export type ProviderIdentity = Pick<ProviderInstance<string>, 'namespace' | 'installationId' | 'generation' | 'protocolVersion'>;
+export { providerIdentity } from './provider-creation.js';
+export type { ProviderIdentity } from './provider-creation.js';
+import type { ProviderIdentity } from './provider-creation.js';
 export interface ProviderAuthorization<I extends string> {
   readonly credential: CredentialHandle<I> | null;
+  readonly expectedAuthority: RunAuthority['kind'];
   assertAuthorized(): void;
 }
 export interface ProviderAuthority {
@@ -22,6 +31,7 @@ export interface ProviderExtension {
 export interface DiscoveredProvider {
   readonly contributionId: string;
   readonly instance: ProviderIdentity;
+  readonly expectedAuthority: RunAuthority['kind'];
   readonly capabilities: Readonly<Record<'create' | 'send' | 'cancel' | 'decide' | 'reconcile' | 'observe', boolean>>;
   readonly agents: readonly { readonly opaqueId: string; readonly name: string }[];
 }
@@ -30,11 +40,6 @@ function text(value: unknown): string {
   const result = identifier(value);
   if (!result.trim()) throw new Error('Invalid provider identifier');
   return result;
-}
-export function providerIdentity(value: unknown): ProviderIdentity {
-  const input = record(value, ['namespace', 'installationId', 'generation', 'protocolVersion']);
-  return { namespace: text(input.namespace), installationId: text(input.installationId),
-    generation: text(input.generation), protocolVersion: text(input.protocolVersion) };
 }
 function identityKey(value: unknown): string { return canonicalJson(providerIdentity(value)); }
 function capability(value: unknown): boolean {
@@ -45,6 +50,11 @@ function capability(value: unknown): boolean {
 }
 interface BoundProvider {
   discover(): Promise<DiscoveredProvider>;
+  capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
+  execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
+  captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget;
+  executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
+  matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
@@ -56,9 +66,10 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
   let acquired: ConnectedProvider<M, I> | undefined;
   let closing: Promise<void> | undefined;
   let discovering: Promise<DiscoveredProvider> | undefined;
-  function assertAuthorized(): void {
+  function assertAuthorized(): ProviderAuthorization<I> {
     if (closing || !authorization) throw new Error('Provider unavailable');
     authorization.assertAuthorized();
+    return authorization;
   }
   function connect(): Promise<ConnectedProvider<M, I>> {
     connection ??= Promise.resolve().then(async () => {
@@ -102,7 +113,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         seen.add(opaqueId);
         return { opaqueId, name: text(agent.name) };
       });
-      return { contributionId: id, instance: identity, capabilities: normalized, agents };
+      return { contributionId: id, instance: identity, expectedAuthority: assertAuthorized().expectedAuthority, capabilities: normalized, agents };
     } catch {
       failed();
       await authority.close();
@@ -110,7 +121,97 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       throw new Error('Provider discovery failed');
     }
   }
+  function validate(selected: ProviderInstallation): ProviderAuthorization<I> {
+    const granted = assertAuthorized();
+    if (selected.contributionId !== id || identityKey(selected.instance) !== key || selected.expectedAuthority !== granted.expectedAuthority) {
+      throw new Error('Provider unavailable');
+    }
+    return granted;
+  }
   return {
+    matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
+    capture(scope, selected) {
+      const granted = validate(selected);
+      return providerCreation({ installation: selected, credential: granted.credential,
+        intent: { kind: 'create', operationId: randomUUID(), scope,
+          agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId } } }, scope);
+    },
+    captureSend(original, text, operationId) {
+      const granted = validate(original.installation);
+      if (original.observation?.kind !== 'confirmed' || canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+      const intent = creationIntent(original.intent, original.installation, instance);
+      const binding = creationBinding(original.observation.binding, intent, original.installation);
+      const request = copyJson(presentation.request(text, binding));
+      if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
+      const decoded = presentation.decodeRequest(copyJson(request));
+      if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
+      return providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential,
+        operation: { kind: 'send', operationId, binding, request } }, intent.scope);
+    },
+    async executeSend(original, fresh, beforeEffect) {
+      let entered = false;
+      const authorize = () => {
+        const granted = validate(original.installation);
+        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+      };
+      try {
+        authorize();
+        const captured = original.operation;
+        const intent = creationIntent(captured.binding.creation, original.installation, instance);
+        const binding = creationBinding(captured.binding, intent, original.installation);
+        const request = presentation.decodeRequest(copyJson(captured.request));
+        if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
+        const operation: ProviderCommand<M, I> = { kind: 'send', operationId: captured.operationId, binding, request };
+        const connected = await connect();
+        authorize();
+        if (!capability(connected.capabilities.reconcile) || (fresh && !capability(connected.capabilities.send))) throw new Error('Provider command unavailable');
+        beforeEffect();
+        authorize();
+        entered = true;
+        const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
+        authorize();
+        return providerOutcome(result, original, fresh);
+      } catch {
+        return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+      }
+    },
+    async execute(original, fresh, beforeEffect) {
+      const source = fresh ? 'create' : 'lookup';
+      let entered = false;
+      try {
+        const granted = validate(original.installation);
+        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+        const operation = creationIntent(original.intent, original.installation, instance);
+        const connected = await connect();
+        validate(original.installation);
+        if (!capability(connected.capabilities[fresh ? 'create' : 'reconcile'])) {
+          return { kind: fresh ? 'not-dispatched' : 'uncertain', source, evidence: null };
+        }
+        beforeEffect();
+        validate(original.installation);
+        entered = true;
+        const result = record(copyJson(await (fresh ? connected.create(operation) : connected.reconcileCreation(operation))));
+        validate(original.installation);
+        if (result.kind === 'confirmed') {
+          record(result, ['kind', 'value', 'evidence']);
+          return creationObservation({ kind: 'confirmed', source, binding: result.value, evidence: result.evidence }, original);
+        }
+        if (result.kind === 'pending' || result.kind === 'rejected' || result.kind === 'uncertain') {
+          record(result, result.kind === 'pending' ? ['kind', 'evidence'] : ['kind', 'reason', 'evidence']);
+          if (result.kind !== 'pending') text(result.reason);
+          return creationObservation({ kind: result.kind, source, evidence: result.evidence }, original);
+        }
+        record(result, ['kind', 'reason']);
+        text(result.reason);
+        if (!['not-dispatched', 'unsupported', 'unavailable', 'authentication-failed', 'unauthorized', 'version-unsupported'].includes(String(result.kind))) {
+          throw new Error('Invalid creation outcome');
+        }
+        return { kind: fresh ? 'not-dispatched' : 'uncertain', source, evidence: { kind: String(result.kind) } };
+      } catch {
+        if (fresh && !entered) return { kind: 'not-dispatched', source: 'host', evidence: null };
+        return { kind: 'uncertain', source, evidence: null };
+      }
+    },
     discover() {
       discovering ??= discover().finally(() => { discovering = undefined; });
       return discovering;
@@ -200,6 +301,36 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         if (phase !== 'active' || results.some(result => result.status === 'rejected')) throw new Error('Provider discovery failed');
         catalog = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
         return structuredClone(catalog);
+      });
+    },
+    capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation {
+      if (phase !== 'active') throw new Error('Provider unavailable');
+      const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+      if (!discovered?.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider agent unavailable');
+      const binding = bindings.find(binding => binding.matches(selected));
+      if (!binding) throw new Error('Provider unavailable');
+      return binding.capture(scope, selected);
+    },
+    captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget {
+      const selected = original.installation;
+      const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+      const binding = bindings.find(binding => binding.matches(selected));
+      if (phase !== 'active' || !binding || !discovered?.capabilities.send || !discovered.capabilities.reconcile ||
+        !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider send unavailable');
+      return binding.captureSend(original, text, operationId);
+    },
+    executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+      return track(async () => {
+        const binding = bindings.find(binding => binding.matches(original.installation));
+        if (phase !== 'active' || !binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        return binding.executeSend(original, fresh, beforeEffect);
+      });
+    },
+    execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation> {
+      return track(async () => {
+        const binding = bindings.find(binding => binding.matches(original.installation));
+        if (phase !== 'active' || !binding) return { kind: fresh ? 'not-dispatched' : 'uncertain', source: fresh ? 'create' : 'lookup', evidence: null };
+        return binding.execute(original, fresh, beforeEffect);
       });
     }, close,
   };

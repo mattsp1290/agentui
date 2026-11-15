@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
@@ -37,7 +37,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const paired = access.pair(access.invite('browser-development'), 'browser-development');
   const { principal } = paired;
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
-    compatibility: { wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
+    compatibility: { wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   let api = createApi({ ...options, host, installation: a, agents: [
     { installation: a, name: 'Project A', availability: { kind: 'ready' } }, { installation: b, availability: { kind: 'ready' } },
@@ -82,8 +82,11 @@ test('authorized agent API and browser route two recorded agents and retain unav
     await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   };
   const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  assert.equal(await page.getByRole('combobox', { name: 'Agent for new chat', exact: true }).count(), 0);
   await open('a');
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  assert.deepEqual(await page.getByRole('group', { name: 'Chat settings', exact: true }).getByRole('button').allTextContents(), ['Codex', 'Host default', 'Default']);
+  assert.equal(await page.getByRole('button', { name: 'Effort, Default. Managed by the host.', exact: true }).isDisabled(), true);
   await message.fill('Draft for Codex');
   await open('b');
   assert.match(await page.locator('.composer-footer').textContent(), /Claude.*Sonnet/);
@@ -91,24 +94,40 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-sonnet.png' });
   await open('a');
   assert.equal(await message.inputValue(), 'Draft for Codex');
-  const chooser = page.getByRole('combobox', { name: 'Agent for new chat', exact: true });
-  assert.equal(await chooser.locator('option').filter({ hasText: 'Opus' }).isDisabled(), true);
-  assert.equal(await chooser.locator('option', { hasText: 'Project A · Codex' }).count(), 1);
-  assert.equal(await chooser.locator('option', { hasText: 'Project B · Codex' }).count(), 1);
-  await chooser.selectOption(sonnet.id);
+  const harness = page.getByRole('button', { name: /^Harness,/ });
+  const model = page.getByRole('button', { name: /^Model,/ });
+  mkdirSync('.audit/composer', { recursive: true });
+  await model.click();
+  assert.equal(await page.getByRole('button', { name: 'Project A · Codex, current model', exact: true }).count(), 1);
+  assert.equal(await page.getByRole('button', { name: 'Start new chat with Project B · Codex', exact: true }).count(), 1);
+  await page.screenshot({ path: '.audit/composer/model-menu.png' });
+  await page.keyboard.press('Escape');
+  assert.equal(await model.evaluate(node => node === document.activeElement), true);
+  await harness.click();
+  assert.equal(await page.getByRole('button', { name: 'Pi, unavailable', exact: true }).isDisabled(), true);
+  await page.screenshot({ path: '.audit/composer/harness-menu.png' });
+  await page.getByRole('button', { name: 'Claude', exact: true }).click();
+  assert.equal(await page.getByRole('button', { name: `Start new chat with ${opus.label}`, exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).isEnabled(), true);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  assert.equal(await message.inputValue(), 'Draft for Codex');
   let loseCreate = true, dropCreate = false, droppedScope;
+  const createRequests = [], recoveryResponses = [];
   await page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON().op === 'create') createRequests.push(route.request().postDataJSON());
     if (dropCreate && route.request().postDataJSON().op === 'create') {
       dropCreate = false; droppedScope = route.request().postDataJSON().scope; await route.abort();
     } else if (loseCreate && route.request().postDataJSON().op === 'create') {
       loseCreate = false; await route.fetch(); await route.abort();
     } else await route.continue();
   });
-  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
+  assert.equal(await harness.isDisabled(), true);
+  assert.equal(await model.isDisabled(), true);
   await page.reload();
-  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(codex.id);
+  await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
+  assert.equal(await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.composer-footer')?.textContent?.includes('Sonnet'));
   await page.getByRole('heading', { name: 'Plan review', exact: true }).waitFor();
@@ -122,6 +141,9 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-chooser.png' });
   await page.setViewportSize({ width: 360, height: 480 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await harness.click();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true);
+  await page.keyboard.press('Escape');
   await page.setViewportSize({ width: 1280, height: 720 });
   await open('a');
   assert.equal(await message.inputValue(), 'Draft for Codex');
@@ -150,7 +172,6 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.waitForFunction(() => document.querySelector('.scope-label')?.textContent === 'legacy-absent');
   assert.deepEqual(host.installation({ ...scopeA, conversationId: 'legacy-absent' }), b);
   await open('a');
-  await chooser.selectOption(codex.id);
   dropCreate = true;
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
@@ -166,13 +187,28 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const replay = await call({ op: 'submit', command: { version: 1, scope: scopeA, clientCommandId: 'same-id', body: { kind: 'send', text: 'hello' } } });
   assert.equal(replay.receipt.state.kind, 'completed');
   assert.deepEqual(calls, ['codex', 'sonnet', 'sonnet', 'codex']);
+  page.on('response', response => {
+    if (response.request().postDataJSON()?.op === 'create') recoveryResponses.push(response);
+  });
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
-  await page.getByRole('alert').filter({ hasText: 'Choose a configured agent.' }).waitFor();
+  await page.getByRole('alert').filter({ hasText: 'This conversation was not created. Choose an available agent for a new conversation.' }).waitFor();
+  assert.equal(createRequests.at(-1).agentId, codex.id);
+  assert.deepEqual(createRequests.at(-1).scope, droppedScope);
+  assert.equal(recoveryResponses.at(-1).status(), 409);
+  assert.equal((await recoveryResponses.at(-1).json()).error.kind, 'create-rejected');
   assert.equal(host.installation(droppedScope), null);
-  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(sonnet.id);
-  await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
-  await page.waitForFunction(id => document.querySelector('.scope-label')?.textContent === id, droppedScope.conversationId);
-  assert.deepEqual(host.installation(droppedScope), b);
+  assert.equal(await page.locator('.creation-recovery').count(), 0);
+  await page.reload();
+  await harness.click();
+  await page.getByRole('button', { name: 'Claude', exact: true }).click();
+  await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('.creation-recovery') === null && document.querySelector('.composer-footer')?.textContent?.includes('Sonnet'));
+  const newScope = createRequests.at(-1).scope;
+  assert.notDeepEqual(newScope, droppedScope);
+  assert.equal(createRequests.at(-1).agentId, sonnet.id);
+  assert.deepEqual(host.installation(newScope), b);
+  assert.equal(host.installation(droppedScope), null);
+  assert.deepEqual(calls, ['codex', 'sonnet', 'sonnet', 'codex']);
   await page.reload();
   await open('a');
   await page.getByText(/no longer configured.*Saved history/).waitFor();
@@ -180,5 +216,8 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await page.getByRole('button', { name: 'Review the plan', exact: true }).isDisabled(), true);
   assert.equal(await page.getByText('Draft for Codex', { exact: true }).count(), 1);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
+  await model.click();
+  assert.equal(await page.getByRole('button', { name: 'Codex, current model', exact: true }).isDisabled(), true);
+  await page.keyboard.press('Escape');
   await page.screenshot({ path: '.audit/mvp/native-agent-routing-unavailable.png' });
 });

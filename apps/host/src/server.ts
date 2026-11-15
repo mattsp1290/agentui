@@ -110,6 +110,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
     access = new Access(accessDatabase);
+    providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
+      manifest: extension.manifest, entry: extension.entry,
+      authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
+    })));
+    await providers.activate();
+    const providerCatalog = await providers.discover();
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
@@ -164,23 +170,18 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
-        driver: drivers, authorize: scope => scope.hostId === hostId });
+        driver: drivers, providers, authorize: scope => scope.hostId === hostId });
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
-        hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
+        hostId: access.hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
-    providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
-      manifest: extension.manifest, entry: extension.entry,
-      authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
-    })));
-    await providers.activate();
-    await providers.discover();
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
       const page = host.listConversations(access.hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
+        if ('kind' in installation) { after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
           recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
@@ -194,7 +195,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, installation: defaultInstallation, ...(configured ? { agents } : {}),
+      access, host, compatibility, feeds: registry, providers, providerCatalog, installation: defaultInstallation, ...(configured ? { agents } : {}),
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });

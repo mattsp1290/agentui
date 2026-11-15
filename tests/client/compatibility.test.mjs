@@ -36,7 +36,7 @@ test('deployment and applied artifact mismatches remain distinct findings', () =
 });
 
 test('solo clients accept the exact Pi SDK chat runtime and reject other versions or formats', () => {
-  const piHost = { ...host, wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION,
+  const piHost = { ...host, wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION,
     nativeRuntime: { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' } };
   assert.deepEqual(PI_RUNTIME, piHost.nativeRuntime);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, piHost), { kind: 'compatible' });
@@ -49,7 +49,7 @@ test('solo clients accept the exact Pi SDK chat runtime and reject other version
 });
 
 test('solo clients accept the exact Codex SDK subscription runtime and reject changed native identity', () => {
-  const sdkHost = { ...host, wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: {
+  const sdkHost = { ...host, wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: {
     engine: 'codex-sdk', version: '0.169.0', format: 'codex-sdk-chat-chatgpt-gpt-6.1-sol-v1',
   } };
   assert.deepEqual(CODEX_SDK_RUNTIME, sdkHost.nativeRuntime);
@@ -62,7 +62,7 @@ test('solo clients accept the exact Codex SDK subscription runtime and reject ch
 
 for (const model of ['opus', 'sonnet']) {
   test(`solo clients accept the exact Claude ${model} runtime and reject changed identities`, () => {
-    const claudeHost = { ...host, wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CLAUDE_SDK_RUNTIMES[model] };
+    const claudeHost = { ...host, wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CLAUDE_SDK_RUNTIMES[model] };
     assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, claudeHost), { kind: 'compatible' });
     for (const change of [{ version: '0.3.324' }, { format: 'claude-sdk-v2' }, { engine: 'other' }]) {
       const result = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...claudeHost,
@@ -74,7 +74,7 @@ for (const model of ['opus', 'sonnet']) {
 }
 
 test('current clients refuse pre-presentation SDK artifacts without changing the wire version', () => {
-  const current = { ...host, wireVersion: 2, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
+  const current = { ...host, wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, current), { kind: 'compatible' });
   const old = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...current, extensionSdkVersion: '0.0.0' });
   assert.equal(old.kind, 'incompatible');

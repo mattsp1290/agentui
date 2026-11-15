@@ -2,7 +2,7 @@ import { canonicalJson, parseDecision, parseRunIdentity, sameScope } from '@agen
 import type { ConversationScope, Json, Projection } from '@agentui/contracts';
 import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
 import type { DispatchEvidence, DispatchIdentity } from '@mattsp1290/switchboard';
-import type { CapturedTarget, HostOutput, Installation, NativeRun, NotDispatched, ObservedResult, ProviderDispatchObservation, ProviderDriver, StoredCommand } from './durable-model.js';
+import type { CapturedTarget, HostOutput, Installation, NativeRun, NotDispatched, ObservedResult, ProviderDispatchObservation, ProviderDriver, NativeStoredCommand } from './durable-model.js';
 import { array, cloneJson, nonempty, object, positiveInteger } from './codec.js';
 import type { SettlementObservation } from './settlement.js';
 
@@ -99,7 +99,7 @@ export function captureTarget(input: Omit<CapturedTarget, 'identity'>, hostOpera
   return target;
 }
 
-export async function dispatchNative<E>(stored: StoredCommand, driverFor: (target: Installation) => ProviderDriver<E> | undefined,
+export async function dispatchNative<E>(stored: NativeStoredCommand, driverFor: (target: Installation) => ProviderDriver<E> | undefined,
   verifyIntent: () => void): Promise<ProviderDispatchObservation<ObservedResult>> {
   let localRefusal: NotDispatched | undefined;
   const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
@@ -121,7 +121,7 @@ export async function dispatchNative<E>(stored: StoredCommand, driverFor: (targe
   return localRefusal ?? observed;
 }
 
-export async function reconcileNative<E>(stored: StoredCommand, driver: ProviderDriver<E> | undefined): Promise<ProviderDispatchObservation<ObservedResult>> {
+export async function reconcileNative<E>(stored: NativeStoredCommand, driver: ProviderDriver<E> | undefined): Promise<ProviderDispatchObservation<ObservedResult>> {
   const lookup = driver?.lookup;
   const previous = stored.observation === null || stored.observation.kind === 'not-dispatched'
     ? { kind: 'outcome-unknown' } as const : stored.observation;
@@ -139,6 +139,11 @@ export function settlementObservation(value: ProviderDispatchObservation<Observe
 }
 
 export function nativeObservation(value: SettlementObservation<DispatchEvidence>): ProviderDispatchObservation<ObservedResult> {
+  if (value.kind === 'pending') throw new Error('Invalid native pending evidence');
+  if (value.kind === 'conclusive') {
+    if (value.result.kind === 'receipt-completed') throw new Error('Invalid native completion');
+    return { ...value, result: value.result, evidence: { ...value.evidence.source, nativeOperation: value.evidence.operation } };
+  }
   if (value.kind === 'outcome-unknown' || value.kind === 'not-dispatched') return value;
   return { ...value, evidence: { ...value.evidence.source, nativeOperation: value.evidence.operation } };
 }

@@ -1,5 +1,6 @@
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
 import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity } from '@agentui/contracts';
+import type { ProviderTarget, ProviderObservation } from './provider-commands.js';
 import type { DispatchIdentity, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
 export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
@@ -52,12 +53,19 @@ export interface ProviderDriver<E> {
 export type ObservedResult =
   | { readonly kind: 'completed'; readonly output: unknown }
   | { readonly kind: 'rejected'; readonly reason: string };
-export interface StoredCommand {
+export interface NativeStoredCommand {
   readonly command: ClientCommand;
   readonly target: CapturedTarget;
   readonly receipt: Receipt;
   readonly observation: ProviderDispatchObservation<ObservedResult> | null;
 }
+export type StoredCommand = NativeStoredCommand | {
+  readonly kind: 'provider';
+  readonly command: ClientCommand;
+  readonly target: ProviderTarget;
+  readonly receipt: Receipt;
+  readonly observation: ProviderObservation | null;
+};
 export interface HostBudgets {
   readonly maxCommandBytes: number;
   readonly maxEventBytes: number;

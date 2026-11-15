@@ -44,8 +44,8 @@ A confirmed command effect records acceptance for execution or completion. Accep
 
 `ProviderPresentation<M,I>` supplies the typed instance, four decoders (`decodeRequest`, `decodeCursor`, `decodeState`, `decodeEvent`), request conversion, transcript snapshots, and `apply(previous, event, refs)` returning the next state and transcript events.
 `PresentationRefs<I>.run` translates a conversation-bound provider run to a public `RunIdentity`.
-Presentation callbacks are public contracts for subsequent durable integration; this connection slice validates their presence but does not render provider conversations.
-The generic binding retains each concrete model and installation inside a closure; the heterogeneous registry stores only normalized discovery and close operations.
+Presentation callbacks are public contracts for subsequent messaging and observation integration. Creation validates their presence and opens an empty saved conversation.
+The generic binding retains each concrete model and installation inside a closure; the heterogeneous registry stores normalized discovery, captured creation, reconciliation and close operations.
 
 ```ts
 activate(context: ServerExtensionContext) {
@@ -56,14 +56,15 @@ const running = await startBrowserHost({
   directory, assetsDirectory,
   providerExtensions: [{ manifest, entry, installations: [{
     id: 'service', instance: presentation.instance, service: 'https://service.example',
+    expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: 'operator-revision-1', resolve: readOperatorSecret },
   }] }],
 });
-const catalog = await running.discoverProviders(); // Server-only; no client chooser yet.
+const catalog = await running.discoverProviders(); // Private server catalog; metadata exposes safe agent descriptors.
 await running.close();
 ```
 
-Startup configuration explicitly supplies each contribution's full instance, canonical HTTP(S) service origin and secret revision/resolver, or `authentication: { kind: 'unauthenticated' }`.
+Startup configuration explicitly supplies each contribution's full instance, expected authority kind (`remote-provider` or `agentui-host`), canonical HTTP(S) service origin and secret revision/resolver, or `authentication: { kind: 'unauthenticated' }`.
 Origins contain no path, query, fragment, username or password; adapters own routes within that origin.
 `service_provider_credentials` stores only opaque grant metadata in the existing access database: host, namespace, contribution, installation, generation, protocol, service, revision and revocation.
 The authority borrows that connection and never closes it. Device pairing and native credentials remain independent.
@@ -77,14 +78,51 @@ Discovery validates full instance and reference identity, capabilities, bounded 
 IDs may collide across installations; catalog identity includes the full instance and contribution.
 Repeated discovery reuses one connection; overlapping discovery shares its pending call.
 Configured extensions are required in this slice: any activation, connection or discovery failure retires the entire collection. Startup then fails; a later failure makes subsequent provider discovery unavailable.
-Unsupported, offline, authentication and version failures all become the same sanitized discovery failure here. Per-provider availability/status and chooser behavior remain downstream work.
+Unsupported, offline, authentication and version failures all become the same sanitized discovery failure here. Per-provider operational status remains downstream work. Discovered agents appear in the existing chooser. Send is advertised only when the provider supports both send and reconciliation. Cancel and approval remain unavailable.
 
 Closing or failure freezes admission and credential use, drains admitted calls, closes acquired or late-arriving connections once, then disposes extension lifetimes before access storage closes.
 There is no hard timeout guarantee for uncooperative full-trust code. Full-trust extensions can leak secrets or perform their own effects; this capability is an authorization boundary for cooperating adapters, not a secret sandbox.
 
-## Remaining durable integration obligations
+## Durable creation
 
-These are requirements for future creation, command and observation integration. SDK declarations do not enforce them.
+Service wire version 3 adds a tagged provider agent descriptor and the `create-rejected` failure.
+Native descriptor bytes and identity hashes remain unchanged; SDK compatibility stays 0.1, package versions stay 0.0 and transcript projection stays 2.
+Matching host and client artifacts are required. This change does not deploy or upgrade an existing Mac installation.
+
+The authenticated `create(scope, agentId)` route checks saved creation provenance before local rows or the current catalog.
+`LocalHost.createProviderConversation` reserves the immutable selected installation, UUID intent, original credential handle and expected authority in `SqliteStore` before an effect.
+It commits attempted status and verifies the original intent before entering `BackendProvider.create`.
+Concurrent callers share a local lease; existing intents, including reserved intents after restart, use only `reconcileCreation`.
+The registry reconstructs concrete generic references from the validated presentation instance and checks authorization before and after awaited calls.
+Confirmation validates the complete original operation, instance, scope and operator-selected authority; host authority additionally requires the local host ID.
+The confirmed binding and public conversation commit atomically in the same database.
+A failed confirmation commit leaves the original intent recoverable through lookup.
+
+Pending and uncertain creation returns a safe unavailable response and retains the client's saved scope and draft.
+Authoritative rejection or fresh known nonacceptance returns `create-rejected` with HTTP 409.
+Only the matching create response and current view may release that pending client record; the host retains the original terminal record.
+Lookup refusal or failure never establishes nonacceptance of the original creation and never erases admitted processing evidence.
+`conversation-agent` resolves the original selected agent even before a public conversation exists.
+Confirmed history and existing receipts remain readable when their provider is unconfigured.
+
+## Durable send
+
+The authenticated submit route captures provider sends in the existing command ledger after exact-ID retry detection.
+The stored target contains the original installation, configured authority, credential handle, confirmed binding and translated request.
+Translation runs once for a new admitted command. Admission bounds the translated target and commits it with the pending receipt before submission.
+Retries return the saved receipt. Explicit reconciliation decodes the original request without translation and calls only `reconcileCommand`.
+A changed decoder, credential or generation cannot replace the original operation.
+
+Pending and accepted evidence survives weaker lookup outcomes. A changed run reference conflicts with the original acceptance.
+Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
+These effects contain no transcript output and do not establish a terminal run outcome.
+Provider observation and streaming remain unimplemented. Cancel needs the accepted scoped run mapping, while approval also needs observation-owned decision and choice mappings.
+The send integration keeps wire version 3, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+It does not qualify a complete provider conversation or upgrade an existing Mac installation.
+
+## Command and observation obligations
+
+Creation and send follow the rules below. Cancel, approval and observation integration remain future work; SDK declarations alone do not enforce these rules.
 
 The host authorizes the scope and persists creation intent before creation.
 It persists the confirmed binding and the exact command before dispatch.
