@@ -1,0 +1,11 @@
+{
+  "iteration": 1,
+  "branch": "bead-swarm/iteration-1-server-artifact-contract-cleanup",
+  "slug": "server-artifact-contract-cleanup",
+  "main_branch": "main",
+  "main_branch_source": "default",
+  "selected_beans": ["agentui-xenp"],
+  "beans_done_pending_close": [],
+  "beans_blocked": [],
+  "beans_partial": []
+}
