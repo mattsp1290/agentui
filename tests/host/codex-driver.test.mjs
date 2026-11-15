@@ -220,6 +220,71 @@ test('run is authoritative before response text and persists in a fresh snapshot
   assert.deepEqual((await snapshot(session.host.conversation(scope))).document.domain, beforeText.domain);
 });
 
+test('Stop admitted before turn completion refuses without native or output effects after completion', { timeout: 5000 }, async t => {
+  const f = fixture(t), session = f.open();
+  session.host.createConversation(scope, session.driver.installation);
+  await session.port.submit(command('send'));
+  const running = await observe(session.port, document => assistant(document).some(message => message.text === 'Hello'));
+  const runId = running.domain.currentRun.runId;
+  const cancel = command('late-stop', { kind: 'cancel', runId });
+  const dispatch = session.driver.dispatch;
+  let dispatches = 0, lookups = 0;
+  session.driver.lookup = async () => { lookups++; throw new Error('Terminal refusal must not be looked up'); };
+  session.driver.dispatch = async (cmd, target) => {
+    dispatches++;
+    f.finish(runId);
+    await observe(session.port, document => document.domain.currentRun.kind === 'ended');
+    const events = f.records().events;
+    const requests = f.log();
+    const result = await dispatch(cmd, target);
+    assert.deepEqual(f.records().events, events);
+    assert.deepEqual(f.log(), requests);
+    return result;
+  };
+  const refused = await session.port.submit(cancel);
+  assert.equal(refused.kind, 'receipt');
+  assert.deepEqual(refused.receipt.state, { kind: 'not-dispatched', reason: 'Codex turn is no longer active' });
+  assert.deepEqual(f.records().observations['late-stop'], refused.receipt.state);
+  assert.deepEqual(await session.port.submit(cancel), refused);
+  assert.deepEqual(await session.host.reconcile(scope, cancel.clientCommandId), refused.receipt);
+  assert.equal(dispatches, 1);
+  assert.equal(lookups, 0);
+  assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
+  assert.equal(f.records().events.some(event => event.kind === 'domain' && event.event.kind === 'run-stop-requested'), false);
+});
+
+test('approval admitted before connection closure refuses without native or output effects after expiry', { timeout: 5000 }, async t => {
+  const f = fixture(t, 'command-approval'), session = f.open();
+  session.host.createConversation(scope, session.driver.installation);
+  await session.port.submit(command('send'));
+  const waiting = await observe(session.port, document => Object.keys(document.decisions).length === 1);
+  const decision = Object.values(waiting.decisions)[0];
+  const approval = command('expired-approval', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' });
+  const dispatch = session.driver.dispatch;
+  let dispatches = 0, lookups = 0;
+  session.driver.lookup = async () => { lookups++; throw new Error('Terminal refusal must not be looked up'); };
+  session.driver.dispatch = async (cmd, target) => {
+    dispatches++;
+    session.driver.close();
+    const events = f.records().events;
+    const requests = f.log();
+    const result = await dispatch(cmd, target);
+    assert.deepEqual(f.records().events, events);
+    assert.deepEqual(f.log(), requests);
+    return result;
+  };
+  const refused = await session.port.submit(approval);
+  assert.equal(refused.kind, 'receipt');
+  assert.deepEqual(refused.receipt.state, { kind: 'not-dispatched', reason: 'Codex approval expired with its connection' });
+  assert.deepEqual(f.records().observations['expired-approval'], refused.receipt.state);
+  assert.deepEqual(await session.port.submit(approval), refused);
+  assert.deepEqual(await session.host.reconcile(scope, approval.clientCommandId), refused.receipt);
+  assert.equal(dispatches, 1);
+  assert.equal(lookups, 0);
+  assert.equal(f.log().filter(message => !('method' in message)).length, 0);
+  assert.deepEqual((await snapshot(session.port)).document.decisions, {});
+});
+
 test('a definite interrupt rejection restores running and allows another Stop', { timeout: 5000 }, async t => {
   const f = fixture(t, 'reject-stop'), session = f.open();
   session.host.createConversation(scope, session.driver.installation);

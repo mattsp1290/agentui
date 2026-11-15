@@ -361,7 +361,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
           const approval = approvals.get(canonicalJson(continuation.requestId));
           if (continuation.processId !== rpc.processId || !approval || approval.pendingId !== target.decision.visible.pendingId ||
             approval.run.identity.runId !== target.run.identity.runId || scopeKey(approval.turn.scope) !== scopeKey(command.scope)) {
-            throw new Error('Codex approval expired with its connection');
+            return { kind: 'not-dispatched', reason: 'Codex approval expired with its connection' };
           }
           let timeout: ReturnType<typeof setTimeout> | undefined;
           const resolved = new Promise<void>((resolve, reject) => {
@@ -380,7 +380,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
           const turn = active.get(threadId);
           if (!turn || turn.complete || turn.run?.identity.runId !== command.body.runId ||
             target.run.identity.runId !== command.body.runId || scopeKey(turn.scope) !== scopeKey(command.scope)) {
-            throw new Error('Codex turn is no longer active');
+            return { kind: 'not-dispatched', reason: 'Codex turn is no longer active' };
           }
           if (turn.stopCommandId) return { kind: 'not-dispatched', reason: 'Codex is already stopping this response.' };
           turn.stopCommandId = command.clientCommandId;

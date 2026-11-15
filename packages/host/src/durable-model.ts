@@ -43,6 +43,9 @@ export interface ProviderDriver<E> {
   readonly source: 'recorded' | 'codex' | 'codex-sdk' | 'claude-sdk' | 'pi';
   readonly installation: Installation;
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
+  /** Return not-dispatched only before issuing any native request or response, publishing an event,
+   * or producing output for this command. It is permanently terminal and is never looked up.
+   * After any such effect, return native evidence or outcome-unknown, or throw if the outcome is unknown. */
   dispatch(command: ClientCommand, target: CapturedTarget): Promise<ProviderDispatchObservation<CommandResult<E>>>;
   lookup?(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
 }
