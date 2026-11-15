@@ -76,7 +76,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let closing = false;
   const http = createServer();
   function close(): Promise<void> {
-    closePromise ??= (async () => {
+    if (closePromise) return closePromise;
+    closePromise = Promise.resolve().then(() => shutdown);
+    const shutdown = (async () => {
       closing = true;
       feeds?.dispose();
       const driverResults = await Promise.allSettled([

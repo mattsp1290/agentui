@@ -131,8 +131,6 @@ export function createServerExtensions() {
     if (closing) return closing;
     const previous = state;
     state = { kind: 'closing' };
-    const retirement = Promise.allSettled(previous.kind === 'active' || previous.kind === 'changing'
-      ? [previous.generation?.registry.close()] : []);
     closing = Promise.resolve().then(async () => {
       if (previous.kind === 'changing') {
         const result = await previous.settled;
@@ -145,6 +143,8 @@ export function createServerExtensions() {
       state = cleanupFailure;
       throw new Error('Provider cleanup failed');
     });
+    const retirement = Promise.allSettled(previous.kind === 'active' || previous.kind === 'changing'
+      ? [previous.generation?.registry.close()] : []);
     return closing;
   }
   function status(): ServerExtensionStatus {

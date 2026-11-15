@@ -1,5 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { join } from 'node:path';
+import { realpathSync } from 'node:fs';
+import { ownDirectory } from '../../apps/host/build/tsc/ownership.js';
 import { providerService, fixture, saved, send } from './provider-stream-fixture.mjs';
 import { until } from '../host/fixture.mjs';
 
@@ -252,3 +256,57 @@ test('a newer replacement takes over recovery without opening later conversation
   assert.equal(remote.requests.filter(value => value.path === '/create').length, 2);
   assert.equal(remote.requests.filter(value => value.path === '/snapshot').length, 2);
 });
+
+for (const cleanupFails of [false, true]) {
+  test(`host shutdown shares synchronous HTTP feed reentry through ${cleanupFails ? 'failed' : 'successful'} drain`, { timeout: 5000 }, async t => {
+    const remote = await providerService(t), a = remote.extension(), observe = a.backend.observe, gate = Promise.withResolvers();
+    let f, nested, credentialAttempt, settled = false;
+    a.backend.observe = (input, receive) => {
+      const feed = observe(input, receive);
+      return { close() {
+        nested ??= f.running.close();
+        credentialAttempt ??= a.context.credentials.use({ credential: a.credential, service: remote.service }, async () => assert.fail('retired credential effect'))
+          .then(() => 'authorized', () => 'refused');
+        feed.close();
+      }, ended: feed.ended.then(() => gate.promise).then(() => { if (cleanupFails) throw new Error('feed drain failed'); }) };
+    };
+    f = await fixture(t, [a], { shutdownFailure: cleanupFails }); await f.create(); await until(() => a.calls.ready === 1);
+    const binding = remote.conversations.get('chat').snapshot.binding;
+    const accepted = a.calls.receive(remote.makeEvent(binding, 'Admitted before reentrant shutdown', 1));
+    const closedDatabases = [], closeDatabase = DatabaseSync.prototype.close;
+    const storageClose = t.mock.method(DatabaseSync.prototype, 'close', function () {
+      if (this.prepare('PRAGMA database_list').all().some(row => row.file === join(realpathSync(f.directory), 'host.sqlite'))) closedDatabases.push(this);
+      return closeDatabase.call(this);
+    });
+    const outer = f.running.close(), result = outer.then(() => { settled = true; return null; }, error => { settled = true; return error; });
+    try {
+      assert.equal(nested, outer); assert.equal(f.running.close(), outer);
+      await accepted;
+      assert.equal(await credentialAttempt, 'refused');
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(settled, false); assert.deepEqual(f.running.extensionStatus(), { kind: 'closing' });
+      assert.equal(a.calls.feedClosed, 1); assert.equal(a.calls.closed, 0); assert.equal(a.calls.disposed, 0);
+      assert.equal(closedDatabases.length, 0);
+      assert.throws(() => ownDirectory(f.directory), /Another host owns/);
+      await assert.rejects(a.calls.receive(remote.makeEvent(binding, 'Late callback', 2)), /stream closed/);
+    } finally { gate.resolve(); await Promise.allSettled([outer, nested]); storageClose.mock.restore(); }
+    const error = await result;
+    assert.equal(a.calls.feedClosed, 1); assert.equal(a.calls.closed, 1); assert.equal(a.calls.disposed, 1);
+    assert.equal(f.running.close(), outer);
+    assert.equal(JSON.parse(saved(f).conversation.document).domain.messages.at(-1).text, 'Admitted before reentrant shutdown');
+    if (cleanupFails) {
+      assert.equal(error.message, 'Host shutdown failed'); assert.equal(error.cause.message, 'Provider cleanup failed');
+      assert.deepEqual(f.running.extensionStatus(), { kind: 'failed', failure: 'cleanup', recovery: 'restart' });
+      assert.deepEqual(await replace(f, []), f.running.extensionStatus());
+      await assert.rejects(f.running.close(), value => value === error);
+      assert.equal(closedDatabases.length, 0);
+      assert.throws(() => ownDirectory(f.directory), /Another host owns/);
+    } else {
+      assert.equal(error, null); assert.deepEqual(f.running.extensionStatus(), { kind: 'closed' });
+      await f.running.close();
+      assert.equal(closedDatabases.length, 2); assert.equal(new Set(closedDatabases).size, 2);
+      ownDirectory(f.directory).close();
+    }
+    assert.equal(a.calls.feedClosed, 1); assert.equal(a.calls.closed, 1); assert.equal(a.calls.disposed, 1);
+  });
+}
