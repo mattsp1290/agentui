@@ -69,6 +69,12 @@ enum Body {
     },
 }
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ObservationAction {
+    Read,
+    Retry,
+}
+#[derive(Deserialize, Serialize)]
 #[serde(
     tag = "op",
     rename_all = "kebab-case",
@@ -90,6 +96,10 @@ enum Request {
     Create {
         scope: Scope,
         agent_id: Id,
+    },
+    ProviderObservation {
+        scope: Scope,
+        action: ObservationAction,
     },
     ConversationAgent {
         scope: Scope,
@@ -137,6 +147,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
     let scope = match &mut request {
         Request::Create { scope, .. }
         | Request::ConversationAgent { scope }
+        | Request::ProviderObservation { scope, .. }
         | Request::Receipt { scope, .. }
         | Request::Reconcile { scope, .. } => Some(scope),
         Request::Watch {
@@ -246,6 +257,8 @@ mod tests {
             json!({"op":"search", "query":"find text", "after":"cursor"}),
             json!({"op":"create", "scope":scope(), "agentId":"agent"}),
             json!({"op":"conversation-agent", "scope":scope()}),
+            json!({"op":"provider-observation", "scope":scope(), "action":"read"}),
+            json!({"op":"provider-observation", "scope":scope(), "action":"retry"}),
             command(json!({"kind":"send", "text":"Hello"})),
             command(json!({"kind":"approve", "pendingId":"pending", "choiceId":"yes"})),
             command(json!({"kind":"cancel", "runId":"run"})),
@@ -454,6 +467,16 @@ mod tests {
         ] {
             invalid(command(body));
         }
+    }
+
+    #[test]
+    fn observation_is_scoped_and_accepts_only_read_or_retry() {
+        for action in [json!("restart"), json!(null), json!(1)] {
+            invalid(json!({"op":"provider-observation", "scope":scope(), "action":action}));
+        }
+        invalid(json!({"op":"provider-observation", "scope":scope()}));
+        invalid(json!({"op":"provider-observation", "scope":scope(), "action":"retry", "binding":{}}));
+        assert!(request(json!({"op":"provider-observation", "scope":scope(), "action":"read"}), "foreign").is_err());
     }
 
     #[test]

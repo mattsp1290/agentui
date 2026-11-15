@@ -116,6 +116,11 @@ if (args.length === 1 && args[0] === '--version') {
     const metadata = await call(client.path, { op: 'metadata' }, client.headers);
     assert.equal(metadata.status, 200);
     assert.deepEqual(metadata.body.value.compatibility.nativeRuntime, CODEX_RUNTIME, client.conversationId);
+    assert.equal(metadata.body.value.agents.every(agent => agent.model), true);
+    assert.equal(metadata.body.value.agents.find(agent => agent.id === metadata.body.value.defaultAgentId).model.id, 'gpt-9.1-astra');
+    assert.deepEqual(metadata.body.value.agents.filter(agent => agent.model).map(agent => agent.model), [
+      { id: 'gpt-9.2-sol', label: 'GPT-9.2 Sol' }, { id: 'gpt-9.1-astra', label: 'GPT-9.1 Astra' },
+    ]);
     const scope = { hostId: ready.hostId, conversationId: client.conversationId };
     const created = await call(client.path, { op: 'create', scope, agentId: metadata.body.value.defaultAgentId }, client.headers);
     assert.equal(created.status, 200);
@@ -126,12 +131,23 @@ if (args.length === 1 && args[0] === '--version') {
     const rows = db.prepare('SELECT conversation, installation FROM conversations ORDER BY conversation').all();
     assert.deepEqual(rows.map(row => row.conversation), clients.map(client => client.conversationId));
     for (const row of rows) assert.deepEqual(JSON.parse(row.installation), {
-      installationId: 'codex-local-v1', binding: {
+      installationId: 'codex-local-model-v1:gpt-9.1-astra', binding: {
         engine: 'codex', nativeVersion: CODEX_RUNTIME.version, account: 'local', authorizedScope: workspace,
         nativeFormat: CODEX_RUNTIME.format,
       },
     }, row.conversation);
   } finally { db.close(); }
+  const metadata = await call(clients[0].path, { op: 'metadata' }, clients[0].headers);
+  const selected = metadata.body.value.agents.find(agent => agent.model?.id === 'gpt-9.1-astra');
+  const selectedScope = { hostId: ready.hostId, conversationId: 'selected-model' };
+  assert.equal((await call(clients[0].path, { op: 'create', scope: selectedScope, agentId: selected.id }, clients[0].headers)).status, 200);
+  const descriptor = await call(clients[0].path, { op: 'conversation-agent', scope: selectedScope }, clients[0].headers);
+  assert.deepEqual(descriptor.body.value.model, { id: 'gpt-9.1-astra', label: 'GPT-9.1 Astra' });
+  const modelDb = new DatabaseSync(join(directory, 'data', 'host.sqlite'), { readOnly: true });
+  try {
+    assert.equal(JSON.parse(modelDb.prepare('SELECT installation FROM conversations WHERE conversation=?').get(selectedScope.conversationId).installation).installationId,
+      'codex-local-model-v1:gpt-9.1-astra');
+  } finally { modelDb.close(); }
   await until(() => records(pidPath).some(({ args }) => args[0] === 'app-server'));
   assert.deepEqual(records(pidPath).map(({ args }) => args), [['--version'], ['app-server', '--stdio']]);
   await stop(host);

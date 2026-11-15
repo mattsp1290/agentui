@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { requestReceiptResponseSchema } from '@birbcrew/client/contract';
 import type { ProviderConversation, ProviderInstance, ProviderModel, ProviderPresentation, ConversationRef } from '@agentui/sdk';
 
 const id = z.string().min(1).max(512);
@@ -12,7 +13,8 @@ export const remoteSchema = z.object({ conversationId: z.uuid(), memberId: z.uui
 export const messageSchema = z.strictObject({ messageId: id, role: z.enum(['user', 'assistant']),
   text: z.string().max(262144), revision: z.int().positive(), complete: z.boolean() });
 export const runSchema = z.strictObject({ requestId: z.uuid(), status: z.enum([
-  'accepted', 'waiting', 'running', 'cancellation_requested', 'completed', 'cancelled', 'failed', 'uncertain']) });
+  'accepted', 'waiting', 'running', 'cancellation_requested', 'completed', 'cancelled', 'failed', 'uncertain']),
+  cancellation: requestReceiptResponseSchema.options[0].shape.cancellation.unwrap().nullable().exactOptional() });
 const instanceSchema = z.strictObject({ namespace: id, installationId: id, generation: id, protocolVersion: id });
 export const bindingSchema = z.strictObject({ kind: z.literal('agentui-created'),
   creation: z.strictObject({ kind: z.literal('create'), operationId: z.uuid(),
@@ -44,6 +46,10 @@ export const choiceLabels: Record<z.infer<typeof choiceSchema>, string> = {
   approve: 'Approve once', deny: 'Deny', inspect: 'Inspect', test: 'Test',
   allow_conversation: 'Allow for this conversation', allow_always: 'Always allow for this member',
 };
+export function runOutcome(run: z.input<typeof runSchema> | z.infer<typeof requestReceiptResponseSchema>) {
+  return run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed'
+    : run.status === 'cancelled' || run.cancellation?.nativeTermination === 'confirmed' ? 'interrupted' : null;
+}
 export function presentation(instance: ProviderInstance<string>): ProviderPresentation<CrewModel, string> {
   return { instance, decodeRequest: value => requestSchema.parse(value), decodeCursor: value => cursorSchema.parse(value),
     decodeState: value => stateSchema.parse(value), decodeEvent: value => stateSchema.parse(value),
@@ -52,8 +58,7 @@ export function presentation(instance: ProviderInstance<string>): ProviderPresen
       const run = state.run;
       if (!run) return { messages: state.messages, currentRun: null };
       const runId = refs.run(reference(state.binding, 'run', run.requestId)).runId;
-      const outcome = run.status === 'completed' ? 'completed' : run.status === 'cancelled' ? 'interrupted'
-        : run.status === 'failed' ? 'failed' : null;
+      const outcome = runOutcome(run);
       return { messages: state.messages, currentRun: outcome ? { kind: 'ended', runId, outcome } : { kind: 'running', runId } };
     },
     apply() { throw new Error('Crew observation supplies authoritative snapshots'); },

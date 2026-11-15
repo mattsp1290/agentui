@@ -29,11 +29,12 @@ export type CompatibilityResult =
   | { readonly kind: 'compatible' }
   | { readonly kind: 'incompatible'; readonly issues: readonly CompatibilityIssue[] };
 
-export const SERVICE_WIRE_VERSION = 4;
+export const SERVICE_WIRE_VERSION = 5;
 export const EXTENSION_SDK_VERSION = '0.1.0';
 export const RECORDED_RUNTIME = Object.freeze({ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
 export const CODEX_RUNTIME = Object.freeze({ engine: 'codex', version: '0.167.2', format: 'codex-app-server-v2' });
-export const CODEX_SDK_CHAT_LABEL = 'Codex · GPT-6.1 Sol · ChatGPT subscription';
+export const CODEX_SDK_MODEL = Object.freeze({ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' });
+export const CODEX_SDK_CHAT_LABEL = `Codex · ${CODEX_SDK_MODEL.label} · ChatGPT subscription`;
 export const CODEX_SDK_RUNTIME = Object.freeze({ engine: 'codex-sdk', version: '0.169.0', format: 'codex-sdk-chat-chatgpt-gpt-6.1-sol-v1' });
 export type ClaudeSdkModel = 'opus' | 'sonnet';
 export const CLAUDE_SDK_CHAT_LABELS = Object.freeze({

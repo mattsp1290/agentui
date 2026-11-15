@@ -114,7 +114,7 @@ test('authenticated send commits exact target before HTTP effect, persists accep
     return (await fetch(service, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(operation) })).json();
   }) }), b = extension({ native: true, submit: (operation, { effect }) => effect(operation, 'completed') });
   f = await fixture(t, [a, b]);
-  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, 4);
+  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, 5);
   for (const agent of metadata.agents.filter(agent => agent.kind === 'provider')) assert.deepEqual(agent.commands, agent.label === 'Local provider' ? ['send', 'cancel', 'approve'] : ['send', 'approve']);
   const scope = await create(f, 'remote'), local = await create(f, 'local', 'Local provider');
   const native = f.scope('native'); await f.client.create(native, metadata.defaultAgentId);

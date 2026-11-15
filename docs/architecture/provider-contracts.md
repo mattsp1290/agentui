@@ -118,7 +118,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 4, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+The current integration uses wire version 5, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Durable response streams
@@ -152,7 +152,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 4, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 5, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -248,3 +248,39 @@ They also consume confirmed reconciliation values, route saved operations by kin
 The Crew fixture constructs confirmed creation and reconciliation results without casts inside a generic per-installation factory.
 An isolated consumer compiles that same fixture and checks the packed SDK declarations, public runtime export, and private import restrictions.
 The connection tests additionally exercise real host startup, SQLite grants, controlled read-only HTTP discovery, revocation and drain. They do not qualify durable provider commands, a production service, or reconnect behavior.
+
+
+## Provider observation status and retry
+
+Service wire 5 adds the authenticated `provider-observation` operation. Its exact
+request contains only `op`, `scope`, and `action`, where action is `read` or
+`retry`. The host selects the saved provider binding, installation generation,
+and credential. The browser cannot supply replacements. SDK compatibility stays
+at 0.1.0, the backend provider contract stays at 1, and transcript projection and
+the database schema are unchanged. Wire 4 clients and hosts must update together
+with the native request whitelist.
+
+The local host retains ephemeral observation status alongside each scope's
+starting or live observer. A drained observer retains a typed stopped reason.
+These states are separate from the durable journal, transcript, command receipts,
+and run authority. A stopped provider observer leaves journal subscriptions open,
+so later local receipts still arrive. It neither ends a running run nor removes
+known terminal facts. Stop and Approve retain their existing admission rules.
+
+Reads never connect to a provider or replenish automatic recovery. Explicit retry
+joins a pending acquisition, leaves a live observer alone, or starts one fresh
+snapshot and observer after the old writer drains. It validates the saved
+checkpoint before requesting the fresh snapshot, uses the original binding and
+credential, and never submits or reconciles a command. The existing bounded
+resync policy still applies. A failed cleanup forbids another writer. Missing
+original configuration or credentials requires restoration through the existing
+host configuration path; retry cannot retarget a conversation.
+
+The application polls only the selected conversation, serially at two-second
+intervals after each completed read. A native conversation's first `not-applicable`
+response ends that poll. Selection, session changes and disposal suppress stale
+results. The notice and retry progress live outside the canonical document and
+`OpenConversation` identity. A transport error reports unknown observation status;
+only an authenticated stopped status produces the paused notice. Unauthorized
+responses still use the existing access-revoked path. Retry remains local so
+navigation and saved drafts stay available.

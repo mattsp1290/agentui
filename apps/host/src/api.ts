@@ -26,15 +26,16 @@ export function createApi(options: {
   const defaultInstallation = options.installation ?? recordedInstallation;
   const configured: readonly InstalledAgent[] = options.agents ?? [{ installation: defaultInstallation, availability: { kind: 'ready' } }];
   const agents = new Map(configured.map(entry => {
-    const descriptor = describeAgent(entry.installation, entry.availability);
+    const descriptor = describeAgent(entry.installation, entry.availability, entry.model);
     return [canonicalJson(entry.installation), { ...descriptor, label: entry.name ? `${entry.name} · ${descriptor.label}` : descriptor.label }];
   }));
+  const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability).id));
   const defaultAgentId = describeAgent(defaultInstallation, { kind: 'ready' }).id;
-  if (agents.size !== configured.length || ![...agents.values()].some(agent => agent.id === defaultAgentId)) throw new Error('Invalid configured agents');
+  if (agents.size !== configured.length || !selectable.has(defaultAgentId)) throw new Error('Invalid configured agents');
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -61,12 +62,13 @@ export function createApi(options: {
     switch (request.op) {
       case 'metadata': {
         const providerAgents = providerChoices();
-        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...agents.values(), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents.values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
       })) satisfies ServiceValueMap['catalog'];
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
+      case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);
       case 'conversation-agent': {
         const providerAgents = providerChoices();
         const installation = host.creation(request.scope)?.installation ?? host.installation(request.scope);
@@ -94,7 +96,7 @@ export function createApi(options: {
           if (describe(existing, providerAgents).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
           return request.scope;
         }
-        const selected = configured.find(entry => describe(entry.installation, providerAgents).id === request.agentId);
+        const selected = configured.find(entry => entry.selectable !== false && describe(entry.installation, providerAgents).id === request.agentId);
         if (!selected) throw new ServiceError('create-rejected', 'This conversation was not created. Choose an available agent for a new conversation.');
         const descriptor = describe(selected.installation, providerAgents);
         if (descriptor.availability.kind !== 'ready') throw new ServiceError('unavailable', descriptor.availability.reason);

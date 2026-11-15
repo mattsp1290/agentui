@@ -150,10 +150,10 @@ test('configured agents probe and launch their exact binaries while missing opti
   };
   await call({ op: 'pair', code: JSON.parse(invitation.stdout).value.code });
   const metadata = await call({ op: 'metadata' });
-  assert.deepEqual(metadata.agents.map(agent => agent.availability.kind), ['ready', 'ready', 'unavailable', 'unavailable', 'unavailable']);
+  assert.deepEqual(metadata.agents.map(agent => agent.availability.kind), ['ready', 'ready', 'ready', 'unavailable', 'unavailable', 'unavailable']);
   assert.equal(metadata.defaultAgentId, metadata.agents[0].id);
   assert.match(metadata.agents[0].label, /^sol · Codex/);
-  assert.match(metadata.agents[2].label, /^missing-binary · Codex/);
+  assert.match(metadata.agents[3].label, /^missing-binary · Codex/);
   assert.doesNotMatch(JSON.stringify(metadata), /not-installed|private|AGENTUI_ANTHROPIC|OPENCODE_GO|Unselected/);
   for (const [index, agent] of metadata.agents.slice(0, 2).entries()) {
     const scope = { hostId: ready.hostId, conversationId: `configured-${index}` };
@@ -177,9 +177,9 @@ test('configured agents probe and launch their exact binaries while missing opti
   nextLines.close();
   const response = await fetch(`${next.origin}/api/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: next.origin, Cookie: cookie }, body: JSON.stringify({ op: 'metadata' }) });
   const reopened = (await response.json()).value;
-  assert.equal(reopened.defaultAgentId, metadata.agents[2].id);
+  assert.equal(reopened.defaultAgentId, metadata.agents[3].id);
   assert.equal(reopened.agents[0].availability.kind, 'ready');
-  assert.equal(reopened.agents[2].availability.kind, 'unavailable');
+  assert.equal(reopened.agents[3].availability.kind, 'unavailable');
 });
 
 test('agent configuration refuses embedded credentials, unsupported models and an absent default', async t => {

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
+import { chromium } from 'playwright';
 import { crewProvider } from '../dist/provider.js';
 import { fixture, saved, send } from '../../../tests/application/provider-stream-fixture.mjs';
 import { until } from '../../../tests/host/fixture.mjs';
@@ -9,7 +10,7 @@ import { until } from '../../../tests/host/fixture.mjs';
 const memberId = randomUUID();
 async function service(t) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map();
-  let lost = false, observationMode = 'stream', conflict = false;
+  let lost = false, observationMode = 'stream', conflict = false, decisionReply = {};
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer private-crew-test');
     let text = ''; for await (const chunk of request) text += chunk;
@@ -41,7 +42,7 @@ async function service(t) {
     }
     if (parts[4] === 'human') {
       if (lost) { response.destroy(); return; }
-      return json(200, { approvalId: input.approvalId, decision: input.choice });
+      return json(200, { approvalId: input.approvalId, decision: input.choice, ...decisionReply });
     }
     if (request.method === 'GET') return receipts.has(requestId) ? json(200, receipts.get(requestId)) : json(404, { error: 'not_found' });
     if (parts[6] === 'cancel') {
@@ -71,7 +72,7 @@ async function service(t) {
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => 'private-crew-test' } }] } });
-  return { calls, streams, conversations, receipts, emit, extension, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
+  return { calls, streams, conversations, receipts, emit, extension, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
 }
 
 test('Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen', async t => {
@@ -91,7 +92,7 @@ test('Crew public entry creates, observes actual SSE text, approves, stops and r
   const decision = JSON.parse(saved(f).decisions[0].data);
   const result = await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'approve',
     body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } });
-  assert.equal(result.receipt.state.kind, 'accepted');
+  assert.equal(result.receipt.state.kind, 'completed');
   assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.requestId, requestId);
   conversation.state.pendingApprovals = []; remote.emit(conversationId);
   const runId = JSON.parse(saved(f).conversation.document).domain.currentRun.runId;
@@ -125,8 +126,8 @@ test('Crew lost submit remains original-only GET recovery and does not turn miss
 
 async function direct(remote) {
   const { value } = remote.extension(), installation = value.installations[0];
-  let provider;
-  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend) { provider = backend; } },
+  let provider, presentation;
+  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
     credentials: { use: (_request, action) => action('private-crew-test') } });
   const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
     credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
@@ -135,7 +136,7 @@ async function direct(remote) {
     agent: (await backend.discover()).agents[0].ref };
   const created = await backend.create(operation);
   assert.equal(created.kind, 'confirmed');
-  return { backend, binding: created.value };
+  return { backend, binding: created.value, presentation };
 }
 
 for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
@@ -274,9 +275,11 @@ for (const terminal of ['completed', 'failed', 'cancelled']) test(`Crew ${termin
   await f.client.conversation(scope).submit(send(scope));
   const [requestId, receipt] = [...remote.receipts][0];
   receipt.status = terminal;
+  receipt.cancellation = { receiptId: randomUUID(), delivery: 'delivered', nativeTermination: 'confirmed', effects: 'not_assessed' };
   if (terminal === 'completed') receipt.result = { text: 'Finished' };
   remote.emit(receipt.conversationId);
   await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'ended');
+  assert.equal(JSON.parse(saved(f).conversation.document).domain.currentRun.outcome, terminal === 'cancelled' ? 'interrupted' : terminal);
   const before = remote.calls.length;
   assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'completed');
   assert(remote.calls.slice(before).every(call => call.method === 'GET'));
@@ -320,7 +323,7 @@ for (const question of [false, true]) test(`Crew reopened child ${question ? 'qu
   assert(!JSON.stringify(JSON.parse(current.conversation.document).domain.messages).includes('Child transcript stays hidden'));
   assert(decision.choices.length > 0);
   assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'child-choice',
-    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'accepted');
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'completed');
   const submitted = remote.calls.find(call => call.path.endsWith('/human')).input;
   for (const field of ['requestId', 'invocationId', 'approvalId', 'version']) assert.equal(submitted[field], card[field]);
   assert.equal(submitted.choice, question ? 'inspect' : 'approve');
@@ -376,6 +379,7 @@ test('Crew lost decision remains uncertain after card omission and original-only
   assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'lost-decision',
     body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'uncertain');
   const original = saved(f).commands.find(command => command.id === 'lost-decision');
+  receipt.status = 'completed'; receipt.result = { text: 'Request ended without an exact-choice receipt' };
   conversation.state.pendingApprovals = []; remote.emit(receipt.conversationId);
   const before = remote.calls.length;
   await f.restart([remote.extension()]);
@@ -390,4 +394,172 @@ test('Crew lost decision remains uncertain after card omission and original-only
   assert.equal(after.decisions[0].status, 'reserved');
   assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
   assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.approvalId, card.approvalId);
+});
+
+
+for (const choice of ['approve', 'deny', 'inspect', 'test']) test(`Crew exact ${choice} acknowledgement closes only its command and stays settled on reopen`, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId, { question: choice === 'inspect' || choice === 'test' });
+  remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const decision = JSON.parse(saved(f).decisions[0].data);
+  const chosen = decision.choices[card.choices.indexOf(choice)];
+  const command = { version: 1, scope, clientCommandId: 'exact-choice',
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: chosen.id } };
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  const settled = saved(f), original = settled.commands.find(row => row.id === 'exact-choice');
+  assert.equal(settled.decisions[0].status, 'closed');
+  assert.equal(settled.decisions[0].operation, null);
+  assert.deepEqual(JSON.parse(original.observation).evidence.source.data, { approvalId: card.approvalId, choice });
+  assert.equal(JSON.parse(settled.conversation.document).domain.currentRun.kind, 'running');
+  assert.equal(JSON.parse(settled.commands.find(row => row.id === 'send').receipt).state.kind, 'accepted');
+  conversation.state.pendingApprovals = []; conversation.state.pendingQuestions = [];
+  remote.emit(receipt.conversationId);
+  await f.restart([remote.extension()]);
+  await until(() => remote.streams.size === 1);
+  const before = remote.calls.length;
+  assert.equal((await f.client.reconcile(scope, 'exact-choice')).state.kind, 'completed');
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  assert(remote.calls.slice(before).every(call => call.method === 'GET'));
+  assert.equal(saved(f).commands.find(row => row.id === 'exact-choice').target, original.target);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
+  assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.choice, choice);
+});
+
+for (const termination of ['absent', 'unconfirmed', 'confirmed']) test(`Crew uncertain request with ${termination} native termination preserves evidence across SQLite reopen`, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
+  const runId = JSON.parse(saved(f).conversation.document).domain.currentRun.runId;
+  assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'stop',
+    body: { kind: 'cancel', runId } })).receipt.state.kind, 'accepted');
+  const stopped = remote.receipts.get(requestId);
+  stopped.status = 'uncertain';
+  if (termination === 'absent') delete stopped.cancellation;
+  else Object.assign(stopped.cancellation, { delivery: 'delivered', nativeTermination: termination });
+  conversation.state.phase = 'idle'; conversation.state.pendingApprovals = [];
+  remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.status === 'uncertain');
+  const assertObserved = () => {
+    const state = saved(f), run = JSON.parse(state.checkpoint.data).state.run;
+    assert.deepEqual(JSON.parse(state.conversation.document).domain.currentRun, termination === 'confirmed'
+      ? { kind: 'ended', runId, outcome: 'interrupted' } : { kind: 'running', runId });
+    assert.deepEqual(run, { requestId, status: 'uncertain', cancellation: stopped.cancellation ?? null });
+    assert.deepEqual(JSON.parse(state.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
+  };
+  assertObserved();
+  const epoch = JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch;
+  await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== epoch);
+  assertObserved();
+  const recoveryStart = remote.calls.length;
+  const expected = termination === 'confirmed' ? 'completed' : 'accepted';
+  assert.equal((await f.client.reconcile(scope, 'stop')).state.kind, expected);
+  assert.equal((await f.client.reconcile(scope, 'send')).state.kind, expected);
+  assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET'));
+  assert(remote.calls.slice(recoveryStart).every(call => call.path.endsWith(requestId)));
+  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source.data;
+  assert.deepEqual(evidence, { requestId, status: 'uncertain', ...(stopped.cancellation && { cancellation: stopped.cancellation }) });
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/requests') && call.method === 'POST').length, 1);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel')).length, 1);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 0);
+  if (termination !== 'confirmed') {
+    assert.equal((await f.client.conversation(scope).submit(send(scope, 'blocked'))).kind, 'rejected');
+    return;
+  }
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A distinct next request');
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: /Harness,/ }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check pending command', exact: true }).count(), 0);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await until(() => remote.receipts.size === 2);
+  const requests = remote.calls.filter(call => call.path.endsWith('/requests') && call.method === 'POST');
+  assert.equal(requests.length, 2);
+  assert.notEqual(requests[1].input.requestId, requestId);
+  assert.equal(requests[1].input.text, 'A distinct next request');
+});
+
+
+for (const mismatch of ['approvalId', 'decision']) test(`Crew mismatched ${mismatch} acknowledgement cannot settle the original choice`, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  pendingCall(conversation, requestId); remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const decision = JSON.parse(saved(f).decisions[0].data);
+  remote.setDecisionReply(mismatch === 'approvalId' ? { approvalId: randomUUID() } : { decision: 'deny' });
+  assert.equal((await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'mismatched-choice',
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'uncertain');
+  assert.equal(saved(f).decisions[0].status, 'reserved');
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
+});
+
+
+test('Crew historical uncertain run checkpoint decodes without inventing termination evidence', async t => {
+  const remote = await service(t), { backend, binding, presentation } = await direct(remote);
+  t.after(() => backend.close());
+  const historical = { binding, messages: [], run: { requestId: randomUUID(), status: 'uncertain' } };
+  const state = presentation.decodeState(historical);
+  assert.equal(JSON.stringify(state), JSON.stringify(historical));
+  assert.equal(Object.hasOwn(state.run, 'cancellation'), false);
+  assert.deepEqual(presentation.snapshot(state, { run: () => ({ runId: 'original-run' }) }),
+    { messages: [], currentRun: { kind: 'running', runId: 'original-run' } });
+});
+
+
+test('Crew legacy checkpoint without cancellation restores before a fresh confirmed-stop snapshot and drains normally', { timeout: 15_000 }, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  receipt.status = 'uncertain'; conversation.state.phase = 'idle'; remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.status === 'uncertain');
+  const runId = JSON.parse(saved(f).conversation.document).domain.currentRun.runId;
+  await f.running.close();
+  const historical = JSON.parse(saved(f).checkpoint.data);
+  delete historical.state.run.cancellation;
+  f.inspect(db => db.prepare('UPDATE provider_checkpoints SET data=? WHERE conversation=?').run(JSON.stringify(historical), scope.conversationId));
+  assert.deepEqual(JSON.parse(saved(f).checkpoint.data).state.run, { requestId, status: 'uncertain' });
+  assert.deepEqual(JSON.parse(saved(f).conversation.document).domain.currentRun, { kind: 'running', runId });
+  const original = saved(f).commands.find(row => row.id === 'send');
+  receipt.cancellation = { receiptId: randomUUID(), delivery: 'delivered', nativeTermination: 'confirmed', effects: 'not_assessed' };
+  await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== historical.cursor.opaque.epoch);
+  const restored = saved(f), checkpoint = JSON.parse(restored.checkpoint.data);
+  assert.equal(checkpoint.projectionVersion, historical.projectionVersion);
+  assert.deepEqual(checkpoint.state.run, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
+  assert.deepEqual(JSON.parse(restored.conversation.document).domain.currentRun, { kind: 'ended', runId, outcome: 'interrupted' });
+  assert.deepEqual(JSON.parse(restored.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
+  const recoveryStart = remote.calls.length;
+  assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'completed');
+  assert.equal(saved(f).commands.find(row => row.id === 'send').target, original.target);
+  assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET' && call.path.endsWith(requestId)));
+  assert(remote.calls.slice(recoveryStart).length > 0);
+  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source.data;
+  assert.deepEqual(evidence, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('An unsent draft after legacy restore');
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: /Harness,/ }).isEnabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check pending command', exact: true }).count(), 0);
+  assert.equal(remote.receipts.size, 1);
+  await page.close(); await f.running.close();
+  await until(() => remote.streams.size === 0);
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel') || call.path.endsWith('/human')).length, 0);
 });

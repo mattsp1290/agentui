@@ -1,11 +1,26 @@
+import { canRetryObservation } from '@agentui/contracts';
+import type { ObservationStopReason } from '@agentui/contracts';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
-import type { ConversationActions, OpenConversation } from './application-controller.js';
+import type { ConversationActions, OpenConversation, ConversationObservation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
 import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
+
+const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
+  'unsupported': 'This provider does not support live updates.',
+  'snapshot-unavailable': 'The provider could not refresh this conversation.',
+  'invalid-projection': 'The provider’s saved state or updates could not be validated.',
+  'recovery-failed': 'The provider could not resume updates.',
+  'retry-exhausted': 'Updates stopped after repeated gaps without progress.',
+  'provider-disconnected': 'The provider disconnected.',
+  'original-provider-unavailable': 'Restore this conversation’s original provider configuration to resume updates.',
+  'original-credentials-unavailable': 'Restore this conversation’s original provider credentials to resume updates.',
+  'original-binding-unavailable': 'This conversation’s original provider binding is unavailable. Restore its original configuration.',
+  'cleanup-failed': 'The previous observer could not close safely. Restart the host before resuming updates.',
+};
 
 type DraftEditor =
   | { readonly kind: 'saved' | 'saving'; readonly text: string }
@@ -16,8 +31,9 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, agent = 'recorded', composerControls }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, agent = 'recorded', composerControls }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
+  readonly observation?: ConversationObservation | null;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
   const presentation = 'kind' in active.agent ? agentPresentation(active.agent).presentation : AGENT_PRESENTATION[agent];
@@ -42,6 +58,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
         message: error instanceof Error ? error.message : 'Your draft could not be saved.' });
     }
   }
+  const observationStatus = observation?.status;
+  const paused = observationStatus?.kind === 'stopped';
   const available = active.agent.availability.kind === 'ready';
   const connected = enabled && available && view.connection.kind === 'connected';
   const live = presentation.live;
@@ -79,14 +97,21 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
     {active.agent.availability.kind === 'unavailable' && <p role="status">{active.agent.availability.reason} Saved history remains available.</p>}
+    {observationStatus?.kind === 'unknown' && <p role="status">Observation status unavailable. Reconnect to check for updates.</p>}
+    {observationStatus?.kind === 'recovering' && <p role="status">Resuming provider updates…</p>}
+    {observationStatus?.kind === 'stopped' && <div role="status" className="observation-notice">
+      <p>Updates paused. {OBSERVATION_NOTICE[observationStatus.reason]} Saved messages and your draft remain available.{run && run.kind !== 'ended' ? ' The provider may still be running.' : ''}</p>
+      {canRetryObservation(observationStatus) && <button type="button" disabled={!enabled || observation?.retrying}
+        onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Retrying observation…' : 'Retry observation'}</button>}
+    </div>}
     <div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
         <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
         {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
-        {!message.complete && <span className="progress-label">{agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
+        {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
-      <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} />
+      <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
     </div>
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">

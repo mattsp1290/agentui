@@ -4,7 +4,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderCommand, ProviderCommandEffect,
   ProviderConversation, ProviderInstance, ProviderOutcome, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
-import { bindingSchema, choiceSchema, decisionKey, presentation, reference } from './provider-model.js';
+import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
 
@@ -76,7 +76,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
             const receipt = await client.decide({ conversationId, memberId, requestId, invocationId, approvalId, version, choice },
               { signal: AbortSignal.timeout(15000) });
             if (receipt.approvalId !== approvalId || receipt.decision !== choice) return uncertain();
-            return { kind: 'confirmed', value: { kind: 'decide', state: 'accepted' }, evidence: { approvalId, choice } };
+            return { kind: 'confirmed', value: { kind: 'decide', state: 'completed' }, evidence: { approvalId, choice } };
           }
           const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
           if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
@@ -90,8 +90,8 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
               evidence: { requestId, receiptId: receipt.cancellation.receiptId, nativeTermination: receipt.cancellation.nativeTermination } };
           }
           return { kind: 'confirmed', value: { kind: 'send', run: reference(operation.binding, 'run', requestId),
-            state: ['completed', 'failed', 'cancelled'].includes(receipt.status) ? 'completed' : 'accepted' },
-            evidence: { requestId, status: receipt.status } };
+            state: runOutcome(receipt) ? 'completed' : 'accepted' },
+            evidence: { requestId, status: receipt.status, ...(receipt.cancellation && { cancellation: receipt.cancellation }) } };
         }, fresh);
       };
       function source(binding: ProviderConversation<string>, after: CrewModel['cursor'] | null) {

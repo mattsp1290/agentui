@@ -1,3 +1,5 @@
+import { parseProviderObservationStatus } from './observation.js';
+import type { ProviderObservationStatus } from './observation.js';
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
@@ -30,6 +32,7 @@ export type ServiceRequest =
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
   | { readonly op: 'conversation-agent'; readonly scope: ConversationScope }
+  | { readonly op: 'provider-observation'; readonly scope: ConversationScope; readonly action: 'read' | 'retry' }
   | { readonly op: 'submit'; readonly command: ClientCommand }
   | { readonly op: 'receipt' | 'reconcile'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
@@ -41,7 +44,10 @@ interface AgentDescription {
   readonly commands: readonly ('send' | 'cancel' | 'approve')[];
   readonly availability: { readonly kind: 'ready' } | { readonly kind: 'unavailable'; readonly reason: string };
 }
-export type NativeAgentDescriptor = AgentDescription & { readonly runtime: NativeRuntimeIdentity };
+export type NativeAgentDescriptor = AgentDescription & {
+  readonly runtime: NativeRuntimeIdentity;
+  readonly model?: { readonly id: string; readonly label: string };
+};
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
 });
@@ -73,6 +79,7 @@ export interface ServiceValueMap {
   readonly catalog: readonly ConversationCatalogEntry[];
   readonly search: ConversationSearchPage;
   readonly 'conversation-agent': AgentDescriptor | null;
+  readonly 'provider-observation': ProviderObservationStatus;
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -94,6 +101,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
   conversationAgent(scope: ConversationScope): Promise<AgentDescriptor | null>;
+  providerObservation(input: { readonly scope: ConversationScope; readonly action: 'read' | 'retry' }): Promise<ProviderObservationStatus>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
@@ -121,6 +129,10 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
     }
     case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
+    case 'provider-observation':
+      exact(input, ['op', 'scope', 'action']);
+      if (input.action !== 'read' && input.action !== 'retry') throw new Error('Invalid observation action');
+      return { op: 'provider-observation', scope: parseScope(input.scope), action: input.action };
     case 'create': exact(input, ['op', 'scope', 'agentId']); return { op: 'create', scope: parseScope(input.scope), agentId: identifier(input.agentId) };
     case 'submit': {
       exact(input, ['op', 'command']);
@@ -147,7 +159,7 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
   exact(input, input.kind === 'provider' ? ['id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
-    : ['id', 'label', 'runtime', 'commands', 'availability']);
+    : ['id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
   if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
@@ -164,7 +176,9 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   const common = { id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
-  return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) } };
+  const model = Object.hasOwn(input, 'model') ? record(input.model, ['id', 'label']) : null;
+  return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
+    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label) } } : {}) };
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
@@ -241,6 +255,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     });
     return { items: entries, after: input.after === null ? null : identifier(input.after) };
   },
+  'provider-observation': parseProviderObservationStatus,
   'conversation-agent': value => value === null ? null : agentDescriptor(value),
   create: parseScope,
   submit(value) {
