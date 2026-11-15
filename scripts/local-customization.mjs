@@ -1,9 +1,10 @@
 import { readFile, realpath } from 'node:fs/promises';
-import { dirname, isAbsolute, join, relative, sep } from 'node:path';
+import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { planCustomizationCatalog } from '@agentui/host/customization';
-import { checkCustomizationSource, sourcePolicies } from './lib/customization-source-policy.mjs';
+import { checkCustomizationSource, isWorkerRequest, sourcePolicies } from './lib/customization-source-policy.mjs';
+import { checkCustomizationAsset, customizationCssPolicy, within } from './lib/customization-asset-policy.mjs';
 
 const selection = fileURLToPath(new URL('../apps/desktop/src/application/customization-selection.ts', import.meta.url));
 const tsconfig = fileURLToPath(new URL('../apps/desktop/tsconfig.json', import.meta.url));
@@ -26,7 +27,7 @@ export function desktopPlan(root) {
 }
 
 function checkSource(code, id, label) {
-  checkCustomizationSource(code, id, sourcePolicies.desktop, rule => {
+  return checkCustomizationSource(code, id, sourcePolicies.desktop, rule => {
     if (rule === 'syntax') return new Error(`Invalid customization source in ${label}`);
     if (rule === 'ambientReference') return new Error(`Unsupported ambient reference or JSX configuration (${rule}) in ${label}`);
     if (rule === 'absoluteSpecifier') return new Error(`Unsupported customization import (${rule}) in ${label}`);
@@ -35,10 +36,6 @@ function checkSource(code, id, label) {
 }
 
 export function customizationPlugin(plan) {
-  const within = (root, id) => {
-    const path = relative(root, id);
-    return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
-  };
   const contained = id => plan.roots.some(root => within(root, id));
   const reserved = name => (name ?? '').startsWith('@agentui/') || Object.hasOwn(SHARED, name);
   const owners = new Map();
@@ -58,7 +55,7 @@ export function customizationPlugin(plan) {
   const source = `export default [${plan.entries.map(entry => `{manifest:${JSON.stringify(entry.manifest)},load:()=>import(${JSON.stringify(entry.source)})}`).join(',')}];`;
   return {
     name: 'agentui-committed-customization', enforce: 'pre',
-    config: () => ({ tsconfig, resolve: { dedupe: Object.keys(SHARED) },
+    config: () => ({ tsconfig, resolve: { dedupe: Object.keys(SHARED) }, css: { postcss: { plugins: [customizationCssPolicy(plan.roots)] } },
       oxc: { jsx: { runtime: 'automatic', importSource: 'react' } } }),
     async resolveId(specifier, importer, options) {
       if (!importer || !contained(importer.split('?')[0])) return;
@@ -70,6 +67,7 @@ export function customizationPlugin(plan) {
       }
       if (sharedPackage(specifier) || specifier.startsWith('@agentui/') || specifier.includes('\\') || /^(?:node:|[a-z]+:|#)/iu.test(specifier)) throw new Error(`Unsupported customization import: ${specifier}`);
       const result = await this.resolve(specifier, importer, { skipSelf: true, kind: options.kind });
+      if (result && isWorkerRequest(result.id)) throw new Error(`Unsupported customization import (unsupportedWorker): ${specifier}`);
       if (result?.id.startsWith('\0') && !result.external) return result;
       if (!result || result.external || !isAbsolute(result.id.split('?')[0])) throw new Error(`Unsupported customization import: ${specifier}`);
       const path = await realpath(result.id.split('?')[0]);
@@ -80,10 +78,12 @@ export function customizationPlugin(plan) {
     async load(id) {
       if (id === selection) return source;
       const path = id.split('?')[0];
+      if (contained(path) && /\.module\.(?:css|less|sass|scss|styl|stylus|pcss|postcss|sss)$/u.test(path)) throw new Error('Unsupported customization CSS modules');
       if (contained(path) && scripts.test(path)) {
         if (reserved(await owner(path))) throw new Error('Duplicate shared customization dependency');
         const root = plan.roots.find(root => within(root, path));
-        checkSource(await readFile(path, 'utf8'), path, relative(root, path));
+        const { assetUrls } = checkSource(await readFile(path, 'utf8'), path, relative(root, path));
+        for (const reference of assetUrls) await checkCustomizationAsset(reference, path, plan.roots);
       }
     },
   };

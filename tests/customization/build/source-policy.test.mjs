@@ -21,8 +21,17 @@ for (const [rule, source] of [
   ['importOptions', "import('./a.js', {with: {type: 'json'}})"],
   ['requireCallForm', "require?.('./a.js')"],
   ['requireCallForm', "new require('./a.js')"],
-  ['evaluator', "eval('1')"],
-  ['evaluator', "new Function('return 1')"],
+  ['computedAssetUrl', 'new URL(name, import.meta.url)'],
+  ['computedAssetUrl', 'new URL(`./${name}.png`, import.meta.url)'],
+  ['computedAssetUrl', 'new URL("./a.png", import.meta.url, extra)'],
+  ['unsupportedAssetUrl', 'new URL("/a.png", import.meta.url)'],
+  ['unsupportedAssetUrl', 'new URL("a.png", import.meta.url)'],
+  ['unsupportedAssetUrl', 'new URL("./a\\u002epng", import.meta.url)'],
+  ['unsupportedAssetUrl', 'new URL(`./a\\u002epng`, import.meta.url)'],
+  ['unsupportedWorker', 'import Worker from "./worker.js?worker"'],
+  ['unsupportedWorker', 'import("./worker.js?inline&sharedworker")'],
+  ['unsupportedWorker', 'new Worker(new URL("./worker.js", import.meta.url))'],
+  ['unsupportedWorker', 'new SharedWorker(new URL("./worker.js", import.meta.url) as URL)'],
   ['importMetaOtherThanUrl', 'import.meta.glob("*.ts")'],
   ['importMetaOtherThanUrl', 'import.meta["url"]'],
   ['ambientModule', 'import x = require("x")'],
@@ -35,8 +44,16 @@ for (const [rule, source] of [
   assert.doesNotThrow(() => check(source, 'server'));
 });
 for (const source of ["import './a.js'", "export {x} from './a.js'", "export * from './a.js'", "import('./a.js')",
-  "require('./a.cjs')", 'new URL("./a.png", import.meta.url)', 'function f() { return new.target; }']) {
+  "require('./a.cjs')", 'new URL("./a.png", import.meta.url)', 'new URL(`./a.png`, import.meta.url)',
+  'new URL(style)', 'new Worker(address)', 'service.Worker()', "eval('1')", "new Function('return 1')", 'function f() { return new.target; }']) {
   test(`both targets allow static source ${source}`, () => {
     for (const target of ['desktop', 'server']) assert.doesNotThrow(() => check(source, target));
   });
 }
+test('source inspection returns static URL references from the existing traversal', () => {
+  assert.deepEqual(check('new URL("./a.png?no-inline#part", import.meta.url); new URL(`../b.png`, import.meta.url); new URL(style);', 'desktop'),
+    { assetUrls: ['./a.png?no-inline#part', '../b.png'] });
+});
+test('URL inspection follows TypeScript expression wrappers removed before Vite asset compilation', () => {
+  assert.deepEqual(check('new (URL as any)("./a.png" as string, import.meta.url!);', 'desktop'), { assetUrls: ['./a.png'] });
+});
