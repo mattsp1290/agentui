@@ -1,5 +1,5 @@
 import { record, nonempty, count, identifier, exact } from './decode.js';
-import type { ConversationScope } from './index.js';
+import type { ConversationScope, ProviderBinding, RunAuthority, RunIdentity } from './index.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 export const DEFAULT_MAX_COMMAND_BYTES = 64_000;
@@ -129,6 +129,29 @@ export function parseScope(value: unknown): ConversationScope {
   exact(input, ['hostId', 'conversationId']);
   return { hostId: identifier(input.hostId), conversationId: identifier(input.conversationId) };
 }
+export function parseProviderBinding(value: unknown): ProviderBinding {
+  const input = record(value, ['namespace', 'installationId', 'opaqueSessionId']);
+  return { namespace: nonempty(input.namespace), installationId: nonempty(input.installationId), opaqueSessionId: nonempty(input.opaqueSessionId) };
+}
+export function parseRunAuthority(value: unknown): RunAuthority {
+  const input = record(value);
+  switch (input.kind) {
+    case 'agentui-host':
+      exact(input, ['kind', 'hostId', 'binding']);
+      return { kind: 'agentui-host', hostId: identifier(input.hostId), binding: parseProviderBinding(input.binding) };
+    case 'remote-provider':
+      exact(input, ['kind', 'binding']);
+      return { kind: 'remote-provider', binding: parseProviderBinding(input.binding) };
+    default: throw new Error('Invalid run authority');
+  }
+}
+export function parseRunIdentity(value: unknown): RunIdentity {
+  const input = record(value, ['conversation', 'runId', 'authority']);
+  const conversation = parseScope(input.conversation);
+  const authority = parseRunAuthority(input.authority);
+  if (authority.kind === 'agentui-host' && authority.hostId !== conversation.hostId) throw new Error('Run authority host mismatch');
+  return { conversation, runId: nonempty(input.runId), authority };
+}
 /**
  * Local scope and command IDs are limited to 1024 UTF-16 units. Approval and cancel targets preserve
  * nonempty provider-owned IDs. Semantic parsing does not enforce host resource budgets.
@@ -247,7 +270,16 @@ export function parseFeedItem<E, P>(value: unknown, projection: Pick<Projection<
   }
 }
 export class JsonLimitError extends Error {}
-export function canonicalJson(value: unknown, budget: { readonly maxNodes: number; readonly maxDepth: number } = { maxNodes: JSON_MAX_NODES, maxDepth: JSON_MAX_DEPTH }): string {
+type JsonBudget = { readonly maxNodes: number; readonly maxDepth: number };
+const defaultJsonBudget: JsonBudget = { maxNodes: JSON_MAX_NODES, maxDepth: JSON_MAX_DEPTH };
+export function canonicalJson(value: unknown, budget: JsonBudget = defaultJsonBudget): string {
+  return serializeJson(value, budget, true);
+}
+/** Copies bounded plain JSON in authored key order without invoking getters or toJSON. */
+export function copyJson(value: unknown, budget: JsonBudget = defaultJsonBudget): Json {
+  return JSON.parse(serializeJson(value, budget, false));
+}
+function serializeJson(value: unknown, budget: JsonBudget, sortKeys: boolean): string {
   if (!Number.isSafeInteger(budget.maxNodes) || budget.maxNodes < 1 || budget.maxNodes > JSON_MAX_NODES ||
     !Number.isSafeInteger(budget.maxDepth) || budget.maxDepth < 1 || budget.maxDepth > JSON_MAX_DEPTH) throw new Error('Invalid JSON budget');
   const ancestors = new Set<object>();
@@ -283,7 +315,9 @@ export function canonicalJson(value: unknown, budget: { readonly maxNodes: numbe
         token('[]' + ','.repeat(Math.max(0, items.length - 1)));
         return `[${items.join(',')}]`;
       }
-      const fields = Object.keys(value).sort().map(key => {
+      const keys = Object.keys(value);
+      if (sortKeys) keys.sort();
+      const fields = keys.map(key => {
         const descriptor = Object.getOwnPropertyDescriptor(value, key);
         if (!descriptor || !('value' in descriptor)) throw new Error('Invalid JSON property');
         return `${token(JSON.stringify(key) + ':')}${encode(descriptor.value, depth + 1)}`;

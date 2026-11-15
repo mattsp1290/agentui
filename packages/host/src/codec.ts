@@ -1,4 +1,4 @@
-import { canonicalJson, parseDecision, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, parseDecision, parseRunIdentity, sameScope } from '@agentui/contracts';
 import type { ConversationScope, Json, Projection } from '@agentui/contracts';
 import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
 import type { DispatchEvidence, DispatchIdentity, DispatchObservation } from '@mattsp1290/switchboard';
@@ -35,16 +35,14 @@ export function installation(value: unknown): Installation {
   return parsed;
 }
 export function nativeRun(value: unknown, expected: Installation, scope: ConversationScope): NativeRun {
-  const input = object(value), identity = object(input.identity), authority = object(identity.authority);
-  const binding = object(authority.binding), conversation = parseScope(identity.conversation);
+  const input = object(value), identity = parseRunIdentity(input.identity);
+  const { authority, conversation } = identity;
   if (!sameScope(conversation, scope) || authority.kind !== 'agentui-host' ||
-    authority.hostId !== scope.hostId || binding.installationId !== expected.installationId) throw new Error('Foreign run authority');
+    authority.binding.installationId !== expected.installationId) throw new Error('Foreign run authority');
   const reference = parseSessionReference({ value: input.reference, expected: expected.binding });
   if (reference.kind !== 'ok') throw new Error('Invalid native reference');
-  if (binding.opaqueSessionId !== reference.value.opaque) throw new Error('Session identity mismatch');
-  return { identity: { conversation, runId: nonempty(identity.runId), authority: { kind: 'agentui-host',
-    hostId: scope.hostId, binding: { namespace: nonempty(binding.namespace),
-      installationId: expected.installationId, opaqueSessionId: reference.value.opaque } } }, reference: reference.value };
+  if (authority.binding.opaqueSessionId !== reference.value.opaque) throw new Error('Session identity mismatch');
+  return { identity, reference: reference.value };
 }
 export function output<E>(value: unknown, projection: Pick<Projection<E, unknown>, 'decodeEvent'>, installed: Installation,
   scope: ConversationScope): HostOutput<E> {
