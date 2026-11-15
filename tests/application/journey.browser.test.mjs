@@ -10,6 +10,7 @@ import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
 import { preview } from 'vite';
+import { repository, buildCustom } from '../customization/build/support.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const cli = join(root, 'apps/host/dist/main.js');
@@ -20,12 +21,12 @@ const wait = async (predicate, label) => {
     await new Promise(resolve => setTimeout(resolve, 20));
   }
 };
-async function fixture(t) {
+async function fixture(t, assets) {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-browser-'));
   const browser = await chromium.launch();
   let child, stderr = '';
   const start = async (port = 0) => {
-    child = spawn(process.execPath, [cli, 'browser-dev', '--data-dir', directory, '--port', String(port)], { cwd: root, stdio: 'pipe' });
+    child = spawn(process.execPath, [cli, 'browser-dev', '--data-dir', directory, '--port', String(port), ...(assets ? ['--assets', assets] : [])], { cwd: root, stdio: 'pipe' });
     child.stderr.on('data', data => { stderr += data; });
     const info = await new Promise((resolve, reject) => {
       let output = '';
@@ -69,7 +70,7 @@ async function fixture(t) {
   };
   return { ...info, directory, browser, page, control, entries, start, stop };
 }
-async function connected(page) { await page.getByRole('status').first().filter({ hasText: 'Conversation connected' }).waitFor(); }
+async function connected(page) { await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor(); }
 async function draft(page, text) {
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill(text);
   await wait(() => page.evaluate(async expected => {
@@ -499,4 +500,177 @@ test('an unreadable foreign saved view leaves the current conversation and draft
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'My own draft survives another view’s bad record');
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
   assert.deepEqual(await host.entries(), []);
+});
+
+
+test('committed custom artifact sends one exact prompt, retains drafts and restores the healthy composer', { timeout: 90_000 }, async t => {
+  const custom = repository();
+  t.after(() => rm(custom.directory, { recursive: true, force: true }));
+  const commit = custom.commit();
+  custom.write('shared/prompts.ts', "export const reviewPrompt = 'DIRTY PROMPT';");
+  buildCustom(custom, commit);
+  const host = await fixture(t, join(custom.directory, 'browser')), page = await host.page();
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  const prompt = 'Review our current plan. Identify the next useful step and any unresolved decision.';
+  let submissions = 0;
+  page.on('request', request => {
+    if (request.url().endsWith('/api/v1') && request.postDataJSON().op === 'submit') submissions++;
+  });
+  const send = async text => {
+    const previous = await page.locator('.scope-label').count() ? await page.locator('.scope-label').textContent() : null;
+    await page.getByRole('button', { name: 'New recorded conversation' }).click();
+    await wait(async () => await page.locator('.scope-label').count() > 0 && await page.locator('.scope-label').textContent() !== previous, 'new custom conversation opens');
+    await connected(page);
+    await draft(page, text);
+    const review = page.getByRole('button', { name: 'Review the plan', exact: true });
+    await wait(() => review.isEnabled(), 'custom review ready');
+    const before = submissions;
+    await review.evaluate(button => { button.click(); button.click(); });
+    await page.getByRole('status').filter({ hasText: /Review (submitted|pending|completed)\./ }).waitFor();
+    await page.locator('.message-user p').filter({ hasText: prompt }).waitFor();
+    assert.equal(submissions, before + 1);
+    assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), text);
+    await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+    return page.locator('.scope-label').textContent();
+  };
+  const first = await send(prompt);
+  const second = await send('A different draft');
+  await page.getByRole('button', { name: new RegExp(`Open conversation ${first}$`) }).click();
+  await wait(async () => await page.locator('.scope-label').textContent() === first, 'first custom conversation selected');
+  await connected(page);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), prompt);
+  await page.getByRole('button', { name: new RegExp(`Open conversation ${second}$`) }).click();
+  await wait(async () => await page.locator('.scope-label').textContent() === second, 'second custom conversation selected');
+  await connected(page);
+  await page.reload();
+  await connected(page);
+  await page.getByRole('heading', { name: 'Plan review', exact: true }).waitFor();
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'A different draft');
+  await page.setViewportSize({ width: 360, height: 480 });
+  await page.getByRole('button', { name: 'Review the plan', exact: true }).scrollIntoViewIfNeeded();
+  await page.getByRole('button', { name: 'approve', exact: true }).scrollIntoViewIfNeeded();
+  assert.equal(await page.getByRole('button', { name: 'approve', exact: true }).isEnabled(), true);
+  await page.getByRole('button', { name: 'Send', exact: true }).scrollIntoViewIfNeeded();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'no horizontal overflow at minimum size');
+  if (process.env.AGENTUI_CUSTOM_SCREENSHOT) await page.screenshot({ path: process.env.AGENTUI_CUSTOM_SCREENSHOT, fullPage: true });
+  const editor = await page.getByRole('textbox', { name: 'Message', exact: true }).elementHandle();
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  assert.equal(await page.getByRole('heading', { name: 'Plan review', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).evaluate((node, old) => node === old, editor), true);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'A different draft');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.locator('.message-user p').filter({ hasText: 'A different draft' }).waitFor();
+  assert.equal(submissions, 3);
+  assert.deepEqual(errors, []);
+});
+
+async function customRuntime(page, host, selection, breakDefault = false) {
+  const bundled = await build({ stdin: { contents: `import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {BrowserApplication} from './apps/desktop/src/shell/BrowserApplication.tsx';
+    createRoot(document.getElementById('root')).render(<BrowserApplication />);`, resolveDir: root, loader: 'jsx' },
+    bundle: true, write: false, outfile: 'custom.js', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' },
+    plugins: [{ name: 'custom-runtime-fixture', setup(plugin) {
+      if (breakDefault) plugin.onLoad({ filter: /ConversationView\.tsx$/ }, async () => ({
+        contents: `import { createElement } from 'react';\n` +
+          (await readFile(join(root, 'apps/desktop/src/application/ConversationView.tsx'), 'utf8')).replace('export function ConversationView(', 'function HealthyConversationView(') +
+          `\nexport function ConversationView(props) { if (window.failDefault) throw new Error('Default view failed'); return createElement(HealthyConversationView, props); }`, loader: 'tsx' }));
+      plugin.onLoad({ filter: /customization-selection\.ts$/ }, () => ({ contents: `import * as React from 'react';
+        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.0.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
+        export default { manifest, ${selection} };`, loader: 'tsx' }));
+    } }] });
+  await page.route('**/custom.html', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script src="/custom.js"></script>' }));
+  await page.route('**/custom.js', route => route.fulfill({ contentType: 'text/javascript', body: Buffer.from(bundled.outputFiles.find(file => file.path.endsWith('.js')).contents) }));
+  await page.goto(`${host.origin}/custom.html`);
+  if (!breakDefault) await connected(page);
+}
+
+for (const [label, body, disposed] of [
+  ['import', "load: async () => { throw new Error('Import failed'); }", 0],
+  ['activation', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { throw new Error('Activation failed'); } } })", 0],
+  ['compatibility', "load: async () => ({ default: { kind: 'desktop', sdkVersion: 'bad', activate() {} } })", 0],
+  ['invalid contributions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: null }; } } })", 1],
+  ['unsupported actions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { return null; }, actions: [] }] }; } } })", 1],
+  ['render', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { throw new Error('Render failed'); } }] }; } } })", 1],
+]) test(`custom ${label} failure stays local and disposes its lifetime`, { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  await customRuntime(page, host, body);
+  await page.getByRole('alert').filter({ hasText: 'Custom tools could not load.' }).waitFor();
+  await draft(page, 'Keep this composer');
+  const editor = await page.getByRole('textbox', { name: 'Message', exact: true }).elementHandle();
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).evaluate((node, old) => node === old, editor), true);
+  assert.equal(await page.evaluate(() => window.disposals || 0), disposed);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+});
+
+test('restoring during activation disposes a late lifetime once and catches cleanup rejection', { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() {
+    return new Promise(resolve => { window.finishActivation = () => resolve({ modules: [], dispose() { window.disposals = (window.disposals || 0) + 1; return Promise.reject(new Error('Cleanup rejected')); } }); });
+  } } })`);
+  await wait(() => page.evaluate(() => typeof window.finishActivation === 'function'), 'pending activation');
+  await draft(page, 'Late activation draft');
+  const errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await page.evaluate(() => window.finishActivation());
+  await wait(() => page.evaluate(() => window.disposals === 1), 'late disposal');
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Late activation draft');
+  assert.deepEqual(errors, []);
+});
+
+
+test('activation survives navigation and healthy restore disposes once while keeping the composer', { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  const first = await page.locator('.scope-label').textContent();
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.0.0', activate() {
+    window.activations = (window.activations || 0) + 1;
+    return { modules: [{ id: 'working', label: 'Working', component({ conversation }) {
+      const [count, setCount] = React.useState(0);
+      return React.createElement('button', { onClick: () => setCount(count + 1) }, 'Custom count ' + count + ' ' + conversation.conversationId);
+    } }], dispose() { window.disposals = (window.disposals || 0) + 1; } };
+  } } })`);
+  await page.getByRole('button', { name: `Custom count 0 ${first}`, exact: true }).click();
+  await page.getByRole('button', { name: `Custom count 1 ${first}`, exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await page.getByRole('button', { name: `Custom count 1 ${first}`, exact: true }).waitFor();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await wait(async () => await page.locator('.scope-label').textContent() !== first, 'next conversation selected');
+  const second = await page.locator('.scope-label').textContent();
+  await page.getByRole('button', { name: `Custom count 0 ${second}`, exact: true }).waitFor();
+  assert.equal(await page.evaluate(() => window.activations), 1);
+  await draft(page, 'Healthy lifetime draft');
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  assert.equal(await page.evaluate(() => window.disposals), 1);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Healthy lifetime draft');
+});
+
+test('managed restore retries a failed default conversation boundary', { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  await draft(page, 'Recover the default composer');
+  await page.addInitScript(() => { window.failDefault = true; });
+  await customRuntime(page, host, 'load: async () => ({ default: {} })', true);
+  await page.getByText('This view could not load.', { exact: true }).waitFor();
+  await page.evaluate(() => { window.failDefault = false; });
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await connected(page);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Recover the default composer');
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
 });
