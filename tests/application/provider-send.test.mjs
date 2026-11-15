@@ -112,8 +112,8 @@ test('authenticated send commits exact target before HTTP effect, persists accep
     return (await fetch(service, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(operation) })).json();
   }) }), b = extension({ native: true, submit: (operation, { effect }) => effect(operation, 'completed') });
   f = await fixture(t, [a, b]);
-  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, 3);
-  for (const agent of metadata.agents.filter(agent => agent.kind === 'provider')) assert.deepEqual(agent.commands, ['send']);
+  const metadata = await f.client.metadata(); assert.equal(metadata.compatibility.wireVersion, 4);
+  for (const agent of metadata.agents.filter(agent => agent.kind === 'provider')) assert.deepEqual(agent.commands, agent.label === 'Local provider' ? ['send', 'cancel', 'approve'] : ['send', 'approve']);
   const scope = await create(f, 'remote'), local = await create(f, 'local', 'Local provider');
   const native = f.scope('native'); await f.client.create(native, metadata.defaultAgentId);
   const nativeBytes = f.inspect(db => db.prepare("SELECT installation,document FROM conversations WHERE conversation='native'").get());
@@ -221,7 +221,7 @@ test('capability intersection requires reconciliation and never changes the prov
   assert.deepEqual(agent.commands, []);
   assert.equal((await f.client.conversation(scope).submit(send(scope))).kind, 'rejected'); assert.equal(a.calls.translations, 0);
   await f.restart([extension()]);
-  const enabled = await selected(f); assert.equal(enabled.id, agent.id); assert.deepEqual(enabled.commands, ['send']);
+  const enabled = await selected(f); assert.equal(enabled.id, agent.id); assert.deepEqual(enabled.commands, ['send', 'approve']);
   assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
 });
 

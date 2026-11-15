@@ -8,7 +8,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
   const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];
   const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [descriptor], defaultAgentId: 'agent', hostId: 'host', principalId: 'principal', compatibility: {
-    wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
+    wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' },
   } };
   const old = Promise.withResolvers();

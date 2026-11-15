@@ -158,10 +158,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           if (provider) { await observeProvider(scope); authorized(scope); }
           const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
-            registry && command.body.kind === 'send' ? (original, operation) => {
-              if (command.body.kind !== 'send') throw new Error('Provider send required');
-              return registry.captureSend(original, command.body.text, operation);
-            } : undefined);
+            registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
@@ -170,7 +167,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             dispatching.add(key);
             try {
               const observed = 'kind' in stored
-                ? await registry?.executeSend(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
+                ? await registry?.executeCommand(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
               const receipt = store.settle(scope, command.clientCommandId, observed);
               return { kind: 'receipt' as const, receipt };
@@ -198,7 +195,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       return inFlight(async () => {
         const observed = 'kind' in stored
-          ? await options.providers?.executeSend(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
+          ? await options.providers?.executeCommand(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
           : await reconcileNative(stored, driverFor(stored.target.installation));
         if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
           const current = store.command(scope, id);

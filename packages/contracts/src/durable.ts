@@ -41,6 +41,8 @@ export interface PendingDecision {
   readonly runId: string;
   readonly choices: readonly string[];
   readonly prompt: string;
+  readonly choiceLabels?: Readonly<Record<string, string>>;
+  readonly reserved?: true;
 }
 const TERMINAL_RECEIPT_RETENTION = 128;
 export interface ConversationDocument<P> {
@@ -184,11 +186,23 @@ export function parseCommand(value: unknown): ClientCommand {
   return { version: 1, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId), body: parsed };
 }
 export function parseDecision(value: unknown): PendingDecision {
-  const input = record(value, ['pendingId', 'runId', 'choices', 'prompt']);
+  const input = record(value);
+  exact(input, ['pendingId', 'runId', 'choices', 'prompt', ...(Object.hasOwn(input, 'choiceLabels') ? ['choiceLabels'] : []), ...(Object.hasOwn(input, 'reserved') ? ['reserved'] : [])]);
   if (!Array.isArray(input.choices)) throw new Error('Expected array');
   const choices = input.choices.map(nonempty);
   if (choices.length === 0 || new Set(choices).size !== choices.length) throw new Error('Invalid choices');
-  return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt) };
+  let choiceLabels: Readonly<Record<string, string>> | undefined;
+  if (Object.hasOwn(input, 'choiceLabels')) {
+    const labels = record(input.choiceLabels, choices);
+    choiceLabels = Object.fromEntries(choices.map(id => {
+      const label = nonempty(labels[id]);
+      if (!label.trim()) throw new Error('Invalid choice label');
+      return [id, label];
+    }));
+  }
+  if (Object.hasOwn(input, 'reserved') && (input.reserved !== true || !choiceLabels)) throw new Error('Invalid reservation');
+  return { pendingId: nonempty(input.pendingId), runId: nonempty(input.runId), choices, prompt: nonempty(input.prompt),
+    ...(choiceLabels ? { choiceLabels } : {}), ...(input.reserved === true ? { reserved: true } : {}) };
 }
 export function parseReceipt(value: unknown): Receipt {
   const input = record(value, ['scope', 'clientCommandId', 'hostOperationId', 'sequence', 'state']), state = record(input.state);
