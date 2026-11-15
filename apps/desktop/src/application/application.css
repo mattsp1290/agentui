@@ -127,3 +127,53 @@
   .message-user { max-width: 100%; }
   .composer-footer span { max-width: 100px; }
 }
+
+.desktop-shell:has(.view-rail) {
+  grid-template-columns: 56px 232px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) 30px;
+}
+.desktop-shell:has(.view-rail) .shell-header {
+  position: absolute; z-index: 4; top: 16px; right: 24px;
+  padding: 0; border: 0; background: transparent;
+}
+.desktop-shell:has(.view-rail) .shell-header .brand { display: none; }
+.desktop-shell[data-workspace-view="chats"] .shell-header { display: none; }
+.view-rail {
+  grid-column: 1; grid-row: 1 / -1; display: flex; flex-direction: column;
+  align-items: center; gap: 12px; padding: 18px 6px 16px;
+  background: var(--aui-color-surface); border-right: 1px solid var(--aui-color-border);
+}
+.view-rail button {
+  width: 40px; height: 40px; flex: none; padding: 9px;
+  border: 0; border-radius: 10px; background: transparent; color: var(--aui-color-muted); cursor: pointer;
+}
+.view-rail button[aria-pressed="true"], .view-rail button:hover { background: var(--aui-color-raised); color: var(--aui-color-text); }
+.view-rail button:focus-visible { outline: 2px solid var(--aui-color-accent); outline-offset: 2px; }
+.view-rail svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.view-rail .settings-view-button { margin-top: auto; }
+.desktop-shell:has(.view-rail) .application-controls { grid-column: 2; grid-row: 1 / -1; padding-top: 18px; }
+.sidebar-title { font-size: 16px; margin: 0 10px 18px; font-weight: 600; }
+.desktop-shell:has(.view-rail) main { grid-column: 3; grid-row: 1; }
+.desktop-shell:has(.view-rail) .shell-footer { grid-column: 3; grid-row: 2; }
+.chat-view { display: flex; width: 100%; height: 100%; min-height: 0; }
+.chat-view[hidden], .chat-navigation[hidden], .settings-panel[hidden] { display: none; }
+.settings-panel { width: min(100%, 720px); margin: 0 auto; padding: 32px 0; overflow-y: auto; }
+.settings-panel h1 { margin: 0 0 32px; font-size: 24px; }
+.settings-section { margin: 0 0 28px; padding-bottom: 24px; border-bottom: 1px solid var(--aui-color-border); }
+.settings-section h2 { font-size: 15px; margin: 0 0 12px; }
+.settings-section p { color: var(--aui-color-muted); }
+.settings-section .application-status { padding: 0; }
+.settings-section button { padding: 8px 14px; background: var(--aui-color-raised); color: inherit; border: 1px solid var(--aui-color-border); border-radius: 8px; font: inherit; cursor: pointer; }
+.settings-link { display: block; color: var(--aui-color-text); text-decoration: none; padding: 10px; border-radius: 8px; background: var(--aui-color-raised); font-size: 13px; }
+@media (max-width: 760px) {
+  .desktop-shell:has(.view-rail) { grid-template-columns: 48px 160px minmax(0, 1fr); }
+  .settings-panel { padding-top: 72px; }
+  .view-rail { padding-inline: 4px; }
+  .view-rail button { width: 36px; height: 36px; padding: 7px; }
+}
+@media (max-width: 520px) {
+  .desktop-shell:has(.view-rail) { grid-template-columns: 44px 108px minmax(0, 1fr); }
+  .sidebar-title { font-size: 14px; margin-inline: 4px; }
+  .desktop-shell:has(.view-rail) .application-controls { padding-inline: 4px; }
+  .desktop-shell:has(.view-rail) main { padding-inline: 10px; }
+}
