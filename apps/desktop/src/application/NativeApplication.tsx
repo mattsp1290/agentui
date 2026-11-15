@@ -34,7 +34,7 @@ export function NativeApplication() {
         ownedViewStorage: { open: failure => BrowserViewStorage.reopen('native-mac-default', failure, true), reopen: BrowserViewStorage.reopen } });
       current.current = { id: crypto.randomUUID(), access, controller };
       setSession(current.current);
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Native access unavailable. Restore Keychain access, then reconnect.'); }
+    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Native connection unavailable. Reconnect, or restart AgentUI if the problem continues. Local work is retained.'); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   useEffect(() => {
