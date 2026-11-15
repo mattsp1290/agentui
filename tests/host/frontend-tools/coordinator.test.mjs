@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import { spawn } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { appendFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { once } from 'node:events';
 import { fileURLToPath } from 'node:url';
@@ -18,7 +18,7 @@ async function setup(t, effect = () => {}) {
   const f = fixture(t), host = f.open(); host.createConversation(scope, installed);
   const { generation } = await createFrontendToolGeneration({ namespace: 'demo', generation: 'same', platform: 'desktop',
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'work', description: 'work' }, decodeInput: value => value,
-      async execute(value) { effect(value); return 'done'; } }); return { dispose() {} }; }, accept: value => value });
+      async execute(value) { const output = effect(value); return typeof output === 'string' ? output : 'done'; } }); return { dispose() {} }; }, accept: value => value });
   const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run: run().identity, capabilities: { tools: { clientProvided: true } } });
   t.after(async () => { pin.release(); await generation.retire(); });
   const producer = frontendToolsFor(host).producer(scope);
@@ -92,7 +92,7 @@ test('conflicting replay, missing start and inconsistent pending set fault the r
 });
 test('a complete version one database upgrades without losing conversations', t => {
   const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
-  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_events; DROP TABLE frontend_runs; PRAGMA user_version=1;'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_receipts; DROP TABLE frontend_events; DROP TABLE frontend_runs; PRAGMA user_version=1;'); db.close();
   const upgraded = f.open(); assert.deepEqual(upgraded.installation(scope), installed);
   const verify = new DatabaseSync(f.path); assert.equal(verify.prepare('PRAGMA user_version').get().user_version, 2); verify.close();
 });
@@ -251,4 +251,122 @@ test('trusted producer accepts a remote-provider run identity', t => {
   assert.equal(producer.observe(key, 1, started), 'accepted');
   assert.equal(producer.observe(key, 2, finished()), 'accepted');
   assert.deepEqual(producer.results(key), { kind: 'ready', identity, threadId: key.threadId, batch: [] });
+});
+
+
+test('independent maximum receipts survive reopen with simultaneous permits and escaped outputs', async t => {
+  let effectPath;
+  const f = await setup(t, value => { appendFileSync(effectPath, `${value.index}\n`); return value.index % 2 ? '\0'.repeat(64000) : 'a'.repeat(64000); });
+  effectPath = join(f.dir, 'effects.txt');
+  const calls = Array.from({ length: 16 }, (_, index) => ({ id: `call-${index}`, args: JSON.stringify({ index }) }));
+  stream(f.producer, calls);
+  const client = frontendToolsFor(f.host).client(scope, actor('original'));
+  const permits = calls.map(call => {
+    allow(f.producer, call.id, f.binding);
+    const permit = client.claim(key, call.id, f.binding.activationId);
+    assert.equal(permit.kind, 'permit');
+    return permit;
+  });
+  const outcomes = [];
+  for (const permit of permits) {
+    const outcome = await f.pin.invoke(permit.name, permit.arguments, f.binding.activationId);
+    outcomes.push(outcome);
+    assert.equal(client.receipt(key, permit.permitId, outcome), 'recorded');
+  }
+  assert.equal(readFileSync(effectPath, 'utf8'), calls.map((_, index) => `${index}\n`).join(''));
+  f.host.close(); await f.host.drained;
+  const reopened = f.open(), original = frontendToolsFor(reopened).client(scope, actor('original'));
+  assert.equal(original.receipt(key, permits[15].permitId, outcomes[15]), 'duplicate');
+  assert.throws(() => original.receipt(key, permits[15].permitId, { kind: 'completed', output: 'changed' }), /Conflicting/);
+  assert.deepEqual(frontendToolsFor(reopened).producer(scope).results(key), {
+    kind: 'ready', identity: run().identity, threadId: key.threadId,
+    batch: calls.map((call, index) => ({ toolCallId: call.id, result: outcomes[index] })),
+  });
+});
+
+test('event insert failure rolls back state and allows exact replay', async t => {
+  const f = await setup(t), db = new DatabaseSync(f.path);
+  t.after(() => db.close());
+  db.exec("CREATE TRIGGER fail_event BEFORE INSERT ON frontend_events BEGIN SELECT RAISE(ABORT, 'event failure'); END");
+  assert.throws(() => f.producer.observe(key, 1, started), /event failure/);
+  assert.equal(f.producer.inspect(key).status, 'collecting');
+  const state = JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data);
+  assert.equal(state.cursor, 0);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM frontend_events').get().count, 0);
+  db.exec('DROP TRIGGER fail_event');
+  assert.equal(f.producer.observe(key, 1, started), 'accepted');
+  assert.equal(f.producer.observe(key, 1, started), 'duplicate');
+});
+
+test('receipt insert failure preserves the permit and permits the original receipt retry', async t => {
+  let effects = 0; const f = await setup(t, () => { effects++; });
+  stream(f.producer); allow(f.producer, 'a', f.binding);
+  const original = frontendToolsFor(f.host).client(scope, actor('original'));
+  const permit = original.claim(key, 'a', f.binding.activationId);
+  assert.equal(permit.kind, 'permit');
+  const outcome = await f.pin.invoke(permit.name, permit.arguments, f.binding.activationId);
+  const db = new DatabaseSync(f.path); t.after(() => db.close());
+  db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON frontend_receipts BEGIN SELECT RAISE(ABORT, 'receipt failure'); END");
+  assert.throws(() => original.receipt(key, permit.permitId, outcome), /receipt failure/);
+  assert.equal(original.inspect(key).calls[0].status, 'uncertain');
+  assert.equal(frontendToolsFor(f.host).client(scope, actor('other')).claim(key, 'a', f.binding.activationId).kind, 'uncertain');
+  assert.equal(f.producer.results(key).kind, 'waiting');
+  db.exec('DROP TRIGGER fail_receipt');
+  assert.equal(original.receipt(key, permit.permitId, outcome), 'recorded');
+  assert.equal(original.receipt(key, permit.permitId, outcome), 'duplicate');
+  assert.equal(effects, 1);
+});
+
+test('refusal receipt write failures roll back event folding and decisions', async t => {
+  const f = await setup(t), db = new DatabaseSync(f.path); t.after(() => db.close());
+  const events = [started, { type: 'TOOL_CALL_START', toolCallId: 'a', toolCallName: 'demo__work' },
+    { type: 'TOOL_CALL_ARGS', toolCallId: 'a', delta: '{' }, { type: 'TOOL_CALL_END', toolCallId: 'a' }];
+  for (const [i, event] of events.entries()) assert.equal(f.producer.observe(key, i + 1, event), 'accepted');
+  db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON frontend_receipts BEGIN SELECT RAISE(ABORT, 'receipt failure'); END");
+  assert.throws(() => f.producer.observe(key, 5, finished()), /receipt failure/);
+  assert.equal(JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).cursor, 4);
+  assert.equal(db.prepare('SELECT count(*) AS count FROM frontend_events').get().count, 4);
+  db.exec('DROP TRIGGER fail_receipt');
+  assert.equal(f.producer.observe(key, 5, finished()), 'accepted');
+  assert.deepEqual(f.producer.results(key).batch[0].result, { kind: 'refused', code: 'invalid-arguments' });
+});
+
+test('missing or corrupt receipt cannot produce a result batch or confirm a retry', async t => {
+  const f = await setup(t); stream(f.producer); allow(f.producer, 'a', f.binding);
+  const client = frontendToolsFor(f.host).client(scope, actor('original'));
+  const permit = client.claim(key, 'a', f.binding.activationId), outcome = { kind: 'completed', output: 'done' };
+  assert.equal(client.receipt(key, permit.permitId, outcome), 'recorded');
+  const db = new DatabaseSync(f.path); t.after(() => db.close());
+  db.prepare('UPDATE frontend_receipts SET data=?').run(JSON.stringify({ kind: 'completed', output: 'a'.repeat(64001) }));
+  assert.throws(() => f.producer.results(key));
+  assert.throws(() => client.receipt(key, permit.permitId, outcome));
+  db.exec('DELETE FROM frontend_receipts');
+  assert.throws(() => f.producer.results(key), /Missing frontend receipt/);
+  assert.throws(() => client.receipt(key, permit.permitId, outcome), /Missing frontend receipt/);
+});
+
+
+test('denial receipt write failure leaves the decision retryable', async t => {
+  const f = await setup(t); stream(f.producer);
+  const digest = f.producer.inspect(key).calls[0].argumentsDigest;
+  const db = new DatabaseSync(f.path); t.after(() => db.close());
+  db.exec("CREATE TRIGGER fail_receipt BEFORE INSERT ON frontend_receipts BEGIN SELECT RAISE(ABORT, 'receipt failure'); END");
+  assert.throws(() => f.producer.decide(key, 'a', 'deny', f.binding.activationId, digest), /receipt failure/);
+  assert.equal(f.producer.inspect(key).calls[0].status, 'pending');
+  db.exec('DROP TRIGGER fail_receipt');
+  f.producer.decide(key, 'a', 'deny', f.binding.activationId, digest);
+  assert.deepEqual(f.producer.results(key).batch[0].result, { kind: 'refused', code: 'denied' });
+});
+
+test('invalid terminal event faults without retaining partial fold or receipts', async t => {
+  const f = await setup(t), events = [started,
+    { type: 'TOOL_CALL_START', toolCallId: 'a', toolCallName: 'demo__work' },
+    { type: 'TOOL_CALL_ARGS', toolCallId: 'a', delta: '{' }, { type: 'TOOL_CALL_END', toolCallId: 'a' },
+    { type: 'TOOL_CALL_START', toolCallId: 'b', toolCallName: 'unknown' }, { type: 'TOOL_CALL_END', toolCallId: 'b' }];
+  for (const [i, event] of events.entries()) assert.equal(f.producer.observe(key, i + 1, event), 'accepted');
+  assert.equal(f.producer.observe(key, 7, finished()), 'faulted');
+  assert.deepEqual(f.producer.inspect(key).calls.map(call => call.status), ['sealed', 'sealed']);
+  const db = new DatabaseSync(f.path); t.after(() => db.close());
+  assert.equal(db.prepare('SELECT count(*) AS count FROM frontend_receipts').get().count, 0);
+  assert.equal(JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).cursor, 6);
 });

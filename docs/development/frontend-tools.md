@@ -50,6 +50,6 @@ Desktop and iOS transport binding, service routes, provider capability advertise
 
 ## Limits and verification
 
-A run permits at most 128 registered tools and 128 streamed calls. Each event, argument buffer and output string has a 64,000-byte limit. Registration has a 128,000-byte limit. Stored run state and retained event payloads each have a 1,000,000-byte limit. A run accepts at most 4,096 event cursors.
+A run permits at most 128 registered tools and 128 streamed calls. Each event, argument buffer and output string has a 64,000-byte limit. Registration has a 128,000-byte limit. Stored run metadata and retained event payloads each have a 1,000,000-byte limit. Each conclusive result is stored independently in an immutable receipt, so output payloads do not consume the run metadata limit. Receipt and resolved state commit together. A run accepts at most 4,096 event cursors.
 
 After building, run the public host regression suite with `node --test tests/host/frontend-tools/*.test.mjs`. It uses real SQLite databases, SDK pins, independent processes and an external effect file. The SDK contracts include a Chromium CSP execution check and packed TypeScript consumers.

@@ -17,7 +17,7 @@ type CallState =
   | { kind: 'sealed'; fragments: string; answered: boolean }
   | { kind: 'ready'; args: Json; digest: string; decision: 'pending' | 'allow' }
   | { kind: 'permitted'; args: Json; permitId: string; actorId: string; activationId: string }
-  | { kind: 'resolved'; result: Result; permitId: string | null; actorId: string | null };
+  | { kind: 'resolved'; permitId: string | null; actorId: string | null };
 type Run = { identity: RunIdentity; threadId: string; platform: FrontendPlatform; bindings: readonly StoredBinding[];
   cursor: number; eventBytes: number; status: 'collecting' | 'ready' | 'blocked' | 'faulted'; calls: Call[]; pending: string[] };
 export interface FrontendRunKey { readonly threadId: string; readonly runId: string }
@@ -48,7 +48,7 @@ const digest = (value: string) => createHash('sha256').update(value).digest('hex
 const copy = <T>(value: T): T => JSON.parse(canonicalJson(value));
 const refused = (code: Extract<Result, { kind: 'refused' }>['code']): Result => ({ kind: 'refused', code });
 const receiptSchema = z.discriminatedUnion('kind', [
-  z.object({ kind: z.literal('completed'), output: z.string() }).strict(),
+  z.object({ kind: z.literal('completed'), output: z.string().refine(value => Buffer.byteLength(value) <= 64000) }).strict(),
   z.object({ kind: z.literal('refused'), code: z.enum(['released', 'unknown-tool', 'activation-mismatch', 'invalid-arguments', 'decode-failed', 'denied']) }).strict(),
 ]);
 const stateSchema = z.discriminatedUnion('kind', [
@@ -56,7 +56,7 @@ const stateSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('sealed'), fragments: z.string(), answered: z.boolean() }).strict(),
   z.object({ kind: z.literal('ready'), args: z.json(), digest: z.string(), decision: z.enum(['pending', 'allow']) }).strict(),
   z.object({ kind: z.literal('permitted'), args: z.json(), permitId: z.string(), actorId: z.string(), activationId: z.string() }).strict(),
-  z.object({ kind: z.literal('resolved'), result: receiptSchema, permitId: z.string().nullable(), actorId: z.string().nullable() }).strict(),
+  z.object({ kind: z.literal('resolved'), permitId: z.string().nullable(), actorId: z.string().nullable() }).strict(),
 ]);
 const runSchema = z.object({
   identity: z.unknown().transform(parseRunIdentity), threadId: z.string().min(1), platform: z.enum(['desktop', 'ios']),
@@ -77,6 +77,16 @@ function validResult(value: FrontendReceipt): FrontendReceipt {
 export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
   const store = frontendToolsContext(host), authorized = store.authorized;
   const keyParts = (scope: ConversationScope, key: FrontendRunKey) => [scope.hostId, scope.conversationId, nonempty(key.threadId), nonempty(key.runId)] as const;
+  const writeReceipt = (scope: ConversationScope, key: FrontendRunKey, callId: string, result: Result) => {
+    store.db.prepare('INSERT INTO frontend_receipts(host, conversation, thread, run, call, data) VALUES (?, ?, ?, ?, ?, ?)')
+      .run(...keyParts(scope, key), callId, canonicalJson(result));
+  };
+  const readReceipt = (scope: ConversationScope, key: FrontendRunKey, callId: string): Result => {
+    const row = store.db.prepare('SELECT data FROM frontend_receipts WHERE host=? AND conversation=? AND thread=? AND run=? AND call=?')
+      .get(...keyParts(scope, key), callId);
+    if (!row || typeof row.data !== 'string') throw new Error('Missing frontend receipt');
+    return receiptSchema.parse(JSON.parse(row.data));
+  };
   const load = (scope: ConversationScope, key: FrontendRunKey): Run => {
     const row = store.db.prepare('SELECT data FROM frontend_runs WHERE host=? AND conversation=? AND thread=? AND run=?').get(...keyParts(scope, key));
     if (!row || typeof row.data !== 'string') throw new Error('Unknown frontend run');
@@ -147,6 +157,8 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
             const previous = store.db.prepare('SELECT data FROM frontend_events WHERE host=? AND conversation=? AND thread=? AND run=? AND cursor=?').get(...parts, cursor);
             if (previous && previous.data === encoded) return 'duplicate';
             if (previous || cursor !== run.cursor + 1 || run.status !== 'collecting' || cursor > 4096) { run.status = 'faulted'; save(scope, run); return 'faulted'; }
+            const original = copy(run);
+            const receipts: { callId: string; result: Result }[] = [];
             try {
               const event = EventSchema.parse(input);
               if ((cursor === 1) !== (event.type === 'RUN_STARTED')) throw new Error('Invalid run start');
@@ -192,15 +204,21 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
                     try {
                       const args: Json = JSON.parse(canonicalJson(JSON.parse(call.state.fragments)));
                       call.state = { kind: 'ready', args, digest: digest(canonicalJson(args)), decision: 'pending' };
-                    } catch { call.state = { kind: 'resolved', result: refused('invalid-arguments'), permitId: null, actorId: null }; }
+                    } catch {
+                      call.state = { kind: 'resolved', permitId: null, actorId: null };
+                      receipts.push({ callId: call.id, result: refused('invalid-arguments') });
+                    }
                   }
                   run.status = 'ready'; break;
                 }
               }
-              run.cursor = cursor; run.eventBytes += Buffer.byteLength(encoded);
-              store.db.prepare('INSERT INTO frontend_events(host, conversation, thread, run, cursor, data) VALUES (?, ?, ?, ?, ?, ?)').run(...parts, cursor, encoded);
-            } catch { run.status = 'faulted'; }
-            save(scope, run); return run.status === 'faulted' ? 'faulted' : 'accepted';
+            } catch {
+              original.status = 'faulted'; save(scope, original); return 'faulted';
+            }
+            run.cursor = cursor; run.eventBytes += Buffer.byteLength(encoded);
+            store.db.prepare('INSERT INTO frontend_events(host, conversation, thread, run, cursor, data) VALUES (?, ?, ?, ?, ?, ?)').run(...parts, cursor, encoded);
+            for (const receipt of receipts) writeReceipt(scope, key, receipt.callId, receipt.result);
+            save(scope, run); return 'accepted';
           });
         },
         decide(key, callId, decision, activationId, argumentsDigest) {
@@ -208,7 +226,10 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
             const call = run.calls.find(call => call.id === callId), binding = run.bindings.find(item => item.name === call?.name);
             if (run.status !== 'ready' || !call || call.state.kind !== 'ready' || !binding || binding.activationId !== activationId || call.state.digest !== argumentsDigest) throw new Error('Invalid decision');
             if (decision === 'allow') call.state.decision = 'allow';
-            else if (decision === 'deny') call.state = { kind: 'resolved', result: refused('denied'), permitId: null, actorId: null };
+            else if (decision === 'deny') {
+              writeReceipt(scope, key, call.id, refused('denied'));
+              call.state = { kind: 'resolved', permitId: null, actorId: null };
+            }
             else throw new Error('Invalid decision');
           });
         },
@@ -220,7 +241,7 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
           if (calls.some(call => !call || call.state.kind !== 'resolved')) return { kind: 'waiting' };
           return { kind: 'ready', identity: copy(run.identity), threadId: run.threadId, batch: calls.map(call => {
             if (!call || call.state.kind !== 'resolved') throw new Error('Invalid call state');
-            return { toolCallId: call.id, result: copy(call.state.result) };
+            return { toolCallId: call.id, result: readReceipt(scope, key, call.id) };
           }) };
         },
       };
@@ -254,11 +275,12 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
             const activationId = run.bindings.find(item => item.name === call.name)?.activationId ?? null;
             checkActor(key, 'receipt', call.id, activationId);
             if (call.state.kind === 'resolved') {
-              if (result.kind === 'uncertain' || canonicalJson(result) !== canonicalJson(call.state.result)) throw new Error('Conflicting receipt');
+              if (result.kind === 'uncertain' || canonicalJson(result) !== canonicalJson(readReceipt(scope, key, call.id))) throw new Error('Conflicting receipt');
               return 'duplicate';
             }
             if (result.kind === 'uncertain') return 'uncertain';
-            call.state = { kind: 'resolved', result, permitId, actorId }; return 'recorded';
+            writeReceipt(scope, key, call.id, result);
+            call.state = { kind: 'resolved', permitId, actorId }; return 'recorded';
           });
         },
       };

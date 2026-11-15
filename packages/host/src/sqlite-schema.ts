@@ -56,12 +56,16 @@ export function openDatabase(path: string): DatabaseSync {
           host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, cursor INTEGER NOT NULL, data TEXT NOT NULL,
           PRIMARY KEY(host, conversation, thread, run, cursor),
           FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
+        CREATE TABLE frontend_receipts (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, call TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run, call),
+          FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
         PRAGMA user_version=2;`);
       else if (lockedVersion !== 2) throw new Error('Unsupported database version');
       db.exec('COMMIT');
     }
     const allTables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
-    const missingFrontend = ['frontend_runs', 'frontend_events'].filter(name => !allTables.has(name));
+    const missingFrontend = ['frontend_runs', 'frontend_events', 'frontend_receipts'].filter(name => !allTables.has(name));
     if (missingFrontend.length) throw new Error(`Incomplete database schema version 2: missing ${missingFrontend.join(', ')}`);
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
