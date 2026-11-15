@@ -7,7 +7,7 @@ import type { ConnectedProvider, ConversationRef, ProviderConversation, Provider
 import { providerReference, providerRun } from './provider-commands.js';
 import type { ProviderRun } from './provider-commands.js';
 import { creationBinding } from './provider-creation.js';
-import type { ProviderCreation } from './provider-creation.js';
+import type { ProviderCreation, ProviderInstallation } from './provider-creation.js';
 
 export interface ProviderCheckpoint {
   readonly revision: number;
@@ -20,6 +20,24 @@ export interface ProviderDecision {
   readonly visible: PendingDecision;
   readonly reference: ConversationRef<string, 'decision'>;
   readonly choices: readonly { readonly id: string; readonly reference: ConversationRef<string, 'choice'>; readonly label: string }[];
+}
+export function providerDecision(value: unknown, binding: ProviderConversation<string>, selected: ProviderInstallation): ProviderDecision {
+  const input = record(value, ['kind', 'visible', 'reference', 'choices']);
+  record(input.visible, ['pendingId', 'runId', 'prompt', 'choices']);
+  const visible = parseDecision(input.visible), reference = providerReference(input.reference, binding, selected, 'decision');
+  if (input.kind !== 'provider' || reference.ref.opaqueId !== visible.pendingId || !Array.isArray(input.choices)) throw new Error('Invalid provider decision');
+  const choices = input.choices.map(value => {
+    const choice = record(value, ['id', 'reference', 'label']);
+    const reference = providerReference(choice.reference, binding, selected, 'choice'), label = identifier(choice.label);
+    if (reference.ref.opaqueId !== choice.id || !label.trim()) throw new Error('Invalid provider choice');
+    return { id: reference.ref.opaqueId, reference, label };
+  });
+  if (canonicalJson(choices.map(choice => choice.id)) !== canonicalJson(visible.choices)) throw new Error('Invalid provider choices');
+  return { kind: 'provider', visible, reference, choices };
+}
+export function visibleProviderDecision(pending: ProviderDecision, reserved: boolean): PendingDecision {
+  return parseDecision({ ...pending.visible, choiceLabels: Object.fromEntries(pending.choices.map(choice => [choice.id, choice.label])),
+    ...(reserved ? { reserved: true } : {}) });
 }
 export interface ProviderChange {
   readonly checkpoint: Omit<ProviderCheckpoint, 'revision'>;
@@ -96,7 +114,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
           });
           const visible = parseDecision({ pendingId: reference.ref.opaqueId, runId: run(decision.run).runId,
             prompt: decision.prompt, choices: choices.map(choice => choice.id) });
-          return { kind: 'provider', visible, reference, choices } satisfies ProviderDecision;
+          return providerDecision({ kind: 'provider', visible, reference, choices }, storedBinding, original.installation);
         });
         if (new Set(decisions.map(value => value.visible.pendingId)).size !== decisions.length) throw new Error('Duplicate provider decision');
         const transcript = parseTranscript(bounded(presentation.snapshot(decode(presentation.decodeState, state), refs)));

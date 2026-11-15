@@ -1,7 +1,7 @@
-import { providerCheckpoint } from './provider-stream.js';
-import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore } from './provider-stream.js';
-import { providerTarget, providerObservation, retainProviderRun } from './provider-commands.js';
-import type { ProviderTarget, ProviderRun } from './provider-commands.js';
+import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
+import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
+import { providerTarget, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
+import type { ProviderTarget, ProviderRun, ProviderAction } from './provider-commands.js';
 import { creationObservation, providerCreation, conversationInstallation } from './provider-creation.js';
 import type { ConversationInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 import { randomUUID } from 'node:crypto';
@@ -166,7 +166,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           requireRun(pending.visible.runId);
           if (!prior) this.db.prepare("INSERT INTO pending_decisions(host, conversation, id, run, data, status, operation) VALUES (?, ?, ?, ?, ?, 'open', NULL)")
             .run(...key(scope), id, pending.visible.runId, data);
-          if (prior?.status !== 'closed') decisions.set(id, pending.visible);
+          if (prior?.status !== 'closed') decisions.set(id, visibleProviderDecision(pending, prior?.status === 'reserved'));
         }
         for (const row of this.db.prepare("SELECT id FROM pending_decisions WHERE host=? AND conversation=? AND status='open'").all(...key(scope))) {
           const id = nonempty(row.id);
@@ -203,7 +203,18 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
   }
   snapshot(scope: ConversationScope): Snapshot<P> {
     const row = this.conversation(scope), cursor = integer(row.head);
-    const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
+    let document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
+    const original = this.creation(scope);
+    if (original?.observation?.kind === 'confirmed') {
+      const binding = original.observation.binding;
+      const decisions = Object.keys(document.decisions).flatMap(id => {
+        const pending = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
+        if (!pending || pending.status === 'closed') return [];
+        const parsed = providerDecision(json(pending.data), binding, original.installation);
+        return [[id, visibleProviderDecision(parsed, pending.status === 'reserved')]];
+      });
+      document = { ...document, decisions: Object.fromEntries(decisions) };
+    }
     return { scope, projectionVersion: this.projection.version, cursor, document };
   }
   findInstallation(scope: ConversationScope): ConversationInstallation | null {
@@ -226,7 +237,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     const parsedReceipt = parseReceipt(json(row.receipt));
     if (!sameScope(command.scope, scope) || command.clientCommandId !== id || parsedReceipt.hostOperationId !== ('kind' in target ? target.operation.operationId : target.identity.hostOperationId)) throw new Error('Corrupt command');
     if ('kind' in target) {
-      if (command.body.kind !== 'send') throw new Error('Invalid provider command');
+      matchProviderCommand(target, command.body);
       return { kind: 'provider', command, target, receipt: parsedReceipt,
         observation: row.observation === null ? null : providerObservation(json(row.observation), target) };
     }
@@ -268,7 +279,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
-  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string) => ProviderTarget): Admission {
+  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget): Admission {
     try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
       if (existing) return canonicalJson(existing.command) === canonicalJson(command)
@@ -281,9 +292,9 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
-      if ('kind' in installed && (command.body.kind !== 'send' || !captureProvider)) return { kind: 'rejected', reason: 'provider-command-unavailable' };
+      if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
       let run = null, pending = null;
-      if (command.body.kind === 'approve') {
+      if (command.body.kind === 'approve' && !('kind' in installed)) {
         const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?')
           .get(...key(scope), command.body.pendingId);
         if (!row || row.status !== 'open') return { kind: 'rejected', reason: 'decision-unavailable' };
@@ -307,11 +318,32 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         sequence: this.head(scope) + 1, state: { kind: 'pending' } };
       this.appendEvents(scope, [{ kind: 'receipt', receipt: admitted }]);
       let target;
+      let providerPending: ProviderDecision | null = null;
       if ('kind' in installed) {
         const original = this.creation(scope);
         if (!original || original.observation?.kind !== 'confirmed' || !captureProvider ||
           canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
-        try { target = providerTarget(captureProvider(original, operation), scope); }
+        let action: ProviderAction;
+        if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text };
+        else {
+          if (command.body.kind === 'approve') {
+            const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);
+            if (!row || row.status !== 'open') throw new AdmissionError('decision-unavailable');
+            providerPending = providerDecision(json(row.data), original.observation.binding, installed);
+          }
+          const runId = command.body.kind === 'cancel' ? command.body.runId : providerPending?.visible.runId;
+          const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId ?? '');
+          if (!row) throw new AdmissionError('unknown-run');
+          const saved = object(json(row.data)), run = providerRun(saved.reference, original.observation.binding, installed);
+          if (canonicalJson(saved) !== canonicalJson(run) || run.identity.runId !== runId) throw new AdmissionError('provider-run-mismatch');
+          if (command.body.kind === 'cancel') action = { kind: 'cancel', run: run.reference };
+          else {
+            const choiceId = command.body.choiceId, choice = providerPending?.choices.find(choice => choice.id === choiceId);
+            if (!choice || !providerPending) throw new AdmissionError('invalid-choice');
+            action = { kind: 'decide', run: run.reference, decision: providerPending.reference, choice: choice.reference };
+          }
+        }
+        try { target = providerTarget(captureProvider(original, operation, action), scope); matchProviderCommand(target, command.body); }
         catch { throw new AdmissionError('provider-command-unavailable'); }
         if (canonicalJson(target.installation) !== canonicalJson(installed) || canonicalJson(target.credential) !== canonicalJson(original.credential) ||
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
@@ -319,6 +351,11 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       } else target = captureTarget({ installation: installed, run, decision: pending }, operation);
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
+      if (providerPending) {
+        this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
+          .run(operation, ...key(scope), providerPending.visible.pendingId);
+        this.appendEvents(scope, [{ kind: 'decision-opened', decision: visibleProviderDecision(providerPending, true) }]);
+      }
       if (pending) this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
         .run(operation, ...key(scope), pending.visible.pendingId);
       return 'kind' in target
@@ -432,6 +469,21 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if ('kind' in stored && (observed.kind === 'accepted' || observed.kind === 'conclusive') && typeof observed.evidence.source !== 'string') {
         const run = observed.evidence.source.run;
         if (run) this.writeProviderRun(scope, run);
+      }
+      if ('kind' in stored && stored.target.operation.kind === 'decide' && (observed.kind === 'conclusive' || observed.kind === 'not-dispatched')) {
+        const pendingId = stored.target.operation.decision.ref.opaqueId;
+        const decisions = this.snapshot(scope).document.decisions;
+        const closed = observed.kind === 'conclusive' && observed.result.kind === 'receipt-completed';
+        const present = Object.hasOwn(decisions, pendingId) ? decisions[pendingId] : undefined;
+        const changed = this.db.prepare('UPDATE pending_decisions SET status=?, operation=NULL WHERE host=? AND conversation=? AND id=? AND operation=?')
+          .run(closed || !present ? 'closed' : 'open', ...key(scope), pendingId, stored.receipt.hostOperationId);
+        if (changed.changes) {
+          if (closed || !present) events.push({ kind: 'decision-closed', pendingId });
+          else {
+            const { reserved: _reserved, ...released } = present;
+            events.push({ kind: 'decision-opened', decision: released });
+          }
+        }
       }
       const pending = 'kind' in stored ? null : stored.target.decision;
       if (pending && (observed.kind === 'conclusive' || observed.kind === 'not-dispatched')) {

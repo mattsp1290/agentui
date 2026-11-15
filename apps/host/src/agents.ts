@@ -28,8 +28,8 @@ export function describeAgent(installation: Installation, availability: AgentDes
     availability: known ? availability : { kind: 'unavailable', reason: 'This agent runtime is unsupported.' } };
 }
 
-export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], send = false): AgentDescriptor {
+export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], commands: AgentDescriptor['commands'] = []): AgentDescriptor {
   return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(providerInstallationKey(installation)).digest('hex')}`,
     label: installation.agent.name, namespace: installation.instance.namespace, protocolVersion: installation.instance.protocolVersion,
-    commands: send ? ['send'] : [], availability };
+    commands, availability };
 }

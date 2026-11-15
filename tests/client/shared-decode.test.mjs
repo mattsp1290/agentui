@@ -8,7 +8,7 @@ import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdenti
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 const payload = () => manifestPayload({ schemaVersion: 1, platform: 'browser-development', sourceRevision: 'a'.repeat(64),
-  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: 3, extensionSdkVersion: EXTENSION_SDK_VERSION,
+  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: 4, extensionSdkVersion: EXTENSION_SDK_VERSION,
   nativeRuntime: BROWSER_RUNTIME, artifactRuntime: BROWSER_RUNTIME, lockSha256: 'c'.repeat(64),
   assets: [{ path: 'browser.html', sha256: 'd'.repeat(64) }],
 });
@@ -59,4 +59,15 @@ test('durable receipt and decision boundaries reject unexpected fields before se
   const decision = { pendingId: 'decision', runId: 'run', choices: ['yes'], prompt: 'Continue?' };
   assert.deepEqual(parseDecision(decision), decision);
   assert.throws(() => parseDecision({ ...decision, extra: true }));
+});
+
+test('provider decision labels require exact ID coverage and preserve native optional-field absence', () => {
+  const native = { pendingId: 'decision', runId: 'run', choices: ['a', '__proto__'], prompt: 'Continue?' };
+  assert.equal(canonicalJson(parseDecision(native)), canonicalJson(native));
+  const provider = { ...native, choiceLabels: Object.fromEntries([['a', 'Allow once'], ['__proto__', 'Allow once']]), reserved: true };
+  assert.deepEqual(parseDecision(provider), provider);
+  for (const fields of [{ choiceLabels: { a: 'Allow once' } }, { choiceLabels: { a: ' ', ['__proto__']: 'Allow once' } },
+    { choiceLabels: { ...provider.choiceLabels, extra: 'No' } }, { ...provider, reserved: false }, { reserved: true }]) {
+    assert.throws(() => parseDecision({ ...native, ...fields }));
+  }
 });

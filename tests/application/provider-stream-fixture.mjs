@@ -27,7 +27,7 @@ const secret = 'STREAM_PRIVATE_SECRET';
 export async function providerService(t, { native = false } = {}) {
   const instance = { namespace: 'stream-fixture', installationId: 'stream-installation', generation: 'original', protocolVersion: '1' };
   const conversations = new Map(), clients = new Set(), requests = [], replyGates = new Map();
-  let sequence = 0, beforeReply = false;
+  let sequence = 0, beforeReply = false, commandHandler;
   const ref = (binding, kind, opaqueId) => ({ binding, ref: { kind, instance, opaqueId } });
   const cursor = binding => ({ kind: 'provider-cursor', binding, opaque: { token: `opaque-${++sequence}-z` } });
   const state = () => ({ run: null, transcript: transcriptProjection.initial() });
@@ -72,6 +72,10 @@ export async function providerService(t, { native = false } = {}) {
       response.flushHeaders(); request.on('close', () => clients.delete(client)); response.on('close', () => clients.delete(client));
       const index = saved.history.findIndex(item => JSON.stringify(item.kind === 'snapshot' ? item.snapshot.cursor : item.cursor) === JSON.stringify(input.after));
       if (index >= 0) for (const item of saved.history.slice(index + 1)) response.write(`${JSON.stringify(item)}\n`);
+    } else if ((request.url === '/submit' || request.url === '/lookup') && commandHandler) {
+      const result = await commandHandler(input, request.url);
+      if (result === 'lost-reply') response.destroy();
+      else response.end(JSON.stringify(result));
     } else if (request.url === '/submit') {
       if (beforeReply) {
         const gate = Promise.withResolvers(); replyGates.set(input.binding.creation.scope.conversationId, gate);
@@ -83,7 +87,7 @@ export async function providerService(t, { native = false } = {}) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
   const service = `http://127.0.0.1:${server.address().port}`;
-  const extension = ({ revision = '1', generation = 'original', mutate, onAck, holdReceive } = {}) => {
+  const extension = ({ revision = '1', generation = 'original', mutate, onAck, holdReceive, controls = false } = {}) => {
     const installed = { ...instance, generation }, calls = { observe: [], ack: [], failures: [], connected: [], closed: 0, disposed: 0, ready: 0 };
     let context, credential;
     const request = (path, input, signal) => context.credentials.use({ credential, service }, async token => {
@@ -104,11 +108,11 @@ export async function providerService(t, { native = false } = {}) {
     const backend = {
       instance: installed,
       capabilities: Object.fromEntries(['create', 'send', 'reconcile', 'observe', 'cancel', 'decide'].map(kind => [kind,
-        ['cancel', 'decide'].includes(kind) ? { kind: 'unsupported', reason: 'Not enabled' } : { kind: 'supported' }])),
+        !controls && ['cancel', 'decide'].includes(kind) ? { kind: 'unsupported', reason: 'Not enabled' } : { kind: 'supported' }])),
       async discover() { return { kind: 'available', agents: [{ ref: { instance: installed, kind: 'agent', opaqueId: 'agent' }, name: 'Streaming provider' }] }; },
       create: value => request('/create', value), snapshot: value => request('/snapshot', value),
       submit: value => request('/submit', value), reconcileCreation: async () => ({ kind: 'unsupported', reason: 'Unused' }),
-      reconcileCommand: async () => ({ kind: 'unsupported', reason: 'Unused' }),
+      reconcileCommand: value => controls ? request('/lookup', value) : { kind: 'unsupported', reason: 'Unused' },
       observe(input, receive) {
         calls.observe.push(structuredClone(input));
         calls.receive = receive;
@@ -153,7 +157,7 @@ export async function providerService(t, { native = false } = {}) {
         authentication: { kind: 'secret', revision, resolve: async () => secret } }],
     } };
   };
-  return { extension, requests, conversations, clients, ref, cursor, makeEvent, emit, beforeReply() { beforeReply = true; } };
+  return { extension, requests, conversations, clients, ref, cursor, makeEvent, emit, command(handler) { commandHandler = handler; }, beforeReply() { beforeReply = true; } };
 }
 export async function fixture(t, extensions) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-stream-'));
@@ -164,7 +168,7 @@ export async function fixture(t, extensions) {
     socket.on('data', data => { output += data; }); socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
   });
   const client = createBrowserConnection({ fetch: async (url, init) => {
-    const response = await fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Origin: running.origin, ...(cookie ? { Cookie: cookie } : {}) } });
+    const response = await fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Connection: 'close', Origin: running.origin, ...(cookie ? { Cookie: cookie } : {}) } });
     if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
     return response;
   } });
