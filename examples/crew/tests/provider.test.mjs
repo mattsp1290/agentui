@@ -715,6 +715,7 @@ for (const termination of ['absent', 'unconfirmed', 'confirmed']) test(`Crew unc
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('A distinct next request');
+  await page.getByRole('button', { name: 'Send', exact: true }).and(page.locator(':enabled')).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
   assert.equal(await page.getByRole('button', { name: /Harness,/ }).isEnabled(), true);
@@ -791,6 +792,7 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   await page.getByRole('textbox', { name: 'Message', exact: true }).fill('An unsent draft after legacy restore');
+  await page.getByRole('button', { name: 'Send', exact: true }).and(page.locator(':enabled')).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), true);
   assert.equal(await page.getByRole('button', { name: /Harness,/ }).isEnabled(), true);
