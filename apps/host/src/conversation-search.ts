@@ -18,7 +18,20 @@ export function searchConversations(host: LocalHost<TranscriptEvent, Transcript>
     if (match === undefined && !conversationLabel(entry).toLowerCase().includes(query)) continue;
     let excerpt: string | null = null;
     if (match !== undefined) {
-      const start = Math.max(0, match.toLowerCase().indexOf(query) - 40);
+      const at = match.toLowerCase().indexOf(query);
+      let from = 0, to = 0, lowered = 0;
+      // Match the whole string for contextual casing, then map only the hit boundaries.
+      for (const character of match) {
+        if (lowered <= at) from = to;
+        to += character.length;
+        lowered += character.toLowerCase().length;
+        if (lowered >= at + query.length) break;
+      }
+      let start = Math.max(0, from - 40);
+      if (to - start > SERVICE_SEARCH_EXCERPT_LENGTH && to - from <= SERVICE_SEARCH_EXCERPT_LENGTH) {
+        start = to - SERVICE_SEARCH_EXCERPT_LENGTH;
+      }
+      if (/[\uDC00-\uDFFF]/u.test(match[start] ?? '')) start++;
       excerpt = match.slice(start, start + SERVICE_SEARCH_EXCERPT_LENGTH).replace(/[\uD800-\uDBFF]$/u, '');
     }
     items.push({ ...entry, excerpt });

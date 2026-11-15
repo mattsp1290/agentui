@@ -295,7 +295,7 @@ export function createApplicationController(deps: {
         const host = requireHost(owner);
         if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
         if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');
-        if (page.after !== null && after !== null && page.after <= after) throw new Error('Search did not advance.');
+        if (page.after !== null && page.after === after) throw new Error('Search did not advance.');
         return page;
       } catch (cause) {
         if (!signal.aborted && cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
