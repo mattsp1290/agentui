@@ -2,7 +2,7 @@ import { readFile, realpath } from 'node:fs/promises';
 import { dirname, isAbsolute, join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import { planCustomizationCatalog } from '@agentui/host/customization';
+import { desktopCustomizationIdentity, planCustomizationCatalog } from '@agentui/host/customization';
 import { checkCustomizationSource, isWorkerRequest, sourcePolicies } from './lib/customization-source-policy.mjs';
 import { checkCustomizationAsset, customizationCssPolicy, within } from './lib/customization-asset-policy.mjs';
 
@@ -23,7 +23,7 @@ const scripts = /\.[cm]?[jt]sx?$/u;
 export function desktopPlan(root) {
   const plan = planCustomizationCatalog(root, EXTENSION_SDK_VERSION, 'desktop');
   return { roots: plan.roots, entries: plan.entries.map((entry, index) => ({ ...entry, source: plan.sources[index] })),
-    catalog: { schemaVersion: 1, root: root.identity, packages: plan.packages, entries: plan.entries } };
+    identity: desktopCustomizationIdentity(plan) };
 }
 
 function checkSource(code, id, label) {

@@ -32,11 +32,10 @@ try {
   for (const item of outputs) {
     if (item.type === 'chunk' && [...item.imports, ...item.dynamicImports].some(path => !paths.has(path))) throw new Error('Unsupported external desktop import');
   }
-  await writeFile(join(stage, 'customization-identity.json'), JSON.stringify(plan.catalog) + '\n');
+  await writeFile(join(stage, 'customization-identity.json'), JSON.stringify(plan.identity) + '\n');
   execFileSync(process.execPath, [join(root, 'scripts/artifact-manifest.mjs'), 'browser-development', '--directory', stage], { cwd: root, stdio: 'inherit' });
   const verified = readArtifactBytes(stage, 'browser-development');
-  const catalog = JSON.parse(verified.files.get('customization-identity.json').toString());
-  await qualifyDesktopArtifact({ files: verified.files, namespaces: catalog.entries.map(entry => entry.manifest.namespace) });
+  await qualifyDesktopArtifact({ files: verified.files, namespaces: plan.entries.map(entry => entry.manifest.namespace) });
   const final = readArtifactBytes(stage, 'browser-development');
   if (verified.manifest.artifactId !== final.manifest.artifactId) throw new Error('Desktop artifact changed during qualification');
   await rename(stage, out);

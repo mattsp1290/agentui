@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { planCustomizationCatalog, planServerCatalog, serverCatalog } from '@agentui/host/customization';
+import { desktopCustomizationIdentity, planCustomizationCatalog, planServerCatalog, serverCatalog } from '@agentui/host/customization';
 import { desktopPlan } from '../../../scripts/local-customization.mjs';
 
 function node(identity, extensions = [], kinds = ['desktop', 'server']) {
@@ -13,24 +13,36 @@ function node(identity, extensions = [], kinds = ['desktop', 'server']) {
 test('desktop and server share diamond preorder, source paths and exact provenance projection', () => {
   const leaf = node('leaf'), left = node('left', [leaf]), right = node('right', [leaf]), root = node('root', [left, right]);
   const desktop = desktopPlan(root), server = planServerCatalog(root, '0.1.0');
-  assert.deepEqual(desktop.catalog.packages, server.catalog.packages);
-  assert.deepEqual(desktop.catalog.packages.map(pkg => pkg.identity), ['root', 'left', 'leaf', 'right']);
+  assert.equal(desktop.identity.schemaVersion, 1);
+  assert.equal(desktop.identity.root, 'root');
+  assert.deepEqual(desktop.identity.entries, ['root', 'left', 'leaf', 'right'].map(packageIdentity => ({ packageIdentity, module: './0.js' })));
+  assert.deepEqual(desktop.identity.packages, server.catalog.packages);
+  assert.deepEqual(desktop.identity.packages.map(pkg => pkg.identity), ['root', 'left', 'leaf', 'right']);
   assert.deepEqual(desktop.entries.map(entry => entry.source), ['root', 'left', 'leaf', 'right'].map(id => `/prepared/${id}/package/0.ts`));
   assert.deepEqual(server.sources, ['root', 'left', 'leaf', 'right'].map(id => `/prepared/${id}/package/1.ts`));
-  assert.deepEqual(desktop.catalog.packages[0], { identity: 'root', commit: 'root-commit', subdirectory: 'package', inputs: root.inputs, npm: { kind: 'absent' },
+  assert.deepEqual(desktop.identity.packages[0], { identity: 'root', commit: 'root-commit', subdirectory: 'package', inputs: root.inputs, npm: { kind: 'absent' },
     local: { manifest: root.customization.local.manifest, sources: [{ module: './0.js', source: './0.ts' }, { module: './1.js', source: './1.ts' }] },
     shared: './shared.ts', extensions: [{ packageIdentity: 'left', commit: 'left-commit' }, { packageIdentity: 'right', commit: 'right-commit' }] });
-  assert.equal(JSON.stringify(desktop.catalog).includes('/prepared/'), false);
+  assert.equal(JSON.stringify(desktop.identity).includes('/prepared/'), false);
   assert.deepEqual(server.catalog.entries.map(entry => entry.index), [0, 1, 2, 3]);
+});
+test('desktop identity stores one manifest per package even with several selected entries', () => {
+  const root = node('root', [], ['desktop', 'desktop']);
+  const plan = planCustomizationCatalog(root, '0.1.0', 'desktop');
+  const identity = desktopCustomizationIdentity(plan);
+  assert.deepEqual(JSON.parse(JSON.stringify(identity)), { schemaVersion: 1, root: 'root', packages: plan.packages,
+    entries: [{ packageIdentity: 'root', module: './0.js' }, { packageIdentity: 'root', module: './1.js' }] });
+  assert.deepEqual(desktopPlan(root).entries.map(entry => entry.manifest), [root.customization.local.manifest, root.customization.local.manifest]);
+  assert.throws(() => desktopCustomizationIdentity({ packages: [], entries: [] }), { code: 'invalid-graph' });
 });
 test('shared projection retains every pinned edge and excludes locked installation directories', () => {
   const child = node('child'), root = node('root', [child, { ...child, commit: 'later-commit' }]);
   root.npm = { kind: 'locked', identity: 'lock', directory: '/installed/private', packageManager: 'npm@11.19.1' };
   const desktop = desktopPlan(root), server = planServerCatalog(root, '0.1.0');
-  assert.deepEqual(desktop.catalog.packages, server.catalog.packages);
-  assert.equal(desktop.catalog.packages.length, 2);
-  assert.deepEqual(desktop.catalog.packages[0].extensions.map(edge => edge.commit), ['child-commit', 'later-commit']);
-  assert.deepEqual(desktop.catalog.packages[0].npm, { kind: 'locked', identity: 'lock', packageManager: 'npm@11.19.1' });
+  assert.deepEqual(desktop.identity.packages, server.catalog.packages);
+  assert.equal(desktop.identity.packages.length, 2);
+  assert.deepEqual(desktop.identity.packages[0].extensions.map(edge => edge.commit), ['child-commit', 'later-commit']);
+  assert.deepEqual(desktop.identity.packages[0].npm, { kind: 'locked', identity: 'lock', packageManager: 'npm@11.19.1' });
 });
 test('desktop accepts zero entries while server retains its entry limits', () => {
   const root = node('root', [], []);

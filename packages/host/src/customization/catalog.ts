@@ -27,6 +27,18 @@ export interface CustomizationCatalogPlan extends CustomizationCatalog {
   readonly roots: readonly string[];
   readonly sources: readonly string[];
 }
+export interface DesktopCustomizationIdentity {
+  readonly schemaVersion: 1;
+  readonly root: string;
+  readonly packages: readonly CustomizationArtifactPackage[];
+  readonly entries: readonly { readonly packageIdentity: string; readonly module: string }[];
+}
+export function desktopCustomizationIdentity(plan: CustomizationCatalog): DesktopCustomizationIdentity {
+  const root = plan.packages[0];
+  if (!root) throw CustomizationError.fixed('invalid-graph');
+  return { schemaVersion: 1, root: root.identity, packages: plan.packages,
+    entries: plan.entries.map(({ packageIdentity, module }) => ({ packageIdentity, module })) };
+}
 export function customizationCatalog(packages: readonly CustomizationArtifactPackage[], sdkVersion: string, kind: 'server' | 'desktop'): CustomizationCatalog {
   const invalidGraph = () => CustomizationError.fixed('invalid-graph');
   const root = packages[0];

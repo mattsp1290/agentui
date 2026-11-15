@@ -50,11 +50,13 @@ React, React DOM, SDK, contracts, protocol, theme, and desktop UI imports use th
 
 Literal JavaScript URL assets require an exact dot-relative file inside prepared sources. Plain CSS URL assets and CSS imports also stay inside those sources. Computed asset patterns, ambiguous escaped paths, public-directory fallbacks, CSS modules, CSS `image-set`, and separate worker compilations are unsupported. Artifact asset names must use NFC and contained path segments without control characters or colons.
 
+CSS assets require package ancestry without object-valued `browser` metadata around both source and target. This conservative rule also rejects unrelated map entries. Vite's reserved `@vite/` asset aliases are unsupported; explicit relative files such as `./@vite/client` remain ordinary assets. JavaScript-only browser maps still use guarded module resolution.
+
 Source rules reject unsupported module lookups in authored code and installed dependencies. Runtime string evaluation is governed by the host CSP. An unused global-detection fallback inside a dependency is allowed.
 
 The builder reserves a fresh output directory and generates the ordinary artifact manifest. Chromium serves retained verified bytes with the host's headers and activates every entry through the app's lifecycle. That lifecycle checks SDK compatibility and contribution validity. Qualification checks panel namespace order and readiness. Off-origin requests are blocked during qualification. It also checks that `index.html` starts under the native CSP. Native-session activation, component rendering, and conversation operations are not exercised by this gate. The builder verifies the inventory again before publication. Failed builds remove their output and private staging. An existing output is never replaced.
 
-The hashed `customization-identity.json` asset records the ordered package graph, committed input and npm identities, manifests, and selected desktop modules. It excludes temporary paths and repository addresses. The ordinary artifact manifest retains the AgentUI source and lock provenance. The host verifies and retains the artifact bytes at startup.
+The hashed `customization-identity.json` asset records the ordered package graph, committed input and npm identities, manifests, and selected desktop modules. Each entry references its package and module; package records own the manifests. It excludes temporary paths and repository addresses. The ordinary artifact manifest retains the AgentUI source and lock provenance. The host verifies and retains the artifact bytes at startup.
 
 ## Source loader
 

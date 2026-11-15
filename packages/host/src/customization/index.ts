@@ -8,5 +8,5 @@ export type { CommittedInputs, SourceFile } from './repository.js';
 export type { NpmInputs } from './packages.js';
 export { planServerCatalog, serverCatalog, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from './server-artifact.js';
 export type { VerifiedServerCustomizationArtifact, ServerCatalogPlan, ServerCatalog, ServerCustomizationArtifact, ServerArtifactExpectation } from './server-artifact.js';
-export { planCustomizationCatalog } from './catalog.js';
-export type { CustomizationArtifactPackage, CustomizationArtifactNpm, CustomizationCatalog, CustomizationCatalogPlan } from './catalog.js';
+export { desktopCustomizationIdentity, planCustomizationCatalog } from './catalog.js';
+export type { CustomizationArtifactPackage, CustomizationArtifactNpm, CustomizationCatalog, CustomizationCatalogPlan, DesktopCustomizationIdentity } from './catalog.js';

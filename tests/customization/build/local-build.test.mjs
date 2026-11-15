@@ -14,7 +14,7 @@ function fixture(t) {
 test('catalog sources have locale-independent code-unit order', () => {
   const node = { identity: 'root', commit: 'commit', subdirectory: '', inputs: [], npm: {}, repositoryDirectory: '/tmp/root', directory: '/tmp/root', extensions: [],
     customization: { local: { manifest: { sdkVersion: '0.1.0', namespace: 'example', entries: [] }, sources: new Map([['./z.js', 'z'], ['./t.js', 't'], ['./s.js', 's'], ['./B.js', 'B']]) } } };
-  assert.deepEqual(desktopPlan(node).catalog.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
+  assert.deepEqual(desktopPlan(node).identity.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
 });
 
 test('an ambient installed package outside prepared roots is rejected', { timeout: 30_000 }, t => {
@@ -169,7 +169,7 @@ test('builds every committed desktop entry in graph order and changes identity w
   buildCustom(f);
   const artifact = readArtifactBytes(join(f.directory, 'browser'), 'browser-development');
   const identity = JSON.parse(artifact.files.get('customization-identity.json'));
-  assert.deepEqual(identity.entries.map(entry => entry.manifest.namespace), [rootPackage.agentui.extension.namespace, 'child']);
+  assert.deepEqual(identity.entries.map(entry => identity.packages.find(pkg => pkg.identity === entry.packageIdentity).local.manifest.namespace), [rootPackage.agentui.extension.namespace, 'child']);
   assert.deepEqual(identity.packages.map(pkg => pkg.commit), [identity.packages[0].commit, first]);
   assert.ok(!JSON.stringify(identity).includes(child.repo));
   child.write('shared/prompts.ts', "export const reviewPrompt = 'Child updated';");
