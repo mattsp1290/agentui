@@ -8,6 +8,10 @@
       "types": "./dist/recorded-conversation.d.ts",
       "import": "./dist/recorded-conversation.js"
     },
+    "./frontend-tools": {
+      "types": "./dist/frontend-tools/index.d.ts",
+      "import": "./dist/frontend-tools/index.js"
+    },
     "./agui": {
       "types": "./dist/agui.d.ts",
       "import": "./dist/agui.js"
@@ -55,6 +59,7 @@
     "@earendil-works/pi-coding-agent": "1.5.2",
     "@mattsp1290/switchboard": "file:../../vendor/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.tgz",
     "@modelcontextprotocol/sdk": "1.32.2",
-    "@openai/codex-sdk": "0.169.0"
+    "@openai/codex-sdk": "0.169.0",
+    "zod": "4.6.6"
   }
 }

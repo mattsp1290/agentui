@@ -5,12 +5,12 @@ export function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA busy_timeout=5000;');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || (version !== 0 && version !== 1)) throw new Error('Unsupported database version');
+    if (typeof version !== 'number' || (version !== 0 && version !== 1 && version !== 2)) throw new Error('Unsupported database version');
     db.exec('PRAGMA foreign_keys=ON;');
     if (version === 0) {
       db.exec('BEGIN IMMEDIATE');
       const lockedVersion = db.prepare('PRAGMA user_version').get()?.user_version;
-      if (lockedVersion !== 0 && lockedVersion !== 1) throw new Error('Unsupported database version');
+      if (lockedVersion !== 0 && lockedVersion !== 1 && lockedVersion !== 2) throw new Error('Unsupported database version');
       if (lockedVersion === 0) db.exec(`
         CREATE TABLE conversations (
           host TEXT NOT NULL, conversation TEXT NOT NULL, installation TEXT NOT NULL,
@@ -44,6 +44,25 @@ export function openDatabase(path: string): DatabaseSync {
     const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
     const missing = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits'].filter(name => !tables.has(name));
     if (missing.length) throw new Error(`Incomplete database schema version 1: missing ${missing.join(', ')}`);
+    if (version !== 2) {
+      db.exec('BEGIN IMMEDIATE');
+      const lockedVersion = db.prepare('PRAGMA user_version').get()?.user_version;
+      if (lockedVersion === 1) db.exec(`
+        CREATE TABLE frontend_runs (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run),
+          FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE frontend_events (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, cursor INTEGER NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run, cursor),
+          FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
+        PRAGMA user_version=2;`);
+      else if (lockedVersion !== 2) throw new Error('Unsupported database version');
+      db.exec('COMMIT');
+    }
+    const allTables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
+    const missingFrontend = ['frontend_runs', 'frontend_events'].filter(name => !allTables.has(name));
+    if (missingFrontend.length) throw new Error(`Incomplete database schema version 2: missing ${missingFrontend.join(', ')}`);
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
     db.exec('PRAGMA synchronous=FULL;');

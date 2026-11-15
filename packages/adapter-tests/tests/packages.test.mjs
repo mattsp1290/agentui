@@ -23,6 +23,7 @@ test('emitted workspace packages resolve through public exports', async () => {
   assert.equal(hostRuntime, 'node');
   assert.equal(desktop, 'desktop');
   assert.equal(ios, 'ios');
+  assert.equal(typeof (await import('@agentui/host/frontend-tools')).frontendToolsFor, 'function');
   await import('@agentui/sdk/react');
   await import('@agentui/theme');
   const { EventType } = await import('@agentui/protocol');
