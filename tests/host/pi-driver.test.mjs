@@ -13,10 +13,11 @@ const frame = (content, finish_reason = null) => `data: ${JSON.stringify({
   choices: [{ index: 0, delta: content === null ? {} : { role: 'assistant', content }, finish_reason }],
 })}\n\n`;
 const key = 'fixture-provider-key-never-persist';
-async function fixture(t) {
+async function fixture(t, budgets = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-pi-driver-'));
   const requests = [];
   let release;
+  let emitText;
   let held = false;
   let withholdFirstText = false;
   let failFirstAppend = false;
@@ -28,6 +29,7 @@ async function fixture(t) {
     requests.push(JSON.parse(init.body));
     return new Response(new ReadableStream({ start(controller) {
       const emit = value => controller.enqueue(new TextEncoder().encode(value));
+      emitText = text => emit(frame(text));
       if (!withholdFirstText) emit(frame('Hello from Pi'));
       if (!held) { emit(frame(null, 'stop')); emit('data: [DONE]\n\n'); controller.close(); return; }
       release = () => { emit(frame(null, 'stop')); emit('data: [DONE]\n\n'); controller.close(); };
@@ -47,7 +49,7 @@ async function fixture(t) {
           throw new Error('Storage acknowledgement failed before native prompt');
         }
       } });
-    host = openLocalHost({ path: join(directory, 'host.sqlite'), projection: transcriptProjection, driver, authorize: () => true });
+    host = openLocalHost({ path: join(directory, 'host.sqlite'), projection: transcriptProjection, driver, authorize: () => true, budgets });
     let closed = false;
     const instance = { host, driver, port: host.conversation(scope), async close() {
       if (closed) return;
@@ -62,7 +64,7 @@ async function fixture(t) {
     globalThis.fetch = original;
     await rm(directory, { recursive: true, force: true });
   });
-  return { directory, requests, open, failOutput: predicate => { rejectOutput = predicate; }, failBeforePrompt: () => { failFirstAppend = true; }, hold: () => { held = true; }, holdWithoutText: () => { held = true; withholdFirstText = true; }, finish: () => release() };
+  return { directory, requests, open, failOutput: predicate => { rejectOutput = predicate; }, failBeforePrompt: () => { failFirstAppend = true; }, hold: () => { held = true; }, holdWithoutText: () => { held = true; withholdFirstText = true; }, more: text => emitText(text), finish: () => release() };
 }
 
 test('Pi host streams with one dispatch per command, follows up, resumes and preserves native Stop outcome', { timeout: 15_000 }, async t => {
@@ -294,4 +296,26 @@ test('Pi Stop works during first-token latency immediately after send admission'
   assert.equal(stop.receipt.state.kind, 'completed');
   await until(() => current.host.inspect(scope).snapshot.document.domain.currentRun.kind === 'ended');
   assert.equal(current.host.inspect(scope).snapshot.document.domain.currentRun.outcome, 'interrupted');
+});
+
+
+test('snapshot exhaustion seals the last saved Pi text across reopen', { timeout: 10_000 }, async t => {
+  const f = await fixture(t, { snapshotBytes: 5000 });
+  const current = await f.open();
+  current.host.createConversation(scope, current.driver.installation);
+  f.hold();
+  assert.equal((await current.port.submit(command('snapshot-full'))).receipt.state.kind, 'completed');
+  const state = () => current.host.inspect(scope).snapshot.document.domain;
+  await until(() => state().messages.some(message => message.role === 'assistant' && message.text === 'Hello from Pi' && !message.complete));
+  f.more('x'.repeat(6000));
+  await until(() => state().currentRun.kind === 'ended');
+  assert.equal(state().currentRun.outcome, 'failed');
+  assert.equal(state().messages.at(-1).text, 'Hello from Pi');
+  assert.equal(state().messages.every(message => message.complete), true);
+  await current.close();
+  const reopened = await f.open();
+  const saved = reopened.host.inspect(scope).snapshot.document.domain;
+  assert.equal(saved.currentRun.outcome, 'failed');
+  assert.equal(saved.messages.at(-1).text, 'Hello from Pi');
+  assert.equal(saved.messages.every(message => message.complete), true);
 });

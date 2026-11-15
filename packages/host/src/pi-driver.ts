@@ -21,7 +21,7 @@ interface Turn {
   readonly scope: ConversationScope;
   readonly session: PiSession;
   readonly run: NativeRun;
-  readonly rendered: { text: string; complete: boolean }[];
+  readonly rendered: { text: string; complete: boolean; revision: number }[];
   text: string;
   revision: number;
   stopCommandId: string | null;
@@ -75,9 +75,24 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
       const value = text[index] ?? '';
       const previous = turn.rendered[index];
       if (previous?.complete || !complete && previous?.text === value) continue;
+      const revision = ++turn.revision;
       publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
-        revision: ++turn.revision, role: 'assistant', text: value, complete }]);
-      turn.rendered[index] = { text: value, complete };
+        revision, role: 'assistant', text: value, complete }]);
+      turn.rendered[index] = { text: value, complete, revision };
+    }
+  }
+  function sealSaved(turn: Turn) {
+    for (const [index, previous] of turn.rendered.entries()) {
+      if (previous.complete) continue;
+      const revision = previous.revision + 1;
+      try {
+        publish(turn, [{ kind: 'message-updated', messageId: `${turn.run.identity.runId}:assistant:${index}`,
+          revision, role: 'assistant', text: previous.text, complete: true }]);
+        turn.rendered[index] = { ...previous, revision, complete: true };
+        turn.revision = Math.max(turn.revision, revision);
+      } catch {
+        process.emitWarning('Could not finish stored Pi output. Start a new conversation.', { code: 'AGENTUI_PI_STORAGE' });
+      }
     }
   }
   function registerReference(turn: Turn) {
@@ -108,7 +123,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
           turn.text += '\n\nPi could not finish this response. You can send another message.';
         }
         render(turn, true);
-      } catch { outputFailed(turn); try { render(turn, true); } catch {} }
+      } catch { outputFailed(turn); try { render(turn, true); } catch { sealSaved(turn); } }
       const outcome: RunOutcome = closing && terminal.outcome !== 'completed' ? 'connection-lost'
         : cleanupFailed.has(key) || turn.storageFailed ? 'failed' : terminal.outcome;
       try { publish(turn, [{ kind: 'run-ended', runId: turn.run.identity.runId, outcome }]); }
