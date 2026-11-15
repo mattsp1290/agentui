@@ -1,7 +1,5 @@
 import { createHash } from 'node:crypto';
 
-export const CODEX_VERSION = '0.167.2';
-
 export function shellQuote(value) {
   return `'${String(value).replaceAll("'", "'\\''")}'`;
 }
@@ -20,7 +18,7 @@ export function profileFor(target, workspace, agent) {
   return { id: identity.slice(0, 12), port: 18000 + Number.parseInt(identity.slice(0, 7), 16) % 22000 };
 }
 
-export function bootstrapScript(nodeVersion, agent) {
+export function bootstrapScript(nodeVersion, agent, codexVersion) {
   return `set -eu
 umask 077
 root="$HOME/.local/share/agentui"
@@ -52,11 +50,11 @@ if [ ! -x "$node" ] || [ "$("$node" --version 2>/dev/null || true)" != "v$node_v
 fi
 export PATH="$(dirname "$node"):$PATH"
 codex=''
-${agent === 'codex' ? `codex_root="$root/tools/codex-${CODEX_VERSION}"
+${agent === 'codex' ? `codex_root="$root/tools/codex-${codexVersion}"
 codex="$codex_root/node_modules/.bin/codex"
-if [ ! -x "$codex" ] || [ "$("$codex" --version 2>/dev/null || true)" != "codex-cli ${CODEX_VERSION}" ]; then
-  echo "Installing Codex ${CODEX_VERSION} in AgentUI's private tools directory." >&2
-  npm install --prefix "$codex_root" --no-audit --no-fund '@openai/codex@${CODEX_VERSION}' >&2
+if [ ! -x "$codex" ] || [ "$("$codex" --version 2>/dev/null || true)" != "codex-cli ${codexVersion}" ]; then
+  echo "Installing Codex ${codexVersion} in AgentUI's private tools directory." >&2
+  npm install --prefix "$codex_root" --no-audit --no-fund '@openai/codex@${codexVersion}' >&2
 fi
 if ! "$codex" login status >&2; then
   echo "Codex login is required on this server. Run $codex login there, then rerun AgentUI." >&2

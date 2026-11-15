@@ -210,9 +210,11 @@ export async function launch(options) {
     if (options.kind === 'existing') { await open(options.url); return; }
     const [host, browser] = await Promise.all(['apps/host/dist/artifact.json', 'apps/desktop/web-dist-browser/artifact.json'].map(async path => JSON.parse(await readFile(join(root, path), 'utf8'))));
     checkArtifacts(host, browser, nodeVersion);
+    const { CODEX_RUNTIME } = await import('@agentui/contracts/compatibility');
+    const setupScript = bootstrapScript(nodeVersion, options.agent, CODEX_RUNTIME.version);
     const setupOutput = options.kind === 'ssh'
-      ? await run('ssh', [...sshOptions, options.destination, 'sh -s'], lifecycle, bootstrapScript(nodeVersion, options.agent))
-      : await run('/bin/sh', ['-s'], lifecycle, bootstrapScript(nodeVersion, options.agent));
+      ? await run('ssh', [...sshOptions, options.destination, 'sh -s'], lifecycle, setupScript)
+      : await run('/bin/sh', ['-s'], lifecycle, setupScript);
     checkRunning();
     const setupLine = setupOutput.split('\n').findLast(line => line.startsWith('AGENTUI_SETUP '));
     if (!setupLine) throw new Error('Server setup did not return its runtime information.');

@@ -6,6 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { parseLaunchArgs, assertPortAvailable } from '../../scripts/agentui-launch.mjs';
 import { bootstrapScript, distribution, profileFor, shellQuote } from '../../scripts/agentui-runtime.mjs';
 
@@ -45,9 +46,9 @@ test('shell paths remain literal including quotes and substitution syntax', () =
 });
 
 test('Pi provisioning does not install Codex or require its login', () => {
-  const script = bootstrapScript('24.22.3', 'pi');
+  const script = bootstrapScript('24.22.3', 'pi', CODEX_RUNTIME.version);
   assert.doesNotMatch(script, /npm install|login status/);
-  assert.match(bootstrapScript('24.22.3', 'codex'), /@openai\/codex@0\.167\.2/);
+  assert.ok(bootstrapScript('24.22.3', 'codex', CODEX_RUNTIME.version).includes(`@openai/codex@${CODEX_RUNTIME.version}`));
 });
 
 test('launcher refuses an occupied local port without affecting the listener', async t => {
