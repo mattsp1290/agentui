@@ -60,15 +60,17 @@ Theme and platform controls remain direct imports from `@agentui/theme/react` an
 
 ## Register a typed frontend tool
 
-The UI context exposes `frontendTools.add(tool)`. Each contribution supplies a protocol tool definition, a decoder from `unknown`, and an async handler returning a string. The handler receives the pinned conversation scope. Import the runtime from `@agentui/sdk/tools` when implementing an activation owner:
+The UI context exposes `frontendTools.add(tool)`.
+Each contribution supplies a protocol tool definition, a decoder from `unknown`, and an async handler returning a string.
+The handler receives the pinned conversation scope.
+The factory supplies the validated namespace and registration sink in an immutable activation context.
+Import the runtime from `@agentui/sdk/tools` when implementing an activation owner:
 
 ```ts
 const { generation, contributions } = await createFrontendToolGeneration({
   namespace: manifest.namespace, generation: 'activation-1', platform: 'desktop',
-  accept: validateUiExtensionContributions,
-  async activate(frontendTools) {
-    return entry.activate({ namespace: manifest.namespace, frontendTools });
-  },
+  accept: value => { validateUiExtensionContributions(value); return value; },
+  activate: context => entry.activate(context),
 });
 const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run, capabilities });
 try {
@@ -81,13 +83,17 @@ await generation.retire();
 
 Use `contributions.modules` to render validated modules and handle the returned tool outcome.
 - **Creation.** If activation throws or returns a value without a callable disposer, the callback owns cleanup of any partial activation.
-Otherwise, creation disposes a rejected contribution and preserves both validation and disposal errors.
+Otherwise, creation captures its disposer once, then awaits the acceptance decoder.
+The decoder may return the original contribution or a transformed contribution.
+The raw activation result still owns disposal in either case.
+Creation disposes a rejected contribution and preserves both validation and disposal errors.
 Any failed `frontendTools.add` fails the whole activation even when the extension catches it.
 Creation rethrows the first registration error before checking acceptance.
 Creation waits for failed-activation disposal, so a disposer that never settles leaves creation pending.
 Creation has no cancellation and registration stays open until activation settles.
 An owner that abandons the wait must observe the promise and retire any generation it eventually returns.
 An activation that never settles retains its partial resources.
+An acceptance decoder that never settles retains the captured activation resources.
 - **Retirement.** The activation owner retains the generation and retires it when replaced.
 Contributions are cooperative full-trust objects.
 Call `generation.retire()` for cleanup instead of calling the contribution disposer directly.
@@ -97,12 +103,16 @@ The generation label is captured for diagnostics and owner correlation; the SDK 
 Disposal runs once after all pins and calls drain.
 Its failure rejects every retirement caller.
 Always observe the retirement promise.
+A replacement generation can activate before the previous generation disposes, so extensions must tolerate overlapping activations.
+A disposer must not await its own generation's retirement, since retirement waits for that disposer.
 - **Pins.** Existing pins and calls remain usable until released or settled.
 Release every pin on every run outcome, including cancellation and failure.
 A handler must not await retirement of any generation held by its own run's pin, since retirement waits for that pin.
 A loader action reachable from a tool call must start retirement and return without awaiting it.
 A handler that never settles retains its resources and leaves retirement pending.
 A pin snapshots the run and definitions.
+It holds only generations that contribute at least one tool.
+Enabled client tool names must not match agent-provided names in `tools.items`.
 It exposes definitions only when `tools.clientProvided` is true and `tools.supported` is not false.
 Otherwise it holds no generation and refuses every call as `unknown-tool` until released.
 Released pins refuse calls.
@@ -115,7 +125,6 @@ Duplicate local names and duplicate selected namespaces are rejected.
 Platform belongs to the activation generation, not individual tools.
 A mixed desktop and iOS generation list is intentionally filtered to the pin's platform.
 The `ag-ui` metadata key is reserved.
-Extension manifest namespaces use `[a-z][a-z0-9-]{0,31}`; dots, uppercase letters, underscores, and longer names now fail manifest parsing.
 Provider instance namespaces such as `example.crew` are a separate identity and may contain dots.
 
 Parameters use a bounded JSON copy and an object-root inline draft-07 JSON Schema.
@@ -123,9 +132,12 @@ Schema-position `$ref`, `definitions`, `$id`, unknown keywords, nested or non-dr
 Literal boolean schemas remain valid in schema positions.
 Annotation values such as `default`, `enum`, `const`, and `examples` are data.
 Regular expressions use Unicode mode.
-Omitted parameters and `{}` use the SDK's object-argument convention, so arrays and primitives are refused even though `{}` remains unchanged on the wire.
-Arguments are parsed values, not streamed text.
+Registration normalizes omitted parameters and `{}` to `{ type: 'object' }`, which is both advertised and validated.
+Arrays and primitives are refused.
+Arguments are parsed values.
+The loader parses accumulated argument text when a tool call completes and passes `{}` when that text is empty.
 They are copied, validated, then decoded without coercion or defaults.
+`decodeInput` must be synchronous.
 Extensions are fully trusted; schema regular expressions can consume excessive time on hostile input.
 
 Supported formats are `date`, `time`, `date-time`, `uri`, `uri-reference`, `uri-template`, `email`, `hostname`, `ipv4`, `ipv6`, `regex`, `json-pointer`, and `relative-json-pointer`.
@@ -134,8 +146,7 @@ Every other format is rejected, including draft-07's `idn-email`, `idn-hostname`
 The validator's constructor rejects some valid schemas with dependencies named `id` or `$id`.
 For example, `dependencies: { id: ['name'] }` is supported, but `dependencies: { id: [] }` is rejected.
 
-Definitions are advertised verbatim.
-Provider adapters must normalize omitted or empty parameters to `{ type: 'object' }` to preserve the SDK's object-argument convention.
+Nonempty schemas and metadata retain their authored property order.
 A provider adapter whose tool-schema dialect is narrower than draft-07 must translate or refuse the definition; the SDK does not.
 
 The validator uses `@cfworker/json-schema` 4.1.6 and the [official draft-07 meta-schema](https://json-schema.org/draft-07/schema).
@@ -146,4 +157,6 @@ React Native's global `URL` cannot set `hash` or resolve fragment references, wh
 iOS needs a standards-compliant `URL` before registering tools.
 WKWebView and native Hermes have not been qualified.
 
-This contract does not implement frontend-tool delivery, authorization, durable call claims, stream parsing, or protocol continuation. It does not by itself justify advertising `tools.clientProvided`. Installed extensions appear in the app after later loader and activation work.
+This contract does not implement frontend-tool delivery, authorization, durable call claims, stream parsing, or protocol continuation.
+It does not by itself justify advertising `tools.clientProvided`.
+Installed extensions appear in the app after later loader and activation work.

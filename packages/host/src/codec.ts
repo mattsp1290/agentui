@@ -38,7 +38,7 @@ export function nativeRun(value: unknown, expected: Installation, scope: Convers
   const input = object(value), identity = parseRunIdentity(input.identity);
   const { authority, conversation } = identity;
   if (!sameScope(conversation, scope) || authority.kind !== 'agentui-host' ||
-    authority.hostId !== scope.hostId || authority.binding.installationId !== expected.installationId) throw new Error('Foreign run authority');
+    authority.binding.installationId !== expected.installationId) throw new Error('Foreign run authority');
   const reference = parseSessionReference({ value: input.reference, expected: expected.binding });
   if (reference.kind !== 'ok') throw new Error('Invalid native reference');
   if (authority.binding.opaqueSessionId !== reference.value.opaque) throw new Error('Session identity mismatch');

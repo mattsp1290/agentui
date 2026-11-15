@@ -14,8 +14,8 @@ const pin = (generations, overrides = {}) =>
   pinFrontendTools({ generations, platform: 'desktop', run, capabilities, ...overrides });
 async function make(dispose, overrides = {}) {
   return (await createFrontendToolGeneration({
-    namespace: 'demo', generation: '1', platform: 'desktop', accept: validateExtensionLifetime,
-    activate(tools) {
+    namespace: 'demo', generation: '1', platform: 'desktop', accept: value => { validateExtensionLifetime(value); return value; },
+    activate({ frontendTools: tools }) {
       tools.add({ definition: { name: 'x', description: 'x' }, decodeInput: value => value,
         async execute() { return 'ok'; }, ...overrides });
       return { dispose };

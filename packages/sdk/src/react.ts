@@ -2,8 +2,8 @@ import type { ComponentType } from 'react';
 import type { ConversationDocument, ConversationScope, SubmitResult } from '@agentui/contracts';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
-import type { FrontendToolContributions } from './tool-contracts.js';
-export type { FrontendToolContribution, FrontendToolContributions } from './tool-contracts.js';
+import type { UiExtensionContext } from './tool-contracts.js';
+export type { FrontendToolContribution, FrontendToolContributions, UiExtensionContext } from './tool-contracts.js';
 import { behaviour, validateExtensionLifetime } from './extensions.js';
 import type { EXTENSION_SDK_VERSION, ExtensionLifetime, FrontendPlatform } from './extensions.js';
 
@@ -30,10 +30,6 @@ export interface ConversationModule {
   readonly actions?: readonly ModuleAction[];
 }
 
-export interface UiExtensionContext {
-  readonly namespace: string;
-  readonly frontendTools: FrontendToolContributions;
-}
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
 }

@@ -7,6 +7,7 @@ test('native run decoding retains host authority and native reference checks', (
   const source = run();
   source.identity.authority.binding.namespace = 'example.crew';
   assert.deepEqual(nativeRun(source, installed, scope), source);
+  assert.throws(() => nativeRun(source, installed, { ...scope, hostId: 'foreign' }), /Foreign run authority/u);
   const cases = [
     [value => { value.identity.conversation.conversationId = 'foreign'; }, /Foreign run authority/u],
     [value => { value.identity.authority = { kind: 'remote-provider', binding: value.identity.authority.binding }; }, /Foreign run authority/u],

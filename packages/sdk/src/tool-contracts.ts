@@ -6,39 +6,49 @@ export type { FrontendPlatform } from './extensions.js';
 export type FrontendTool = NonNullable<RunAgentInput['tools']>[number];
 export interface FrontendToolContribution<Input> {
   readonly definition: FrontendTool;
+  /** Decodes synchronously after schema validation. */
   decodeInput(value: unknown): Input;
   execute(input: Input, context: { readonly conversation: ConversationScope }): Promise<string>;
 }
 export interface FrontendToolContributions { add<Input>(tool: FrontendToolContribution<Input>): void }
+export interface UiExtensionContext {
+  readonly namespace: string;
+  readonly frontendTools: FrontendToolContributions;
+}
 export interface FrontendToolGeneration {
   readonly namespace: string;
   /** Captured diagnostic and owner correlation label; uniqueness is not enforced. */
   readonly generation: string;
   readonly platform: FrontendPlatform;
+  /**
+   * Remove this generation from the active list before awaiting retirement and observe the promise.
+   * Disposal waits for every pin and call to drain. Handlers must not await retirement of a
+   * generation held by their own run's pin, and disposers must not await their own retirement.
+   */
   retire(): Promise<void>;
 }
 export interface FrontendToolPin {
   readonly run: RunIdentity;
   readonly definitions: readonly Readonly<FrontendTool>[];
   invoke(name: string, args: unknown): Promise<FrontendToolOutcome>;
+  /** Release on every run outcome, including cancellation and failure. In-flight calls still drain. */
   release(): void;
 }
 export type FrontendToolOutcome =
   | { readonly kind: 'completed'; readonly output: string }
   | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'invalid-arguments' | 'decode-failed' };
-export type AcceptedContributions<A> = A extends (value: unknown) => asserts value is infer L ? L : never;
 export interface FrontendToolActivation<L> {
   readonly generation: FrontendToolGeneration;
   /** Dispose through generation.retire(), which waits for pins and calls to drain. */
   readonly contributions: Omit<L, 'dispose'>;
 }
-export interface FrontendToolGenerationOptions<A extends (value: unknown) => void> {
+export interface FrontendToolGenerationOptions<L extends ExtensionLifetime> {
   readonly namespace: string;
   readonly generation: string;
   readonly platform: FrontendPlatform;
-  activate(tools: FrontendToolContributions): unknown;
-  // TypeScript does not enforce the lifetime constraint on an inferred assertion target.
-  readonly accept: A & (AcceptedContributions<A> extends ExtensionLifetime ? unknown : never);
+  activate(context: UiExtensionContext): unknown;
+  /** Decodes the activation result. The raw activation result owns disposal, captured before this runs. */
+  accept(value: unknown): L | Promise<L>;
 }
 export interface FrontendToolPinOptions {
   readonly generations: readonly FrontendToolGeneration[];

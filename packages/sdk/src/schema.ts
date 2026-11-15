@@ -12,9 +12,7 @@ const formats = new Set('date time date-time uri uri-reference uri-template emai
 const dialects = new Set(['http://json-schema.org/draft-07/schema#', 'http://json-schema.org/draft-07/schema']);
 export function compileParameters(input: unknown): (value: unknown) => boolean {
   // cfworker adds hidden reference metadata, so it must own a mutable copy of the wire schema.
-  const parameters = copyJson(input === undefined ? {} : input);
-  const empty = typeof parameters === 'object' && parameters !== null && !Array.isArray(parameters) && Object.keys(parameters).length === 0;
-  const root = (empty ? { type: 'object' } : parameters) as Schema;
+  const root = copyJson(input) as Schema;
   if (typeof root !== 'object' || root === null || root.type !== 'object') throw new Error('Tool parameters must have object type');
   if (!metaValidator().validate(root).valid) throw new Error('Invalid draft-07 schema');
   function walk(schema: Schema): void {

@@ -18,11 +18,11 @@ const pin = (generations, overrides = {}) =>
 const make = async (opts = {}) =>
   (
     await createFrontendToolGeneration({
-      accept: validateExtensionLifetime,
+      accept: value => { validateExtensionLifetime(value); return value; },
       namespace: 'demo',
       generation: '1',
       platform: 'desktop',
-      activate(tools) {
+      activate({ frontendTools: tools }) {
         tools.add({
           definition: {
             name: 'text_length',
@@ -51,7 +51,7 @@ test('pins hold retired generations and active calls until they drain', async ()
   let finish,
     disposed = 0;
   const a = await make({
-    activate(tools) {
+    activate({ frontendTools: tools }) {
       tools.add({
         definition: { name: 'x', description: 'x' },
         decodeInput(x) {
@@ -89,7 +89,7 @@ test('pins hold retired generations and active calls until they drain', async ()
 test('old and new generations and multiple pins are independent', async () => {
   let disposed = 0;
   const a = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: { name: 'x', description: 'x' },
         decodeInput(x) {
@@ -143,7 +143,7 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
   }
   const tool = new Tool();
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add(tool);
       return { dispose() {} };
     },
@@ -205,7 +205,7 @@ test('invalid schemas poison registration and clean up', async (t) => {
       let disposed = 0;
       await assert.rejects(
         make({
-          activate(tools) {
+          activate({ frontendTools: tools }) {
             try {
               tools.add({
                 definition: { name: 'x', description: 'x', parameters: schema },
@@ -272,7 +272,7 @@ test('rejects malformed public definitions and generation identity', async () =>
   ]) {
     await assert.rejects(
       make({
-        activate(t) {
+        activate({ frontendTools: t }) {
           t.add({
             definition,
             decodeInput(x) {
@@ -294,7 +294,7 @@ test('rejects malformed public definitions and generation identity', async () =>
 test('generation identity is captured before activation settles', async () => {
   let finish;
   const options = {
-    accept: validateExtensionLifetime,
+    accept: value => { validateExtensionLifetime(value); return value; },
     namespace: 'original',
     generation: 'one',
     platform: 'desktop',
@@ -330,7 +330,7 @@ test('registration rejects collisions and closes after activation', async () => 
   };
   await assert.rejects(
     make({
-      activate(t) {
+      activate({ frontendTools: t }) {
         t.add(contribution);
         t.add(contribution);
         return { dispose() {} };
@@ -338,7 +338,7 @@ test('registration rejects collisions and closes after activation', async () => 
     }),
   );
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       add = t.add;
       return { dispose() {} };
     },
@@ -352,7 +352,7 @@ test('registration rejects collisions and closes after activation', async () => 
 
 test('arguments are not defaulted or coerced and decoder errors refuse', async () => {
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: {
           name: 'x',
@@ -390,7 +390,7 @@ test('handler rejection drains an in-flight call and nonstring results reject', 
   let reject,
     disposed = 0;
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: { name: 'x', description: 'x' },
         decodeInput(x) {
@@ -418,7 +418,7 @@ test('handler rejection drains an in-flight call and nonstring results reject', 
   await retired;
   assert.equal(disposed, 1);
   const other = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: { name: 'x', description: 'x' },
         decodeInput(x) {
@@ -452,7 +452,7 @@ test('registration captures methods and schema independently', async () => {
     },
   };
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add(contribution);
       return { dispose() {} };
     },
@@ -471,7 +471,7 @@ test('registration captures methods and schema independently', async () => {
 test('activation reports registration and disposal failures', async () => {
   await assert.rejects(
     make({
-      activate(t) {
+      activate({ frontendTools: t }) {
         try {
           t.add({
             definition: {
@@ -504,7 +504,7 @@ test('activation reports registration and disposal failures', async () => {
 test('refusals and failed pins drain retired generations', async () => {
   let disposed = 0;
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: {
           name: 'x',
@@ -552,7 +552,7 @@ test('rejected activation closes registration', async () => {
   };
   await assert.rejects(
     make({
-      activate(t) {
+      activate({ frontendTools: t }) {
         add = t.add;
         t.add(tool);
         throw Error('activation');
@@ -570,7 +570,7 @@ test('optional definitions and empty schemas preserve object arguments', async (
     { $schema: 'http://json-schema.org/draft-07/schema', type: 'object' },
   ]) {
     const g = await make({
-      activate(t) {
+      activate({ frontendTools: t }) {
         t.add({
           definition: { name: 'x', description: 'x', parameters, metadata: undefined },
           decodeInput(x) {
@@ -586,8 +586,8 @@ test('optional definitions and empty schemas preserve object arguments', async (
     const p = pin([g]);
     assert.equal((await p.invoke('demo__x', {})).kind, 'completed');
     assert.equal((await p.invoke('demo__x', 'text')).code, 'invalid-arguments');
-    if (parameters && !Object.keys(parameters).length)
-      assert.deepEqual(p.definitions[0].parameters, {});
+    if (parameters === undefined || !Object.keys(parameters).length)
+      assert.deepEqual(p.definitions[0].parameters, { type: 'object' });
     p.release();
     await g.retire();
   }
@@ -604,7 +604,7 @@ test('optional definitions and empty schemas preserve object arguments', async (
   ]) {
     await assert.rejects(
       make({
-        activate(t) {
+        activate({ frontendTools: t }) {
           t.add({
             definition,
             decodeInput(x) {
@@ -653,7 +653,7 @@ test('acceptance failure preserves disposal failure and captures disposal once',
 
 test('run validation, property order, and reserved metadata', async () => {
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: {
           name: 'x',
@@ -686,7 +686,7 @@ test('run validation, property order, and reserved metadata', async () => {
   await g.retire();
   await assert.rejects(
     make({
-      activate(t) {
+      activate({ frontendTools: t }) {
         t.add({
           definition: { name: 'x', description: 'x', metadata: { 'ag-ui': {} } },
           decodeInput(x) {
@@ -707,7 +707,7 @@ test('disabled pins do not retain and concurrent calls drain', async () => {
   let disposed = 0;
   const finish = [];
   const g = await make({
-    activate(t) {
+    activate({ frontendTools: t }) {
       t.add({
         definition: { name: 'x', description: 'x' },
         decodeInput(x) {
@@ -758,7 +758,7 @@ test('accepted contributions preserve identity and opaque provider bindings', as
     namespace: 'demo',
     generation: 'label',
     platform: 'desktop',
-    accept: validateExtensionLifetime,
+    accept: value => { validateExtensionLifetime(value); return value; },
     activate() {
       return lifetime;
     },
@@ -794,7 +794,7 @@ test('JSON snapshots preserve data without invoking hidden serialization hooks',
     },
   });
   const generation = await make({
-    activate(tools) {
+    activate({ frontendTools: tools }) {
       tools.add({
         definition: { name: 'x', description: 'x', metadata },
         decodeInput(value) {
@@ -837,7 +837,7 @@ test('registration error precedes acceptance failure and still disposes', async 
   let disposed = 0;
   let accepted = 0;
   await assert.rejects(make({
-    activate(tools) {
+    activate({ frontendTools: tools }) {
       try {
         tools.add({ definition: { name: 'x', description: 'x', parameters: { type: 'object', future: true } },
           decodeInput: value => value, async execute() { return ''; } });
@@ -852,7 +852,7 @@ test('registration error precedes acceptance failure and still disposes', async 
 
 test('property dependency named id works without references', async () => {
   const g = await make({
-    activate(tools) {
+    activate({ frontendTools: tools }) {
       tools.add({ definition: { name: 'x', description: 'x', parameters: {
         type: 'object', properties: { id: { type: 'string' } }, dependencies: { id: ['name'] },
       } }, decodeInput: value => value, async execute() { return 'ok'; } });
@@ -868,7 +868,7 @@ test('property dependency named id works without references', async () => {
 
 test('tool handlers require functions at registration', async () => {
   for (const field of ['decodeInput', 'execute']) {
-    await assert.rejects(make({ activate(tools) {
+    await assert.rejects(make({ activate({ frontendTools: tools }) {
       tools.add({ definition: { name: 'x', description: 'x' }, decodeInput: value => value,
         async execute() { return ''; }, [field]: 'invalid' });
     } }), /Tool requires decodeInput and execute functions/u);
@@ -876,23 +876,23 @@ test('tool handlers require functions at registration', async () => {
 });
 
 test('tool definition fields share one JSON budget after optional undefined normalization', async () => {
-  await assert.rejects(make({ activate(tools) {
+  await assert.rejects(make({ activate({ frontendTools: tools }) {
     tools.add({ definition: { name: 'x', description: 'a'.repeat(8_000_000), metadata: { text: 'b'.repeat(8_000_000) } },
       decodeInput: value => value, async execute() { return ''; } });
   } }), /JSON exceeds size limit/u);
-  const g = await make({ activate(tools) {
+  const g = await make({ activate({ frontendTools: tools }) {
     tools.add({ definition: { name: 'x', description: '', parameters: undefined, metadata: undefined },
       decodeInput: value => value, async execute() { return ''; } });
     return { dispose() {} };
   } });
   const p = pin([g]);
-  assert.deepEqual(p.definitions, [{ name: 'demo__x', description: '' }]);
+  assert.deepEqual(p.definitions, [{ name: 'demo__x', description: '', parameters: { type: 'object' } }]);
   p.release();
   await g.retire();
 });
 
 test('local schema references are unsupported', async () => {
-  await assert.rejects(make({ activate(tools) {
+  await assert.rejects(make({ activate({ frontendTools: tools }) {
     tools.add({ definition: { name: 'x', description: '', parameters: { type: 'object', $ref: '#/properties/y', properties: { y: { type: 'string' } } } }, decodeInput: x => x, async execute() { return ''; } });
     return { dispose() {} };
   } }), /Unsupported schema keyword: \$ref/u);
@@ -907,7 +907,7 @@ test('activation options are callable before activation starts', async () => {
 });
 
 test('annotation data may contain reference-shaped keys', async () => {
-  const g = await make({ activate(tools) {
+  const g = await make({ activate({ frontendTools: tools }) {
     tools.add({ definition: { name: 'x', description: '', parameters: { type: 'object', default: { $ref: '#', definitions: {} }, examples: [{ $ref: '#', definitions: {} }] } }, decodeInput: x => x, async execute() { return 'ok'; } });
     return { dispose() {} };
   } });

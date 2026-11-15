@@ -1,8 +1,8 @@
 import { copyJson, parseRunIdentity, type ConversationScope } from '@agentui/contracts';
 import { record } from '@agentui/contracts/decode';
-import { behaviour, extensionNamespace, frontendPlatform } from './extensions.js';
+import { behaviour, extensionNamespace, frontendPlatform, type ExtensionLifetime } from './extensions.js';
 import { compileParameters } from './schema.js';
-import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, AcceptedContributions, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
+import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
 export type * from './tool-contracts.js';
 
 type Registered = { readonly definition: FrontendTool; call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> };
@@ -25,12 +25,15 @@ function registerTool<Input>(namespace: string, tool: FrontendToolContribution<I
   if (metadata && 'ag-ui' in metadata) throw new Error('Reserved tool metadata');
   const name = `${namespace}__${copied.name}`;
   if (name.length > 64) throw new Error('Oversized tool name');
-  const definition: FrontendTool = { name, description: copied.description,
-    ...(copied.parameters === undefined ? {} : { parameters: copied.parameters }),
+  const authored = copied.parameters;
+  const parameters = authored === undefined ||
+    (typeof authored === 'object' && authored !== null && !Array.isArray(authored) && Object.keys(authored).length === 0)
+    ? { type: 'object' } : authored;
+  const definition: FrontendTool = { name, description: copied.description, parameters,
     ...(metadata === undefined ? {} : { metadata }) };
   const decodeInput = tool.decodeInput; const handler = tool.execute;
   if (typeof decodeInput !== 'function' || typeof handler !== 'function') throw new Error('Tool requires decodeInput and execute functions');
-  const validate = compileParameters(definition.parameters);
+  const validate = compileParameters(parameters);
   const decode = decodeInput.bind(tool); const execute = handler.bind(tool);
   return Object.freeze({ definition: freeze(definition), async call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> {
     let value: unknown;
@@ -74,7 +77,11 @@ function generationHandle(identity: Lifetime['identity'], dispose: () => Promise
   lifetimes.set(handle, state);
   return handle;
 }
-export async function createFrontendToolGeneration<A extends (value: unknown) => void>(options: FrontendToolGenerationOptions<A>): Promise<FrontendToolActivation<AcceptedContributions<A>>> {
+/**
+ * Creation awaits activation and acceptance without cancellation. An owner that stops waiting
+ * must observe the result and retire its generation. A pending acceptance retains captured resources.
+ */
+export async function createFrontendToolGeneration<L extends ExtensionLifetime>(options: FrontendToolGenerationOptions<L>): Promise<FrontendToolActivation<L>> {
   const { generation, activate, accept } = options;
   const platform = frontendPlatform(options.platform);
   const namespace = extensionNamespace(options.namespace);
@@ -82,16 +89,17 @@ export async function createFrontendToolGeneration<A extends (value: unknown) =>
   if (typeof activate !== 'function' || typeof accept !== 'function') throw new Error('Tool activation requires activate and accept functions');
   const tools = new Map<string, Registered>();
   let open = true; let failure: { error: unknown } | undefined;
-  const contributions = { add<Input>(tool: FrontendToolContribution<Input>): void {
+  const registrationSink = Object.freeze({ add<Input>(tool: FrontendToolContribution<Input>): void {
     if (!open) throw new Error('Tool registration is closed');
     try {
       const registered = registerTool(namespace, tool);
       if (tools.has(registered.definition.name)) throw new Error('Duplicate tool name');
       tools.set(registered.definition.name, registered);
     } catch (error) { failure ??= { error }; throw error; }
-  } };
+  } });
+  const context = Object.freeze({ namespace, frontendTools: registrationSink });
   let lifetime: unknown; let registered: Registered[];
-  try { lifetime = await activate.call(options, contributions); }
+  try { lifetime = await activate.call(options, context); }
   finally { open = false; registered = [...tools.values()]; tools.clear(); }
   let dispose: (() => Promise<void>) | undefined;
   try {
@@ -99,9 +107,8 @@ export async function createFrontendToolGeneration<A extends (value: unknown) =>
     if (typeof method !== 'function') throw new Error('Expected extension disposal');
     dispose = async () => { await method.call(lifetime); };
     if (failure) throw failure.error;
-    const validate: (value: unknown) => asserts value is AcceptedContributions<A> = accept;
-    validate(lifetime);
-    return { generation: generationHandle({ namespace, generation, platform }, dispose, registered), contributions: lifetime };
+    const contributions = await accept(lifetime);
+    return { generation: generationHandle({ namespace, generation, platform }, dispose, registered), contributions };
   } catch (error) {
     if (dispose) {
       try { await dispose(); }
@@ -110,14 +117,18 @@ export async function createFrontendToolGeneration<A extends (value: unknown) =>
     throw error;
   }
 }
-export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
+function readPinOptions(options: FrontendToolPinOptions) {
   const platform = frontendPlatform(options.platform);
   const candidates = [...options.generations];
   const run = freeze(parseRunIdentity(copyJson(options.run)));
   const capabilityTools = options.capabilities?.tools;
   const clientProvided = capabilityTools?.clientProvided;
   const supported = capabilityTools?.supported;
-  const enabled = clientProvided === true && supported !== false;
+  const agentNames = new Set(capabilityTools?.items?.map(tool => tool.name));
+  return { platform, candidates, run, agentNames, enabled: clientProvided === true && supported !== false };
+}
+export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
+  const { platform, candidates, run, agentNames, enabled } = readPinOptions(options);
   const selected: Lifetime[] = []; const namespaces = new Set<string>();
   for (const generation of candidates) {
     const state = live(generation);
@@ -125,7 +136,10 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
     if (namespaces.has(state.identity.namespace)) throw new Error('Duplicate tool namespace');
     namespaces.add(state.identity.namespace); selected.push(state);
   }
-  let held: Lifetime[] | undefined = enabled ? selected : [];
+  if (enabled) for (const state of selected) for (const tool of state.tools) {
+    if (agentNames.has(tool.definition.name)) throw new Error('Tool name collides with an agent-provided tool');
+  }
+  let held: Lifetime[] | undefined = enabled ? selected.filter(state => state.tools.length > 0) : [];
   const entries = new Map<string, { tool: Registered; state: Lifetime }>();
   for (const state of held) {
     hold(state);
