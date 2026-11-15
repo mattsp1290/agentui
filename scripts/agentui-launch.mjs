@@ -91,7 +91,7 @@ function command(file, args, options = {}) {
 }
 
 function terminate(task, signal) {
-  if (task.child.exitCode !== null || task.child.signalCode !== null || !task.child.pid) return;
+  if (!task.child.pid) return;
   try {
     if (process.platform === 'win32') task.child.kill(signal);
     else process.kill(-task.child.pid, signal);
@@ -191,8 +191,8 @@ export async function launch(options) {
     return stopping;
   }
   const interrupt = () => { void stop(); };
-  process.on('SIGINT', interrupt);
-  process.on('SIGTERM', interrupt);
+  const interruptionSignals = ['SIGINT', 'SIGTERM', 'SIGHUP'];
+  for (const signal of interruptionSignals) process.on(signal, interrupt);
   try {
     const nodeVersion = (await readFile(join(root, '.node-version'), 'utf8')).trim();
     if (options.build) {
@@ -253,8 +253,7 @@ export async function launch(options) {
     else await session.exited;
   } finally {
     await stop();
-    process.off('SIGINT', interrupt);
-    process.off('SIGTERM', interrupt);
+    for (const signal of interruptionSignals) process.off(signal, interrupt);
   }
 }
 

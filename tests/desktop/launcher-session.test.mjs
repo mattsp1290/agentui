@@ -58,21 +58,46 @@ test('launcher refuses an occupied local port without affecting the listener', a
   assert.equal(server.listening, true);
 });
 
-async function session(t, { ownKey } = {}) {
+function kill(pid, signal = 'SIGKILL') {
+  if (!pid) return;
+  try { process.kill(pid, signal); } catch (error) { if (error.code !== 'ESRCH') throw error; }
+}
+
+async function until(check) {
+  const deadline = Date.now() + 2000;
+  while (!check() && Date.now() < deadline) await new Promise(resolve => setTimeout(resolve, 10));
+  assert.ok(check(), 'Owned process cleanup did not complete');
+}
+
+function alive(pid) {
+  try { process.kill(pid, 0); return true; } catch (error) { if (error.code === 'ESRCH') return false; throw error; }
+}
+
+async function session(t, { ownKey, descendant = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-lease-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
   const main = join(directory, 'host.mjs');
-  await writeFile(main, `process.stdout.write(JSON.stringify({pid:process.pid,key:process.env.OPENCODE_GO_API_KEY})+'\\n');
+  await writeFile(main, `import {spawn} from 'node:child_process';
+const report = extra => process.stdout.write(JSON.stringify({pid:process.pid,key:process.env.OPENCODE_GO_API_KEY,...extra})+'\\n');
+${descendant ? `const child=spawn(process.execPath,['-e', 'process.on("SIGINT",()=>{});process.send("ready");setInterval(()=>{},1000);'],{stdio:['ignore','inherit','inherit','ipc']});
+child.once('message',()=>report({descendant:child.pid}));` : 'report({});'}
 process.on('SIGINT',()=>process.exit(0));
 setInterval(()=>{},1000);
 `);
   const child = spawn(process.execPath, [helper, process.execPath, main], { env: { ...process.env, OPENCODE_GO_API_KEY: ownKey ?? '' }, stdio: ['pipe', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let reported;
+  t.after(async () => {
+    kill(reported?.descendant);
+    kill(reported?.pid);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await rm(directory, { recursive: true, force: true });
+  });
   const closed = new Promise((resolve, reject) => { child.once('error', reject); child.once('close', (code, signal) => resolve({ code, signal })); });
+  let errors = '';
+  child.stderr.on('data', data => { errors += data; });
   let stdout = '';
-  const output = new Promise(resolve => child.stdout.on('data', data => { stdout += data; if (stdout.includes('\n')) resolve(JSON.parse(stdout.split('\n')[0])); }));
+  const output = new Promise(resolve => child.stdout.on('data', data => { stdout += data; if (stdout.includes('\n')) { reported = JSON.parse(stdout.split('\n')[0]); resolve(reported); } }));
   child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: 'forwarded-key' })}\n`);
-  return { child, closed, output };
+  return { child, closed, output, errors: () => errors };
 }
 
 test('session closes its host when the SSH input lease ends', { timeout: 5000 }, async t => {
@@ -81,7 +106,7 @@ test('session closes its host when the SSH input lease ends', { timeout: 5000 },
   assert.equal(host.key, 'forwarded-key');
   process.kill(host.pid, 0);
   running.child.stdin.end();
-  assert.deepEqual(await running.closed, { code: 0, signal: null });
+  assert.deepEqual(await running.closed, { code: 0, signal: null }, running.errors());
   assert.throws(() => process.kill(host.pid, 0), { code: 'ESRCH' });
 });
 
@@ -90,11 +115,22 @@ test('server environment takes precedence and SIGTERM closes its owned host', { 
   const host = await running.output;
   assert.equal(host.key, 'server-key');
   running.child.kill('SIGTERM');
-  assert.deepEqual(await running.closed, { code: 0, signal: null });
+  assert.deepEqual(await running.closed, { code: 0, signal: null }, running.errors());
   assert.throws(() => process.kill(host.pid, 0), { code: 'ESRCH' });
 });
 
-test('interrupting SSH setup ends owned setup processes and never starts a host', { timeout: 10_000 }, async t => {
+test('session cleanup closes inherited stdio and stops a surviving host descendant', { timeout: 5000 }, async t => {
+  const running = await session(t, { descendant: true });
+  const host = await running.output;
+  let closed = false;
+  running.closed.then(() => { closed = true; });
+  running.child.stdin.end();
+  await until(() => closed && !alive(host.descendant));
+  assert.deepEqual(await running.closed, { code: 0, signal: null }, running.errors());
+  assert.equal(alive(host.pid), false);
+});
+
+for (const signal of ['SIGTERM', 'SIGHUP']) test(`${signal} during SSH setup ends owned processes and never starts a host`, { timeout: 10_000 }, async t => {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-cancel-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const fakeSsh = join(directory, 'ssh');
@@ -102,7 +138,11 @@ test('interrupting SSH setup ends owned setup processes and never starts a host'
   const entry = fileURLToPath(new URL('../../scripts/agentui-launch.mjs', import.meta.url));
   const child = spawn(process.execPath, [entry, '--skip-build', '--no-open', '--agent', 'pi', '--ssh', 'test-only'],
     { env: { ...process.env, PATH: `${directory}:${process.env.PATH}` }, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
+  let pid;
+  t.after(() => {
+    kill(pid ? -pid : undefined);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+  });
   let output = '';
   child.stdout.on('data', data => { output += data; });
   let errors = '';
@@ -112,9 +152,42 @@ test('interrupting SSH setup ends owned setup processes and never starts a host'
     if (found) resolve(Number(found[1]));
   }));
   const closed = new Promise(resolve => child.once('close', resolve));
-  const pid = await started;
-  child.kill('SIGTERM');
+  pid = await started;
+  child.kill(signal);
   await closed;
   assert.doesNotMatch(output, /"event":"ready"/);
   assert.throws(() => process.kill(pid, 0), { code: 'ESRCH' });
+});
+
+test('cancellation cleans an exited setup leader and its inherited-stdio descendant', { timeout: 5000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-exited-setup-'));
+  const main = join(directory, 'setup.mjs');
+  await writeFile(main, `import {spawn} from 'node:child_process';
+const child=spawn(process.execPath,['-e','process.send("ready");setInterval(()=>{},1000);'],{stdio:['ignore','inherit','inherit','ipc']});
+child.once('message',()=>{process.stderr.write('SETUP_TREE='+JSON.stringify({leader:process.pid,descendant:child.pid})+'\\n');process.exit(0);});
+`);
+  await writeFile(join(directory, 'ssh'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} ${shellQuote(main)}\n`, { mode: 0o755 });
+  const entry = fileURLToPath(new URL('../../scripts/agentui-launch.mjs', import.meta.url));
+  const child = spawn(process.execPath, [entry, '--skip-build', '--no-open', '--agent', 'pi', '--ssh', 'test-only'],
+    { env: { ...process.env, PATH: `${directory}:${process.env.PATH}` }, stdio: ['ignore', 'pipe', 'pipe'] });
+  let tree;
+  t.after(async () => {
+    kill(tree?.descendant);
+    kill(tree?.leader);
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    await rm(directory, { recursive: true, force: true });
+  });
+  let errors = '', output = '', closed = false;
+  child.stdout.on('data', data => { output += data; });
+  const started = new Promise(resolve => child.stderr.on('data', data => {
+    errors += data;
+    const found = /SETUP_TREE=(\{[^\n]+\})/.exec(errors);
+    if (found) { tree = JSON.parse(found[1]); resolve(); }
+  }));
+  child.once('close', () => { closed = true; });
+  await started;
+  await until(() => !alive(tree.leader));
+  child.kill('SIGTERM');
+  await until(() => closed && !alive(tree.descendant));
+  assert.doesNotMatch(output, /"event":"ready"/);
 });
