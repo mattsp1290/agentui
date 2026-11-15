@@ -99,7 +99,14 @@ test('authoritative replacement reaches an active reader and preserves receipts,
   assert.deepEqual(JSON.parse(saved(f).conversation.document).decisions, {});
   snapshot.cursor = remote.cursor(binding); snapshot.decisions = [{ ...remote.conversations.get('chat').history[1].snapshot.decisions[0], prompt: 'Changed reserved question' }];
   const preserved = saved(f); remote.emit({ kind: 'snapshot', snapshot }, false);
-  await until(() => a.calls.failures.length === 1); assert.deepEqual(saved(f), preserved);
+  await until(() => a.calls.ack.length === 4);
+  const enriched = saved(f);
+  assert.deepEqual(enriched.decisions, preserved.decisions);
+  assert.deepEqual(enriched.commands, preserved.commands);
+  assert.deepEqual(enriched.runs, preserved.runs);
+  assert.equal(JSON.parse(enriched.conversation.document).decisions.decision.prompt, 'Continue?');
+  assert.equal(JSON.parse(enriched.conversation.document).decisions.decision.reserved, true);
+  assert.equal(a.calls.failures.length, 0);
 });
 
 for (const failure of ['presentation', 'capacity', 'foreign-run', 'foreign-cursor', 'transaction']) {

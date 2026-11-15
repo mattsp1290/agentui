@@ -8,18 +8,20 @@ import { fixture, saved, send } from '../../../tests/application/provider-stream
 import { until } from '../../../tests/host/fixture.mjs';
 
 const memberId = randomUUID();
-async function service(t) {
-  const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map();
+async function service(t, { approvalDetails } = {}) {
+  const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
+  let detailHandler;
   let lost = false, observationMode = 'stream', conflict = false, decisionReply = {};
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer private-crew-test');
     let text = ''; for await (const chunk of request) text += chunk;
     const input = text ? JSON.parse(text) : null, path = new URL(request.url, 'http://localhost').pathname;
-    calls.push({ method: request.method, path, input });
+    calls.push({ method: request.method, path, input, query: Object.fromEntries(new URL(request.url, 'http://localhost').searchParams) });
     const parts = path.split('/'), conversationId = parts[3], requestId = parts[5];
     const json = (status, body) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body)); };
     if (path === '/v1/capabilities') return json(200, { apiVersion: '1', requestContract: 'sql-admission-temporal-queue-v1',
-      observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'] });
+      observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'],
+      ...(approvalDetails && { approvalDetails }) });
     if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test' }], next: null });
     if (path === '/v1/conversations') {
       conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId, engine: 'codex', profile: 'test',
@@ -43,6 +45,11 @@ async function service(t) {
     if (parts[4] === 'human') {
       if (lost) { response.destroy(); return; }
       return json(200, { approvalId: input.approvalId, decision: input.choice, ...decisionReply });
+    }
+    if (request.method === 'GET' && parts[6] === 'approvals') {
+      const detail = details.get(parts[7]);
+      const result = detailHandler ? await detailHandler(detail) : { status: detail ? 200 : 404, body: detail ?? { error: 'not_found' } };
+      return json(result.status, result.body);
     }
     if (request.method === 'GET') return receipts.has(requestId) ? json(200, receipts.get(requestId)) : json(404, { error: 'not_found' });
     if (parts[6] === 'cancel') {
@@ -72,7 +79,8 @@ async function service(t) {
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => 'private-crew-test' } }] } });
-  return { calls, streams, conversations, receipts, emit, extension, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
+  return { calls, streams, conversations, receipts, details, emit, extension,
+    setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
 }
 
 test('Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen', async t => {
@@ -305,6 +313,236 @@ function pendingCall(conversation, requestId, { question = false, child = false,
   conversation.state[question ? 'pendingQuestions' : 'pendingApprovals'] = [card];
   return card;
 }
+
+const detailCapability = { version: 1, tools: ['record_work_item'] };
+function ownerDetail(card, args = {}) {
+  const { conversationId, memberId, requestId, invocationId, approvalId, version } = card;
+  return { apiVersion: '1', conversationId, memberId, requestId, invocationId, approvalId, version,
+    policyVersion: 1, toolName: 'record_work_item', arguments: { operation_id: requestId, ...args } };
+}
+
+for (const args of [{}, { note: '' }, { note: ' \n\tCafé e\u0301 雪 😀  ' }, { note: '\u0001'.repeat(4096) }]) {
+  test(`Crew owner detail preserves complete arguments (${Object.hasOwn(args, 'note') ? args.note.length : 'absent'} characters)`, async t => {
+    const remote = await service(t, { approvalDetails: detailCapability }), { backend, binding } = await direct(remote);
+    t.after(() => backend.close());
+    const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+    conversation.messages.push({ id: requestId, role: 'user', content: 'Controlled pending request' });
+    const card = pendingCall(conversation, requestId, { child: true, proof: false });
+    const detail = ownerDetail(card, args); remote.details.set(card.approvalId, detail);
+    const baseline = await backend.snapshot(binding);
+    assert.equal(baseline.kind, 'available');
+    const decision = baseline.snapshot.decisions[0];
+    assert.equal(decision.prompt, `${card.summary}\nrecord_work_item\n${JSON.stringify(detail.arguments, null, 2)}`);
+    assert.deepEqual(decision.choices.map(choice => choice.label), ['Approve once', 'Deny']);
+    assert.deepEqual(JSON.parse(decision.ref.ref.opaqueId), [requestId, card.invocationId, card.approvalId, 1]);
+    const get = remote.calls.find(call => call.path.endsWith(`/approvals/${card.approvalId}`));
+    assert.equal(get.method, 'GET');
+    assert.equal(get.path, `/v1/conversations/${card.conversationId}/requests/${requestId}/approvals/${card.approvalId}`);
+    assert.deepEqual(get.query, { memberId, invocationId: card.invocationId, version: '1' });
+    assert.equal(remote.calls.some(call => call.path.endsWith('/human')), false);
+    if (args.note?.length === 4096) assert(decision.prompt.length > 16384);
+  });
+}
+
+for (const approvalDetails of [undefined, { version: 2, tools: ['record_work_item'] }, { version: 1, tools: ['future_tool'] }]) {
+  for (const variant of ['redacted', 'complete', 'question']) test(`Crew unsupported owner detail ${JSON.stringify(approvalDetails)} retains ${variant} behavior`, async t => {
+    const remote = await service(t, { approvalDetails }), { backend, binding } = await direct(remote);
+    t.after(() => backend.close());
+    const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+    conversation.messages.push({ id: requestId, role: 'user', content: 'Controlled pending request' });
+    pendingCall(conversation, requestId, { question: variant === 'question', proof: variant === 'complete' });
+    const baseline = await backend.snapshot(binding);
+    assert.equal(baseline.kind, 'available');
+    assert.deepEqual(baseline.snapshot.decisions[0].choices.map(choice => choice.label),
+      variant === 'redacted' ? ['Deny'] : variant === 'complete' ? ['Approve once', 'Deny'] : ['Inspect', 'Test']);
+    assert.equal(remote.calls.some(call => call.path.includes('/approvals/')), false);
+  });
+}
+
+test('Crew owner detail capability leaves questions on their existing public argument path', async t => {
+  const remote = await service(t, { approvalDetails: detailCapability }), { backend, binding } = await direct(remote);
+  t.after(() => backend.close());
+  const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+  conversation.messages.push({ id: requestId, role: 'user', content: 'Question' });
+  pendingCall(conversation, requestId, { question: true, proof: false });
+  const baseline = await backend.snapshot(binding);
+  assert.equal(baseline.kind, 'available');
+  assert.deepEqual(baseline.snapshot.decisions[0].choices.map(choice => choice.label), ['Inspect', 'Test']);
+  assert.equal(remote.calls.some(call => call.path.includes('/approvals/')), false);
+});
+
+for (const status of ['open', 'reserved', 'closed']) test(`Crew legacy ${status} card keeps its decision ownership when owner details become available`, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId, { proof: false }); remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const legacy = JSON.parse(saved(f).decisions[0].data);
+  assert.deepEqual(legacy.choices.map(choice => choice.label), ['Deny']);
+  if (status !== 'open') {
+    remote.setLost(status === 'reserved');
+    const result = await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'legacy-choice',
+      body: { kind: 'approve', pendingId: legacy.visible.pendingId, choiceId: legacy.choices[0].id } });
+    assert.equal(result.receipt.state.kind, status === 'reserved' ? 'uncertain' : 'completed');
+    remote.setLost(false);
+  }
+  const before = saved(f);
+  remote.setCapability(detailCapability);
+  remote.details.set(card.approvalId, ownerDetail(card, { note: 'Full note after upgrade' }));
+  await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== JSON.parse(before.checkpoint.data).cursor.opaque.epoch);
+  const after = saved(f), doc = JSON.parse(after.conversation.document);
+  assert.deepEqual(after.commands, before.commands);
+  assert.equal(after.decisions[0].status, status);
+  if (status === 'open') {
+    assert.match(doc.decisions[legacy.visible.pendingId].prompt, /Full note after upgrade/);
+    assert.deepEqual(JSON.parse(after.decisions[0].data).choices.map(choice => choice.label), ['Approve once', 'Deny']);
+    assert.deepEqual(JSON.parse(after.decisions[0].data).reference, legacy.reference);
+  } else {
+    assert.deepEqual(after.decisions, before.decisions);
+    if (status === 'closed') assert.deepEqual(doc.decisions, {});
+    else {
+      assert.equal(doc.decisions[legacy.visible.pendingId].prompt, legacy.visible.prompt);
+      assert.equal(doc.decisions[legacy.visible.pendingId].reserved, true);
+      assert.equal((await f.client.reconcile(scope, 'legacy-choice')).state.kind, 'uncertain');
+      assert.equal(saved(f).commands.find(row => row.id === 'legacy-choice').target, before.commands.find(row => row.id === 'legacy-choice').target);
+    }
+  }
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, status === 'open' ? 0 : 1);
+});
+
+test('Crew resolves every supported detail before publishing any decision from a baseline', async t => {
+  const remote = await service(t, { approvalDetails: detailCapability }), { backend, binding } = await direct(remote);
+  t.after(() => backend.close());
+  const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+  conversation.messages.push({ id: requestId, role: 'user', content: 'Two pending calls' });
+  const first = pendingCall(conversation, requestId, { proof: false }), second = pendingCall(conversation, requestId, { proof: false });
+  conversation.state.pendingApprovals = [first, second];
+  remote.details.set(first.approvalId, ownerDetail(first, { note: 'The first read succeeds' }));
+  assert.equal((await backend.snapshot(binding)).kind, 'unavailable');
+  await until(() => remote.streams.size === 0);
+  remote.details.set(second.approvalId, ownerDetail(second, { note: 'Now both reads succeed' }));
+  const recovered = await backend.snapshot(binding);
+  assert.equal(recovered.kind, 'available');
+  assert.equal(recovered.snapshot.decisions.length, 2);
+  assert(recovered.snapshot.decisions.every(decision => decision.choices[0].label === 'Approve once'));
+  assert.equal(remote.calls.some(call => call.path.endsWith('/human')), false);
+});
+
+test('complete owner details still fail the whole snapshot budget without publishing any approval', async t => {
+  const remote = await service(t, { approvalDetails: detailCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  conversation.messages.push({ id: 'long-message', role: 'assistant', content: 'x'.repeat(250000) });
+  remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.messages.at(-1).text.length === 250000);
+  const before = saved(f), cards = [];
+  for (let index = 0; index < 32; index++) {
+    const card = pendingCall(conversation, requestId, { proof: false }); cards.push(card);
+    remote.details.set(card.approvalId, ownerDetail(card, { note: '\u0001'.repeat(4096) }));
+  }
+  conversation.state.pendingApprovals = cards;
+  remote.emit(receipt.conversationId, [{ type: 'STATE_SNAPSHOT', snapshot: conversation.state }]);
+  await until(() => remote.streams.size === 0);
+  assert.equal(saved(f).decisions.length, 0);
+  assert.deepEqual(saved(f).commands, before.commands);
+  assert.deepEqual(JSON.parse(saved(f).checkpoint.data).state, JSON.parse(before.checkpoint.data).state);
+  assert.equal((await f.client.providerObservation({ scope, action: 'read' })).kind, 'stopped');
+});
+
+for (const failure of ['unavailable', 'invalid', 'conversationId', 'memberId', 'requestId', 'invocationId', 'approvalId', 'version', 'policyVersion', 'operation_id']) {
+  test(`Crew ${failure} owner detail stops observation without publishing partial or downgraded decisions and recovers on reopen`, async t => {
+    const remote = await service(t, { approvalDetails: detailCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+    await f.client.conversation(scope).submit(send(scope));
+    const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+    const card = pendingCall(conversation, requestId, { proof: false });
+    remote.details.set(card.approvalId, ownerDetail(card, { note: 'Retain this exact owner note' })); remote.emit(receipt.conversationId);
+    await until(() => saved(f).decisions.length === 1);
+    const before = saved(f);
+    remote.setDetailHandler(detail => {
+      const body = structuredClone(detail);
+      if (failure === 'unavailable') return { status: 503, body: { error: 'unavailable' } };
+      if (failure === 'invalid') body.arguments.note = '\0';
+      else if (failure === 'operation_id') body.arguments.operation_id = randomUUID();
+      else body[failure] = ['version', 'policyVersion'].includes(failure) ? 2 : randomUUID();
+      return { status: 200, body };
+    });
+    conversation.messages.push({ id: 'unpublished', role: 'assistant', content: 'Must not replace saved history' });
+    remote.emit(receipt.conversationId);
+    await until(() => remote.streams.size === 0);
+    assert.deepEqual(saved(f), before);
+    assert.equal((await f.client.providerObservation({ scope, action: 'read' })).kind, 'stopped');
+    remote.setDetailHandler(undefined);
+    await f.restart([remote.extension()]);
+    await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== JSON.parse(before.checkpoint.data).cursor.opaque.epoch);
+    assert.deepEqual(saved(f).decisions, before.decisions);
+    assert.deepEqual(saved(f).commands, before.commands);
+    assert.equal(JSON.parse(saved(f).conversation.document).domain.messages.at(-1).text, 'Must not replace saved history');
+    assert.equal(remote.calls.some(call => call.path.endsWith('/human')), false);
+  });
+}
+
+test('closing Crew observation aborts an owner detail read and drains without publishing', { timeout: 5000 }, async t => {
+  const remote = await service(t, { approvalDetails: detailCapability }), { backend, binding } = await direct(remote);
+  t.after(() => backend.close());
+  const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+  conversation.messages.push({ id: requestId, role: 'user', content: 'Pending read' });
+  const card = pendingCall(conversation, requestId, { proof: false });
+  remote.details.set(card.approvalId, ownerDetail(card));
+  const reading = Promise.withResolvers(), release = Promise.withResolvers();
+  remote.setDetailHandler(async detail => { reading.resolve(); await release.promise; return { status: 200, body: detail }; });
+  try {
+    const baseline = backend.snapshot(binding);
+    await reading.promise;
+    await backend.close();
+    assert.equal((await baseline).kind, 'unavailable');
+    await until(() => remote.streams.size === 0);
+  } finally { release.resolve(); }
+});
+
+test('browser retries owner detail failures and renders a full escaped note before one exact approval', { timeout: 20_000 }, async t => {
+  const remote = await service(t, { approvalDetails: detailCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId, { proof: false });
+  const markup = '<img src=x onerror="window.ownerNoteExecuted=true">雪😀';
+  const note = markup + '\u0001'.repeat(4096 - Buffer.byteLength(markup));
+  const detail = ownerDetail(card, { note }); remote.details.set(card.approvalId, detail);
+  remote.setDetailHandler(() => ({ status: 503, body: { error: 'unavailable' } })); remote.emit(receipt.conversationId);
+  await until(() => remote.streams.size === 0);
+  assert.equal(saved(f).decisions.length, 0);
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  await page.getByRole('button', { name: 'Retry observation', exact: true }).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Approve once', exact: true }).count(), 0);
+  remote.setDetailHandler(undefined);
+  await page.getByRole('button', { name: 'Retry observation', exact: true }).click();
+  const approval = page.getByRole('region', { name: 'Approval required', exact: true });
+  await approval.getByRole('button', { name: 'Approve once', exact: true }).waitFor();
+  const prompt = `${card.summary}\nrecord_work_item\n${JSON.stringify(detail.arguments, null, 2)}`;
+  assert.equal(await approval.locator('p').textContent(), prompt);
+  assert(prompt.length > 16384);
+  assert.equal(await approval.locator('img').count(), 0);
+  assert.equal(await page.evaluate(() => window.ownerNoteExecuted), undefined);
+  assert.equal(remote.calls.some(call => call.path.endsWith('/human')), false);
+  assert.equal(JSON.parse(saved(f).decisions[0].data).visible.prompt, prompt);
+  await approval.getByRole('button', { name: 'Approve once', exact: true }).click();
+  await until(() => saved(f).decisions[0].status === 'closed');
+  const decisions = remote.calls.filter(call => call.path.endsWith('/human'));
+  assert.equal(decisions.length, 1);
+  assert.equal(decisions[0].path, `/v1/conversations/${card.conversationId}/human`);
+  assert.deepEqual(decisions[0].input, { memberId, requestId, invocationId: card.invocationId,
+    approvalId: card.approvalId, version: 1, choice: 'approve' });
+  const before = saved(f);
+  await page.close(); await f.restart([remote.extension()]);
+  await until(() => JSON.parse(saved(f).checkpoint.data).cursor.opaque.epoch !== JSON.parse(before.checkpoint.data).cursor.opaque.epoch);
+  assert.deepEqual(saved(f).decisions, before.decisions);
+  assert.deepEqual(JSON.parse(saved(f).conversation.document).decisions, {});
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
+});
 
 for (const question of [false, true]) test(`Crew reopened child ${question ? 'question' : 'approval'} keeps exact usable choices without child transcript`, async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();

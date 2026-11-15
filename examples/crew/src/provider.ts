@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CrewClient, CrewHttpError } from '@birbcrew/client';
+import { CrewClient, CrewHttpError, type Capabilities } from '@birbcrew/client';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderCommand, ProviderCommandEffect,
@@ -34,6 +34,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       if (request.apiVersion !== 1 || canonicalJson(request.instance) !== canonicalJson(instance) || !request.credential ||
         canonicalJson(request.credential.instance) !== canonicalJson(instance)) return unavailable();
       const credential = request.credential;
+      let capabilities: Capabilities;
       let closed = false;
       const observations = new Map<string, ReturnType<typeof observation>>();
       const use = <T>(action: (client: CrewClient, token: string) => Promise<T>): Promise<T> => {
@@ -99,14 +100,15 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         const id = binding.authority.binding.opaqueSessionId;
         let current = observations.get(id);
         if (!current) {
-          current = observation(binding, memberId, use, service.origin, after);
+          current = observation(binding, memberId, use, service.origin, after,
+            capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'));
           observations.set(id, current);
           const captured = current;
           void current.ended.then(() => { if (observations.get(id) === captured) observations.delete(id); });
         }
         return current;
       }
-      try { await use(async client => { await client.capabilities({ signal: AbortSignal.timeout(10000) }); }); }
+      try { capabilities = await use(client => client.capabilities({ signal: AbortSignal.timeout(10000) })); }
       catch { return unavailable(); }
       const backend: ConnectedProvider<CrewModel, string> = { instance,
         capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
