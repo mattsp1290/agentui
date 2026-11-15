@@ -35,6 +35,10 @@
     "./claude-sdk": {
       "types": "./dist/claude-sdk-driver.d.ts",
       "import": "./dist/claude-sdk-driver.js"
+    },
+    "./extensions": {
+      "types": "./dist/extensions/index.d.ts",
+      "import": "./dist/extensions/index.js"
     }
   },
   "files": [

@@ -9,7 +9,7 @@ import { canonicalJson } from '@agentui/contracts';
 import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import { createCodexDriver, createProviderRegistry, openLocalHost } from '@agentui/host';
+import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
@@ -29,9 +29,10 @@ import { providerInstallation } from './agent-config.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { describeAgent } from './agents.js';
 import type { InstalledAgent } from './agents.js';
-import type { ExtensionManifest, ServerExtensionEntry } from '@agentui/sdk';
-import { createProviderAuthority } from './provider-credentials.js';
-import type { ProviderInstallation } from './provider-credentials.js';
+import { createServerExtensions } from '@agentui/host/extensions';
+import { providerExtensionSource } from './provider-extensions.js';
+import type { BrowserProviderExtension } from './provider-extensions.js';
+export type { BrowserProviderExtension } from './provider-extensions.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -40,8 +41,7 @@ export interface BrowserHostOptions {
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
-  readonly providerExtensions?: readonly { readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry;
-    readonly installations: readonly ProviderInstallation[] }[];
+  readonly providerExtensions?: readonly BrowserProviderExtension[];
   readonly accessMode?: 'paired' | 'trusted';
 }
 function piApiKey(): string {
@@ -70,17 +70,20 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
-  let providers: ReturnType<typeof createProviderRegistry> | undefined;
+  const providers = createServerExtensions();
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
   let closing = false;
   const http = createServer();
   function close(): Promise<void> {
-    closePromise ??= (async () => {
+    if (closePromise) return closePromise;
+    // Cleanup can reenter close(), so publish first. The microtask reads shutdown after initialization.
+    closePromise = Promise.resolve().then(() => shutdown);
+    const shutdown = (async () => {
       closing = true;
       feeds?.dispose();
       const driverResults = await Promise.allSettled([
-        Promise.resolve().then(() => providers?.close()),
+        providers.close(),
         ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
       ]);
       const driverFailed = driverResults.some(result => result.status === 'rejected');
@@ -111,12 +114,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
     access = new Access(accessDatabase, options.accessMode);
-    providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
-      manifest: extension.manifest, entry: extension.entry,
-      authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
-    })));
-    await providers.activate();
-    const providerCatalog = await providers.discover();
+    const replacement = await providers.replace(providerExtensionSource(accessDatabase, options.providerExtensions ?? []));
+    if (replacement.kind === 'failed') {
+      const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
+        activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+      throw new Error(messages[replacement.failure]);
+    }
+    if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
@@ -196,7 +200,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, providers, providerCatalog, installation: defaultInstallation, ...(configured ? { agents } : {}),
+      access, host, compatibility, feeds: registry, providers, installation: defaultInstallation, ...(configured ? { agents } : {}),
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
@@ -219,7 +223,28 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing);
-    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover };
+    const hostId = access.hostId;
+    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
+      extensionStatus: providers.status,
+      async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
+        const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
+        if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
+        const selectedHost = host, generation = replacement.generation;
+        const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
+        let after: string | null = null;
+        while (selectedHost && current()) {
+          const page = selectedHost.listConversations(hostId, after, 100);
+          for (const scope of page) {
+            if (!current()) return replacement;
+            if ('kind' in selectedHost.inspect(scope).installation) await selectedHost.observeProvider(scope);
+            if (!current()) return replacement;
+            after = scope.conversationId;
+          }
+          if (page.length < 100) break;
+        }
+        return replacement;
+      },
+    };
   } catch (error) {
     await close();
     throw error;

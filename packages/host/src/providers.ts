@@ -261,6 +261,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
   const bindings: BoundProvider[] = [], lifetimes: ExtensionLifetime[] = [];
   const pending = new Set<Promise<unknown>>();
   const streams = new Set<ProviderStream>();
+  let retiring: Set<ProviderStream> | undefined;
+  let cleanupFailed = false;
   let phase: 'new' | 'activating' | 'active' | 'closing' = 'new';
   let closing: Promise<void> | undefined;
   let catalog: readonly DiscoveredProvider[] = [];
@@ -270,26 +272,35 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
   }
-  async function close(): Promise<void> {
+  function stop(stream: ProviderStream): void {
+    try { stream.close(); } catch { cleanupFailed = true; }
+  }
+  function close(): Promise<void> {
     if (closing) return closing;
     phase = 'closing';
-    for (const stream of streams) stream.close();
-    const authorities = extensions.map(extension => extension.authority.close());
-    // Attach rejection handlers immediately while admitted calls drain.
-    const authorityResults = Promise.allSettled(authorities);
-    closing = (async () => {
+    const draining = new Set(streams);
+    retiring = draining;
+    const authorities: Promise<void>[] = [];
+    // Cleanup can reenter close(), so publish first. The microtask reads authorityResults after initialization.
+    closing = Promise.resolve().then(async () => {
       await Promise.allSettled(pending);
-      for (const stream of streams) stream.close();
-      await Promise.allSettled([...streams].map(stream => stream.drained));
-      const results = await authorityResults;
+      for (const stream of draining) stop(stream);
+      const results = await Promise.allSettled([...draining].map(stream => stream.drained));
+      results.push(...await authorityResults);
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
       results.push(...await Promise.allSettled(lifetimes.map(lifetime => Promise.resolve().then(() => lifetime.dispose()))));
       catalog = [];
-      if (results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
-    })();
+      if (cleanupFailed || results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
+    });
+    for (const extension of extensions) {
+      try { authorities.push(extension.authority.close()); } catch { cleanupFailed = true; }
+    }
+    const authorityResults = Promise.allSettled(authorities);
+    for (const stream of draining) stop(stream);
     return closing;
   }
   return {
+    activity(): { readonly phase: typeof phase; readonly pending: number } { return { phase, pending: pending.size }; },
     activate(): Promise<void> {
       if (phase !== 'new') return Promise.reject(new Error('Provider activation unavailable'));
       phase = 'activating';
@@ -344,6 +355,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         return structuredClone(catalog);
       });
     },
+    catalog(): readonly DiscoveredProvider[] { return phase === 'active' ? structuredClone(catalog) : []; },
     capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
@@ -353,10 +365,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       return binding.capture(scope, selected);
     },
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
+      if (phase !== 'active') throw new Error('Provider unavailable');
       const selected = original.installation;
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
       const binding = bindings.find(binding => binding.matches(selected));
-      if (phase !== 'active' || !binding || !discovered?.capabilities[action.kind] || !discovered.capabilities.reconcile ||
+      if (!binding || !discovered?.capabilities[action.kind] || !discovered.capabilities.reconcile ||
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
       return binding.captureCommand(original, action, operationId);
     },
@@ -366,15 +379,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         if (phase !== 'active' || !binding) throw new Error('Provider unavailable');
         const stream = await binding.observe(original, store);
         streams.add(stream);
-        void stream.drained.then(() => streams.delete(stream), () => streams.delete(stream));
-        if (phase !== 'active') stream.close();
+        void stream.drained.then(() => streams.delete(stream), () => { cleanupFailed = true; streams.delete(stream); });
+        if (phase !== 'active') { retiring?.add(stream); stop(stream); }
         return stream;
       });
     },
     executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
       return track(async () => {
+        if (phase !== 'active') return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
         const binding = bindings.find(binding => binding.matches(original.installation));
-        if (phase !== 'active' || !binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        if (!binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
         return binding.executeCommand(original, fresh, beforeEffect);
       });
     },
@@ -387,3 +401,6 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     }, close,
   };
 }
+
+export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe'>;

@@ -9,7 +9,7 @@ import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { providerInstallationKey } from './provider-creation.js';
 import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
-import type { createProviderRegistry } from './providers.js';
+import type { ProviderConversationOperations, ProviderCreationOperations } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
 import { registerFrontendToolsHost } from './frontend-tools-context.js';
@@ -19,13 +19,13 @@ export interface LocalHostOptions<E, P> {
   readonly projection: Projection<E, P>;
   readonly driver: ProviderDriver<E> | readonly ProviderDriver<E>[];
   readonly authorize: (scope: ConversationScope) => boolean;
-  readonly providers?: ReturnType<typeof createProviderRegistry>;
+  readonly providers?: ProviderConversationOperations;
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
-  createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ReturnType<typeof createProviderRegistry>): Promise<CreationObservation>;
+  createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
   observeProvider(scope: ConversationScope): Promise<void>;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
@@ -44,7 +44,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const driverFor = (target: Installation) => drivers.get(canonicalJson(target));
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
-  let closed = false;
+  let closed = false, observationCleanupFailed = false;
   let active = 0;
   const dispatching = new Set<string>();
   const creating = new Map<string, Promise<CreationObservation>>();
@@ -54,6 +54,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
   const finishClosing = () => {
     if (!closed || active !== 0) return;
+    if (observationCleanupFailed) { rejectDrained(new Error('Provider observation cleanup failed')); return; }
     try { store.close(); resolveDrained(); }
     catch (error) { rejectDrained(error); }
   };
@@ -81,11 +82,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       starting = inFlight(async () => {
         try {
           const stream = await registry.observe(original, store);
-          if (closed) stream.close();
           return stream;
         } catch { return null; }
       });
       observing.set(key, starting);
+      const current = starting;
+      const forget = () => { if (observing.get(key) === current) observing.delete(key); };
+      void current.then(stream => { if (stream) void stream.drained.then(forget, () => { observationCleanupFailed = true; forget(); }); else forget(); }, forget);
     }
     await starting;
   };
@@ -212,8 +215,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (!observing.size) { finishClosing(); return; }
       void inFlight(async () => {
         const streams = (await Promise.all(observing.values())).filter(stream => stream !== null);
-        for (const stream of streams) stream.close();
-        await Promise.allSettled(streams.map(stream => stream.drained));
+        for (const stream of streams) {
+          try { stream.close(); } catch { observationCleanupFailed = true; }
+        }
+        const results = await Promise.allSettled(streams.map(stream => stream.drained));
+        if (results.some(result => result.status === 'rejected')) observationCleanupFailed = true;
       });
     },
   };

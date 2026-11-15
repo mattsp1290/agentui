@@ -16,8 +16,13 @@ Call `parseExtensionManifest` on unknown metadata, then `checkExtensionEntrypoin
 An incompatible result names an unsupported version, an undeclared or mismatched target, or an invalid entry export.
 Parsing accepts declared version strings within the currently known manifest field shape so compatibility checking can report unsupported versions separately.
 It does not parse speculative future manifest shapes.
-Path checking validates syntax. The future loader must check filesystem containment and existence.
-The caller has already imported the entry. Importing full-trust code can itself execute code.
+Manifest path checking validates syntax. `loadServerExtension` from `@agentui/host/extensions` checks filesystem containment and existence.
+It checks manifest compatibility before import and requires a regular file beneath the real installation directory.
+Symlinks that escape that directory are rejected. The imported default export must pass the SDK entry check.
+Use immutable revision directories. Node caches each module URL, so changing bytes at an existing path does not select a new revision.
+Importing full-trust code can itself execute code. The extension owns cleanup of import effects and failed partial activation.
+The host provides no cleanup callback for import effects.
+Start timers, listeners, and connections in `activate` so `dispose` can release them.
 
 A server entry implements `ServerExtensionEntry`.
 Its context supplies `providers.add(id, provider, presentation)`, a generic method preserving the concrete `BackendProvider<Model, Installation>` type.
@@ -39,7 +44,90 @@ A server activation likewise returns required disposal, checked with `validateEx
 The host accepts already imported server entries through `startBrowserHost({ providerExtensions })`.
 It stages all registrations before connecting, rejects duplicate contributions or full instances, and closes registration when activation settles.
 Failed activation disposes earlier valid lifetimes; an entry that throws before returning a valid lifetime owns its partial activation cleanup.
-Filesystem loading, replacement generations, and recovery remain separate work.
+
+## Load and replace server entries
+
+### Contract
+
+`startBrowserHost` accepts imported `providerExtensions` and installed entries with this shape:
+
+```ts
+{
+	kind: 'installed',
+	directory: '/installed/example/revision-2',
+	manifest,
+	installations,
+}
+```
+
+The host loads and activates the selected entries, then discovers their providers before listening.
+`installations` uses the existing host provisioning and credential policy.
+Credentials remain server-only. Discovery results, lifecycle status, and replacement results contain no secrets or extension exception text.
+The production CLI does not yet select installed server entries from customization configuration.
+
+The returned host exposes `discoverProviders()`, `extensionStatus()`, `replaceProviderExtensions(selection)`, and `close()`.
+An empty selection disables local extensions. It does not send a provider cancel, delete, or other remote command.
+The owner in `@agentui/host/extensions` manages one whole provider registry generation at a time.
+The host supplies its `prepare()` callback only after replacement admission and successful old cleanup.
+Preparation loads all entries before creating authorities and closes any authorities acquired before a preparation failure.
+A custom host using `createServerExtensions()` must follow that same preparation ownership contract.
+It returns `{ kind: 'ready', extensions }` to transfer authorities to the registry, or a fixed failure after its own cleanup.
+If preparation cleanup fails, it returns `{ kind: 'failed', failure: 'cleanup', recovery: 'restart' }`.
+
+`extensionStatus()` reports `empty`, `active`, `changing`, `failed`, `closing`, or `closed`.
+An active status includes a generation number and the number of admitted discovery, creation, command, lookup, and observation acquisition operations.
+An acquired observation feed does not count as pending work.
+Replacement outcomes are:
+
+- `replaced` includes the new generation number, or `null` for an empty selection.
+- `deferred` with reason `active-work` leaves healthy admitted work and later operations on the original generation.
+  It does not import the candidate, prepare authorities, revoke credentials, or dispose the original generation.
+- `deferred` with reason `changing` refuses a competing change while an accepted change or failure cleanup is pending.
+- `failed` reports a fixed failure category and recovery action.
+- `unavailable` refuses replacement during or after shutdown.
+
+A deferred request is not queued or remembered. Retry with the latest desired selection after work settles.
+Continuous admitted work can postpone replacement indefinitely.
+An accepted idle replacement stops discovery, creation, command, lookup, and observation admission before any asynchronous work.
+It stops local feeds, drains admitted callbacks, and awaits complete old disposal before importing or activating the next generation.
+This ordering prevents overlap between activation-owned listeners, with an unavailable interval between generations.
+Close during replacement prevents publication of the new generation and disposes every acquired valid lifetime once.
+After a successful nonempty replacement, the host resumes saved provider observations compatible with the new selection.
+Each observation keeps its original installation, credential handle, conversation binding, and last committed cursor.
+An existing checkpoint avoids another snapshot. Recovery does not create conversations, submit commands, reconcile operations, or change saved provenance.
+Incompatible identities, credentials, or decoders leave saved history readable without opening a feed.
+Concurrent replacement or shutdown stops an obsolete recovery scan. A later compatible replacement retries failed observation starts.
+
+### Failure and shutdown
+
+A load, authorization, activation, or discovery failure permits an explicit replacement only after successful cleanup.
+A `load` failure caused by the entry module throwing during import stays cached for that path.
+Recover by replacing with a new immutable revision directory, or restart the host.
+The owner does not automatically retry extension callbacks or restore the old generation.
+Any cleanup failure is permanent for that host and reports `recovery: 'restart'`.
+Further replacements remain refused and repeated shutdown remains rejected without calling disposers again.
+The application retains its storage and directory ownership after failed cleanup because extension code may still be live.
+Recovery requires a process restart, with the failing extension disabled or repaired as needed.
+
+Shutdown retains the existing immediate authorization freeze.
+Unlike normal deferred replacement, `close()` revokes credential admission immediately and discards late discovery results. Entered creation and send effects retain uncertain outcomes for later lookup.
+It waits for admitted work before closing connections and disposing lifetimes.
+An independent discovery failure can also start registry cleanup and revoke concurrent work.
+The successful-result guarantee applies to healthy discovery, creation, commands, lookup, and observation acquisition across deferred replacement, not to shutdown or independent provider failure.
+Feed callbacks copy and authorize their input before admission. Already admitted callbacks may commit during retirement after credentials freeze.
+Retirement waits for those callbacks. New callbacks and credential use are refused.
+A throwing feed close or rejected drain reports cleanup failure and retains storage and directory ownership.
+A feed that closes without error but never ends can keep retirement pending indefinitely.
+Independent credential callbacks and extension background work are not counted as admitted provider operations.
+They keep the registry's existing close behavior.
+Cooperative code that never settles can leave replacement or shutdown pending indefinitely.
+
+The registry admits provider creation, commands, lookup, and observation acquisition synchronously before provider delegation.
+It owns observation stop and drain. It does not deliver frontend tools or qualify slow frontend-tool execution.
+Agent discovery and creation requests read the active catalog. Retired, changing, disabled, and failed generations expose no choices.
+Creation and command recovery retain the original installation, credential, and operation identity across replacement.
+Command lookup never translates or resends the original request. A replacement that cannot match its original target leaves the existing outcome unchanged.
+UI refresh does not invoke server replacement.
 
 ## Contribute conversation views and actions
 
