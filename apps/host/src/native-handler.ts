@@ -1,11 +1,10 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { identifier, record } from '@agentui/contracts/decode';
-import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES } from '@agentui/contracts/service';
+import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES, ServiceError } from '@agentui/contracts/service';
 import type { Access } from './access.js';
 import type { createApi } from './api.js';
-import { ServiceError } from '@agentui/contracts/service';
-import { FAILURE_STATUS } from './errors.js';
 import { json, readJson } from './framing.js';
+import { writeServiceResult, writeServiceFailure } from './service-endpoint.js';
 
 export function nativeHandler(options: { readonly access: Access; readonly api: ReturnType<typeof createApi>;
   readonly isClosing: () => boolean }) {
@@ -39,16 +38,9 @@ export function nativeHandler(options: { readonly access: Access; readonly api: 
       if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
       const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
       if (message.op === 'pair') throw new Error('Pairing requires the native pairing route');
-      try { json(response, 200, { ok: true, value: await options.api(principal, message) }); }
-      catch (error) {
-        if (error instanceof ServiceError) throw error;
-        throw new ServiceError('unavailable', 'Host request did not complete');
-      }
+      await writeServiceResult(response, () => options.api(principal, message));
     } catch (error) {
-      if (response.headersSent || response.destroyed) { response.destroy(); return; }
-      const kind = error instanceof ServiceError ? error.kind : 'invalid';
-      const message = error instanceof ServiceError ? error.message : 'Invalid host request';
-      json(response, FAILURE_STATUS[kind], { ok: false, error: { kind, message } });
+      writeServiceFailure(response, error);
     }
   };
 }

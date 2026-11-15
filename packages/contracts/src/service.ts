@@ -57,12 +57,12 @@ export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
 /** Host-classified failures reject with ServiceError. Every failed submit promise may follow admission.
  * A resolved rejection concerns this attempt and cannot rule out an earlier same-ID attempt.
  * Preserve previously uncertain commands until authoritative receipt settlement. */
-export interface ServiceConnection {
+export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationScope[]>;
   create(scope: ConversationScope): Promise<ConversationScope>;
-  conversation(scope: ConversationScope): ConversationPort<TranscriptEvent, Transcript>;
+  conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }

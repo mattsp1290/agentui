@@ -1,11 +1,42 @@
 import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
-import type { ConversationPort, ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
-import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
+import type { ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
+import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 
 export class ServiceProtocolError extends Error {}
 class ServiceRequestRejected extends Error {}
+export async function readServiceResponseBody(response: Response): Promise<unknown> {
+  const announced = response.headers.get('content-length');
+  if (announced !== null && Number(announced) > SERVICE_MAX_RESPONSE_BYTES) {
+    await response.body?.cancel();
+    throw new ServiceProtocolError('Service response exceeds byte limit');
+  }
+  if (!response.headers.get('content-type')?.toLowerCase().startsWith('application/json')) {
+    await response.body?.cancel();
+    throw new ServiceProtocolError('Expected JSON service response');
+  }
+  if (!response.body) throw new ServiceProtocolError('Empty service response');
+  const reader = response.body.getReader(), decoder = new TextDecoder('utf-8', { fatal: true });
+  let bytes = 0, body = '';
+  try {
+    for (;;) {
+      const chunk = await reader.read();
+      if (chunk.done) break;
+      bytes += chunk.value.byteLength;
+      if (bytes > SERVICE_MAX_RESPONSE_BYTES) throw new ServiceProtocolError('Service response exceeds byte limit');
+      try { body += decoder.decode(chunk.value, { stream: true }); }
+      catch { throw new ServiceProtocolError('Invalid UTF-8 service response'); }
+    }
+    try { body += decoder.decode(); }
+    catch { throw new ServiceProtocolError('Invalid UTF-8 service response'); }
+  } catch (error) {
+    await reader.cancel().catch(() => {});
+    throw error;
+  } finally { reader.releaseLock(); }
+  try { return JSON.parse(body); }
+  catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
+}
 interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly onUnauthorized?: () => void;
@@ -13,10 +44,10 @@ interface ServiceConnectionOptions {
 type ServiceExecutor = (request: ServiceRequest, context: {
   readonly signal: AbortSignal;
   readonly timeoutMs: number;
-}) => Promise<unknown>;
+}) => Promise<Response>;
 export function createServiceConnection<E, P>(execute: ServiceExecutor,
   projection: Pick<Projection<E, P>, 'version' | 'decodeState' | 'decodeEvent'>,
-  options: ServiceConnectionOptions = {}): Omit<ServiceConnection, 'conversation'> & { conversation(scope: ConversationScope): ConversationPort<E, P> } {
+  options: ServiceConnectionOptions = {}): ServiceConnection<E, P> {
   let credentialGeneration = 0;
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
@@ -38,11 +69,19 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       signal?.addEventListener('abort', abort, { once: true });
     });
     const perform = async (): Promise<ServiceValueMap[K]> => {
-      const raw = await execute(normalized, { signal: controller.signal, timeoutMs });
+      const response = await execute(normalized, { signal: controller.signal, timeoutMs });
       let result;
-      try { result = parseServiceResponse<K>(value, raw); }
-      catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
+      try {
+        const raw = await readServiceResponseBody(response);
+        try { result = parseServiceResponse<K>(value, raw); }
+        catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
+      } catch (error) {
+        if (response.status === 401) throw new ServiceError('unauthorized', 'Pair this device with the host');
+        throw error;
+      }
+      if (response.status === 401) throw new ServiceError('unauthorized', result.ok ? 'Pair this device with the host' : result.error.message);
       if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
+      if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
       return result.value;
     };
     try { return await Promise.race([perform(), interrupted]); }

@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { setImmediate } from 'node:timers/promises';
+import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { projection, events, scope as textScope, snapshot as textSnapshot } from './support.mjs';
 import { createServiceConnection } from '../../packages/client/dist/service-engine.js';
@@ -9,8 +10,8 @@ import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 1, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
-const reply = value => ({ ok: true, value });
-const unauthorized = { ok: false, error: { kind: 'unauthorized', message: 'Expired' } };
+const reply = value => Response.json({ ok: true, value });
+const unauthorized = () => Response.json({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }, { status: 401 });
 const until = async predicate => {
   for (let attempt = 0; attempt < 100; attempt++) { if (predicate()) return; await setImmediate(); }
   assert.fail('Expected asynchronous operation did not complete');
@@ -26,7 +27,7 @@ test('shared engine bounds an executor that ignores abort and ignores its late u
   await assert.rejects(connection.metadata(), error => error instanceof ServiceError && /timed out/.test(error.message));
   assert.equal(timeout, 10);
   assert.equal(signal.aborted, true);
-  pending.resolve(unauthorized);
+  pending.resolve(unauthorized());
   await setImmediate();
   assert.equal(notifications, 0);
 });
@@ -37,12 +38,12 @@ test('shared engine fences old unauthorized envelopes and adapter errors across 
     let notifications = 0, calls = 0;
     const connection = createServiceConnection(async request => {
       if (request.op === 'pair') return reply(null);
-      return ++calls === 1 ? pending.promise : unauthorized;
+      return ++calls === 1 ? pending.promise : unauthorized();
     }, transcriptProjection, { onUnauthorized: () => notifications++ });
     const old = connection.metadata();
     await connection.pair('replacement');
     if (adapterError) pending.reject(new ServiceError('unauthorized', 'Expired'));
-    else pending.resolve(unauthorized);
+    else pending.resolve(unauthorized());
     await assert.rejects(old, error => error.kind === 'unauthorized');
     assert.equal(notifications, 0);
     await assert.rejects(connection.metadata(), error => error.kind === 'unauthorized');
@@ -60,7 +61,7 @@ test('shared engine validates before execution and never retries a failed comman
   assert.equal(calls, 0);
   await assert.rejects(port.submit(command), /Lost reply/);
   assert.equal(calls, 1);
-  const malformed = createServiceConnection(async () => ({ ok: true, value: {} }), transcriptProjection);
+  const malformed = createServiceConnection(async () => reply({}), transcriptProjection);
   await assert.rejects(malformed.metadata(), error => error instanceof ServiceProtocolError);
 });
 
@@ -146,5 +147,39 @@ for (const [name, mutate, kind] of [
     assert.equal((await feed.ended).kind, kind);
     assert.deepEqual(acks, [null]);
     assert.equal(closed, 1);
+  });
+}
+
+for (const [name, response, kind] of [
+  ['malformed unauthorized', () => new Response('{', { status: 401, headers: { 'Content-Type': 'application/json' } }), 'unauthorized'],
+  ['non-OK success', () => Response.json({ ok: true, value: null }, { status: 503 }), 'unavailable'],
+  ['classified failure', () => Response.json({ ok: false, error: { kind: 'forbidden', message: 'Denied' } }, { status: 403 }), 'forbidden'],
+]) {
+  test(`shared engine classifies ${name}`, async () => {
+    let notifications = 0;
+    const connection = createServiceConnection(response, transcriptProjection, { onUnauthorized: () => notifications++ });
+    await assert.rejects(connection.reconcile(scope, 'command'), error => error instanceof ServiceError && error.kind === kind);
+    assert.equal(notifications, kind === 'unauthorized' ? 1 : 0);
+  });
+}
+
+for (const [name, body, headers] of [
+  ['content type', '{}', { 'Content-Type': 'text/plain' }],
+  ['UTF-8', new Uint8Array([0xff]), { 'Content-Type': 'application/json' }],
+  ['JSON', '{', { 'Content-Type': 'application/json' }],
+  ['announced limit', '{}', { 'Content-Type': 'application/json', 'Content-Length': String(SERVICE_MAX_RESPONSE_BYTES + 1) }],
+  ['stream limit', ' '.repeat(SERVICE_MAX_RESPONSE_BYTES + 1), { 'Content-Type': 'application/json' }],
+]) {
+  test(`shared engine resynchronizes ${name} failure without delivery or ACK`, async () => {
+    const acks = [];
+    const connection = createServiceConnection(async request => {
+      if (request.op === 'watch') return reply({ feedId: 'feed' });
+      if (request.op === 'close') return reply(null);
+      acks.push(request.ack);
+      return new Response(body, { headers });
+    }, transcriptProjection);
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 1 }, async () => assert.fail('Invalid item delivered'));
+    assert.equal((await feed.ended).kind, 'resync');
+    assert.deepEqual(acks, [null]);
   });
 }

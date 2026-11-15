@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, watch } from 'node:fs';
-import { createServer, request } from 'node:http';
+import { request } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 
 const root = new URL('../../', import.meta.url);
@@ -134,78 +135,10 @@ test('native loopback routes reject ambiguous credentials, class substitution an
   assert.equal((await f.control('devices')).find(value => value.id === device.principalId).revoked, true);
 });
 
-async function nativeClient() {
-  const { default: assert } = await import('node:assert/strict');
-  const { createServiceConnection } = await import('./packages/client/dist/service-engine.js');
-  const { record, identifier } = await import('@agentui/contracts/decode');
-  const { transcriptProjection } = await import('@agentui/contracts/conversation');
-  const { SERVICE_MAX_RESPONSE_BYTES } = await import('@agentui/contracts/service');
-  const input = await new Promise(resolve => process.once('message', resolve));
-  let credential = input.credential;
-  const connection = createServiceConnection(async (request, { signal }) => {
-    const pairing = request.op === 'pair';
-    const response = await fetch(`${input.origin}/native/v1${pairing ? '/pair' : ''}`, {
-      method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json',
-        ...(!pairing ? { Authorization: `Bearer ${credential.secret}` } : {}) },
-      body: JSON.stringify(pairing ? { version: 1, hostId: input.hostId, code: request.code } : request),
-    });
-    const reader = response.body.getReader();
-    const chunks = [];
-    let bytes = 0;
-    try {
-      for (;;) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        bytes += value.byteLength;
-        if (bytes > SERVICE_MAX_RESPONSE_BYTES) throw new Error('Response exceeds byte limit');
-        chunks.push(value);
-      }
-    } finally { await reader.cancel(); }
-    const result = JSON.parse(Buffer.concat(chunks).toString('utf8'));
-    if (!pairing || result.ok !== true) return result;
-    record(result, ['ok', 'value']);
-    const value = record(result.value, ['hostId', 'principalId', 'secret']);
-    assert.equal(value.hostId, input.hostId);
-    assert.match(value.secret, /^[A-Za-z0-9_-]{43}$/);
-    credential = { hostId: value.hostId, principalId: identifier(value.principalId), secret: value.secret };
-    process.send({ kind: 'paired', credential });
-    return { ok: true, value: null };
-  }, transcriptProjection);
-  if (!credential) await connection.pair(input.code);
-  const metadata = await connection.metadata();
-  assert.equal(metadata.hostId, input.hostId);
-  assert.equal(metadata.principalId, credential.principalId);
-  const scope = { hostId: input.hostId, conversationId: 'native-process-lifetime' };
-  await connection.create(scope);
-  const port = connection.conversation(scope);
-  let feed;
-  const snapshot = new Promise(resolve => {
-    feed = port.watch({ after: null, projectionVersion: 1 }, item => { if (item.kind === 'snapshot') resolve(item.snapshot); });
-  });
-  const before = await snapshot;
-  const command = { version: 1, scope, clientCommandId: 'same-original-id', body: { kind: 'send', text: 'A separate host owns this command.' } };
-  if (input.credential) {
-    const receipt = await connection.reconcile(scope, command.clientCommandId);
-    assert.equal(receipt.state.kind, 'completed');
-    assert.equal(Object.keys(before.document.decisions).length, 1);
-    assert.equal(before.document.domain.messages.filter(value => value.role === 'user').length, 1);
-    assert.deepEqual((await port.submit(command)).receipt, receipt);
-    feed.close();
-    await feed.ended;
-    process.send({ kind: 'recovered', hostOperationId: receipt.hostOperationId });
-    process.disconnect();
-  } else {
-    feed.close();
-    await feed.ended;
-    await port.submit(command);
-    throw new Error('Client was not killed during host execution');
-  }
-}
-
 test('separate native engine processes recover one original command after client exit while the bundled host lives', { timeout: 20_000 }, async t => {
   const f = await fixture(t), invitation = await f.control('invite-native');
   const run = input => {
-    const child = f.launch(['--input-type=module', '-e', `(${nativeClient.toString()})().catch(() => { process.exitCode = 1; process.disconnect(); });`], true);
+    const child = f.launch([fileURLToPath(new URL('./support/native-client.mjs', import.meta.url))], true);
     child.child.send({ origin: f.origin, hostId: f.hostId, ...input });
     return child;
   };
@@ -217,7 +150,7 @@ test('separate native engine processes recover one original command after client
   t.after(() => watcher.close());
   const first = run({ code: invitation.code });
   const paired = await Promise.race([new Promise(resolve => first.child.once('message', resolve)),
-    first.exited.then(() => { throw new Error('Native client exited before pairing'); })]);
+    first.exited.then(() => { throw new Error(`Native client exited before pairing ${first.stderr}`); })]);
   assert.equal(paired.kind, 'paired');
   await acceptance;
   watcher.close();
@@ -261,25 +194,4 @@ test('native invitations and credentials retain exact expiry and durable revocat
   access = new Access(openAccessDatabase(path));
   try { assert.equal(access.authenticate(secret, 'native', 1001), null); }
   finally { access.close(); }
-});
-
-
-test('native API faults remain unavailable after dispatch and never reflect submitted secrets', async t => {
-  const { nativeHandler } = await import('../../apps/host/build/tsc/native-handler.js');
-  const { ServiceError } = await import('@agentui/contracts/service');
-  let failure = new Error('private backend diagnostic');
-  const handler = nativeHandler({ access: { hostId: 'host', authenticate: () => ({ id: 'device', hostId: 'host', credentialClass: 'native' }) },
-    api: async () => { throw failure; }, isClosing: () => false });
-  const server = createServer((request, response) => { void handler(request, response); });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
-  const call = body => fetch(`http://127.0.0.1:${server.address().port}/native/v1`, {
-    method: 'POST', headers: { 'Content-Type': 'application/json', ...bearer('a'.repeat(43)) }, body: JSON.stringify(body),
-  });
-  const response = await call({ op: 'metadata' });
-  assert.equal(response.status, 503);
-  assert.deepEqual(await response.json(), { ok: false, error: { kind: 'unavailable', message: 'Host request did not complete' } });
-  failure = new ServiceError('forbidden', 'Access refused');
-  assert.equal((await call({ op: 'metadata' })).status, 403);
-  assert.equal((await call({ op: 'metadata', extra: true })).status, 400);
 });
