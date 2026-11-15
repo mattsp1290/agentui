@@ -10,7 +10,7 @@ import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, 
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { migrateTranscriptDatabase } from './transcript-migration.js';
 import { openDatabase } from './sqlite-schema.js';
-import { nonempty, object, integer, cloneJson } from './codec.js';
+import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
@@ -299,7 +299,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           .get(...key(scope), command.body.pendingId);
         if (!row || row.status !== 'open') return { kind: 'rejected', reason: 'decision-unavailable' };
         const data = object(json(row.data));
-        pending = { visible: parseDecision(data.visible), continuation: cloneJson(data.continuation) };
+        pending = { visible: parseDecision(data.visible), continuation: copyCanonicalJson(data.continuation) };
         if (!pending.visible.choices.includes(command.body.choiceId)) return { kind: 'rejected', reason: 'invalid-choice' };
       }
       const runId = command.body.kind === 'cancel' ? command.body.runId : pending?.visible.runId;
