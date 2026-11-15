@@ -75,20 +75,21 @@ test('MCP refuses malformed, oversized, redirected, mismatched and non-snapshot 
 });
 
 test('request deadlines, caller cancellation and admission limits retain an independent feed cleanup budget', { timeout: 15_000 }, async t => {
-  let watches = 0, closes = 0;
+  let watches = 0, pulls = 0, closes = 0;
   const origin = await listen(t, async (request, response) => {
     const input = await readRequest(request);
     if (input.op === 'metadata') reply(response, metadata);
     else if (input.op === 'conversation-agent') reply(response, null);
     else if (input.op === 'watch') { watches++; reply(response, { feedId: `feed-${watches}` }); }
     else if (input.op === 'close') { closes++; reply(response, null); }
-    else if (input.op !== 'pull') throw new Error('Unexpected operation');
+    else if (input.op === 'pull') pulls++;
+    else throw new Error('Unexpected operation');
   });
   const reader = new Reader(parseAccess({ version: 1, origin, ...identity }));
   const cancelled = new AbortController();
   t.after(() => cancelled.abort());
   const cancelledRead = assert.rejects(reader.inspect(scope.conversationId, cancelled.signal));
-  await until(() => watches === 1);
+  await until(() => pulls === 1);
   cancelled.abort();
   await cancelledRead;
   assert.equal(watches, 1);
@@ -98,11 +99,11 @@ test('request deadlines, caller cancellation and admission limits retain an inde
   const pending = Array.from({ length: 4 }, () => reader.inspect(scope.conversationId, controller.signal));
   const settled = Promise.allSettled(pending);
   await assert.rejects(reader.inspect(scope.conversationId, controller.signal), /Inspection limit/);
-  await until(() => watches === 5);
+  await until(() => pulls === 5);
   controller.abort();
   assert.ok((await settled).every(result => result.status === 'rejected'));
   assert.equal(closes, 5);
-  await assert.rejects(reader.inspect(scope.conversationId, AbortSignal.timeout(8000)));
+  await assert.rejects(reader.inspect(scope.conversationId, new AbortController().signal));
   assert.equal(closes, 6);
 });
 
