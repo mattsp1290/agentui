@@ -1,10 +1,19 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
+
+test('installed Crew and example share the patched Zod runtime', () => {
+  const exampleRequire = createRequire(new URL('../package.json', import.meta.url));
+  const crewRequire = createRequire(exampleRequire.resolve('@birbcrew/client'));
+  assert.equal(exampleRequire('zod/package.json').version, '4.6.6');
+  assert.equal(crewRequire('zod/package.json').version, '4.6.6');
+  assert.equal(crewRequire.resolve('zod'), exampleRequire.resolve('zod'));
+});
 
 test('packed Crew example imports both exports with the retained SDK archive', t => {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-crew-consumer-'));
