@@ -13,14 +13,24 @@ type AccessCommand = { readonly kind: 'status' } | { readonly kind: 'pair'; read
 export type MacNativeInvoke = (command: AccessCommand | {
   readonly kind: 'execute'; readonly observation: string; readonly request: ServiceRequest;
 }) => Promise<unknown>;
-const recovery = 'Restore Keychain access, then reconnect. Restart AgentUI if access stays unavailable. Pair again after expiry or revocation. Local work is retained.';
+const invalidResponse = 'Invalid native connection response. Update AgentUI, then reconnect. Local work is retained.';
 function failure(cause: unknown): ServiceError {
-  const reason = cause === 'profile-in-use' ? 'Close the other AgentUI instance before reconnecting.'
-    : cause === 'pairing-failed' ? 'Pairing failed. Request a fresh native invitation from the host.'
-      : cause === 'invalid-input' ? 'Invalid native invitation or request.'
-        : cause === 'cancelled' ? 'Pairing removal cancelled.'
-          : cause === 'stale' ? 'Native access changed. Reconnect before continuing.'
-            : cause === 'network-failed' ? 'The local host request did not complete. Reconnect or inspect command recovery before retrying.' : recovery;
+  let reason: string;
+  switch (cause) {
+    case 'profile-in-use': reason = 'Close the other AgentUI instance before reconnecting.'; break;
+    case 'pairing-failed': reason = 'Pairing failed. Request a fresh native invitation from the host.'; break;
+    case 'invalid-input': reason = 'Invalid native invitation or request.'; break;
+    case 'cancelled': reason = 'Pairing removal cancelled.'; break;
+    case 'stale': reason = 'Native access changed. Reconnect before continuing.'; break;
+    case 'network-failed': reason = 'The local host request did not complete. Reconnect or inspect command recovery before retrying.'; break;
+    case 'forbidden': reason = 'Native access was refused. Open the installed AgentUI app, then reconnect.'; break;
+    case 'profile-unavailable': reason = 'The local profile is unavailable. Check that AgentUI can access its local profile, then restart AgentUI. Local work is retained.'; break;
+    case 'keychain-locked':
+    case 'keychain-denied':
+    case 'keychain-unavailable':
+      reason = 'Restore Keychain access, then reconnect. Restart AgentUI if access stays unavailable. Pair again after expiry or revocation. Local work is retained.'; break;
+    default: reason = 'Native connection unavailable. Reconnect, or restart AgentUI if the problem continues. Local work is retained.';
+  }
   return new ServiceError('unavailable', reason);
 }
 export async function macAccess(command: AccessCommand, nativeInvoke: MacNativeInvoke): Promise<MacAccess> {
@@ -33,7 +43,7 @@ export async function macAccess(command: AccessCommand, nativeInvoke: MacNativeI
     return { kind: 'ready', observation, hostId: identifier(input.hostId), principalId: identifier(input.principalId) };
   }
   record(value, ['kind', 'observation']);
-  if (input.kind !== 'absent' && input.kind !== 'unreadable') throw new Error(recovery);
+  if (input.kind !== 'absent' && input.kind !== 'unreadable') throw new Error(invalidResponse);
   return { kind: input.kind, observation };
 }
 export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeInvoke, options: ServiceConnectionOptions = {}): ServiceConnection {
@@ -43,7 +53,7 @@ export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeIn
     try { value = await nativeInvoke({ kind: 'execute', observation: access.observation, request: parseServiceRequest(JSON.parse(body)) }); }
     catch (cause) { throw failure(cause); }
     const reply = record(value, ['status', 'body']), status = count(reply.status);
-    if (status < 200 || status > 599 || typeof reply.body !== 'string' || reply.body.length > 4_100_000) throw new Error(recovery);
+    if (status < 200 || status > 599 || typeof reply.body !== 'string' || reply.body.length > 4_100_000) throw new Error(invalidResponse);
     return new Response(reply.body, { status, headers: { 'Content-Type': 'application/json' } });
   }, transcriptProjection, options);
   return { ...connection, pair: async () => { throw new Error('Use native pairing controls to enroll this Mac.'); } };
