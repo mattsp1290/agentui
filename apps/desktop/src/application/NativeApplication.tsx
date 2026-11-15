@@ -34,7 +34,7 @@ export function NativeApplication() {
         ownedViewStorage: { open: failure => BrowserViewStorage.reopen('native-mac-default', failure, true), reopen: BrowserViewStorage.reopen } });
       current.current = { id: crypto.randomUUID(), access, controller };
       setSession(current.current);
-    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Native access unavailable. Restore Keychain access, then reconnect.'); }
+    } catch (cause) { if (alive.current) setError(cause instanceof Error ? cause.message : 'Native connection unavailable. Reconnect, or restart AgentUI if the problem continues. Local work is retained.'); }
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   useEffect(() => {
@@ -71,7 +71,7 @@ export function NativeApplication() {
   return session?.access.kind === 'ready'
     ? <BrowserApplication key={session.id} controller={session.controller} connectionControls={controls} suspended={busy} reconnect={() => void replace({ kind: 'status' })} />
     : <ThemeScope className="desktop-shell"><Surface className="landing"><h1>Connect this Mac</h1>
-        {session?.access.kind === 'unreadable' && <p role="alert">The protected record is unreadable. Restore Keychain access, or explicitly discard this local pairing.</p>}
+        {session?.access.kind === 'unreadable' && <p role="alert">The protected record is unreadable. Update AgentUI, or explicitly discard this local pairing. Local work is retained.</p>}
         {controls}<button disabled={busy} onClick={() => void replace({ kind: 'status' })}>Reconnect</button>
       </Surface></ThemeScope>;
 }
