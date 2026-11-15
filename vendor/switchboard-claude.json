@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "f075ca2e0600a7621c1540b2e340482f8ee51094",
-  "sourceTree": "40fabc6e99fea8ac921eb98389329b19e29d85ba",
-  "artifact": "switchboard-f075ca2e0600a7621c1540b2e340482f8ee51094.tgz",
-  "sha256": "84ae2b980afcaecd7b9c07306491bfd867183614ddc3fa50366edc119a591fdc",
+  "sourceRevision": "b4744816ea4010ef7f517bedbf6ed52eb07ff067",
+  "sourceTree": "c36319e0fdc2f5d28fc0df7a7ce74ae4f6c9b23d",
+  "artifact": "switchboard-b4744816ea4010ef7f517bedbf6ed52eb07ff067.tgz",
+  "sha256": "58c6f6fd841918278bf8f82cd30ee68401d1f7378a16cbc1c47d6369cef9aa4f",
   "packageName": "@mattsp1290/switchboard",
   "installedAlias": "@agentui/switchboard-claude",
   "entrypoint": "./claude",
