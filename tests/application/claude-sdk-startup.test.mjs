@@ -105,7 +105,7 @@ for (const model of ['opus', 'sonnet']) {
       assert.deepEqual(metadata.value.compatibility.nativeRuntime, CLAUDE_SDK_RUNTIMES[model]);
       assert.equal(JSON.stringify(metadata).includes('unused-claude-startup-key'), false);
       const scope = { hostId: ready.hostId, conversationId: client.conversationId };
-      assert.deepEqual((await call(client.path, { op: 'create', scope }, client.headers)).value, scope);
+      assert.deepEqual((await call(client.path, { op: 'create', scope, agentId: metadata.value.defaultAgentId }, client.headers)).value, scope);
     }
     const db = new DatabaseSync(join(f.directory, 'data', 'host.sqlite'), { readOnly: true });
     try {

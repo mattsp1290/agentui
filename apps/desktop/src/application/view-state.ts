@@ -2,9 +2,9 @@ import type { DraftStoragePort } from '@agentui/client';
 import type { ConversationScope } from '@agentui/contracts';
 
 export interface SavedView {
-  readonly version: 1;
+  readonly version: 2;
   readonly route: ConversationScope | null;
-  readonly pendingCreation: ConversationScope | null;
+  readonly pendingCreation: { readonly scope: ConversationScope; readonly agentId: string | null } | null;
 }
 export interface OwnedViewStorage {
   readonly viewId: string;

@@ -34,7 +34,7 @@ function harness(t, afterAcceptance) {
     rmSync(directory, { recursive: true, force: true });
   });
   const open = () => {
-    const driver = createRecordedDriver({ backendPath, decodeEvent: projection.decodeEvent,
+    const driver = createRecordedDriver({ installation: installed, backendPath, decodeEvent: projection.decodeEvent,
       resolve: async command => structuredClone(recording[command.body.kind]), afterAcceptance });
     const host = openLocalHost({ path: join(directory, 'host.sqlite'), projection, driver,
       authorize: value => value.hostId === scope.hostId, budgets: { pollMs: 10 } });

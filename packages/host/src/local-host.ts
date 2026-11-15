@@ -1,4 +1,4 @@
-import { CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
@@ -12,7 +12,7 @@ import { Journal } from './journal.js';
 export interface LocalHostOptions<E, P> {
   readonly path: string;
   readonly projection: Projection<E, P>;
-  readonly driver: ProviderDriver<E>;
+  readonly driver: ProviderDriver<E> | readonly ProviderDriver<E>[];
   readonly authorize: (scope: ConversationScope) => boolean;
   readonly budgets?: Partial<HostBudgets>;
 }
@@ -20,6 +20,7 @@ export interface LocalHost<E, P> {
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
+  installation(scope: ConversationScope): Installation | null;
   inspect(scope: ConversationScope): { readonly installation: Installation; readonly snapshot: Snapshot<P> };
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
@@ -28,6 +29,10 @@ export interface LocalHost<E, P> {
 }
 export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
   const store = new SqliteStore(options.path, options.projection, budgets(options.budgets));
+  const configured = 'source' in options.driver ? [options.driver] : options.driver;
+  const drivers = new Map(configured.map(driver => [canonicalJson(driver.installation), driver]));
+  if (drivers.size !== configured.length) { store.close(); throw new Error('Duplicate agent installation'); }
+  const driverFor = (target: Installation) => drivers.get(canonicalJson(target));
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
   let closed = false;
@@ -60,6 +65,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
+    installation(scope) { return store.findInstallation(authorized(scope)); },
     inspect(scope) { return store.inspect(authorized(scope)); },
     listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
       const hostIdValue = identifier(hostId), cursor = after === null ? null : identifier(after);
@@ -84,7 +90,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             authorized(command.scope);
             if (!sameScope(scope, command.scope)) return { kind: 'rejected', reason: 'scope-mismatch' };
           } catch { return { kind: 'rejected', reason: 'invalid-or-unauthorized-command' }; }
-          const admitted = store.admit(command, options.driver.capability(command), options.driver.installation);
+          const target = store.findInstallation(scope);
+          const driver = target ? driverFor(target) : undefined;
+          const admitted = store.admit(command, driver?.capability(command) ?? { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation);
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
@@ -92,7 +100,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
             signal: new AbortController().signal,
             recordIntent: () => store.verifyIntent(stored),
-            dispatchNative: () => options.driver.dispatch(stored.command, stored.target),
+            dispatchNative: () => {
+              const captured = driverFor(stored.target.installation);
+              if (!captured) throw new Error('Captured agent is unavailable');
+              return captured.dispatch(stored.command, stored.target);
+            },
           });
           return inFlight(async () => {
             dispatching.add(key);
@@ -122,10 +134,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         return store.settle(scope, id, stored.observation);
       }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
-      const lookup = options.driver.lookup;
+      const driver = driverFor(stored.target.installation);
+      const lookup = driver?.lookup;
       const operation = createDispatchOperation({ mode: 'recovery', identity: stored.target.identity,
         previous: store.recoveryPrevious(stored),
-        ...(lookup ? { reconcileNative: () => lookup.call(options.driver, stored.command, stored.target) } : {}),
+        ...(lookup ? { reconcileNative: () => lookup.call(driver, stored.command, stored.target) } : {}),
       });
       return inFlight(async () => {
         const result = await operation.reconcile(new AbortController().signal);

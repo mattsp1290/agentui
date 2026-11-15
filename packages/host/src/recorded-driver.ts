@@ -3,9 +3,10 @@ import { canonicalJson } from '@agentui/contracts';
 import type { ClientCommand } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { nonempty, object, output, parseEvidence } from './codec.js';
-import type { CapturedTarget, CommandResult, ProviderDriver } from './durable-model.js';
+import type { CapturedTarget, CommandResult, Installation, ProviderDriver } from './durable-model.js';
 
 export interface RecordedDriverOptions<E> {
+  readonly installation: Installation;
   readonly backendPath: string;
   readonly decodeEvent: (value: unknown) => E;
   readonly resolve: (command: ClientCommand, target: CapturedTarget) => Promise<CommandResult<E> | 'accepted'>;
@@ -14,7 +15,7 @@ export interface RecordedDriverOptions<E> {
 }
 export function createRecordedDriver<E>(options: RecordedDriverOptions<E>): ProviderDriver<E> {
   return {
-    source: 'recorded',
+    source: 'recorded', installation: options.installation,
     capability(command) {
       return command.body.kind === 'cancel' ? options.cancel ?? { kind: 'unsupported', reason: 'recorded-cancel-unavailable' } : { kind: 'supported' };
     },

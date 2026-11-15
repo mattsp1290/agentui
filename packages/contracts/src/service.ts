@@ -1,6 +1,6 @@
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
-import type { HostCompatibility } from './compatibility.js';
+import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
 import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope } from './durable.js';
@@ -28,13 +28,23 @@ export type ServiceRequest =
   | { readonly op: 'metadata' }
   | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
-  | { readonly op: 'create'; readonly scope: ConversationScope }
+  | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
+  | { readonly op: 'conversation-agent'; readonly scope: ConversationScope }
   | { readonly op: 'submit'; readonly command: ClientCommand }
   | { readonly op: 'receipt' | 'reconcile'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string };
+export interface AgentDescriptor {
+  readonly id: string;
+  readonly label: string;
+  readonly runtime: NativeRuntimeIdentity;
+  readonly commands: readonly ('send' | 'cancel' | 'approve')[];
+  readonly availability: { readonly kind: 'ready' } | { readonly kind: 'unavailable'; readonly reason: string };
+}
 export interface ServiceMetadata {
+  readonly agents: readonly AgentDescriptor[];
+  readonly defaultAgentId: string;
   readonly hostId: string;
   readonly principalId: string;
   readonly compatibility: HostCompatibility;
@@ -59,6 +69,7 @@ export interface ServiceValueMap {
   readonly metadata: ServiceMetadata;
   readonly catalog: readonly ConversationCatalogEntry[];
   readonly search: ConversationSearchPage;
+  readonly 'conversation-agent': AgentDescriptor | null;
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -78,7 +89,8 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   metadata(): Promise<ServiceMetadata>;
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
-  create(scope: ConversationScope): Promise<ConversationScope>;
+  create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
+  conversationAgent(scope: ConversationScope): Promise<AgentDescriptor | null>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
@@ -105,7 +117,8 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
       return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
     }
-    case 'create': exact(input, ['op', 'scope']); return { op: 'create', scope: parseScope(input.scope) };
+    case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
+    case 'create': exact(input, ['op', 'scope', 'agentId']); return { op: 'create', scope: parseScope(input.scope), agentId: identifier(input.agentId) };
     case 'submit': {
       exact(input, ['op', 'command']);
       const command = parseCommand(input.command);
@@ -127,6 +140,25 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
     case 'close': exact(input, ['op', 'feedId']); return { op: 'close', feedId: identifier(input.feedId) };
     default: throw new Error('Unknown service operation');
   }
+}
+function agentDescriptor(value: unknown): AgentDescriptor {
+  const input = record(value, ['id', 'label', 'runtime', 'commands', 'availability']);
+  const runtime = record(input.runtime, ['engine', 'version', 'format']);
+  const available = record(input.availability);
+  let availability: AgentDescriptor['availability'];
+  if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
+  else {
+    exact(available, ['kind', 'reason']);
+    if (available.kind !== 'unavailable') throw new Error('Invalid agent availability');
+    availability = { kind: 'unavailable', reason: identifier(available.reason) };
+  }
+  if (!Array.isArray(input.commands)) throw new Error('Invalid agent commands');
+  const commands = input.commands.map((command: unknown) => {
+    if (command !== 'send' && command !== 'cancel' && command !== 'approve') throw new Error('Invalid agent command');
+    return command;
+  });
+  return { id: identifier(input.id), label: identifier(input.label), commands, availability,
+    runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) } };
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
@@ -173,8 +205,11 @@ export function parseServicePull(value: unknown): ServicePull {
 const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) => ServiceValueMap[K] } = {
   pair: nil, close: nil,
   metadata(value) {
-    const input = record(value, ['hostId', 'principalId', 'compatibility']);
-    return { hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
+    const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
+    if (!Array.isArray(input.agents)) throw new Error('Invalid agents');
+    const agents = input.agents.map(agentDescriptor), defaultAgentId = identifier(input.defaultAgentId);
+    if (!agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
+    return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
   },
   catalog(value) {
     if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
@@ -200,6 +235,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     });
     return { items: entries, after: input.after === null ? null : identifier(input.after) };
   },
+  'conversation-agent': value => value === null ? null : agentDescriptor(value),
   create: parseScope,
   submit(value) {
     const input = record(value);

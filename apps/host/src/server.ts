@@ -5,13 +5,13 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { ConversationScope } from '@agentui/contracts';
-import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
+import { canonicalJson } from '@agentui/contracts';
+import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
-import type { ClaudeSdkModel } from '@agentui/contracts/compatibility';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
@@ -25,17 +25,18 @@ import { FeedRegistry } from './feed-registry.js';
 import { serviceEndpoint } from './service-endpoint.js';
 import { startControl } from './control.js';
 import { recoverProviderConversations, PROVIDER_RECOVERY } from './provider-recovery.js';
+import { providerInstallation } from './agent-config.js';
+import type { AgentConfiguration, NativeProvider } from './agent-config.js';
+import { describeAgent } from './agents.js';
+import type { InstalledAgent } from './agents.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
   readonly assetsDirectory: string;
   readonly port?: number;
   readonly progressMs?: number;
-  readonly provider?:
-    | { readonly kind: 'codex'; readonly cwd: string }
-    | { readonly kind: 'codex-sdk'; readonly cwd: string }
-    | { readonly kind: 'claude-sdk'; readonly cwd: string; readonly model: ClaudeSdkModel }
-    | { readonly kind: 'pi'; readonly cwd: string };
+  readonly provider?: NativeProvider;
+  readonly configuration?: AgentConfiguration;
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -50,12 +51,18 @@ function claudeApiKey(): string {
   return apiKey.trim();
 }
 export async function startBrowserHost(options: BrowserHostOptions) {
-  const provider = options.provider?.kind === 'pi' ? { ...options.provider, apiKey: piApiKey() }
-    : options.provider?.kind === 'claude-sdk' ? { ...options.provider, apiKey: claudeApiKey() } : options.provider;
+  if (options.provider && options.configuration) throw new Error('Choose a single provider or an agent configuration');
+  const configured = options.configuration ?? (options.provider
+    ? { default: 'default', agents: [{ ...options.provider, name: 'default' }] } : null);
+  if (options.provider?.kind === 'pi') piApiKey();
+  if (options.provider?.kind === 'claude-sdk') claudeApiKey();
   const owner = ownDirectory(options.directory);
   let access: Access | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
-  let driver: ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>> | undefined;
+  type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
+  const drivers: Driver[] = [];
+  const agents: InstalledAgent[] = [];
+  let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
@@ -65,7 +72,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     closePromise ??= (async () => {
       closing = true;
       feeds?.dispose();
-      const driverResults = await Promise.allSettled([Promise.resolve().then(() => driver?.close())]);
+      const driverResults = await Promise.allSettled(drivers.map(driver => Promise.resolve().then(() => driver.close())));
       const driverFailed = driverResults.some(result => result.status === 'rejected');
       const deadline = setTimeout(() => http.closeAllConnections(), 2000);
       try {
@@ -92,25 +99,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   try {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
-    if (provider) {
-      if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) {
-        throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind === 'pi' ? 'Pi' : provider.kind === 'claude-sdk' ? 'Claude' : 'Codex'}.`);
-      }
-    }
-    if (provider?.kind === 'codex') {
-      let version: string;
-      try {
-        const result = await promisify(execFile)('codex', ['--version'], { timeout: 5000, maxBuffer: 4096 });
-        version = result.stdout.trim();
-      } catch {
-        throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`);
-      }
-      if (version !== `codex-cli ${CODEX_RUNTIME.version}`) {
-        throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
-      }
-    }
     access = new Access(openAccessDatabase(join(owner.directory, 'host.sqlite')));
-    if (provider) {
+    if (configured) {
+      if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
       const append: Parameters<typeof createCodexDriver>[0]['append'] = (scope, output) => {
         if (!host) throw new Error('Host is not ready to store agent output');
         host.append(scope, output);
@@ -119,44 +110,75 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         if (!host) throw new Error('Host not ready');
         return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
       };
-      switch (provider.kind) {
-        case 'pi':
-          driver = await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd,
-            sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append, currentRunId });
-          break;
-        case 'claude-sdk': {
-          const sdkDriver = (await import('@agentui/host/claude-sdk')).createClaudeSdkDriver({ cwd: provider.cwd,
-            sessionDirectory: join(owner.directory, 'claude-sessions', provider.model), apiKey: provider.apiKey,
-            model: provider.model, append, currentRunId });
-          driver = sdkDriver;
-          await sdkDriver.ready();
-          break;
+      for (const provider of configured.agents) {
+        if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind}.`);
+        const installation = providerInstallation(provider);
+        if (agents.some(agent => canonicalJson(agent.installation) === canonicalJson(installation))) throw new Error('Duplicate agent installation');
+        if (provider.name === configured.default) defaultInstallation = installation;
+        let driver: Driver | undefined;
+        try {
+          switch (provider.kind) {
+            case 'pi':
+              driver = await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd,
+                sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: piApiKey(), append, currentRunId });
+              break;
+            case 'claude-sdk':
+              driver = (await import('@agentui/host/claude-sdk')).createClaudeSdkDriver({ cwd: provider.cwd,
+                sessionDirectory: join(owner.directory, 'claude-sessions', provider.model), apiKey: claudeApiKey(),
+                model: provider.model, ...(provider.executable ? { claudePathOverride: provider.executable } : {}), append, currentRunId });
+              break;
+            case 'codex-sdk':
+              driver = (await import('@agentui/host/codex-sdk')).createCodexSdkDriver({ cwd: provider.cwd,
+                ...(provider.executable ? { codexPathOverride: provider.executable } : {}), append, currentRunId });
+              break;
+            case 'codex': {
+              let version: string;
+              try {
+                const result = await promisify(execFile)(provider.executable ?? 'codex', ['--version'], { timeout: 5000, maxBuffer: 4096 });
+                version = result.stdout.trim();
+              } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
+              if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
+              driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
+                ...(provider.executable ? { executable: provider.executable } : {}), append });
+              break;
+            }
+          }
+          drivers.push(driver);
+          if ('ready' in driver) await driver.ready();
+          agents.push({ installation, ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } });
+        } catch (error) {
+          if (!options.configuration) throw error;
+          if (driver) { await driver.close(); drivers.splice(drivers.indexOf(driver), 1); }
+          agents.push({ installation, ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'unavailable', reason: 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
         }
-        case 'codex-sdk': {
-          const sdkDriver = (await import('@agentui/host/codex-sdk')).createCodexSdkDriver({ cwd: provider.cwd, append, currentRunId });
-          driver = sdkDriver;
-          await sdkDriver.ready();
-          break;
-        }
-        case 'codex':
-          driver = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version, append });
-          break;
       }
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
-        driver, authorize: scope => scope.hostId === hostId });
-      recoverProviderConversations(host, hostId, driver.installation, PROVIDER_RECOVERY[provider.kind]);
+        driver: drivers, authorize: scope => scope.hostId === hostId });
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
+    const recovered = new Set<string>();
+    let after: string | null = null;
+    for (;;) {
+      const page = host.listConversations(access.hostId, after, 100);
+      for (const scope of page) {
+        const installation = host.inspect(scope).installation, key = canonicalJson(installation);
+        const engine = installation.binding.engine;
+        if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
+          recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
+          recovered.add(key);
+        }
+        after = scope.conversationId;
+      }
+      if (page.length < 100) break;
+    }
     const registry = new FeedRegistry();
     feeds = registry;
-    const runtimes = { codex: CODEX_RUNTIME, 'codex-sdk': CODEX_SDK_RUNTIME, pi: PI_RUNTIME };
-    const compatibility = provider ? { ...artifact.compatibility,
-      nativeRuntime: provider.kind === 'claude-sdk' ? CLAUDE_SDK_RUNTIMES[provider.model] : runtimes[provider.kind] } : artifact.compatibility;
+    const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, installation: driver?.installation ?? recordedInstallation,
+      access, host, compatibility, feeds: registry, installation: defaultInstallation, ...(configured ? { agents } : {}),
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });

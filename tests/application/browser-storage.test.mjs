@@ -42,7 +42,7 @@ test('saved views reject noncanonical records without overwriting local data or 
     return { failures, retained, listed, foreignRetained };
   });
   assert.deepEqual(result.failures, Array(3).fill('Unsupported saved view. Local records were preserved.'));
-  assert.deepEqual(result.retained, { version: 1, route: null, pendingCreation: null });
+  assert.deepEqual(result.retained, { version: 2, route: null, pendingCreation: null });
   assert.deepEqual(result.listed, { ids: [], unreadable: 1, after: null });
   assert.deepEqual(result.foreignRetained, { version: 1, route: null, pendingCreation: null, extra: 'preserve' });
 });
@@ -95,7 +95,7 @@ test('a schema upgrade releases the old database and view lock and reports a rel
   assert.match(result.failures[0], /changed.*Reload/);
   assert.equal(result.lockReleased, true);
   assert.match(result.writeFailure, /no longer owns local storage/);
-  assert.deepEqual(result.retained, { version: 1, route: null, pendingCreation: null });
+  assert.deepEqual(result.retained, { version: 2, route: null, pendingCreation: null });
 });
 
 
@@ -116,4 +116,28 @@ test('foreign-host scans are bounded and continuation retains another host row f
   });
   assert.deepEqual(result.first, { ids: [], unreadable: 0, after: JSON.stringify(['foreign-view', 'a-099']) });
   assert.deepEqual(result.second, { ids: ['foreign-view'], unreadable: 0, after: null });
+});
+
+test('legacy pending scopes migrate without inventing a selected agent or changing draft keys', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const scope = { hostId: 'host', conversationId: 'legacy-pending' };
+    const open = indexedDB.open('agentui-browser-views', 1);
+    const db = await new Promise(resolve => { open.onsuccess = () => resolve(open.result); });
+    const transaction = db.transaction('records', 'readwrite');
+    transaction.objectStore('records').put({ version: 1, route: scope, pendingCreation: scope }, ['view', owner.viewId, 'host']);
+    transaction.objectStore('records').put({ draft: 'Keep this draft' }, ['draft', owner.viewId, scope.hostId, scope.conversationId]);
+    await new Promise(resolve => { transaction.oncomplete = resolve; });
+    const migrated = await owner.readView('host');
+    await owner.saveView('host', migrated);
+    const reread = await owner.readView('host');
+    const draft = await owner.drafts(() => {}).load(scope);
+    owner.close(); db.close();
+    return { migrated, reread, draft };
+  });
+  const scope = { hostId: 'host', conversationId: 'legacy-pending' };
+  assert.deepEqual(result.migrated, { version: 2, route: scope, pendingCreation: { scope, agentId: null } });
+  assert.deepEqual(result.reread, result.migrated);
+  assert.deepEqual(result.draft, { draft: 'Keep this draft' });
 });

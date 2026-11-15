@@ -366,7 +366,7 @@ test('incompatible metadata and unsupported draft storage block commands without
   await page.route('**/api/v1', async route => {
     if (route.request().postDataJSON().op === 'metadata') {
       const response = await route.fetch(), body = await response.json();
-      body.value.compatibility.wireVersion = 2;
+      body.value.compatibility.wireVersion = 999;
       await route.fulfill({ response, json: body });
     } else await route.continue();
   });
@@ -467,7 +467,8 @@ test('saved chat search finds old message text, selects with keys and preserves 
       const response = await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
       if (!response.ok) throw new Error('Search setup failed');
     };
-    for (let index = 0; index < 105; index++) await call({ op: 'create', scope: { hostId, conversationId: `search-${String(index).padStart(3, '0')}` } });
+    const agentId = (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })).json()).value.defaultAgentId;
+    for (let index = 0; index < 105; index++) await call({ op: 'create', agentId, scope: { hostId, conversationId: `search-${String(index).padStart(3, '0')}` } });
     for (const [id, text] of [
       ['search-103', `Search project alpha ${'planning '.repeat(25)}Lavender treasure`],
       ['search-104', 'Search project beta'],
@@ -563,9 +564,10 @@ test('saved chat search finds old message text, selects with keys and preserves 
 test('browser catalog reads every page and opens a conversation beyond the first hundred', { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.evaluate(async hostId => {
+    const agentId = (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })).json()).value.defaultAgentId;
     for (let index = 0; index < 105; index++) {
       const response = await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ op: 'create', scope: { hostId, conversationId: `catalog-${String(index).padStart(3, '0')}` } }) });
+        body: JSON.stringify({ op: 'create', agentId, scope: { hostId, conversationId: `catalog-${String(index).padStart(3, '0')}` } }) });
       if (!response.ok) throw new Error('Catalog setup failed');
     }
   }, host.hostId);
@@ -591,7 +593,7 @@ test('an unreadable foreign saved view leaves the current conversation and draft
     const request = indexedDB.open('agentui-browser-views', 1);
     const db = await new Promise((resolve, reject) => { request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error); });
     const transaction = db.transaction('records', 'readwrite');
-    transaction.objectStore('records').put({ version: 2, route: null, pendingCreation: null }, ['view', 'unreadable-other-view', hostId]);
+    transaction.objectStore('records').put({ version: 3, route: null, pendingCreation: null }, ['view', 'unreadable-other-view', hostId]);
     await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
     db.close();
   }, host.hostId);

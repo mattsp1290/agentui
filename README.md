@@ -4,9 +4,11 @@ AgentUI is a conversation client for existing agent installations, with React cu
 
 The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. The local Codex app supports paired conversations, streamed replies and explicit approvals. The desktop launcher can open its loopback host with `--host-url`; this native launch option still needs a macOS smoke test. The same screens work in a browser. Read [local Codex setup](docs/development/codex-host.md) to connect your existing login.
 
+To choose among configured agents when creating a chat, read [agent choice setup](docs/development/agent-choice.md). Saved chats keep their original agent.
+
 For GPT 6.1 Sol chat through your Codex subscription, read [Codex SDK setup](docs/development/codex-sdk-host.md). This separate mode supports completed assistant messages, follow-up messages, saved sessions, and Stop.
 
-For Opus or Sonnet text chat with your host API key, read [Claude SDK setup](docs/development/claude-sdk-host.md). Each host selects one model family and supports follow-up messages, saved sessions, and Stop.
+For Opus or Sonnet text chat with your host API key, read [Claude SDK setup](docs/development/claude-sdk-host.md). Each Claude agent selects one model family and supports follow-up messages, saved sessions, and Stop.
 
 For GLM 5.3 text chat through an OpenCode Go subscription, read [Pi setup](docs/development/pi-host.md). Pi supports streamed replies, follow-up messages, saved sessions, and Stop. This mode has no tools or file access.
 

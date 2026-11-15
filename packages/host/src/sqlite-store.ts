@@ -69,6 +69,10 @@ export class SqliteStore<E, P> {
     const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
     return { scope, projectionVersion: this.projection.version, cursor, document };
   }
+  findInstallation(scope: ConversationScope): Installation | null {
+    const row = this.db.prepare('SELECT installation FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
+    return row ? installation(json(row.installation)) : null;
+  }
   inspect(scope: ConversationScope): { readonly installation: Installation; readonly snapshot: Snapshot<P> } {
     return { installation: installation(json(this.conversation(scope).installation)), snapshot: this.snapshot(scope) };
   }

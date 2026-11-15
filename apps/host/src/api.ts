@@ -9,30 +9,60 @@ import type { Access, CredentialClass, Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
 import { searchConversations } from './conversation-search.js';
+import { describeAgent } from './agents.js';
+import type { InstalledAgent } from './agents.js';
+import { canonicalJson } from '@agentui/contracts';
 
 type Request = Exclude<ServiceRequest, { op: 'pair' }>;
 export function createApi(options: {
   readonly access: Access; readonly host: LocalHost<TranscriptEvent, Transcript>;
   readonly compatibility: HostCompatibility; readonly feeds: FeedRegistry;
   readonly installation?: Installation;
+  readonly agents?: readonly InstalledAgent[];
   readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
 }) {
   const { access, host, feeds } = options;
+  const defaultInstallation = options.installation ?? recordedInstallation;
+  const configured: readonly InstalledAgent[] = options.agents ?? [{ installation: defaultInstallation, availability: { kind: 'ready' } }];
+  const agents = new Map(configured.map(entry => {
+    const descriptor = describeAgent(entry.installation, entry.availability);
+    return [canonicalJson(entry.installation), { ...descriptor, label: entry.name ? `${entry.name} · ${descriptor.label}` : descriptor.label }];
+  }));
+  const defaultAgentId = describeAgent(defaultInstallation, { kind: 'ready' }).id;
+  if (agents.size !== configured.length || ![...agents.values()].some(agent => agent.id === defaultAgentId)) throw new Error('Invalid configured agents');
+  const describe = (installation: Installation) => agents.get(canonicalJson(installation)) ?? describeAgent(installation,
+    { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
     switch (request.op) {
-      case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility } satisfies ServiceValueMap['metadata'];
+      case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...agents.values()], defaultAgentId } satisfies ServiceValueMap['metadata'];
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
       })) satisfies ServiceValueMap['catalog'];
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
-      case 'create': host.createConversation(request.scope, options.installation ?? recordedInstallation); return request.scope satisfies ServiceValueMap['create'];
+      case 'conversation-agent': {
+        const installation = host.installation(request.scope);
+        return installation ? describe(installation) : null;
+      }
+      case 'create': {
+        const existing = host.installation(request.scope);
+        if (existing) {
+          if (describe(existing).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
+          return request.scope;
+        }
+        const selected = configured.find(entry => describe(entry.installation).id === request.agentId);
+        if (!selected) throw new ServiceError('invalid', 'Choose a configured agent.');
+        const descriptor = describe(selected.installation);
+        if (descriptor.availability.kind !== 'ready') throw new ServiceError('unavailable', descriptor.availability.reason);
+        host.createConversation(request.scope, selected.installation);
+        return request.scope satisfies ServiceValueMap['create'];
+      }
       case 'submit': return host.conversation(request.command.scope).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
       case 'receipt': return host.conversation(request.scope).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;
       case 'reconcile': return host.reconcile(request.scope, request.id) satisfies Promise<ServiceValueMap['reconcile']>;

@@ -37,7 +37,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
         message: error instanceof Error ? error.message : 'Your draft could not be saved.' });
     }
   }
-  const connected = enabled && view.connection.kind === 'connected';
+  const available = active.agent.availability.kind === 'ready';
+  const connected = enabled && available && view.connection.kind === 'connected';
   const live = presentation.live;
   const run = live ? view.document.domain.currentRun : null;
   const responding = conversationResponding(agent, view.document.domain);
@@ -45,7 +46,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   const stopping = run?.kind === 'stopping' || Boolean(retainedCancel) ||
     (stopPending?.store === active.store && stopPending.runId === run?.runId);
   function stop(): void {
-    if (!connected || run?.kind !== 'running' || stopping ||
+    if (!connected || !active.agent.commands.includes('cancel') || run?.kind !== 'running' || stopping ||
       (stopGuard.current?.store === active.store && stopGuard.current.runId === run.runId)) return;
     const target = { store: active.store, runId: run.runId };
     stopGuard.current = target;
@@ -57,9 +58,10 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
       }
     });
   }
-  const canSend = connected && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
+  const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
   return <section className="conversation-panel" aria-label="Conversation">
-    <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="scope-label">{active.scope.conversationId}</p></header>
+    <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
+    {active.agent.availability.kind === 'unavailable' && <p role="status">{active.agent.availability.reason} Saved history remains available.</p>}
     <div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
@@ -69,7 +71,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     </div>
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
-        {decision.choices.map(choice => <button key={choice} disabled={!connected} onClick={() => void actions.submit(() => active.store.approve(decision.pendingId, choice))}>{agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice}</button>)}
+        {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve')} onClick={() => void actions.submit(() => active.store.approve(decision.pendingId, choice))}>{agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice}</button>)}
       </div>
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); if (canSend) void actions.submit(() => active.store.send()); }}>
@@ -77,8 +79,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
       <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={presentation.placeholder} rows={3} />
       {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
       <div className="composer-footer"><span>{presentation.footer}</span><button disabled={!canSend}>Send</button>
-        {run && run.kind !== 'ended' && <button type="button" disabled={!connected || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
+        {run && run.kind !== 'ended' && <button type="button" disabled={!connected || !active.agent.commands.includes('cancel') || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
     </form>
-    <CommandRecovery view={view} actions={actions} enabled={enabled} retry={id => active.store.retry(id)} />
+    <CommandRecovery view={view} actions={actions} enabled={enabled} canRetry={available} retry={id => active.store.retry(id)} />
   </section>;
 }

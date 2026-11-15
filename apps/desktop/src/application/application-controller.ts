@@ -6,9 +6,10 @@ import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult } from '@agentui/contracts';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
+import { agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
@@ -17,6 +18,7 @@ type HostState =
   | { readonly kind: 'ready'; readonly metadata: ServiceMetadata }
   | { readonly kind: 'incompatible'; readonly metadata: ServiceMetadata; readonly issues: readonly CompatibilityIssue[] };
 export interface OpenConversation {
+  readonly agent: AgentDescriptor;
   readonly viewId: string;
   readonly scope: ConversationScope;
   readonly store: ConversationStore<Transcript>;
@@ -48,8 +50,8 @@ export interface ApplicationController {
   moreConversations(): Promise<void>;
   search(query: string, after: string | null, signal: AbortSignal): Promise<ConversationSearchPage>;
   moreSavedViews(): Promise<void>;
-  create(): Promise<void>;
-  recoverCreation(): Promise<void>;
+  create(agentId?: string): Promise<void>;
+  recoverCreation(agentId?: string): Promise<void>;
   open(scope: ConversationScope): Promise<void>;
   conversationActions(target: OpenConversation): ConversationActions;
 }
@@ -59,10 +61,15 @@ type ApplicationFailure =
   | { readonly kind: 'access-revoked' }
   | { readonly kind: 'operation-failed'; readonly error: string };
 interface Session { view: OwnedView | null; readonly connection: ServiceConnection }
-const EMPTY_SAVED_VIEW: SavedView = { version: 1, route: null, pendingCreation: null };
+const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
   active: null, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
 } satisfies Pick<ApplicationSnapshot, 'active' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
+  return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
+    runtime.version === agent.runtime.version && runtime.format === agent.runtime.format) ? agent
+    : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
+}
 function initialSnapshot(): ApplicationSnapshot {
   return { ...DETACHED_VIEW, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false };
 }
@@ -145,14 +152,20 @@ export function createApplicationController(deps: {
   }
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
-    if (state.active && sameScope(state.active.scope, scope)) { await current(owner, state.active.store.connect()); return; }
+    const found = await current(owner, owner.connection.conversationAgent(scope));
+    if (!found) throw new Error('Conversation does not exist.');
+    const agent = compatibleAgent(found);
+    if (state.active && sameScope(state.active.scope, scope)) {
+      publish({ active: { ...state.active, agent } });
+      await current(owner, state.active.store.connect()); return;
+    }
     disconnectActive();
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
     const store = createConversationStore({ scope, port: owner.connection.conversation(scope), projection: transcriptProjection,
       drafts: storage.drafts(failed), createCommandId: deps.createId });
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
-    publish({ active: { scope, store, viewId: storage.viewId } });
+    publish({ active: { scope, store, agent, viewId: storage.viewId } });
     unsubscribeActive = store.subscribe(() => {
       if (session !== owner || state.active?.store !== store) return;
       const snapshot = store.getSnapshot();
@@ -186,7 +199,8 @@ export function createApplicationController(deps: {
     const storage = local(owner);
     publish({ host: { kind: 'loading' } });
     try {
-      const metadata = await current(owner, owner.connection.metadata());
+      const received = await current(owner, owner.connection.metadata());
+      const metadata = { ...received, agents: received.agents.map(compatibleAgent) };
       const previous = owner.view;
       if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
         disconnectActive();
@@ -194,9 +208,10 @@ export function createApplicationController(deps: {
         publish(DETACHED_VIEW);
       }
       const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
-      if (compatibility.kind === 'incompatible') {
+      const issues = compatibility.kind === 'incompatible' ? compatibility.issues.filter(issue => issue.dimension !== 'native-runtime') : [];
+      if (issues.length) {
         state.active?.store.disconnect();
-        publish({ host: { kind: 'incompatible', metadata, issues: compatibility.issues } });
+        publish({ host: { kind: 'incompatible', metadata, issues } });
         return;
       }
       const saved = await current(owner, storage.readView(metadata.hostId)).catch(cause => {
@@ -225,6 +240,7 @@ export function createApplicationController(deps: {
     publish({ busy: true, error: '' });
     try {
       requireTarget(owner, target);
+      if (target.agent.availability.kind !== 'ready') throw new Error(target.agent.availability.reason);
       const result = await current(owner, operation());
       if (result.kind === 'rejected') publish({ error: result.reason });
       else if (result.receipt.state.kind === 'rejected') publish({ error: result.receipt.state.reason });
@@ -234,9 +250,9 @@ export function createApplicationController(deps: {
       throw cause;
     } finally { if (session === owner) publish({ busy: false }); }
   }
-  async function completeCreation(owner: Session, scope: ConversationScope): Promise<void> {
-    await current(owner, owner.connection.create(scope));
-    await save(owner, { version: 1, route: scope, pendingCreation: null });
+  async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
+    await current(owner, owner.connection.create(scope, agentId));
+    await save(owner, { version: 2, route: scope, pendingCreation: null });
     publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
     await install(owner, scope);
   }
@@ -306,18 +322,30 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       if (state.savedViews.after !== null) await readSavedViews(owner, host.hostId, state.savedViews.after);
     }),
-    create: () => run(async owner => {
+    create: (agentId) => run(async owner => {
       const host = requireHost(owner);
       const { saved } = requireSaved(owner);
       if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
       const scope = { hostId: host.hostId, conversationId: deps.createId() };
-      await save(owner, { ...saved, pendingCreation: scope });
+      const selected = agentId ?? host.defaultAgentId;
+      const agent = host.agents.find(agent => agent.id === selected);
+      if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
+      await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
       requireHost(owner);
-      await completeCreation(owner, scope);
+      await completeCreation(owner, scope, selected);
     }),
-    recoverCreation: () => run(async owner => {
+    recoverCreation: (selected) => run(async owner => {
       const { saved } = requireSaved(owner);
-      if (saved.pendingCreation) await completeCreation(owner, saved.pendingCreation);
+      const pending = saved.pendingCreation;
+      if (!pending) return;
+      let agentId = pending.agentId;
+      if (agentId === null) {
+        const existing = await current(owner, owner.connection.conversationAgent(pending.scope));
+        agentId = existing?.id ?? selected ?? null;
+        if (agentId === null) throw new Error('This older pending creation has no saved agent. Choose an agent explicitly to continue.');
+        await save(owner, { ...saved, pendingCreation: { scope: pending.scope, agentId } });
+      }
+      await completeCreation(owner, pending.scope, agentId);
     }),
     open: scope => run(async owner => {
       const host = requireHost(owner);
@@ -327,22 +355,23 @@ export function createApplicationController(deps: {
     }),
     conversationActions(target) {
       const owner = session;
-      const invoke = (operation: () => Promise<SubmitResult>, sending = false) => submitCommand(owner, target, () => {
+      const invoke = (kind: 'send' | 'approve' | 'cancel', operation: () => Promise<SubmitResult>) => submitCommand(owner, target, () => {
         const view = target.store.getSnapshot();
         if (view.connection.kind !== 'connected') throw new Error('Connect the conversation before continuing.');
-        if (sending && state.host.kind === 'ready' && conversationResponding(state.host.metadata.compatibility.nativeRuntime.engine, view.document.domain)) {
+        if (!target.agent.commands.includes(kind)) throw new Error('This agent does not support that command.');
+        if (kind === 'send' && conversationResponding(agentPresentation(target.agent.runtime).agent, view.document.domain)) {
           throw new Error('Wait for the current response before sending.');
         }
         return operation();
       });
       return {
         commands: {
-          send: text => invoke(() => {
+          send: text => invoke('send', () => {
             if (typeof text !== 'string') throw new Error('An explicit message is required.');
             return target.store.send(text);
-          }, true),
-          approve: (pendingId, choiceId) => invoke(() => target.store.approve(pendingId, choiceId)),
-          cancel: runId => invoke(() => target.store.cancel(runId)),
+          }),
+          approve: (pendingId, choiceId) => invoke('approve', () => target.store.approve(pendingId, choiceId)),
+          cancel: runId => invoke('cancel', () => target.store.cancel(runId)),
         },
         async submit(operation) {
           try { await submitCommand(owner, target, operation); } catch {}

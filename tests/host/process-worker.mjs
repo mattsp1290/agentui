@@ -1,9 +1,9 @@
 import { DatabaseSync } from 'node:sqlite';
 import { openLocalHost, createRecordedDriver } from '@agentui/host';
-import { command, completed, note, projection, scope } from './fixture.mjs';
+import { command, completed, note, projection, scope, installed } from './fixture.mjs';
 
 const [mode, path, backendPath] = process.argv.slice(2);
-const driver = createRecordedDriver({ backendPath, decodeEvent: projection.decodeEvent,
+const driver = createRecordedDriver({ installation: installed, backendPath, decodeEvent: projection.decodeEvent,
   resolve: async () => {
     await new Promise(resolve => setTimeout(resolve, 25));
     return completed(note('external-effect'));
