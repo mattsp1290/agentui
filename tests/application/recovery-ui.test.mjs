@@ -72,7 +72,7 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.match(await page.getByRole('note').textContent(), /Copy your text before reloading/);
   assert.equal(await message.isEnabled(), true);
   await message.focus();
-  await message.press('Control+A');
+  await message.press('ControlOrMeta+A');
   assert.equal(await message.evaluate(input => input.value.slice(input.selectionStart, input.selectionEnd)), 'Copy this text before reloading');
   await message.press('x');
   assert.equal(await message.inputValue(), 'Copy this text before reloading');
