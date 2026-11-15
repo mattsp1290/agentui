@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { readArtifactBytes } from '../../../apps/host/build/tsc/artifact.js';
 import { repository, buildCustom } from './support.mjs';
@@ -27,6 +27,43 @@ test('exact committed TSX/shared source produces a complete verified artifact an
   writeFileSync(join(out, asset.path), 'tampered');
   assert.throws(() => readArtifactBytes(out, 'browser-development'), /digest mismatch/);
   assert.deepEqual(readdirSync(f.directory).sort(), ['browser', 'source']);
+});
+
+test('symlinked output parent builds committed JSX with the installed ABI and ignores repository JSX config', { timeout: 30_000 }, t => {
+  const f = fixture(t), linked = join(f.directory, 'linked');
+  symlinkSync(f.directory, linked, 'dir');
+  f.write('desktop/index.tsx', `import { useState } from 'react';
+import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
+import type { UiExtensionEntry } from '@agentui/sdk/react';
+import { Surface } from '@agentui/ui-primitives/desktop';
+import { reviewPrompt } from '../shared/prompts.js';
+function Plan() { const [prompt] = useState(reviewPrompt); return <Surface>Committed JSX {prompt}</Surface>; }
+export default { kind: 'desktop', sdkVersion: EXTENSION_SDK_VERSION,
+  activate() { return { modules: [{ id: 'plan-review', label: 'Plan review', component: Plan }], dispose() {} }; }
+} satisfies UiExtensionEntry<'desktop'>;`);
+  f.write('tsconfig.json', JSON.stringify({ compilerOptions: { jsxImportSource: 'bad-jsx-package' } }));
+  buildCustom(f, f.commit(), join(linked, 'browser'));
+  const artifact = readArtifactBytes(join(linked, 'browser'), 'browser-development');
+  const js = [...artifact.files].filter(([path]) => path.endsWith('.js')).map(([, bytes]) => bytes.toString()).join('\n');
+  assert.match(js, /Committed JSX/);
+  assert.match(js, /Review our current plan/);
+  assert.doesNotMatch(js, /bad-jsx-package/);
+  assert.deepEqual(readdirSync(f.directory).sort(), ['browser', 'linked', 'source']);
+});
+
+for (const [label, source, error] of [
+  ['outside source', "import '../../../../outside.js';", /contained customization source/],
+  ['outside raw text', "import value from '../../../../outside.txt?raw'; console.log(value);", /Unsupported customization import/],
+  ['undeclared package', "import 'other-package';", /Unsupported customization import/],
+]) test(`symlinked output parent rejects ${label} and cleans owned output and staging`, { timeout: 30_000 }, t => {
+  const f = fixture(t), linked = join(f.directory, 'linked');
+  symlinkSync(f.directory, linked, 'dir');
+  writeFileSync(join(f.directory, 'outside.js'), "console.log('BENIGN OUTSIDE SOURCE');");
+  writeFileSync(join(f.directory, 'outside.txt'), 'BENIGN OUTSIDE TEXT');
+  f.write('desktop/index.tsx', source);
+  assert.throws(() => buildCustom(f, f.commit(), join(linked, 'browser')), error);
+  assert.equal(existsSync(join(linked, 'browser')), false);
+  assert.deepEqual(readdirSync(f.directory).sort(), ['linked', 'outside.js', 'outside.txt', 'source']);
 });
 
 const cases = [
