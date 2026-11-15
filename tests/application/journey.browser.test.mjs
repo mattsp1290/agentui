@@ -105,6 +105,22 @@ test('built browser app pairs two views, streams, races approval and recovers or
   await alice.getByRole('button', { name: 'Send', exact: true }).click();
   await alice.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
   await bob.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+  const approvalLayout = await alice.locator('.decision-card p').evaluate(node => {
+    const original = node.textContent;
+    node.textContent = `Run:\nprintf first\nprintf second\n${'long-file-name'.repeat(100)}`;
+    const text = node.firstChild;
+    const lineTop = content => {
+      const start = text.textContent.indexOf(content);
+      const range = document.createRange();
+      range.setStart(text, start); range.setEnd(text, start + content.length);
+      return range.getBoundingClientRect().top;
+    };
+    const result = { first: lineTop('printf first'), second: lineTop('printf second'), fits: node.scrollWidth <= node.clientWidth };
+    node.textContent = original;
+    return result;
+  });
+  assert.ok(approvalLayout.second > approvalLayout.first, 'approval commands retain separate visible lines');
+  assert.equal(approvalLayout.fits, true, 'long approval paths fit within the card');
   assert.deepEqual(revisions.slice(0, 3), [1, 2, 3]);
   await Promise.all([alice.getByRole('button', { name: 'approve', exact: true }).click(), bob.getByRole('button', { name: 'decline', exact: true }).click()]);
   await wait(async () => (await host.entries()).length === 2, 'one decision winner');
