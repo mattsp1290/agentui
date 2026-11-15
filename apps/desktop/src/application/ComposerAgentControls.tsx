@@ -1,12 +1,12 @@
 import { useEffect, useId, useRef, useState } from 'react';
 import type { AgentDescriptor } from '@agentui/contracts/service';
-import { CLAUDE_SDK_RUNTIMES, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { CLAUDE_SDK_RUNTIMES, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
 type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'provider' | 'other';
 type Picker = { readonly kind: 'closed' } | { readonly kind: 'harness' } | { readonly kind: 'model'; readonly harness: Harness };
 const harnessLabels = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', provider: 'Provider', other: 'Local agent' };
 const modelLabels = [
-  { runtime: CODEX_SDK_RUNTIME, label: 'GPT-6.1 Sol' },
+  { runtime: CODEX_SDK_RUNTIME, label: CODEX_SDK_MODEL.label },
   { runtime: CLAUDE_SDK_RUNTIMES.opus, label: 'Opus' },
   { runtime: CLAUDE_SDK_RUNTIMES.sonnet, label: 'Sonnet' },
   { runtime: PI_RUNTIME, label: 'GLM 5.3' },
@@ -52,8 +52,9 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
   const listedModels = agents.filter(entry => !('runtime' in entry) ||
     (entry.runtime.engine !== 'codex' || entry.model) && (entry.runtime.engine !== 'codex-sdk' || !nativeCodexModels));
   const modelChoices = agent && currentHarness !== 'codex' && !agents.some(entry => entry.id === agent.id) ? [agent, ...listedModels] : listedModels;
-  const selectedChoiceId = agent && 'runtime' in agent && agent.runtime.engine === 'codex-sdk' && nativeCodexModels
-    ? listedModels.find(entry => 'runtime' in entry && entry.runtime.engine === 'codex' && model(entry) === currentModel)?.id ?? agent.id
+  const selectedModelId = agent && 'runtime' in agent ? agent.model?.id : undefined;
+  const selectedChoiceId = agent && 'runtime' in agent && agent.runtime.engine === 'codex-sdk' && nativeCodexModels && selectedModelId !== undefined
+    ? listedModels.find(entry => 'runtime' in entry && entry.runtime.engine === 'codex' && entry.model?.id === selectedModelId)?.id ?? agent.id
     : agent?.id;
   const open = enabled && picker.kind !== 'closed';
   const groups: readonly Harness[] = ['pi', 'claude', 'codex', ...(['recorded', 'provider', 'other'] satisfies Harness[]).filter(kind => agents.some(entry => harness(entry) === kind) || Boolean(agent && currentHarness === kind))];
