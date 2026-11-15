@@ -4,6 +4,7 @@ import type { ConversationActions, OpenConversation } from './application-contro
 import { CommandRecovery } from './CommandRecovery.js';
 import { AGENT_PRESENTATION } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
+import { AssistantReply } from './AssistantReply.js';
 
 type DraftEditor =
   | { readonly kind: 'saved' | 'saving'; readonly text: string }
@@ -65,7 +66,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     <div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
-        <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong><p>{message.text}</p>
+        <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
+        {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
         {!message.complete && <span className="progress-label">{agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
     </div>
