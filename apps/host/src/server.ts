@@ -67,6 +67,7 @@ export type HostAgentStartup =
   | { readonly kind: 'extensions' };
 export async function startBrowserHost(options: BrowserHostOptions) {
   const startup = options.agentStartup;
+  const artifactsSelected = options.providerExtensions?.some(extension => extension.kind === 'artifact') ?? false;
   const configured = startup.kind === 'configured' ? startup.configuration : startup.kind === 'provider'
     ? { default: 'default', agents: [{ ...startup.provider, name: 'default' }] } : null;
   if (startup.kind === 'provider' && startup.provider.kind === 'pi') piApiKey();
@@ -258,6 +259,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
+        if (artifactsSelected || selected.some(extension => extension.kind === 'artifact')) {
+          return { kind: 'unavailable' } as const;
+        }
         const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
         if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
         const selectedHost = host, generation = replacement.generation;

@@ -1,6 +1,7 @@
 import { createProviderRegistry } from '../providers.js';
 import type { DiscoveredProvider, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
+export { loadServerArtifact } from './server-artifact.js';
 export { loadServerExtension } from './loader.js';
 export type { InstalledServerEntry, LoadedServerEntry } from './loader.js';
 

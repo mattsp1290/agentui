@@ -29,6 +29,7 @@ export interface ProviderExtension {
   readonly manifest: ExtensionManifest;
   readonly entry: ServerExtensionEntry;
   readonly authority: ProviderAuthority;
+  readonly dispose?: () => Promise<void>;
 }
 export interface DiscoveredProvider {
   readonly contributionId: string;
@@ -290,6 +291,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
       results.push(...await authorityResults);
       results.push(...await Promise.allSettled(lifetimes.map(lifetime => Promise.resolve().then(() => lifetime.dispose()))));
+      results.push(...await Promise.allSettled(extensions.map(extension => Promise.resolve().then(() => extension.dispose?.()))));
       catalog = [];
       if (cleanupFailed || results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
     });

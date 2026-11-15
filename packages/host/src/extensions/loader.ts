@@ -11,6 +11,7 @@ export interface InstalledServerEntry {
 export interface LoadedServerEntry {
   readonly manifest: ExtensionManifest;
   readonly entry: ServerExtensionEntry;
+  readonly dispose?: () => Promise<void>;
 }
 function isServerEntry(manifest: ExtensionManifest, entry: unknown): entry is ServerExtensionEntry {
   return checkExtensionEntrypoint(manifest, 'server', entry).kind === 'compatible';
