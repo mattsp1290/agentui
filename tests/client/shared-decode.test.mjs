@@ -1,4 +1,4 @@
-import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash, webcrypto } from 'node:crypto';
@@ -8,7 +8,7 @@ import { BROWSER_RUNTIME, manifestPayload, parseArtifactManifest, artifactIdenti
 
 const digest = text => createHash('sha256').update(text).digest('hex');
 const payload = () => manifestPayload({ schemaVersion: 1, platform: 'browser-development', sourceRevision: 'a'.repeat(64),
-  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION,
+  sourceDirty: { kind: 'dirty', fingerprint: 'b'.repeat(64) }, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
   nativeRuntime: BROWSER_RUNTIME, artifactRuntime: BROWSER_RUNTIME, lockSha256: 'c'.repeat(64),
   assets: [{ path: 'browser.html', sha256: 'd'.repeat(64) }],
 });

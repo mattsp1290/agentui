@@ -1,4 +1,4 @@
-import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
@@ -44,7 +44,7 @@ test('actual CLI hashes built files, excludes its manifest, and records applied 
   const first = f.build();
   assert.deepEqual(first.sourceDirty, { kind: 'clean' });
   assert.equal(first.sourceRevision, f.git('rev-parse', 'HEAD'));
-  assert.equal(first.wireVersion, 5);
+  assert.equal(first.wireVersion, SERVICE_WIRE_VERSION);
   assert.equal(first.extensionSdkVersion, EXTENSION_SDK_VERSION);
   assert.deepEqual(first.nativeRuntime, { engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
   assert.deepEqual(first.artifactRuntime, { engine: 'node', version: process.versions.node, format: 'esm' });

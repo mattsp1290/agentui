@@ -43,8 +43,7 @@ export interface BrowserHostOptions {
   readonly hostArtifactDirectory?: string;
   readonly port?: number;
   readonly progressMs?: number;
-  readonly provider?: NativeProvider;
-  readonly configuration?: AgentConfiguration;
+  readonly agentStartup: HostAgentStartup;
   readonly observability?: ObservabilityConfiguration;
   readonly providerExtensions?: readonly BrowserProviderExtension[];
   readonly accessMode?: 'paired' | 'trusted';
@@ -61,12 +60,17 @@ function claudeApiKey(): string {
   if (!apiKey?.trim()) throw new Error('Set AGENTUI_ANTHROPIC_API_KEY in the host environment before starting Claude.');
   return apiKey.trim();
 }
+export type HostAgentStartup =
+  | { readonly kind: 'recorded' }
+  | { readonly kind: 'provider'; readonly provider: NativeProvider }
+  | { readonly kind: 'configured'; readonly configuration: AgentConfiguration }
+  | { readonly kind: 'extensions' };
 export async function startBrowserHost(options: BrowserHostOptions) {
-  if (options.provider && options.configuration) throw new Error('Choose a single provider or an agent configuration');
-  const configured = options.configuration ?? (options.provider
-    ? { default: 'default', agents: [{ ...options.provider, name: 'default' }] } : null);
-  if (options.provider?.kind === 'pi') piApiKey();
-  if (options.provider?.kind === 'claude-sdk') claudeApiKey();
+  const startup = options.agentStartup;
+  const configured = startup.kind === 'configured' ? startup.configuration : startup.kind === 'provider'
+    ? { default: 'default', agents: [{ ...startup.provider, name: 'default' }] } : null;
+  if (startup.kind === 'provider' && startup.provider.kind === 'pi') piApiKey();
+  if (startup.kind === 'provider' && startup.provider.kind === 'claude-sdk') claudeApiKey();
   const observability = createHostObservability(options.observability ?? { kind: 'disabled' });
   let owner: ReturnType<typeof ownDirectory>;
   try { owner = ownDirectory(options.directory); }
@@ -186,23 +190,23 @@ export async function startBrowserHost(options: BrowserHostOptions) {
             if (!selected) throw new Error('Codex did not offer any available models.');
             if (provider.name === configured.default) defaultInstallation = selected.driver.installation;
           }
-          agents.push({ installation, ...('models' in driver ? { selectable: false } : {}), ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } },
+          agents.push({ installation, ...('models' in driver ? { selectable: false } : {}), ...(startup.kind === 'configured' ? { name: provider.name } : {}), availability: { kind: 'ready' } },
             ...discovered.map((entry): InstalledAgent => ({ installation: entry.driver.installation, model: entry.model, selectable: entry.selectable,
-              ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'ready' } })));
+              ...(startup.kind === 'configured' ? { name: provider.name } : {}), availability: { kind: 'ready' } })));
           modelDrivers.push(...discovered.map(entry => entry.driver));
         } catch (error) {
-          if (!options.configuration) throw error;
+          if (startup.kind !== 'configured') throw error;
           if (driver) { await driver.close(); const index = drivers.indexOf(driver); if (index !== -1) drivers.splice(index, 1); }
-          agents.push({ installation, ...(options.configuration ? { name: provider.name } : {}), availability: { kind: 'unavailable', reason: 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
+          agents.push({ installation, name: provider.name, availability: { kind: 'unavailable', reason: 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
         }
       }
-      const hostId = access.hostId;
-      host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
-        driver: [...drivers, ...modelDrivers], providers, authorize: scope => scope.hostId === hostId });
-    } else {
-      host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
-        hostId: access.hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });
     }
+    const hostId = access.hostId;
+    host = startup.kind === 'recorded'
+      ? openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
+        hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) })
+      : openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
+        driver: [...drivers, ...modelDrivers], providers, authorize: scope => scope.hostId === hostId });
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
@@ -221,9 +225,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     }
     const registry = new FeedRegistry();
     feeds = registry;
-    const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
+    const nativeRuntime = startup.kind === 'extensions' ? null : configured
+      ? describeAgent(defaultInstallation, { kind: 'ready' }).runtime : artifact.compatibility.nativeRuntime;
+    const compatibility = { ...artifact.compatibility, nativeRuntime };
+    const agentSelection: Parameters<typeof createApi>[0]['agentSelection'] = startup.kind === 'extensions'
+      ? { kind: 'extensions' }
+      : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, providers, installation: defaultInstallation, ...(configured ? { agents } : {}),
+      access, host, compatibility, feeds: registry, providers, agentSelection,
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
@@ -246,7 +255,6 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing);
-    const hostId = access.hostId;
     return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
