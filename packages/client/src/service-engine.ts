@@ -37,11 +37,11 @@ export async function readServiceResponseBody(response: Response): Promise<unkno
   try { return JSON.parse(body); }
   catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
 }
-interface ServiceConnectionOptions {
+export interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly onUnauthorized?: () => void;
 }
-type ServiceExecutor = (body: string, context: {
+export type ServiceExecutor = (body: string, context: {
   readonly op: ServiceRequest['op'];
   readonly signal: AbortSignal;
 }) => Promise<Response>;

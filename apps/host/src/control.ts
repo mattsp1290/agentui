@@ -4,6 +4,7 @@ import type { Socket } from 'node:net';
 import { record, identifier, count } from '@agentui/contracts/decode';
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
+import { parseInvitationCode } from './native-wire.js';
 
 export type ControlRequest = { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
 type ControlValue = { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
@@ -29,7 +30,7 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
     case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
     case 'invite-native': {
       const invitation = record(input.value, ['hostId', 'code']);
-      return { ok: true, value: { hostId: identifier(invitation.hostId), code: identifier(invitation.code, 32) } };
+      return { ok: true, value: { hostId: identifier(invitation.hostId), code: parseInvitationCode(invitation.code) } };
     }
     case 'revoke': if (input.value !== null) throw new Error('Invalid revocation result'); return { ok: true, value: null };
     case 'devices': {

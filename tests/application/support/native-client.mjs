@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { record, identifier } from '@agentui/contracts/decode';
+import { record } from '@agentui/contracts/decode';
+import { parseNativeCredential } from '../../../apps/host/build/tsc/native-wire.js';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { createServiceConnection, readServiceResponseBody } from '../../../packages/client/dist/service-engine.js';
 
@@ -12,17 +13,24 @@ async function enroll() {
   const result = record(await readServiceResponseBody(response), ['ok', 'value']);
   assert.equal(response.status, 200);
   assert.equal(result.ok, true);
-  const value = record(result.value, ['hostId', 'principalId', 'secret']);
-  assert.equal(value.hostId, input.hostId);
-  assert.match(value.secret, /^[A-Za-z0-9_-]{43}$/);
-  return { hostId: value.hostId, principalId: identifier(value.principalId), secret: value.secret };
+  const credential = parseNativeCredential(result.value);
+  assert.equal(credential.hostId, input.hostId);
+  return credential;
 }
-const credential = input.credential ?? await enroll();
+const credential = input.credential ? parseNativeCredential(input.credential) : await enroll();
 if (!input.credential) process.send({ kind: 'paired', credential });
-const connection = createServiceConnection((body, { signal }) => fetch(`${input.origin}/native/v1`, {
-  method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credential.secret}` },
-  body,
-}), transcriptProjection);
+const connection = createServiceConnection(async (body, { op, signal }) => {
+  const response = await fetch(`${input.origin}/native/v1`, {
+    method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credential.secret}` },
+    body,
+  });
+  if (!input.credential && op === 'submit') {
+    await response.body?.cancel();
+    signal.throwIfAborted();
+    await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
+  }
+  return response;
+}, transcriptProjection);
 const metadata = await connection.metadata();
 assert.equal(metadata.hostId, input.hostId);
 assert.equal(metadata.principalId, credential.principalId);
@@ -49,5 +57,5 @@ if (input.credential) {
   feed.close();
   await feed.ended;
   await port.submit(command);
-  throw new Error('Client was not killed during host execution');
+  throw new Error('Client confirmed a reply that the fixture should hold until death');
 }

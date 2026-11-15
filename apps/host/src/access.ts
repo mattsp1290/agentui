@@ -1,6 +1,7 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import type { DatabaseSync } from 'node:sqlite';
 import type { AccessDatabase } from './access-database.js';
+import { DEVICE_SECRET_BYTES, INVITATION_CODE_BYTES } from './native-wire.js';
 
 export type CredentialClass = 'browser-development' | 'native';
 export interface Principal { readonly id: string; readonly hostId: string; readonly credentialClass: CredentialClass }
@@ -15,7 +16,7 @@ export class Access {
   invite(credentialClass: CredentialClass, now = Date.now()): string {
     for (const [key, invitation] of this.invitations) if (invitation.expires <= now) this.invitations.delete(key);
     if (this.invitations.size >= 32) throw new Error('Outstanding pairing invitation limit');
-    const code = randomBytes(24).toString('base64url');
+    const code = randomBytes(INVITATION_CODE_BYTES).toString('base64url');
     this.invitations.set(digest(code), { expires: now + 300_000, credentialClass });
     return code;
   }
@@ -24,7 +25,7 @@ export class Access {
     if (!invitation || invitation.expires <= now || invitation.credentialClass !== credentialClass) {
       throw new Error('Invalid or expired pairing invitation');
     }
-    const secret = randomBytes(32).toString('base64url');
+    const secret = randomBytes(DEVICE_SECRET_BYTES).toString('base64url');
     const principal = { id: randomUUID(), hostId: this.hostId, credentialClass };
     this.db.prepare("INSERT INTO service_devices(id,digest,host,credential_class,expires,policy,revoked) VALUES(?,?,?,?,?,'owner',0)")
       .run(principal.id, digest(secret), this.hostId, credentialClass, now + 3_600_000);
