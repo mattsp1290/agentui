@@ -1,15 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
-import type { DispatchObservation, NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { migrateTranscriptDatabase } from './transcript-migration.js';
 import { openDatabase } from './sqlite-schema.js';
-import { nonempty, object, installation, integer, nativeRun, output, capturedTarget, observation, cloneJson, assertDispatchIdentity } from './codec.js';
+import { nonempty, object, integer, cloneJson } from './codec.js';
+import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
-import type { CapturedTarget, ObservedResult, HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
+import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
 import { scopeKey as key } from './durable-model.js';
 
+type Observation = NonNullable<StoredCommand['observation']>;
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
@@ -162,10 +163,7 @@ export class SqliteStore<E, P> {
         if (row) run = nativeRun(json(row.data), installed, scope);
       }
       const operation = randomUUID();
-      const target: CapturedTarget = { installation: installed, run, decision: pending,
-        identity: { hostOperationId: operation, target: run ? { kind: 'session', reference: run.reference }
-          : { kind: 'new-session', binding: installed.binding } } };
-      assertDispatchIdentity(target.identity);
+      const target = captureTarget({ installation: installed, run, decision: pending }, operation);
       const admitted: Receipt = { scope, clientCommandId: command.clientCommandId, hostOperationId: operation,
         sequence: this.head(scope) + 1, state: { kind: 'pending' } };
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
@@ -214,26 +212,27 @@ export class SqliteStore<E, P> {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
-  settle(scope: ConversationScope, id: string, value: DispatchObservation<ObservedResult>): Receipt {
+  settle(scope: ConversationScope, id: string, value: Observation): Receipt {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
-      const transition = settlement(stored.observation, observation(value, stored.target), { quarantined: isQuarantined(stored) });
+      const transition = settlement(stored.observation === null ? null : settlementObservation(stored.observation),
+        settlementObservation(observation(value, stored.target)), { quarantined: isQuarantined(stored) });
       switch (transition.kind) {
         case 'keep': return stored.receipt;
         case 'conflict': throw new Error(`Conflicting ${transition.reason}`);
         case 'record-evidence':
-          this.writeObservation(stored, transition.observed);
+          this.writeObservation(stored, nativeObservation(transition.observed));
           return stored.receipt;
-        case 'apply': return this.applyObservation(stored, transition.observed);
+        case 'apply': return this.applyObservation(stored, nativeObservation(transition.observed));
       }
     });
   }
-  private writeObservation(stored: StoredCommand, observed: DispatchObservation<ObservedResult>, next = stored.receipt): void {
+  private writeObservation(stored: StoredCommand, observed: Observation, next = stored.receipt): void {
     this.db.prepare('UPDATE commands SET observation=?, receipt=? WHERE host=? AND conversation=? AND id=?')
       .run(canonicalJson(observed), canonicalJson(next), ...key(stored.command.scope), stored.command.clientCommandId);
   }
-  private quarantine(stored: StoredCommand, observed: DispatchObservation<ObservedResult>, error: OutputApplicationError | CapacityError): Receipt {
+  private quarantine(stored: StoredCommand, observed: Observation, error: OutputApplicationError | CapacityError): Receipt {
     const scope = stored.command.scope;
     const reason = error instanceof CapacityError && observed.kind !== 'conclusive' ? CAPACITY_EXHAUSTED : OUTPUT_REJECTED;
     const current = stored.receipt.state;
@@ -246,7 +245,7 @@ export class SqliteStore<E, P> {
     this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
     return next;
   }
-  private applyObservation(stored: StoredCommand, observed: DispatchObservation<ObservedResult>): Receipt {
+  private applyObservation(stored: StoredCommand, observed: Observation): Receipt {
     const scope = stored.command.scope;
     this.db.exec('SAVEPOINT output_application');
     try {
@@ -278,10 +277,6 @@ export class SqliteStore<E, P> {
       if (!(error instanceof OutputApplicationError) && !(error instanceof CapacityError)) throw error;
       return this.quarantine(stored, observed, error);
     }
-  }
-  recoveryPrevious(stored: StoredCommand): NativeDispatchObservation<ObservedResult> {
-    return stored.observation === null || stored.observation.kind === 'not-dispatched'
-      ? { kind: 'outcome-unknown' } : stored.observation;
   }
   plan(scope: ConversationScope, after: number | null, version: number): ResumePlan<P> {
     return this.transaction(() => {

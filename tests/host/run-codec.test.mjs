@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { nativeRun } from '../../packages/host/dist/codec.js';
+import { nativeRun } from '../../packages/host/dist/native-execution.js';
 import { installed, run, scope } from './fixture.mjs';
 
 test('native run decoding retains host authority and native reference checks', () => {

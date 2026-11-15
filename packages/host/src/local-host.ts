@@ -1,9 +1,9 @@
 import { canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
-import { createDispatchOperation } from '@mattsp1290/switchboard';
 import { budgets, commandKey } from './durable-model.js';
-import { installation, nonempty } from './codec.js';
+import { nonempty } from './codec.js';
+import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { SqliteStore } from './sqlite-store.js';
@@ -97,20 +97,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
           const key = commandKey(scope, command.clientCommandId);
-          const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
-            signal: new AbortController().signal,
-            recordIntent: () => store.verifyIntent(stored),
-            dispatchNative: () => {
-              const captured = driverFor(stored.target.installation);
-              if (!captured) throw new Error('Captured agent is unavailable');
-              return captured.dispatch(stored.command, stored.target);
-            },
-          });
           return inFlight(async () => {
             dispatching.add(key);
             try {
-              const observed = await operation.run();
-              const receipt = store.settle(scope, command.clientCommandId, observed.observation);
+              const observed = await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
+              const receipt = store.settle(scope, command.clientCommandId, observed);
               return { kind: 'receipt' as const, receipt };
             } finally { dispatching.delete(key); }
           });
@@ -135,14 +126,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       const driver = driverFor(stored.target.installation);
-      const lookup = driver?.lookup;
-      const operation = createDispatchOperation({ mode: 'recovery', identity: stored.target.identity,
-        previous: store.recoveryPrevious(stored),
-        ...(lookup ? { reconcileNative: () => lookup.call(driver, stored.command, stored.target) } : {}),
-      });
       return inFlight(async () => {
-        const result = await operation.reconcile(new AbortController().signal);
-        const observed = result.kind === 'ok' ? result.value.observation : { kind: 'outcome-unknown' } as const;
+        const observed = await reconcileNative(stored, driver);
         if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
           const current = store.command(scope, id);
           if (!current) throw new Error('Unknown command');
