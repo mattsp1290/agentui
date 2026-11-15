@@ -54,7 +54,7 @@ The absolute data-directory path plus `/control.sock` must fit within 103 UTF-8 
 
 HTTP/1.1 browsers share a small connection pool across tabs on one origin. Long polls return within two seconds to leave room for commands; opening many simultaneous views can still delay requests.
 
-Production Tauri keeps its network-denying CSP and disconnected entry. Native desktop and iOS need their own protected credential storage and transport adapters. Browser results do not qualify a packaged macOS or iOS application.
+Production Tauri keeps its network-denying CSP and disconnected entry. The [native protected-credential contract](../architecture/native-credentials.md) specifies future storage and ownership requirements. Native desktop and iOS storage and transport adapters remain unimplemented. Browser results do not qualify a packaged macOS or iOS application.
 
 Builds emit `artifact.json` for the executed host bundle and browser assets. The host bundle includes its contracts, durable host, and Switchboard dependencies, with only Node builtin imports remaining. Startup verifies both installed file sets and their hashes before listening. Manifests distinguish the applied source revision, local source changes, dependency lock, artifact bytes, and runtime. The browser shows its own artifact identity. These checks establish artifact consistency; they are not release signatures or Apple qualification.
 
