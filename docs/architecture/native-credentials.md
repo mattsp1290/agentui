@@ -11,6 +11,7 @@ The native owner holds the complete credential and controls request admission.
 
 ```text
 SlotKey = { applicationNamespace, profileId, credentialClass = native, endpoint, hostId }
+Selection = SlotKey without credentialClass
 ProtectedCredential = { formatVersion = 1, key: SlotKey, principalId, secret, generation }
 Revision = { key: SlotKey, ownerLifetime, mutationCounter, rawIdentity: ExactRecord | Absent }
 Observation<K> = opaque redacted reference to one native Revision and observed kind K
@@ -30,6 +31,10 @@ The [wire credential](../../apps/host/src/native-wire.ts) contains `hostId`, `pr
 The [host policy](../../apps/host/src/access.ts) enforces the one-hour lifetime and revocation. `Ready` establishes local admission only.
 
 The owner alone composes and holds revisions, issues observations, and advances mutation counters, including on a current 401.
+Allocate a fresh `ownerLifetime` from at least 128 CSPRNG bits for every coordinator instance, including recovery and process restarts. Lifetimes must not be reused.
+Each slot has its own monotonic counter within that lifetime. Counters never wrap or reset within a lifetime. Exhaustion requires qualified coordinator restart.
+Observation references include their issuing lifetime scope and at least 128 CSPRNG bits, validated against that lifetime and the native issued-reference table.
+A complete reference, including a retired one, is never reassigned to another observation or lifetime. Detected allocation collisions require a new reference.
 Its full revision guard includes the exact stored record, even if unreadable, or absence.
 The revision and raw identity remain native. JavaScript receives only a native-issued opaque observation reference, never record bytes or a fingerprint.
 An identity that cannot be established produces `Blocked(Unavailable)`, not an unreadable or absent observation.
@@ -67,27 +72,26 @@ This is an arbitration failure, not pre-acceptance staleness. The table defines 
 
 ```text
 status(selection) -> Status
-enroll(observation: Observation<Ready | Absent>, code) -> Ready | Failure
-forget(observation: Observation<Ready | Absent>) -> Absent | Failure
-discard(observation: Observation<Unreadable>) -> Absent | Failure
+enroll(observation: Observation<Ready | Absent>, code) -> Status.Ready | Failure
+forget(observation: Observation<Ready | Absent>) -> Status.Absent | Failure
+discard(observation: Observation<Unreadable>) -> Status.Absent | Failure
 execute(observation: Observation<Ready>, request) -> BoundedServiceResponse | Failure
 Failure = InvalidInput | Stale | WrongState | Cancelled | Blocked(StorageBlock)
         | PairingFailed | NetworkFailed | Unauthorized
 ```
 
-`status(selection)` is the sole selection entry point. It validates application, profile, host, and endpoint configuration.
+`status(selection)` is the sole selection entry point. It validates application, profile, host, and endpoint configuration; native enrollment requires the expected host ID before pairing.
 Other operations obtain their slot key from the observation. Mutation success returns a `Ready` or `Absent` status with a fresh observation.
 Every observation-taking operation resolves the reference and checks its declared kind at the native boundary.
-Unknown, retired, wrong-lifetime, or mismatched references return `Stale`. A valid reference supplied to an unsupported operation returns `WrongState`.
 Before request admission or starting pairing or confirmation, and again after an asynchronous reply or confirmation, the owner rereads under exclusive ownership and compares the full revision.
+Every `execute`, including long-poll pulls, requires that protected-storage read. Lock state can therefore block an active feed; cached credentials cannot bypass the guard.
 Raw changes retire observations of the old revision before the owner exposes a new status. A stale caller cannot mutate the new state or invoke its callbacks.
 
 The accepted-mutation rule is one transaction under arbitration. Reread the authoritative raw state and compare the entire incoming revision before acceptance.
 On a match, advance the mutation counter and retire all prior observations and pending enrollment work, then attempt replacement or removal without releasing ownership.
-The backend receives only the compared raw identity, never the revision or advanced counter. Its raw precondition cannot decide owner admission.
 A failed owner guard precedes acceptance and cannot retire newer observations.
 This rule applies to every accepted attempt, including matching absence and every backend failure. Failed writes never revive retired observations.
-Call rows apply in order. Completion and restart rows govern their named events. Effects and invalidations belong only to the named slot.
+Call rows apply in order. Completion and restart rows govern their named events. Effects are slot-local except coordinator restart, which invalidates all references from that coordinator lifetime.
 
 | Operation and current state | Outcome and durable effect | Invalidation |
 | --- | --- | --- |
@@ -125,7 +129,9 @@ Native code chooses routes and headers from the [native wire rules](../developme
 Service replies contain only bounded service data and safe transport metadata. Errors use fixed secret-free categories.
 Any local failure after remote pairing success, including `Stale` or `Blocked`, may leave a consumed invitation and an unused host credential until expiry or revocation.
 
-Each `ServiceConnection` binds one immutable ready observation. Replacement creates a new connection, and retirement closes the old connection's feeds.
+Each `ServiceConnection` binds one immutable ready observation. Replacement creates a new connection.
+The owner pushes no lifecycle events. Callers observe retirement through `Stale` or `Blocked` replies and request `status` before reconnecting.
+The native adapter fails affected executions so the existing service engine ends their feeds; admitted replies remain governed by the table.
 The [service engine](../../packages/client/src/service-engine.ts) retains service decoding and resynchronization duties.
 Its `ServiceExecutor` returns a fetch `Response` through an internal seam, not a [public package export](../../packages/client/package.json).
 Its browser `pair()` generation counter does not coordinate native ownership. A future adapter must enforce the table's admission and callback rules.
@@ -155,7 +161,7 @@ Those tests do not qualify protected persistence, native IPC, replacement safety
 
 | Future qualification | Required evidence |
 | --- | --- |
-| Revision and transition table | Exercise every row, all nonmatching observation kinds, absent-forget races, delayed confirmation, parallel pairing, late callbacks, and restart. Stale work cannot publish access or affect replacements. |
+| Revision and transition table | Exercise every row, all nonmatching observation kinds, absent-forget races, delayed confirmation, parallel pairing, late callbacks, per-slot counter isolation, and handle/lifetime uniqueness across in-process and process restarts. Stale work cannot publish access or affect replacements. |
 | Ownership and durable outcomes | Qualify all participants and external writers, exact raw changes, atomic mutations, every failure outcome, and readback after pending and predecessor writes are quiescent or fenced. Unarbitrated mutation remains unavailable. |
-| Binding and platform protection | Prove application, profile, class, endpoint, and host isolation, plus the record's principal binding. Qualify locks, backup, identity changes, migration, denied-access recovery, bounds, redirects, and redaction. |
+| Binding and platform protection | Prove application, profile, class, endpoint, and host isolation, plus the record's principal binding. Qualify per-request read latency, lock behavior during active feeds, backup, identity changes, migration, denied-access recovery, bounds, redirects, and redaction. |
 | Application recovery | Preserve original command identity and unresolved effects through every credential transition without automatic replay. |
