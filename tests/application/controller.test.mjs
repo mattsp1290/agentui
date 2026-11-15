@@ -10,7 +10,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -24,7 +24,7 @@ function fixture() {
             catch (error) { onFailure(error); throw error; }
           } };
       },
-      close() { owner.closed = true; } };
+      close() { owner.closed = true; return behavior.close(owner); } };
     leases.push(owner);
     return owner;
   }
@@ -45,7 +45,7 @@ function fixture() {
       watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
   };
   const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
-    ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => lease(id, failure) }, createId: () => `id-${++nextId}` });
+    ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => `id-${++nextId}` });
   return { app, views, drafts, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
@@ -139,6 +139,94 @@ test('late writes from a replaced storage owner cannot poison the reopened view'
   f.behavior.write = async () => {};
   await f.app.getSnapshot().active.store.setDraft('New edit');
   assert.equal(f.drafts.get('restored-view/host/conversation').draft, 'New edit');
+});
+
+test('disposal closes admission and feeds immediately, and restart waits for the same drain promise', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const old = f.app.getSnapshot().active;
+  const actions = f.app.conversationActions(old);
+  const drain = deferred();
+  let closes = 0, settled = false;
+  f.behavior.close = () => { closes++; return drain.promise; };
+  const closing = f.app.dispose();
+  assert.equal(f.app.dispose(), closing);
+  assert.equal(closes, 1);
+  assert.equal(f.leases[0].closed, true);
+  assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
+  assert.equal(f.feedCloses(), 1);
+  void closing.then(() => { settled = true; });
+  await assert.rejects(actions.commands.send('Closed session'), /application has closed/);
+  await assert.rejects(f.app.search('closed', null, new AbortController().signal), /application has closed/);
+  const restart = f.app.start();
+  await Promise.resolve();
+  assert.equal(settled, false);
+  assert.equal(f.leases.length, 1);
+  const interruptedRestart = f.app.dispose();
+  assert.equal(f.app.dispose(), interruptedRestart);
+  const finalRestart = f.app.start();
+  await Promise.resolve();
+  assert.equal(f.leases.length, 1);
+  drain.resolve();
+  await Promise.all([closing, restart, interruptedRestart, finalRestart]);
+  assert.equal(settled, true);
+  assert.equal(f.leases.length, 2);
+  assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
+  assert.deepEqual(f.submitted, []);
+});
+
+test('reopening the same view waits for the previous owner to drain before acquiring its lock', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const old = f.app.getSnapshot().active, drain = deferred();
+  let acquired = false;
+  f.behavior.close = () => drain.promise;
+  f.behavior.reopen = async id => { assert.equal(id, 'original-view'); acquired = true; };
+  const reopening = f.app.reopenView('original-view');
+  assert.equal(f.leases[0].closed, true);
+  assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
+  await Promise.resolve();
+  assert.equal(acquired, false);
+  f.leases[0].failure(new Error('Late closed-owner write failed during drain'));
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+  drain.resolve();
+  await reopening;
+  assert.equal(acquired, true);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
+  assert.deepEqual(f.submitted, []);
+});
+
+test('failed replacement acquisition leaves saved records intact and refuses mutations through the closed owner', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const saved = { ...empty(), route: scope };
+  f.views.set('original-view/host', saved);
+  await f.app.start();
+  f.behavior.reopen = async () => { throw new Error('Saved view is already open'); };
+  await f.app.reopenView('original-view');
+  assert.equal(f.app.getSnapshot().active, null);
+  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
+  assert.match(f.app.getSnapshot().storageFailure, /already open/);
+  assert.equal(f.leases[0].closed, true);
+  await f.app.create();
+  assert.deepEqual(f.views.get('original-view/host'), saved);
+  assert.deepEqual(f.created, []);
+});
+
+test('disposal during an existing same-view handover still awaits its admitted storage drain', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const drain = deferred(); let disposed = false;
+  f.behavior.close = () => drain.promise;
+  const reopening = f.app.reopenView('original-view');
+  const closing = f.app.dispose(); void closing.then(() => { disposed = true; });
+  await Promise.resolve(); await Promise.resolve();
+  assert.equal(disposed, false);
+  drain.resolve(); await Promise.all([reopening, closing]);
+  assert.equal(disposed, true); assert.deepEqual(f.submitted, []);
 });
 
 test('busy actions are ignored and original commands and newer drafts survive reopening', async t => {

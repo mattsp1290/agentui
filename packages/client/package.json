@@ -15,6 +15,10 @@
     "./service": {
       "types": "./dist/service.d.ts",
       "import": "./dist/service.js"
+    },
+    "./mac": {
+      "types": "./dist/mac.d.ts",
+      "import": "./dist/mac.js"
     }
   },
   "files": [

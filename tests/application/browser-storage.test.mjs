@@ -7,15 +7,87 @@ import { chromium } from 'playwright';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 async function fixture(t) {
   const bundle = await build({ stdin: { contents: `import { BrowserViewStorage } from './apps/desktop/src/application/browser-storage.ts';
-    globalThis.BrowserViewStorage = BrowserViewStorage;`, resolveDir: root }, bundle: true, write: false, format: 'iife' });
+    import { createConversationStore } from '@agentui/client';
+    import { transcriptProjection } from '@agentui/contracts/conversation';
+    Object.assign(globalThis, { BrowserViewStorage, createConversationStore, transcriptProjection });`, resolveDir: root }, bundle: true, write: false, format: 'iife' });
   const browser = await chromium.launch();
   t.after(() => browser.close());
-  const page = await browser.newPage();
+  const context = await browser.newContext();
+  const page = await context.newPage();
   await page.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Saved view storage</title>' }));
   await page.goto('http://localhost/storage');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
   return page;
 }
+
+async function holdNativeView(page) {
+  const holder = await page.context().newPage();
+  await holder.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><title>Previous native document</title>' }));
+  await holder.goto('http://localhost/previous');
+  await holder.evaluate(async () => {
+    const acquired = Promise.withResolvers();
+    void navigator.locks.request('agentui-view:native-mac-default', () => new Promise(release => {
+      globalThis.releaseView = release;
+      acquired.resolve();
+    }));
+    await acquired.promise;
+  });
+  return holder;
+}
+
+test('native initial view waits for the previous document and retains its exact route and draft', { timeout: 10_000 }, async t => {
+  const page = await fixture(t);
+  const scope = { hostId: 'host', conversationId: 'native-reload' };
+  await page.evaluate(async scope => {
+    const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {});
+    await owner.saveView('host', { version: 2, route: scope, pendingCreation: null });
+    await owner.drafts(() => {}).save({ scope, draft: 'Keep the native reload draft' });
+    await owner.close();
+  }, scope);
+  const holder = await holdNativeView(page);
+  const occupied = await page.evaluate(async () => {
+    try { await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}); }
+    catch (error) { return error.message; }
+  });
+  assert.match(occupied, /already open/);
+  const [, result] = await Promise.all([
+    holder.evaluate(async () => {
+      const deadline = Date.now() + 5000;
+      while (!(await navigator.locks.query()).pending.some(lock => lock.name === 'agentui-view:native-mac-default')) {
+        if (Date.now() > deadline) throw new Error('Native view did not wait for the previous document');
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+      globalThis.releaseView();
+    }),
+    page.evaluate(async scope => {
+      const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true);
+      const result = { viewId: owner.viewId, sessionViewId: sessionStorage.getItem('agentui.viewId'),
+        saved: await owner.readView('host'), draft: await owner.drafts(() => {}).load(scope) };
+      await owner.close();
+      return result;
+    }, scope),
+  ]);
+  assert.equal(result.viewId, 'native-mac-default');
+  assert.equal(result.sessionViewId, 'native-mac-default');
+  assert.deepEqual(result.saved, { version: 2, route: scope, pendingCreation: null });
+  assert.deepEqual(result.draft, { scope, draft: 'Keep the native reload draft' });
+});
+
+test('native initial view refuses a lock that stays held without inventing another view', { timeout: 10_000 }, async t => {
+  const page = await fixture(t);
+  const holder = await holdNativeView(page);
+  const result = await page.evaluate(async () => {
+    let failure;
+    try { await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true); }
+    catch (error) { failure = error.message; }
+    const lockAvailable = await navigator.locks.request('agentui-view:native-mac-default', { ifAvailable: true }, lock => lock !== null);
+    return { failure, lockAvailable, sessionViewId: sessionStorage.getItem('agentui.viewId') };
+  });
+  await holder.evaluate(() => globalThis.releaseView());
+  assert.match(result.failure, /already open/);
+  assert.equal(result.lockAvailable, false);
+  assert.equal(result.sessionViewId, null);
+});
 
 test('saved views reject noncanonical records without overwriting local data or deleting foreign records', async t => {
   const page = await fixture(t);
@@ -140,4 +212,106 @@ test('legacy pending scopes migrate without inventing a selected agent or changi
   assert.deepEqual(result.migrated, { version: 2, route: scope, pendingCreation: { scope, agentId: null } });
   assert.deepEqual(result.reread, result.migrated);
   assert.deepEqual(result.draft, { draft: 'Keep this draft' });
+});
+
+test('close holds the view lock until admitted writes and saved-view scans finish', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const original = IDBDatabase.prototype.transaction;
+    let holding = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const transaction = original.apply(this, args);
+      const store = transaction.objectStore('records');
+      const keepAlive = () => { if (holding) store.get('hold').onsuccess = keepAlive; };
+      keepAlive();
+      return transaction;
+    };
+    const scope = { hostId: 'host', conversationId: 'draining' };
+    const admitted = owner.drafts(() => {}).save({ scope, draft: 'Admitted before close' });
+    const listing = owner.savedViews('host');
+    const closing = owner.close();
+    const samePromise = closing === owner.close();
+    let settled = false;
+    void closing.then(() => { settled = true; });
+    const lockDuringDrain = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => lock !== null);
+    const settledDuringDrain = settled;
+    let rejected;
+    try { await owner.readView('host'); } catch (error) { rejected = error.message; }
+    holding = false;
+    IDBDatabase.prototype.transaction = original;
+    await Promise.all([admitted, listing, closing]);
+    const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
+    const retained = await successor.drafts(() => {}).load(scope);
+    await successor.close();
+    return { samePromise, lockDuringDrain, settledDuringDrain, rejected, retained };
+  });
+  assert.equal(result.samePromise, true);
+  assert.equal(result.lockDuringDrain, false);
+  assert.equal(result.settledDuringDrain, false);
+  assert.match(result.rejected, /no longer owns local storage/);
+  assert.equal(result.retained.draft, 'Admitted before close');
+});
+
+test('close drains a saved-view scan through abort before releasing ownership', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const original = IDBDatabase.prototype.transaction;
+    let transaction;
+    IDBDatabase.prototype.transaction = function (...args) { transaction = original.apply(this, args); return transaction; };
+    const listing = owner.savedViews('host').catch(error => error.message);
+    IDBDatabase.prototype.transaction = original;
+    let aborted = false;
+    transaction.addEventListener('abort', () => { aborted = true; });
+    transaction.abort();
+    await owner.close();
+    const lockReleased = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => lock !== null);
+    return { aborted, lockReleased, failure: await listing };
+  });
+  assert.equal(result.aborted, true);
+  assert.equal(result.lockReleased, true);
+  assert.match(result.failure, /saved view/i);
+});
+
+test('late whole-record settlement from an old store cannot overwrite successor drafts or replay commands', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const scope = { hostId: 'host', conversationId: 'late-settlement' };
+    let reply, entered;
+    const submitted = [];
+    const enteredSubmission = new Promise(resolve => { entered = resolve; });
+    const port = { scope, receipt: async () => null,
+      submit(command) { submitted.push(command); entered(); return new Promise(resolve => { reply = resolve; }); },
+      watch() { return { ended: new Promise(() => {}), close() {} }; } };
+    const makeStore = storage => globalThis.createConversationStore({ scope, port, projection: globalThis.transcriptProjection,
+      drafts: storage.drafts(() => {}), createCommandId: () => 'original-command' });
+    const old = makeStore(owner);
+    await old.ready;
+    await old.setDraft('Original message');
+    const sending = old.send().catch(error => error.message);
+    await enteredSubmission;
+    old.disconnect();
+    await owner.close();
+    const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
+    const current = makeStore(successor);
+    await current.ready;
+    await current.connect();
+    await current.setDraft('Successor unfinished draft');
+    const before = await successor.drafts(() => {}).load(scope);
+    reply({ kind: 'receipt', receipt: { scope, clientCommandId: 'original-command', hostOperationId: 'operation', sequence: 1,
+      state: { kind: 'accepted' } } });
+    const failure = await sending;
+    const retained = await successor.drafts(() => {}).load(scope);
+    current.disconnect();
+    await successor.close();
+    return { before, retained, failure, submitted };
+  });
+  assert.match(result.failure, /no longer owns local storage/);
+  assert.equal(result.retained.draft, 'Successor unfinished draft');
+  assert.deepEqual(result.retained, result.before);
+  assert.equal(result.retained.outbox.length, 1);
+  assert.deepEqual(result.retained.outbox[0].command, result.submitted[0]);
+  assert.equal(result.submitted.length, 1);
 });

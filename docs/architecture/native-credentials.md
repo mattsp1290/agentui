@@ -1,7 +1,22 @@
 # Native protected credentials
 
-This reference specifies future private Rust and Swift interfaces. No native owner or protected store is implemented.
-The [native protocol prerequisite](../development/recorded-host.md#native-protocol-prerequisite) remains the supported development boundary.
+The stock Mac app implements the bounded single-profile subset below. The detailed multi-platform interfaces and qualification table in this reference remain future work.
+
+## Current stock Mac delivery
+
+Normal installed launch uses bundled app assets and Rust-owned native transport to `http://127.0.0.1:7140`. Start the local host first. Request an invitation with `invite-native --data-dir /absolute/private/host-directory`, then paste the returned `value` object, including `hostId` and `code`, into **Native pairing invitation**. Select **Pair this Mac**. The invitation clears on submit.
+
+The existing chat UI provides saved-history search, registered-agent selection, conversation bindings, streaming, approvals, Stop, drafts, and original-command recovery. **Reconnect** explicitly reads protected access and opens a new connection session after local storage drains. It never resubmits an effectful command. A stable `native-mac-default` view retains the saved route, drafts, outbox, and pending creation across same-build process restarts.
+
+Rust stores one complete versioned record in the default macOS Keychain under service `homes.birb.agentui.native.v1`, account `mac-default`. Each admitted request rereads and compares the exact protected record. Secrets never enter JavaScript, browser storage, URLs, preferences, or bridge replies. Native HTTP rejects redirects and caller-supplied destinations, headers, cookies, or bearer secrets. It has response caps, fixed safe errors, and a 20-second deadline. Only the bundled local main document has credential command authority. External navigation and new windows are denied in normal native mode. `--host-url` remains an explicit browser development route with no credential IPC authority.
+
+**Forget local pairing** removes only that protected item after explicit action. It preserves local work and does not revoke the host device. Use the existing host `devices` and `revoke` commands for server revocation. Unreadable records require additional native confirmation before removal. Denied or locked reads never authorize automatic replacement, deletion, or a plaintext fallback. Restore access in macOS Keychain Access and select **Reconnect**. If the app's code identity changed, resolve the item's application access policy explicitly; the app cannot silently repair it.
+
+This implementation uses the classic login-Keychain creating-application ACL, not data-protection access groups or iCloud storage. A process-lifetime advisory profile lock excludes cooperating AgentUI copies using the same Application Support directory. External Keychain editors and restore operations are not arbitrated. The bundle remains ad-hoc signed. Same-build persistence was exercised in a disposable signed Mac test app using a test-owned encrypted Keychain and private ephemeral host; default login-Keychain item access was denied in that worker session. These observations do not establish silent access after rebuilds, upgrades, signing changes, keychain migration, screen lock, or backup restore.
+
+Only stock native assets are included in this unit. Embedding the exact committed custom artifact is the following delivery unit. The user's existing custom browser-hosted app is unchanged. Browser development retains its cookie adapter and existing origin storage; this unit does not migrate those records into the native profile.
+
+Cold launch without usable protected access shows connection controls before loading local drafts. Cold offline/auth-blocked draft browsing, multiple profiles, endpoint selection, remote/TLS/iOS, signed upgrades, migration, external-writer exclusion, and the full transition/qualification table remain open. The configured macOS minimum is not a WebView API qualification claim. The actual tested bundled `tauri://localhost` origin exposed IndexedDB and Web Locks; unsupported API/storage access fails closed.
 
 ## Record and live observation
 
@@ -26,7 +41,7 @@ Status = Ready(Observation<Ready>, hostId, principalId) | Absent(Observation<Abs
 The exact approved endpoint is part of the key. A changed destination or port requires a distinct selection.
 The current protocol permits only literal `http://127.0.0.1:<port>`. The host ID checks enrollment intent, not cryptographic server identity.
 The [wire credential](../../apps/host/src/native-wire.ts) contains `hostId`, `principalId`, and `secret`, with no expiry field.
-The [host policy](../../apps/host/src/access.ts) enforces the one-hour lifetime and revocation. `Ready` establishes local admission only.
+The [host policy](../../apps/host/src/access.ts) gives newly enrolled native credentials 30 days and browser development credentials one hour. Existing rows are not extended. Revocation remains authoritative. `Ready` establishes local admission only.
 
 The owner keeps at most one live reference per slot and reuses it for unchanged status reads.
 Each owner lifetime has a fresh tag from at least 128 CSPRNG bits. Each reference carries that tag and at least 128 fresh CSPRNG bits.
@@ -146,8 +161,8 @@ The existing [pairing form](../../apps/desktop/src/shell/PairForm.tsx) holds inv
 Native diagnostics redact authorization and pairing bodies, including platform error text. Native code limits transient secret copies.
 Protected storage does not isolate credentials from a compromised native process.
 
-The [Rust entrypoint](../../apps/desktop/src-tauri/src/main.rs) configures the shell and optional browser navigation.
-The [Swift entrypoint](../../apps/ios/native/ios/AgentUI/AppDelegate.swift) starts React Native. Neither implements these interfaces.
+The [Rust entrypoint](../../apps/desktop/src-tauri/src/main.rs) restricts native admission and bundled navigation for the current Mac subset.
+The [Swift entrypoint](../../apps/ios/native/ios/AgentUI/AppDelegate.swift) starts React Native and does not implement these interfaces.
 [Native HTTP tests](../../tests/application/native-http.test.mjs) cover route and class separation, expiry, revocation, and original-command recovery.
 Their [private fixture](../../tests/application/support/native-client.mjs) holds one immutable in-memory credential.
 Those tests do not qualify protected persistence, native IPC, replacement safety, installed applications, TLS, LAN access, or remote phone access.

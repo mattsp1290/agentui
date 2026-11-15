@@ -14,7 +14,7 @@ export interface OwnedViewStorage {
     readonly ids: readonly string[]; readonly unreadable: number; readonly after: string | null;
   }>;
   drafts(onFailure: (error: unknown) => void): DraftStoragePort;
-  close(): void;
+  close(): void | Promise<void>;
 }
 export interface ViewStorageFactory {
   open(onFailure: (error: unknown) => void): Promise<OwnedViewStorage>;

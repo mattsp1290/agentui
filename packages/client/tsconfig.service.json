@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": { "lib": ["ES2023", "DOM", "DOM.Iterable"] },
-  "files": ["src/service.ts"]
+  "files": ["src/service.ts", "src/mac.ts"]
 }

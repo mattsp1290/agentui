@@ -44,6 +44,19 @@ test('pairing invitations are one use, expire, remain process-local and never st
   assert.equal(access.authorized(principal, 'browser-development', 1000), false);
   assert.deepEqual(access.devices(), [{ id: principal.id, revoked: true, expires: 3601000, active: false }]);
 });
+test('native enrollment lasts thirty days while old native rows and browser lifetime stay unchanged', t => {
+  const path = join(directory(t), 'host.sqlite'), state = openAccessDatabase(path), access = new Access(state);
+  t.after(() => access.close());
+  const start = 1000, lifetime = 30 * 24 * 3_600_000;
+  const native = access.pair(access.invite('native', start), 'native', start);
+  const browser = access.pair(access.invite('browser-development', start), 'browser-development', start);
+  assert.deepEqual(access.authenticate(native.secret, 'native', start + lifetime - 1), native.principal);
+  assert.equal(access.authenticate(native.secret, 'native', start + lifetime), null);
+  assert.equal(access.authenticate(browser.secret, 'browser-development', start + 3_600_000), null);
+  state.database.prepare('UPDATE service_devices SET expires=? WHERE id=?').run(start + 3_600_000, native.principal.id);
+  assert.equal(access.authenticate(native.secret, 'native', start + 3_600_000), null, 'existing hourly records are not extended');
+});
+
 test('outstanding invitations are bounded and invalid guesses do not consume a valid invitation', t => {
   const access = openAccess(join(directory(t), 'host.sqlite'));
   t.after(() => access.close());
