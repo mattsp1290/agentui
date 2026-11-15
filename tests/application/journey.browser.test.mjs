@@ -185,7 +185,7 @@ test('built browser app pairs two views, streams, races approval and recovers or
   assert.equal(approvalLayout.fits, true, 'long approval paths fit within the card');
   await alice.setViewportSize({ width: 360, height: 480 });
   await alice.getByRole('button', { name: 'Send', exact: true }).scrollIntoViewIfNeeded();
-  const composerBounds = await alice.locator('.composer button').boundingBox();
+  const composerBounds = await alice.getByRole('button', { name: 'Send', exact: true }).boundingBox();
   const mainBounds = await alice.locator('main').boundingBox();
   assert.ok(composerBounds.y + composerBounds.height <= mainBounds.y + mainBounds.height,
     'composer remains reachable with an approval at minimum window size');
