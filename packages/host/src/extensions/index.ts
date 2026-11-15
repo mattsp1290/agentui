@@ -1,5 +1,5 @@
 import { createProviderRegistry } from '../providers.js';
-import type { DiscoveredProvider, ProviderCommandOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
+import type { DiscoveredProvider, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
 export { loadServerExtension } from './loader.js';
 export type { InstalledServerEntry, LoadedServerEntry } from './loader.js';
@@ -124,8 +124,9 @@ export function createServerExtensions() {
   function current() { return state.kind === 'active' ? state.generation.registry : inactive; }
   const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
-  const captureSend: ProviderCommandOperations['captureSend'] = (...args) => current().captureSend(...args);
-  const executeSend: ProviderCommandOperations['executeSend'] = (...args) => current().executeSend(...args);
+  const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
+  const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
+  const observe: ProviderConversationOperations['observe'] = (...args) => current().observe(...args);
   function close(): Promise<void> {
     if (closing) return closing;
     const previous = state;
@@ -157,5 +158,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureSend, executeSend, status, close };
+  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, observe, status, close };
 }

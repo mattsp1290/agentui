@@ -1,10 +1,12 @@
+import { observeProvider } from './provider-stream.js';
+import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
 import type { ConversationScope, RunAuthority } from '@agentui/contracts';
-import { providerTarget, providerOutcome } from './provider-commands.js';
-import type { ProviderTarget, ProviderObservation } from './provider-commands.js';
+import { providerTarget, providerOutcome, providerReference } from './provider-commands.js';
+import type { ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
@@ -52,8 +54,9 @@ interface BoundProvider {
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
-  captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget;
-  executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
+  captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
+  executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
+  observe(original: StoredCreation, store: ProviderStreamStore): Promise<ProviderStream>;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
@@ -136,19 +139,42 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         intent: { kind: 'create', operationId: randomUUID(), scope,
           agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId } } }, scope);
     },
-    captureSend(original, text, operationId) {
+    async observe(original, store) {
+      const authorize = () => {
+        const granted = validate(original.installation);
+        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
+      };
+      authorize();
+      if (original.observation?.kind !== 'confirmed') throw new Error('Provider creation unavailable');
+      const intent = creationIntent(original.intent, original.installation, instance);
+      const binding = creationBinding(original.observation.binding, intent, original.installation);
+      const connected = await connect();
+      authorize();
+      if (!capability(connected.capabilities.observe)) throw new Error('Provider observation unavailable');
+      return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
+        credential: original.credential }, binding, authorize, store);
+    },
+    captureCommand(original, action, operationId) {
       const granted = validate(original.installation);
       if (original.observation?.kind !== 'confirmed' || canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
       const intent = creationIntent(original.intent, original.installation, instance);
       const binding = creationBinding(original.observation.binding, intent, original.installation);
-      const request = copyJson(presentation.request(text, binding));
-      if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
-      const decoded = presentation.decodeRequest(copyJson(request));
-      if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-      return providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential,
-        operation: { kind: 'send', operationId, binding, request } }, intent.scope);
+      const target = (operation: unknown) => providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential, operation }, intent.scope);
+      if (action.kind === 'send') {
+        const request = copyJson(presentation.request(action.text, binding));
+        if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
+        const decoded = presentation.decodeRequest(copyJson(request));
+        if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
+        return target({ kind: 'send', operationId, binding, request });
+      } else {
+        const run = providerReference(action.run, binding, original.installation, 'run');
+        return target(action.kind === 'cancel' ? { kind: 'cancel', operationId, binding, run }
+          : { kind: 'decide', operationId, binding, run,
+            decision: providerReference(action.decision, binding, original.installation, 'decision'),
+            choice: providerReference(action.choice, binding, original.installation, 'choice') });
+      }
     },
-    async executeSend(original, fresh, beforeEffect) {
+    async executeCommand(original, fresh, beforeEffect) {
       let entered = false;
       const authorize = () => {
         const granted = validate(original.installation);
@@ -159,12 +185,23 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         const captured = original.operation;
         const intent = creationIntent(captured.binding.creation, original.installation, instance);
         const binding = creationBinding(captured.binding, intent, original.installation);
-        const request = presentation.decodeRequest(copyJson(captured.request));
-        if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
-        const operation: ProviderCommand<M, I> = { kind: 'send', operationId: captured.operationId, binding, request };
+        let operation: ProviderCommand<M, I>;
+        const operationId = captured.operationId;
+        if (captured.kind === 'send') {
+          const request = presentation.decodeRequest(copyJson(captured.request));
+          if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
+          operation = { kind: 'send', operationId, binding, request };
+        } else if (captured.kind === 'cancel') {
+          operation = { kind: 'cancel', operationId, binding, run: providerReference(captured.run, binding, original.installation, 'run', instance) };
+        } else {
+          providerReference(captured.run, binding, original.installation, 'run', instance);
+          operation = { kind: 'decide', operationId, binding,
+            decision: providerReference(captured.decision, binding, original.installation, 'decision', instance),
+            choice: providerReference(captured.choice, binding, original.installation, 'choice', instance) };
+        }
         const connected = await connect();
         authorize();
-        if (!capability(connected.capabilities.reconcile) || (fresh && !capability(connected.capabilities.send))) throw new Error('Provider command unavailable');
+        if (!capability(connected.capabilities.reconcile) || (fresh && !capability(connected.capabilities[captured.kind]))) throw new Error('Provider command unavailable');
         beforeEffect();
         authorize();
         entered = true;
@@ -223,6 +260,9 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
 export function createProviderRegistry(extensions: readonly ProviderExtension[]) {
   const bindings: BoundProvider[] = [], lifetimes: ExtensionLifetime[] = [];
   const pending = new Set<Promise<unknown>>();
+  const streams = new Set<ProviderStream>();
+  let retiring: Set<ProviderStream> | undefined;
+  let cleanupFailed = false;
   let phase: 'new' | 'activating' | 'active' | 'closing' = 'new';
   let closing: Promise<void> | undefined;
   let catalog: readonly DiscoveredProvider[] = [];
@@ -232,20 +272,30 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
   }
-  async function close(): Promise<void> {
+  function stop(stream: ProviderStream): void {
+    try { stream.close(); } catch { cleanupFailed = true; }
+  }
+  function close(): Promise<void> {
     if (closing) return closing;
     phase = 'closing';
-    const authorities = extensions.map(extension => extension.authority.close());
-    // Attach rejection handlers immediately while admitted calls drain.
-    const authorityResults = Promise.allSettled(authorities);
-    closing = (async () => {
+    const draining = new Set(streams);
+    retiring = draining;
+    const authorities: Promise<void>[] = [];
+    closing = Promise.resolve().then(async () => {
       await Promise.allSettled(pending);
-      const results = await authorityResults;
+      for (const stream of draining) stop(stream);
+      const results = await Promise.allSettled([...draining].map(stream => stream.drained));
+      results.push(...await authorityResults);
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
       results.push(...await Promise.allSettled(lifetimes.map(lifetime => Promise.resolve().then(() => lifetime.dispose()))));
       catalog = [];
-      if (results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
-    })();
+      if (cleanupFailed || results.some(result => result.status === 'rejected')) throw new Error('Provider cleanup failed');
+    });
+    for (const extension of extensions) {
+      try { authorities.push(extension.authority.close()); } catch { cleanupFailed = true; }
+    }
+    const authorityResults = Promise.allSettled(authorities);
+    for (const stream of draining) stop(stream);
     return closing;
   }
   return {
@@ -313,20 +363,32 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
     },
-    captureSend(original: StoredCreation, text: string, operationId: string): ProviderTarget {
+    captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const selected = original.installation;
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
       const binding = bindings.find(binding => binding.matches(selected));
-      if (!binding || !discovered?.capabilities.send || !discovered.capabilities.reconcile ||
-        !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider send unavailable');
-      return binding.captureSend(original, text, operationId);
+      if (!binding || !discovered?.capabilities[action.kind] || !discovered.capabilities.reconcile ||
+        !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
+      return binding.captureCommand(original, action, operationId);
     },
-    executeSend(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+    observe(original: StoredCreation, store: ProviderStreamStore): Promise<ProviderStream> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
-        if (phase !== 'active' || !binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
-        return binding.executeSend(original, fresh, beforeEffect);
+        if (phase !== 'active' || !binding) throw new Error('Provider unavailable');
+        const stream = await binding.observe(original, store);
+        streams.add(stream);
+        void stream.drained.then(() => streams.delete(stream), () => { cleanupFailed = true; streams.delete(stream); });
+        if (phase !== 'active') { retiring?.add(stream); stop(stream); }
+        return stream;
+      });
+    },
+    executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+      return track(async () => {
+        if (phase !== 'active') return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        const binding = bindings.find(binding => binding.matches(original.installation));
+        if (!binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        return binding.executeCommand(original, fresh, beforeEffect);
       });
     },
     execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation> {
@@ -340,4 +402,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderCommandOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureSend' | 'executeSend'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe'>;

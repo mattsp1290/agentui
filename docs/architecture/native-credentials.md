@@ -1,5 +1,7 @@
 # Native protected credentials
 
+The standard `./agentui` launcher uses a trusted host over loopback or an SSH tunnel. It does not use this pairing or Keychain path. See [launcher setup](../development/launcher.md). This document describes the separate protected native entry.
+
 The stock Mac app implements the bounded single-profile subset below. The detailed multi-platform interfaces and qualification table in this reference remain future work.
 
 ## Current stock Mac delivery

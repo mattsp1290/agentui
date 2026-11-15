@@ -75,7 +75,8 @@ It returns `{ kind: 'ready', extensions }` to transfer authorities to the regist
 If preparation cleanup fails, it returns `{ kind: 'failed', failure: 'cleanup', recovery: 'restart' }`.
 
 `extensionStatus()` reports `empty`, `active`, `changing`, `failed`, `closing`, or `closed`.
-An active status includes a generation number and the number of admitted discovery, creation, send, and original-operation lookup operations.
+An active status includes a generation number and the number of admitted discovery, creation, command, lookup, and observation acquisition operations.
+An acquired observation feed does not count as pending work.
 Replacement outcomes are:
 
 - `replaced` includes the new generation number, or `null` for an empty selection.
@@ -87,10 +88,15 @@ Replacement outcomes are:
 
 A deferred request is not queued or remembered. Retry with the latest desired selection after work settles.
 Continuous admitted work can postpone replacement indefinitely.
-An accepted idle replacement stops discovery, creation, send, and lookup admission before any asynchronous work.
-It awaits complete old disposal before importing or activating the next generation.
+An accepted idle replacement stops discovery, creation, command, lookup, and observation admission before any asynchronous work.
+It stops local feeds, drains admitted callbacks, and awaits complete old disposal before importing or activating the next generation.
 This ordering prevents overlap between activation-owned listeners, with an unavailable interval between generations.
 Close during replacement prevents publication of the new generation and disposes every acquired valid lifetime once.
+After a successful nonempty replacement, the host resumes saved provider observations compatible with the new selection.
+Each observation keeps its original installation, credential handle, conversation binding, and last committed cursor.
+An existing checkpoint avoids another snapshot. Recovery does not create conversations, submit commands, reconcile operations, or change saved provenance.
+Incompatible identities, credentials, or decoders leave saved history readable without opening a feed.
+Concurrent replacement or shutdown stops an obsolete recovery scan. A later compatible replacement retries failed observation starts.
 
 ### Failure and shutdown
 
@@ -107,13 +113,17 @@ Shutdown retains the existing immediate authorization freeze.
 Unlike normal deferred replacement, `close()` revokes credential admission immediately and discards late discovery results. Entered creation and send effects retain uncertain outcomes for later lookup.
 It waits for admitted work before closing connections and disposing lifetimes.
 An independent discovery failure can also start registry cleanup and revoke concurrent work.
-The successful-result guarantee applies to healthy discovery, creation, send, and original-operation lookup across deferred replacement, not to shutdown or independent provider failure.
+The successful-result guarantee applies to healthy discovery, creation, commands, lookup, and observation acquisition across deferred replacement, not to shutdown or independent provider failure.
+Feed callbacks copy and authorize their input before admission. Already admitted callbacks may commit during retirement after credentials freeze.
+Retirement waits for those callbacks. New callbacks and credential use are refused.
+A throwing feed close or rejected drain reports cleanup failure and retains storage and directory ownership.
+A feed that closes without error but never ends can keep retirement pending indefinitely.
 Independent credential callbacks and extension background work are not counted as admitted provider operations.
 They keep the registry's existing close behavior.
 Cooperative code that never settles can leave replacement or shutdown pending indefinitely.
 
-The registry admits provider creation, send, and original-operation lookup synchronously before provider delegation.
-It does not own provider observation feeds or deliver frontend tools.
+The registry admits provider creation, commands, lookup, and observation acquisition synchronously before provider delegation.
+It owns observation stop and drain. It does not deliver frontend tools or qualify slow frontend-tool execution.
 Agent discovery and creation requests read the active catalog. Retired, changing, disabled, and failed generations expose no choices.
 Creation and command recovery retain the original installation, credential, and operation identity across replacement.
 Command lookup never translates or resends the original request. A replacement that cannot match its original target leaves the existing outcome unchanged.

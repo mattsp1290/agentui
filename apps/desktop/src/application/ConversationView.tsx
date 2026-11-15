@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
-import { AGENT_PRESENTATION } from './agent-presentation.js';
+import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
@@ -20,11 +20,13 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
-  const presentation = AGENT_PRESENTATION[agent];
+  const presentation = 'kind' in active.agent ? agentPresentation(active.agent).presentation : AGENT_PRESENTATION[agent];
   const view = useConversation(active.store);
   const [editor, setEditor] = useState<DraftEditor>({ kind: 'saved', text: view.draft });
   const editVersion = useRef(0);
   const stopGuard = useRef<{ readonly store: OpenConversation['store']; readonly runId: string } | null>(null);
+  const approvalGuards = useRef(new Map<OpenConversation['store'], Set<string>>());
+  const [approving, setApproving] = useState<ReadonlySet<string>>(new Set());
   const [stopPending, setStopPending] = useState<typeof stopGuard.current>(null);
   useEffect(() => {
     setEditor(previous => previous.kind === 'saved' && previous.text !== view.draft ? { kind: 'saved', text: view.draft } : previous);
@@ -61,6 +63,18 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
       }
     });
   }
+  function approve(pendingId: string, choiceId: string): void {
+    const store = active.store, decision = store.getSnapshot().document.decisions[pendingId];
+    const guards = approvalGuards.current.get(store) ?? new Set<string>();
+    if (!connected || !active.agent.commands.includes('approve') || !decision || decision.reserved || guards.has(pendingId)) return;
+    guards.add(pendingId);
+    approvalGuards.current.set(store, guards);
+    setApproving(new Set(guards));
+    void actions.submit(() => store.approve(pendingId, choiceId)).finally(() => {
+      guards.delete(pendingId);
+      setApproving(new Set(guards));
+    });
+  }
   const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
@@ -76,7 +90,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     </div>
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
-        {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve')} onClick={() => void actions.submit(() => active.store.approve(decision.pendingId, choice))}>{agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice}</button>)}
+        {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve') || decision.reserved || approving.has(decision.pendingId)} onClick={() => approve(decision.pendingId, choice)}>{decision.choiceLabels?.[choice] ?? (agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice)}</button>)}
       </div>
     </section>)}
     <form className="composer" onSubmit={event => { event.preventDefault(); if (canSend) void actions.submit(() => active.store.send()); }}>

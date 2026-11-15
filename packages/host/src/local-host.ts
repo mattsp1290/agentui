@@ -1,3 +1,4 @@
+import type { ProviderStream } from './provider-stream.js';
 import { canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
@@ -8,7 +9,7 @@ import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver } from './durable-model.js';
 import { providerInstallationKey } from './provider-creation.js';
 import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
-import type { ProviderCommandOperations, ProviderCreationOperations } from './providers.js';
+import type { ProviderConversationOperations, ProviderCreationOperations } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
 import { registerFrontendToolsHost } from './frontend-tools-context.js';
@@ -18,7 +19,7 @@ export interface LocalHostOptions<E, P> {
   readonly projection: Projection<E, P>;
   readonly driver: ProviderDriver<E> | readonly ProviderDriver<E>[];
   readonly authorize: (scope: ConversationScope) => boolean;
-  readonly providers?: ProviderCommandOperations;
+  readonly providers?: ProviderConversationOperations;
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
@@ -26,6 +27,7 @@ export interface LocalHost<E, P> {
   createConversation(scope: ConversationScope, target: Installation): void;
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
+  observeProvider(scope: ConversationScope): Promise<void>;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
   installation(scope: ConversationScope): ConversationInstallation | null;
   inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> };
@@ -42,15 +44,17 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const driverFor = (target: Installation) => drivers.get(canonicalJson(target));
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
-  let closed = false;
+  let closed = false, observationCleanupFailed = false;
   let active = 0;
   const dispatching = new Set<string>();
   const creating = new Map<string, Promise<CreationObservation>>();
+  const observing = new Map<string, Promise<ProviderStream | null>>();
   let resolveDrained!: () => void;
   let rejectDrained!: (error: unknown) => void;
   const drained = new Promise<void>((resolve, reject) => { resolveDrained = resolve; rejectDrained = reject; });
   const finishClosing = () => {
     if (!closed || active !== 0) return;
+    if (observationCleanupFailed) { rejectDrained(new Error('Provider observation cleanup failed')); return; }
     try { store.close(); resolveDrained(); }
     catch (error) { rejectDrained(error); }
   };
@@ -68,8 +72,29 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
   };
+  const observeProvider = async (scope: ConversationScope): Promise<void> => {
+    authorized(scope);
+    const key = canonicalJson(scope);
+    let starting = observing.get(key);
+    if (!starting) {
+      const original = store.creation(scope), registry = options.providers;
+      if (original?.observation?.kind !== 'confirmed' || !registry) return;
+      starting = inFlight(async () => {
+        try {
+          const stream = await registry.observe(original, store);
+          return stream;
+        } catch { return null; }
+      });
+      observing.set(key, starting);
+      const current = starting;
+      const forget = () => { if (observing.get(key) === current) observing.delete(key); };
+      void current.then(stream => { if (stream) void stream.drained.then(forget, () => { observationCleanupFailed = true; forget(); }); else forget(); }, forget);
+    }
+    await starting;
+  };
   const host: LocalHost<E, P> = {
     drained,
+    observeProvider,
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
@@ -81,7 +106,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (prior && providerInstallationKey(prior.installation) !== providerInstallationKey(target)) throw new Error('Creation agent is immutable');
       const key = canonicalJson(scope), leased = creating.get(key);
       if (leased) return leased;
-      if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) return prior.observation;
+      if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) {
+        if (prior.observation.kind === 'confirmed') await observeProvider(scope);
+        return prior.observation;
+      }
       let original: ProviderCreation;
       if (prior) original = { installation: prior.installation, intent: prior.intent, credential: prior.credential };
       else {
@@ -94,7 +122,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           authorized(scope);
           if (!prior) store.attemptCreation(original);
         });
-        return store.settleCreation(original, observed);
+        const settled = store.settleCreation(original, observed);
+        if (settled.kind === 'confirmed' && !closed) await observeProvider(scope);
+        return settled;
       });
       creating.set(key, task);
       try { return await task; } finally { creating.delete(key); }
@@ -128,12 +158,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
+          if (provider) { await observeProvider(scope); authorized(scope); }
           const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
-            registry && command.body.kind === 'send' ? (original, operation) => {
-              if (command.body.kind !== 'send') throw new Error('Provider send required');
-              return registry.captureSend(original, command.body.text, operation);
-            } : undefined);
+            registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;
@@ -142,7 +170,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             dispatching.add(key);
             try {
               const observed = 'kind' in stored
-                ? await registry?.executeSend(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
+                ? await registry?.executeCommand(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
               const receipt = store.settle(scope, command.clientCommandId, observed);
               return { kind: 'receipt' as const, receipt };
@@ -170,7 +198,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       return inFlight(async () => {
         const observed = 'kind' in stored
-          ? await options.providers?.executeSend(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
+          ? await options.providers?.executeCommand(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
           : await reconcileNative(stored, driverFor(stored.target.installation));
         if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
           const current = store.command(scope, id);
@@ -184,7 +212,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (closed) return;
       closed = true;
       journal.close();
-      finishClosing();
+      if (!observing.size) { finishClosing(); return; }
+      void inFlight(async () => {
+        const streams = (await Promise.all(observing.values())).filter(stream => stream !== null);
+        for (const stream of streams) {
+          try { stream.close(); } catch { observationCleanupFailed = true; }
+        }
+        const results = await Promise.allSettled(streams.map(stream => stream.drained));
+        if (results.some(result => result.status === 'rejected')) observationCleanupFailed = true;
+      });
     },
   };
   registerFrontendToolsHost(host, {

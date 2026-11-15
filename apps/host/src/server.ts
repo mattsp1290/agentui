@@ -42,6 +42,7 @@ export interface BrowserHostOptions {
   readonly provider?: NativeProvider;
   readonly configuration?: AgentConfiguration;
   readonly providerExtensions?: readonly BrowserProviderExtension[];
+  readonly accessMode?: 'paired' | 'trusted';
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -109,7 +110,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    access = new Access(accessDatabase);
+    access = new Access(accessDatabase, options.accessMode);
     const replacement = await providers.replace(providerExtensionSource(accessDatabase, options.providerExtensions ?? []));
     if (replacement.kind === 'failed') {
       const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
@@ -182,7 +183,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       const page = host.listConversations(access.hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
-        if ('kind' in installation) { after = scope.conversationId; continue; }
+        if ('kind' in installation) { await host.observeProvider(scope); after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
           recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
@@ -219,9 +220,27 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing);
+    const hostId = access.hostId;
     return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
       extensionStatus: providers.status,
-      replaceProviderExtensions: (selected: readonly BrowserProviderExtension[]) => providers.replace(providerExtensionSource(accessDatabase, selected)),
+      async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
+        const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
+        if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
+        const selectedHost = host, generation = replacement.generation;
+        const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
+        let after: string | null = null;
+        while (selectedHost && current()) {
+          const page = selectedHost.listConversations(hostId, after, 100);
+          for (const scope of page) {
+            if (!current()) return replacement;
+            if ('kind' in selectedHost.inspect(scope).installation) await selectedHost.observeProvider(scope);
+            if (!current()) return replacement;
+            after = scope.conversationId;
+          }
+          if (page.length < 100) break;
+        }
+        return replacement;
+      },
     };
   } catch (error) {
     await close();

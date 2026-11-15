@@ -3,7 +3,8 @@
 `@agentui/sdk` exports the version 1 backend provider contract.
 The declarations describe provider integrations without Node or DOM types.
 The host now activates imported server extensions, authorizes connections, discovers a private catalog, and drains them on shutdown.
-Creation, submission, observation, chooser integration, filesystem loading, and generation replacement are not yet wired for contributed providers.
+Imported providers support conversation creation, sends, approvals, cancellation, observation and chooser integration.
+Filesystem loading and generation replacement remain outside this integration.
 The host's recorded Switchboard driver remains a separate integration.
 
 ## API reference
@@ -44,7 +45,7 @@ A confirmed command effect records acceptance for execution or completion. Accep
 
 `ProviderPresentation<M,I>` supplies the typed instance, four decoders (`decodeRequest`, `decodeCursor`, `decodeState`, `decodeEvent`), request conversion, transcript snapshots, and `apply(previous, event, refs)` returning the next state and transcript events.
 `PresentationRefs<I>.run` translates a conversation-bound provider run to a public `RunIdentity`.
-Presentation callbacks are public contracts for subsequent messaging and observation integration. Creation validates their presence and opens an empty saved conversation.
+Creation validates the callbacks and opens a saved conversation. The host then persists the provider snapshot and observes subsequent presentation events.
 The generic binding retains each concrete model and installation inside a closure; the heterogeneous registry stores normalized discovery, captured creation, reconciliation and close operations.
 
 ```ts
@@ -116,13 +117,53 @@ A changed decoder, credential or generation cannot replace the original operatio
 Pending and accepted evidence survives weaker lookup outcomes. A changed run reference conflicts with the original acceptance.
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
-Provider observation and streaming remain unimplemented. Cancel needs the accepted scoped run mapping, while approval also needs observation-owned decision and choice mappings.
-The send integration keeps wire version 3, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
+The current integration uses wire version 4, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
+
+## Durable response streams
+
+Each confirmed provider conversation has one upstream feed, independent of browser watches.
+Creation starts observation after confirmation commits and before its first send. Startup resumes saved conversations with their original installation, generation, binding and credential.
+An unavailable original generation or credential leaves history readable without rebinding it.
+
+The concrete typed provider closure decodes the baseline, cursor, state and events through its presentation.
+SQLite commits the model, opaque cursor, provider projection version, event identity, scoped references and transcript together before acknowledging a callback.
+Callbacks serialize locally and check the persisted checkpoint revision inside the transaction.
+Identical event replay is acknowledged without moving the cursor; a changed duplicate is refused.
+Presentation failures, foreign references and capacity failures roll back the complete update.
+Provider model values and items are limited to one million encoded bytes, with the saved checkpoint also subject to the configured snapshot budget.
+
+A provider snapshot replaces the transcript and visible decisions through a host checkpoint.
+The existing journal sends a replacement snapshot to readers behind that checkpoint before resuming events.
+Receipts, command records, accepted run mappings, and reserved or closed decisions remain intact.
+Open decisions can update their prompt and choices while retaining their scoped decision and run identity. Reserved and closed records cannot change.
+Decision records preserve full scoped choice references and labels. Public decisions expose complete labels keyed by exact choice IDs and a reservation marker while their approval is unresolved.
+Only provider presentation events or snapshots establish assistant output and terminal run outcomes.
+
+Shutdown closes upstream feeds and drains admitted callbacks and feed endings before closing the backend, extension lifetime and database.
+A stopped feed keeps its last committed checkpoint. Restart resumes that checkpoint; automatic reconnect, resync policy, projection migration and generation replacement remain open work.
+The current integration uses wire version 4, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+
+## Durable approval and Stop
+
+Approval captures an OPEN decision, its exact selected choice and its scoped run in the same transaction as the command target, pending receipt and reservation owner.
+Stop captures the persisted reference for the observed run. Both preserve the original installation, credential, binding and operation UUID.
+Exact-ID retries return the saved receipt. Recovery only reconciles that saved operation, even if the current choice map or translator has changed.
+Capabilities advertised by the host intersect implemented send, cancel and decide support with backend support and reconciliation. Fresh dispatch rechecks the current backend capability.
+
+An accepted approval retains its reservation. Other browser views and reopened conversations disable its labelled choices.
+Completion closes only the decision owned by that operation. Rejection or fresh known nonacceptance releases it only when the latest authoritative document still contains the decision; otherwise it closes.
+Snapshot omission hides a reserved decision without releasing its owner. A later snapshot cannot reopen a closed decision.
+Cancel and decide effects contain no run output. Only observed events or snapshots establish the actual run outcome.
+
+Wire version 4 adds optional provider-only `choiceLabels` and `reserved: true` fields. Old strict decoders require matching host and client artifacts.
+Native decisions omit both fields and preserve their encoded shape. Command version 1, transcript projection 2, SDK contract 1, SDK compatibility 0.1 and npm package versions 0.0 are unchanged.
+Controlled HTTP, SQLite and browser fixtures exercise this path. They do not qualify an external production provider, the full provider lifecycle, or a Mac deployment.
 
 ## Command and observation obligations
 
-Creation and send follow the rules below. Cancel, approval and observation integration remain future work; SDK declarations alone do not enforce these rules.
+Creation, send, cancellation, approval and observation follow the rules below. SDK declarations alone do not enforce these rules.
 
 The host authorizes the scope and persists creation intent before creation.
 It persists the confirmed binding and the exact command before dispatch.

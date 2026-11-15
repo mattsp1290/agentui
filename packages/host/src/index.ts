@@ -7,7 +7,7 @@ export type { ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contra
 
 export const hostRuntime = 'node';
 export { createProviderRegistry, providerIdentity } from './providers.js';
-export type { ProviderCommandOperations, ProviderCreationOperations, ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider } from './providers.js';
+export type { ProviderConversationOperations, ProviderCreationOperations, ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider } from './providers.js';
 export { openLocalHost } from './local-host.js';
 export type { LocalHost, LocalHostOptions } from './local-host.js';
 export { createRecordedDriver } from './recorded-driver.js';

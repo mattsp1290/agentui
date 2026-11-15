@@ -1,5 +1,7 @@
 # Chat with GLM 5.3 through OpenCode Go
 
+For automatic local or SSH setup without pairing, run `./agentui --agent pi`. See [launcher setup](launcher.md) for credentials and remote workspaces. The instructions below run an independently managed host with browser pairing.
+
 Use your OpenCode Go subscription key with the Pi SDK host. This host uses Pi 1.5.2 with provider `opencode-go` and model `glm-5.3`. It provides text chat without tools, commands, or file access.
 
 Use Node 24.22.3 and npm 11.19.1. From the repository root, build the host and browser app.

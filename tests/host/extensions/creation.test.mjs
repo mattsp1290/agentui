@@ -198,9 +198,9 @@ for (const create of [createProviderRegistry.bind(null, []), createServerExtensi
   test(`${create.name} inactive send capture refuses before inspecting the original operation`, async () => {
     const registry = create();
     const original = { get installation() { return assert.fail('inactive input was inspected'); } };
-    assert.throws(() => registry.captureSend(original, 'text', 'operation'), /^Error: Provider unavailable$/);
+    assert.throws(() => registry.captureCommand(original, { kind: 'send', text: 'text' }, 'operation'), /^Error: Provider unavailable$/);
     await registry.close();
-    assert.throws(() => registry.captureSend(original, 'text', 'operation'), /^Error: Provider unavailable$/);
+    assert.throws(() => registry.captureCommand(original, { kind: 'send', text: 'text' }, 'operation'), /^Error: Provider unavailable$/);
   });
 }
 

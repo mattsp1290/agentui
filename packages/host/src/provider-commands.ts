@@ -1,16 +1,22 @@
 import { canonicalJson, copyJson, parseRunIdentity } from '@agentui/contracts';
-import type { ConversationScope, Json, RunIdentity } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, RunIdentity } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
-import type { ConversationRef, ProviderConversation } from '@agentui/sdk';
+import type { ConversationRef, ProviderConversation, ProviderInstance } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
-import type { ProviderCreation } from './provider-creation.js';
+import type { ProviderCreation, ProviderInstallation } from './provider-creation.js';
 import type { SettlementObservation } from './settlement.js';
 
 export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 'credential'> {
   readonly kind: 'provider';
-  readonly operation: { readonly kind: 'send'; readonly operationId: string;
-    readonly binding: ProviderConversation<string>; readonly request: Json };
+  readonly operation: { readonly operationId: string; readonly binding: ProviderConversation<string> } & (
+    { readonly kind: 'send'; readonly request: Json }
+    | { readonly kind: 'cancel'; readonly run: ConversationRef<string, 'run'> }
+    | { readonly kind: 'decide'; readonly run: ConversationRef<string, 'run'>;
+      readonly decision: ConversationRef<string, 'decision'>; readonly choice: ConversationRef<string, 'choice'> });
 }
+export type ProviderAction = { readonly kind: 'send'; readonly text: string }
+  | { readonly kind: 'cancel'; readonly run: unknown }
+  | { readonly kind: 'decide'; readonly run: unknown; readonly decision: unknown; readonly choice: unknown };
 export interface ProviderRun {
   readonly kind: 'provider';
   readonly identity: RunIdentity;
@@ -24,23 +30,42 @@ export interface ProviderEvidence {
 export type ProviderObservation = SettlementObservation<ProviderEvidence>;
 export function providerTarget(value: unknown, scope: ConversationScope): ProviderTarget {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
-  const operation = record(input.operation, ['kind', 'operationId', 'binding', 'request']);
+  const operation = record(input.operation);
+  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'send' ? ['request'] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
   const binding = record(operation.binding, ['kind', 'creation', 'authority']);
   const original = providerCreation({ installation: input.installation, credential: input.credential, intent: binding.creation }, scope);
   const operationId = identifier(operation.operationId);
-  if (input.kind !== 'provider' || operation.kind !== 'send' ||
+  if (input.kind !== 'provider' ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(operationId)) throw new Error('Invalid provider command');
-  return { kind: 'provider', installation: original.installation, credential: original.credential,
-    operation: { kind: 'send', operationId, binding: creationBinding(binding, original.intent, original.installation), request: copyJson(operation.request) } };
+  const base = { operationId, binding: creationBinding(binding, original.intent, original.installation) };
+  const reference = <K extends 'run' | 'decision' | 'choice'>(value: unknown, kind: K) => providerReference(value, base.binding, original.installation, kind);
+  let captured: ProviderTarget['operation'];
+  if (operation.kind === 'send') captured = { ...base, kind: 'send', request: copyJson(operation.request) };
+  else if (operation.kind === 'cancel') captured = { ...base, kind: 'cancel', run: reference(operation.run, 'run') };
+  else if (operation.kind === 'decide') captured = { ...base, kind: 'decide', run: reference(operation.run, 'run'),
+    decision: reference(operation.decision, 'decision'), choice: reference(operation.choice, 'choice') };
+  else throw new Error('Invalid provider command');
+  return { kind: 'provider', installation: original.installation, credential: original.credential, operation: captured };
 }
-export function providerRun(value: unknown, target: ProviderTarget): ProviderRun {
+export function matchProviderCommand(target: ProviderTarget, body: ClientCommand['body']): void {
+  const operation = target.operation;
+  if (body.kind === 'send' && operation.kind === 'send') return;
+  if (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) return;
+  if (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId) return;
+  throw new Error('Invalid provider command association');
+}
+export function providerReference<I extends string, K extends 'run' | 'decision' | 'choice'>(value: unknown,
+  original: ProviderConversation<I>, selected: ProviderInstallation, kind: K, instance: ProviderInstance<I> = original.creation.agent.instance): ConversationRef<I, K> {
   const input = record(value, ['binding', 'ref']), ref = record(input.ref, ['kind', 'instance', 'opaqueId']);
-  const binding = creationBinding(input.binding, target.operation.binding.creation, target.installation);
-  if (canonicalJson(binding) !== canonicalJson(target.operation.binding) || ref.kind !== 'run' ||
-    canonicalJson(providerIdentity(ref.instance)) !== canonicalJson(target.installation.instance)) throw new Error('Foreign provider run');
-  const opaqueId = identifier(ref.opaqueId);
-  return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope, runId: opaqueId, authority: binding.authority }),
-    reference: { binding, ref: { kind: 'run', instance: target.installation.instance, opaqueId } } };
+  const binding = creationBinding(input.binding, original.creation, selected);
+  if (canonicalJson(binding) !== canonicalJson(original) || ref.kind !== kind ||
+    canonicalJson(providerIdentity(ref.instance)) !== canonicalJson(selected.instance) || canonicalJson(instance) !== canonicalJson(selected.instance)) throw new Error('Foreign provider reference');
+  return { binding, ref: { kind, instance, opaqueId: identifier(ref.opaqueId) } };
+}
+export function providerRun(value: unknown, binding: ProviderConversation<string>, selected: ProviderInstallation): ProviderRun {
+  const reference = providerReference(value, binding, selected, 'run');
+  return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope,
+    runId: reference.ref.opaqueId, authority: binding.authority }), reference };
 }
 export function providerObservation(value: unknown, target: ProviderTarget): ProviderObservation {
   const input = record(value);
@@ -54,18 +79,20 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
   if (Buffer.byteLength(canonicalJson(data)) > 64_000) throw new Error('Provider evidence exceeds limit');
   let run: ProviderRun | null = null;
   if (source.run !== null) {
+    if (target.operation.kind !== 'send') throw new Error('Unexpected provider run output');
     const stored = record(source.run, ['kind', 'identity', 'reference']);
-    run = providerRun(stored.reference, target);
+    run = providerRun(stored.reference, target.operation.binding, target.installation);
     if (canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
   }
   const parsed = { correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
     source: { source: source.source, data, run } } satisfies Extract<ProviderObservation, { kind: 'pending' }>['evidence'];
   if (canonicalJson(evidence.operation) !== canonicalJson(parsed.operation)) throw new Error('Foreign provider operation');
   if (input.kind === 'pending' && run === null) return { kind: 'pending', evidence: parsed };
-  if (input.kind === 'accepted' && run !== null) return { kind: 'accepted', evidence: parsed };
+  const confirmed = target.operation.kind !== 'send' || run !== null;
+  if (input.kind === 'accepted' && confirmed) return { kind: 'accepted', evidence: parsed };
   if (input.kind !== 'conclusive') throw new Error('Invalid provider observation');
   const result = record(input.result);
-  if (result.kind === 'receipt-completed' && run !== null) { record(result, ['kind']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'receipt-completed' } }; }
+  if (result.kind === 'receipt-completed' && confirmed) { record(result, ['kind']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'receipt-completed' } }; }
   if (result.kind === 'rejected') { record(result, ['kind', 'reason']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'rejected', reason: identifier(result.reason) } }; }
   throw new Error('Invalid provider result');
 }
@@ -77,9 +104,9 @@ export function providerOutcome(value: unknown, target: ProviderTarget, fresh: b
   let result: { kind: 'receipt-completed' } | { kind: 'rejected'; reason: string } | undefined;
   if (input.kind === 'confirmed') {
     record(input, ['kind', 'value', 'evidence']);
-    const effect = record(input.value, ['kind', 'run', 'state']);
-    if (effect.kind !== 'send' || (effect.state !== 'accepted' && effect.state !== 'completed')) throw new Error('Invalid send effect');
-    run = providerRun(effect.run, target);
+    const effect = record(input.value, target.operation.kind === 'send' ? ['kind', 'run', 'state'] : ['kind', 'state']);
+    if (effect.kind !== target.operation.kind || (effect.state !== 'accepted' && effect.state !== 'completed')) throw new Error('Invalid provider effect');
+    if (target.operation.kind === 'send') run = providerRun(effect.run, target.operation.binding, target.installation);
     kind = effect.state === 'accepted' ? 'accepted' : 'conclusive';
     if (kind === 'conclusive') result = { kind: 'receipt-completed' };
   } else if (input.kind === 'pending') { record(input, ['kind', 'evidence']); kind = 'pending'; }
