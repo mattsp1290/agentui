@@ -240,10 +240,10 @@ function capture(ctx: AnalysisContext, owner: NpmOwner, targets: ReadonlySet<str
 }
 async function npmInputs(ctx: AnalysisContext, selected: Member, owner: NpmOwner): Promise<NpmInputs> {
   const lockfile = owner.lockfile;
-  const lock = lockfile ? await readJson(ctx, lockfile.path) : undefined;
   const packages = [owner.root, ...owner.members.values()];
   if (!owner.members.size && !packages.some(member => hasDependencies(member.manifest))) return { kind: 'absent' };
   if (!lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  const lock = await readJson(ctx, lockfile.path);
   const rawPackages = npmLockPackages(lock, owner.root.manifest.packageManager);
   const targets = new Set<string>();
   const entries = lockEntries(ctx, owner, rawPackages, targets);

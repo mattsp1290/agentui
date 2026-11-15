@@ -132,10 +132,10 @@ export async function readCustomizationSnapshot(input: {
     const files = new Set(tree.inputs.files.map(file => file.path));
     if (!files.has('package.json')) return { commit: tree.commit, directory: tree.directory, dispose: tree.dispose };
     const packageJson: unknown = JSON.parse(await readFile(join(tree.directory, 'package.json'), 'utf8'));
-    const lock: unknown = files.has('package-lock.json') ? JSON.parse(await readFile(join(tree.directory, 'package-lock.json'), 'utf8')) : undefined;
     const pkg = record(packageJson);
     const customization = parseCustomizationPackage(pkg, files);
     if (customization && hasDependencies(pkg)) {
+      const lock: unknown = files.has('package-lock.json') ? JSON.parse(await readFile(join(tree.directory, 'package-lock.json'), 'utf8')) : undefined;
       const entry = record(npmLockPackages(lock, pkg.packageManager)['']);
       manifestMatchesLockEntry(pkg, entry);
       if (entry.name !== pkg.name) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
