@@ -147,7 +147,10 @@ export function parseRunAuthority(value: unknown): RunAuthority {
 }
 export function parseRunIdentity(value: unknown): RunIdentity {
   const input = record(value, ['conversation', 'runId', 'authority']);
-  return { conversation: parseScope(input.conversation), runId: nonempty(input.runId), authority: parseRunAuthority(input.authority) };
+  const conversation = parseScope(input.conversation);
+  const authority = parseRunAuthority(input.authority);
+  if (authority.kind === 'agentui-host' && authority.hostId !== conversation.hostId) throw new Error('Run authority host mismatch');
+  return { conversation, runId: nonempty(input.runId), authority };
 }
 /**
  * Local scope and command IDs are limited to 1024 UTF-16 units. Approval and cancel targets preserve

@@ -878,17 +878,17 @@ test('JSON snapshots preserve data without invoking hidden serialization hooks',
 });
 
 
-test('generation constructors cannot forge handles or expose lifecycle helpers', async () => {
+test('copied generation handles are refused without affecting the original', async () => {
   const g = await make();
-  assert.equal(g.constructor.acquire, undefined);
-  assert.equal(g.constructor.release, undefined);
-  assert.equal(g.constructor.live, undefined);
-  assert.throws(() => new g.constructor({ namespace: 'invalid namespace' }, () => {}, []), /Illegal constructor/u);
-  assert.throws(() => new g.constructor(Symbol('Generation'), g, () => {}, []), /Illegal constructor/u);
-  const p = pin([g]);
-  assert.equal((await p.invoke('demo__text_length', { text: 'safe' })).output, '4');
-  p.release();
-  await g.retire();
+  let p;
+  try {
+    assert.throws(() => pin([{ ...g }]), /Invalid or retired/u);
+    p = pin([g]);
+    assert.equal((await p.invoke('demo__text_length', { text: 'safe' })).output, '4');
+  } finally {
+    p?.release();
+    await g.retire();
+  }
 });
 
 test('registration error precedes acceptance failure and still disposes', async () => {

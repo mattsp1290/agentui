@@ -5,7 +5,8 @@ import { compileParameters } from './schema.js';
 import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, AcceptedContributions, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
 export type * from './tool-contracts.js';
 
-type Registered = { definition: FrontendTool; validate(value: unknown): boolean; decode(value: unknown): unknown; execute(value: unknown, context: { readonly conversation: ConversationScope }): Promise<string> };
+type Registered = { readonly definition: FrontendTool; call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> };
+const refused = (code: Extract<FrontendToolOutcome, { kind: 'refused' }>['code']): FrontendToolOutcome => ({ kind: 'refused', code });
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') {
     for (const child of Object.values(value)) freeze(child);
@@ -17,9 +18,7 @@ function registerTool<Input>(namespace: string, tool: FrontendToolContribution<I
   const input = record(tool.definition);
   const allowed = ['name', 'description', 'parameters', 'metadata'];
   if (Object.keys(input).some(key => !allowed.includes(key))) throw new Error('Invalid tool definition field');
-  const copied = record(copyJson({ name: input.name, description: input.description,
-    ...(input.parameters === undefined ? {} : { parameters: input.parameters }),
-    ...(input.metadata === undefined ? {} : { metadata: input.metadata }) }));
+  const copied = record(copyJson(Object.fromEntries(Object.entries(input).filter(([, value]) => value !== undefined))));
   if (typeof copied.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_-]*$/.test(copied.name)) throw new Error('Invalid tool name');
   if (typeof copied.description !== 'string') throw new Error('Invalid tool description');
   const metadata = copied.metadata === undefined ? undefined : record(copied.metadata);
@@ -30,124 +29,123 @@ function registerTool<Input>(namespace: string, tool: FrontendToolContribution<I
     ...(copied.parameters === undefined ? {} : { parameters: copied.parameters }),
     ...(metadata === undefined ? {} : { metadata }) };
   const validate = compileParameters(definition.parameters);
-  if (typeof tool.decodeInput !== 'function' || typeof tool.execute !== 'function') throw new Error('Tool requires decodeInput and execute functions');
-  const decode = tool.decodeInput.bind(tool); const execute = tool.execute.bind(tool);
-  return { definition: freeze(definition), validate, decode, execute: (value, context) => execute(value as Input, context) };
+  const decodeInput = tool.decodeInput; const handler = tool.execute;
+  if (typeof decodeInput !== 'function' || typeof handler !== 'function') throw new Error('Tool requires decodeInput and execute functions');
+  const decode = decodeInput.bind(tool); const execute = handler.bind(tool);
+  return Object.freeze({ definition: freeze(definition), async call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> {
+    let value: unknown;
+    try { value = copyJson(args); if (!validate(value)) return refused('invalid-arguments'); }
+    catch { return refused('invalid-arguments'); }
+    let decoded: Input;
+    try { decoded = decode(value); }
+    catch { return refused('decode-failed'); }
+    const output: unknown = await execute(decoded, { conversation });
+    if (typeof output !== 'string') throw new Error('Tool output must be a string');
+    return { kind: 'completed', output };
+  } });
 }
-function prepare(tool: Registered, args: unknown): FrontendToolOutcome | { decoded: unknown } {
-  let value: unknown;
-  try { value = copyJson(args); if (!tool.validate(value)) return { kind: 'refused', code: 'invalid-arguments' }; }
-  catch { return { kind: 'refused', code: 'invalid-arguments' }; }
-  try { return { decoded: tool.decode(value) }; }
-  catch { return { kind: 'refused', code: 'decode-failed' }; }
+interface Lifetime {
+  readonly identity: Pick<FrontendToolGeneration, 'namespace' | 'generation' | 'platform'>;
+  tools: readonly Registered[];
+  dispose: (() => Promise<void>) | undefined;
+  refs: number;
+  drained: (() => void) | undefined;
+  completion: Promise<void> | undefined;
 }
-const construct = Symbol('Generation');
-let isLive: (value: unknown) => value is Generation;
-let acquire: (generation: Generation) => readonly Registered[];
-let release: (generation: Generation) => void;
-class Generation implements FrontendToolGeneration {
-  readonly namespace: string;
-  readonly generation: string;
-  readonly platform: FrontendToolGeneration['platform'];
-  #tools: readonly Registered[];
-  #dispose: (() => void | Promise<void>) | undefined;
-  #refs = 0;
-  #drained: (() => void) | undefined;
-  #completion: Promise<void> | undefined;
-  constructor(key: typeof construct, options: Pick<FrontendToolGeneration, 'namespace' | 'generation' | 'platform'>, dispose: () => void | Promise<void>, tools: Registered[]) {
-    if (key !== construct) throw new TypeError('Illegal constructor');
-    this.namespace = options.namespace; this.generation = options.generation; this.platform = options.platform;
-    this.#dispose = dispose; this.#tools = Object.freeze(tools.map(tool => Object.freeze(tool)));
-    Object.freeze(this);
-  }
-  static {
-    isLive = (value): value is Generation => typeof value === 'object' && value !== null && #refs in value && !value.#completion;
-    acquire = generation => { generation.#refs++; return generation.#tools; };
-    release = generation => { if (--generation.#refs === 0) generation.#drained?.(); };
-  }
-  readonly retire = (): Promise<void> => {
-    return this.#completion ??= new Promise<void>(resolve => {
-      this.#drained = resolve;
-      if (this.#refs === 0) resolve();
-    }).then(() => {
-      const dispose = this.#dispose;
-      this.#dispose = undefined;
-      return dispose?.();
-    }).finally(() => { this.#tools = []; this.#drained = undefined; });
-  };
+const lifetimes = new WeakMap<object, Lifetime>();
+function live(value: unknown): Lifetime {
+  const state = typeof value === 'object' && value !== null ? lifetimes.get(value) : undefined;
+  if (!state || state.completion) throw new Error('Invalid or retired tool generation');
+  return state;
+}
+function hold(state: Lifetime): void { state.refs++; }
+function drop(state: Lifetime): void { if (--state.refs === 0) state.drained?.(); }
+function generationHandle(identity: Lifetime['identity'], dispose: () => Promise<void>, tools: readonly Registered[]): FrontendToolGeneration {
+  const state: Lifetime = { identity, tools, dispose, refs: 0, drained: undefined, completion: undefined };
+  const retire = (): Promise<void> => state.completion ??= new Promise<void>(resolve => {
+    state.drained = resolve;
+    if (state.refs === 0) resolve();
+  }).then(() => {
+    const dispose = state.dispose;
+    state.dispose = undefined;
+    return dispose?.();
+  }).finally(() => { state.tools = []; state.drained = undefined; });
+  const handle = Object.freeze({ ...identity, retire });
+  lifetimes.set(handle, state);
+  return handle;
 }
 export async function createFrontendToolGeneration<A extends (value: unknown) => void>(options: FrontendToolGenerationOptions<A>): Promise<FrontendToolActivation<AcceptedContributions<A>>> {
   const { generation, activate, accept } = options;
   const platform = frontendPlatform(options.platform);
   const namespace = extensionNamespace(options.namespace);
   if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
-  const tools: Registered[] = [];
-  const names = new Set<string>();
+  const tools = new Map<string, Registered>();
   let open = true; let failure: { error: unknown } | undefined;
   const contributions = { add<Input>(tool: FrontendToolContribution<Input>): void {
     if (!open) throw new Error('Tool registration is closed');
     try {
       const registered = registerTool(namespace, tool);
-      if (names.has(registered.definition.name)) throw new Error('Duplicate tool name');
-      names.add(registered.definition.name);
-      tools.push(registered);
+      if (tools.has(registered.definition.name)) throw new Error('Duplicate tool name');
+      tools.set(registered.definition.name, registered);
     } catch (error) { failure ??= { error }; throw error; }
   } };
-  let lifetime: unknown;
-  try { lifetime = await activate.call(options, contributions); } finally { open = false; }
-  let dispose: (() => void | Promise<void>) | undefined;
   try {
-    const method = behaviour(lifetime).dispose;
-    if (typeof method !== 'function') throw new Error('Expected extension disposal');
-    dispose = async () => { await method.call(lifetime); };
-    if (failure) throw failure.error;
-    const validate: (value: unknown) => asserts value is AcceptedContributions<A> = accept;
-    validate(lifetime);
-    return { generation: new Generation(construct, { namespace, generation, platform }, dispose, tools), contributions: lifetime };
-  } catch (error) {
-    if (dispose) {
-      try { await dispose(); }
-      catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
+    let lifetime: unknown;
+    try { lifetime = await activate.call(options, contributions); } finally { open = false; }
+    let dispose: (() => Promise<void>) | undefined;
+    try {
+      const method = behaviour(lifetime).dispose;
+      if (typeof method !== 'function') throw new Error('Expected extension disposal');
+      dispose = async () => { await method.call(lifetime); };
+      if (failure) throw failure.error;
+      const validate: (value: unknown) => asserts value is AcceptedContributions<A> = accept;
+      validate(lifetime);
+      return { generation: generationHandle({ namespace, generation, platform }, dispose, [...tools.values()]), contributions: lifetime };
+    } catch (error) {
+      if (dispose) {
+        try { await dispose(); }
+        catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
+      }
+      throw error;
     }
-    throw error;
-  }
+  } finally { tools.clear(); }
 }
 export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
   const platform = frontendPlatform(options.platform);
-  const selected: Generation[] = []; const namespaces = new Set<string>();
-  for (const generation of options.generations) {
-    if (!isLive(generation)) throw new Error('Invalid or retired tool generation');
-    if (generation.platform !== platform) continue;
-    if (namespaces.has(generation.namespace)) throw new Error('Duplicate tool namespace');
-    namespaces.add(generation.namespace); selected.push(generation);
-  }
+  const candidates = [...options.generations];
   const run = freeze(parseRunIdentity(copyJson(options.run)));
-  const enabled = options.capabilities?.tools?.clientProvided === true && options.capabilities.tools.supported !== false;
-  let held: Generation[] | undefined = enabled ? selected : [];
-  const entries = new Map<string, { tool: Registered; generation: Generation }>();
-  for (const generation of held) {
-    for (const tool of acquire(generation)) entries.set(tool.definition.name, { tool, generation });
+  const capabilityTools = options.capabilities?.tools;
+  const clientProvided = capabilityTools?.clientProvided;
+  const supported = capabilityTools?.supported;
+  const enabled = clientProvided === true && supported !== false;
+  const selected: Lifetime[] = []; const namespaces = new Set<string>();
+  for (const generation of candidates) {
+    const state = live(generation);
+    if (state.identity.platform !== platform) continue;
+    if (namespaces.has(state.identity.namespace)) throw new Error('Duplicate tool namespace');
+    namespaces.add(state.identity.namespace); selected.push(state);
+  }
+  let held: Lifetime[] | undefined = enabled ? selected : [];
+  const entries = new Map<string, { tool: Registered; state: Lifetime }>();
+  for (const state of held) {
+    hold(state);
+    for (const tool of state.tools) entries.set(tool.definition.name, { tool, state });
   }
   const definitions = Object.freeze([...entries.values()].map(entry => entry.tool.definition));
   return { run, definitions,
     async invoke(name, args): Promise<FrontendToolOutcome> {
-      if (!held) return { kind: 'refused', code: 'released' };
+      if (!held) return refused('released');
       const entry = entries.get(name);
-      if (!entry) return { kind: 'refused', code: 'unknown-tool' };
-      acquire(entry.generation);
-      try {
-        const prepared = prepare(entry.tool, args);
-        if ('kind' in prepared) return prepared;
-        const output = await entry.tool.execute(prepared.decoded, { conversation: run.conversation });
-        if (typeof output !== 'string') throw new Error('Tool output must be a string');
-        return { kind: 'completed', output };
-      } finally { release(entry.generation); }
+      if (!entry) return refused('unknown-tool');
+      hold(entry.state);
+      try { return await entry.tool.call(args, run.conversation); }
+      finally { drop(entry.state); }
     },
     release() {
       const generations = held;
       held = undefined;
       entries.clear();
-      for (const generation of generations ?? []) release(generation);
+      for (const state of generations ?? []) drop(state);
     },
   };
 }

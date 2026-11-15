@@ -4,6 +4,7 @@ import type { BackendProvider, ProviderModel } from './providers.js';
 
 export { EXTENSION_SDK_VERSION };
 export type ExtensionEntryKind = 'server' | 'desktop' | 'ios';
+export type FrontendPlatform = Exclude<ExtensionEntryKind, 'server'>;
 export interface ExtensionEntry {
   readonly kind: ExtensionEntryKind;
   readonly module: string;
@@ -41,7 +42,7 @@ function entryKind(value: unknown): ExtensionEntryKind {
   if (value !== 'server' && value !== 'desktop' && value !== 'ios') throw new Error('Invalid extension entry kind');
   return value;
 }
-export function frontendPlatform(value: unknown): Exclude<ExtensionEntryKind, 'server'> {
+export function frontendPlatform(value: unknown): FrontendPlatform {
   const kind = entryKind(value);
   if (kind === 'server') throw new Error('Invalid frontend platform');
   return kind;

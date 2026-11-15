@@ -5,7 +5,7 @@ import { nonempty } from '@agentui/contracts/decode';
 import type { FrontendToolContributions } from './tool-contracts.js';
 export type { FrontendToolContribution, FrontendToolContributions } from './tool-contracts.js';
 import { behaviour, validateExtensionLifetime } from './extensions.js';
-import type { EXTENSION_SDK_VERSION, ExtensionLifetime } from './extensions.js';
+import type { EXTENSION_SDK_VERSION, ExtensionLifetime, FrontendPlatform } from './extensions.js';
 
 export interface ConversationCommands {
   send(text: string): Promise<SubmitResult>;
@@ -37,7 +37,7 @@ export interface UiExtensionContext {
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
 }
-export interface UiExtensionEntry<K extends 'desktop' | 'ios'> {
+export interface UiExtensionEntry<K extends FrontendPlatform> {
   readonly kind: K;
   readonly sdkVersion: typeof EXTENSION_SDK_VERSION;
   activate(context: UiExtensionContext): UiExtensionContributions | Promise<UiExtensionContributions>;

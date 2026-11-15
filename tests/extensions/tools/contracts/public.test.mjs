@@ -73,6 +73,14 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           "function accept(value: unknown): asserts value is { modules: string[] } {} void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept, activate() { return {}; } });",
           /not assignable/u,
         ],
+        [
+          "const t: FrontendToolContribution<string> = { definition: { name: 1, description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void t;",
+          /not assignable/u,
+        ],
+        [
+          "function accept(value: unknown): asserts value is { modules: string[]; dispose(): void } { void value; } const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept, activate() { return {}; } }); result.contributions.dispose();",
+          /Property 'dispose' does not exist/u,
+        ],
         ['void document;', /Cannot find name 'document'/u],
       ],
     });
@@ -81,7 +89,33 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
       [
         '--input-type=module',
         '-e',
-        "import { createFrontendToolGeneration } from '@agentui/sdk/tools'; if (typeof createFrontendToolGeneration !== 'function') throw Error();",
+        `
+          import assert from 'node:assert/strict';
+          import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
+          const { generation } = await createFrontendToolGeneration({
+            namespace: 'demo', generation: '1', platform: 'ios', accept() {},
+            activate(tools) {
+              tools.add({
+                definition: { name: 'x', description: 'x', parameters: { type: 'object',
+                  properties: { email: { type: 'string', format: 'email' } }, required: ['email'] } },
+                decodeInput: value => value.email, async execute(email) { return email; },
+              });
+              return { dispose() {} };
+            },
+          });
+          let pin;
+          try {
+            pin = pinFrontendTools({ generations: [generation], platform: 'ios',
+              run: { conversation: { hostId: 'h', conversationId: 'c' }, runId: 'r',
+                authority: { kind: 'remote-provider', binding: { namespace: 'n', installationId: 'i', opaqueSessionId: 's' } } },
+              capabilities: { tools: { clientProvided: true } } });
+            assert.deepEqual(await pin.invoke('demo__x', { email: 'a@example.com' }), { kind: 'completed', output: 'a@example.com' });
+            assert.deepEqual(await pin.invoke('demo__x', { email: 'invalid' }), { kind: 'refused', code: 'invalid-arguments' });
+          } finally {
+            pin?.release();
+            await generation.retire();
+          }
+        `,
       ],
       dir,
     );

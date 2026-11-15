@@ -52,6 +52,7 @@ test('run contracts parse exact authority variants and preserve opaque provider 
     assert.notEqual(parsed.authority.binding, binding);
     assert.notEqual(parsed.conversation, scope);
   }
+  assert.throws(() => parseRunIdentity({ ...run, authority: { ...run.authority, hostId: 'foreign' } }), /Run authority host mismatch/u);
   assert.throws(() => parseRunAuthority({ kind: 'unknown' }), /Invalid run authority/u);
   for (const authority of [
     {}, { ...run.authority, hostId: '' }, { ...run.authority, hostId: 'h'.repeat(1025) },
