@@ -1,19 +1,11 @@
 import { execFile } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { chmod, lstat, mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from 'node:fs/promises';
-import { delimiter, dirname, join, relative, resolve } from 'node:path';
+import { delimiter, dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { CustomizationError, resolveCustomizationSources } from '@agentui/host/customization';
+import { CustomizationError, assertSupportedNode, supportedNpmVersion, resolveCustomizationSources } from '@agentui/host/customization';
 
 const execute = promisify(execFile);
-const diagnostics = {
-  'toolchain-mismatch': 'Customization preparation requires supported Node 24 and npm 11.19.1.',
-  'install-failed': 'Could not install committed customization dependencies.',
-  'input-mutation': 'Committed customization inputs changed during preparation.',
-  'resource-limit': 'Customization preparation resource limit exceeded.',
-  'preparation-failed': 'Could not prepare committed customization sources.',
-};
-const failure = code => Object.assign(new Error(diagnostics[code]), { code });
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 
 async function validateInstalledPackages(directory, packages, check) {
@@ -35,7 +27,7 @@ async function validateInstalledPackages(directory, packages, check) {
         throw error;
       });
       if (!metadata) continue;
-      if (!metadata.isDirectory()) throw failure('install-failed');
+      if (!metadata.isDirectory()) throw CustomizationError.fixed('install-failed');
       const modules = location.split('/').at(-1) === 'node_modules';
       const entries = await readdir(container);
       for (const name of entries) {
@@ -45,38 +37,38 @@ async function validateInstalledPackages(directory, packages, check) {
         const destination = join(directory, path);
         const metadata = await lstat(destination);
         if (modules && name.startsWith('@')) {
-          if (!metadata.isDirectory()) throw failure('install-failed');
+          if (!metadata.isDirectory()) throw CustomizationError.fixed('install-failed');
           pending.push(path);
           continue;
         }
         const entry = expected.get(path);
-        if (!entry) throw failure('install-failed');
+        if (!entry) throw CustomizationError.fixed('install-failed');
         let identity = entry;
         if (entry.link === true) {
-          if (!metadata.isSymbolicLink() || await realpath(destination) !== join(canonical, entry.resolved)) throw failure('install-failed');
+          if (!metadata.isSymbolicLink() || await realpath(destination) !== join(canonical, entry.resolved)) throw CustomizationError.fixed('install-failed');
           identity = packages[entry.resolved];
         } else {
-          if (!metadata.isDirectory()) throw failure('install-failed');
+          if (!metadata.isDirectory()) throw CustomizationError.fixed('install-failed');
           pending.push(`${path}/node_modules`);
         }
         const manifestPath = join(destination, 'package.json');
-        if (!(await lstat(manifestPath)).isFile()) throw failure('install-failed');
+        if (!(await lstat(manifestPath)).isFile()) throw CustomizationError.fixed('install-failed');
         const manifest = JSON.parse(await readFile(manifestPath, 'utf8'));
         if (!manifest || typeof manifest !== 'object' || Array.isArray(manifest) || manifest.version !== identity.version ||
           (identity.name !== undefined && manifest.name !== identity.name) || (entry.name !== undefined && manifest.name !== entry.name) ||
           [manifest.bundleDependencies, manifest.bundledDependencies].some(value => Array.isArray(value) ? value.length > 0 : Boolean(value))) {
-          throw failure('install-failed');
+          throw CustomizationError.fixed('install-failed');
         }
         seen.add(path);
       }
     }
     for (const [path, entry] of expected) {
       check();
-      if (!seen.has(path) && entry.optional !== true) throw failure('install-failed');
+      if (!seen.has(path) && entry.optional !== true) throw CustomizationError.fixed('install-failed');
     }
   } catch (error) {
     if (error.code === 'resource-limit') throw error;
-    throw failure('install-failed');
+    throw CustomizationError.fixed('install-failed');
   }
 }
 
@@ -91,7 +83,7 @@ export async function prepareCustomizationSources(input) {
   let owner, sources;
   const deadline = Date.now() + 600_000;
   const check = () => {
-    if (Date.now() >= deadline) throw failure('resource-limit');
+    if (Date.now() >= deadline) throw CustomizationError.fixed('resource-limit');
   };
   const dispose = async () => { if (owner) await rm(owner, { recursive: true, force: true }); };
   try {
@@ -107,8 +99,7 @@ export async function prepareCustomizationSources(input) {
     for (const node of pending) {
       check();
       if (nodes.has(node)) continue;
-      let original = node.directory;
-      for (const _segment of node.subdirectory ? node.subdirectory.split('/') : []) original = dirname(original);
+      const original = node.repositoryDirectory;
       if (!repositories.has(original)) {
         repositories.set(original, { original, directory: join(owner, `repository-${repositories.size}`), inputs: node.inputs });
       }
@@ -127,7 +118,7 @@ export async function prepareCustomizationSources(input) {
         const metadata = await lstat(source);
         const bytes = await readFile(source);
         if (!metadata.isFile() || Boolean(metadata.mode & 0o111) !== file.executable || digest(bytes) !== file.sha256) {
-          throw failure('input-mutation');
+          throw CustomizationError.fixed('input-mutation');
         }
         const destination = join(repository.directory, file.path);
         await mkdir(dirname(destination), { recursive: true, mode: 0o700 });
@@ -135,14 +126,13 @@ export async function prepareCustomizationSources(input) {
         await chmod(destination, file.executable ? 0o700 : 0o600);
       }
     }
-    for (const [original, install] of installs) {
+    for (const install of installs.values()) {
       check();
-      install.directory = join(install.repository.directory, relative(install.repository.original, original));
+      install.directory = join(install.repository.directory, install.npm.path);
       install.packages = JSON.parse(await readFile(join(install.repository.directory, install.npm.lockfile.path), 'utf8')).packages;
     }
     if (installs.size) {
-      const [major, minor, patch] = process.versions.node.split('.').map(Number);
-      if (major !== 24 || minor < 22 || minor === 22 && patch < 3) throw failure('toolchain-mismatch');
+      assertSupportedNode();
       const privateDirectory = join(owner, 'npm');
       const home = join(privateDirectory, 'home');
       const temporary = join(privateDirectory, 'tmp');
@@ -157,7 +147,7 @@ export async function prepareCustomizationSources(input) {
         npm_config_userconfig: userconfig, npm_config_globalconfig: globalconfig };
       let npm;
       try { npm = await realpath(join(dirname(process.execPath), 'npm')); }
-      catch { throw failure('toolchain-mismatch'); }
+      catch { throw CustomizationError.fixed('npm-mismatch'); }
       const run = async (args, cwd, version = false) => {
         check();
         try {
@@ -165,11 +155,11 @@ export async function prepareCustomizationSources(input) {
           return (await execute(process.execPath, [npm, '--prefix', prefix, ...args], { cwd: prefix, env, encoding: 'utf8',
             timeout: Math.min(version ? 10_000 : 120_000, deadline - Date.now()), maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' })).stdout;
         } catch (error) {
-          if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw failure('resource-limit');
-          throw failure(version ? 'toolchain-mismatch' : 'install-failed');
+          if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw CustomizationError.fixed('resource-limit');
+          throw CustomizationError.fixed(version ? 'npm-mismatch' : 'install-failed');
         }
       };
-      if ((await run(['--version'], privateDirectory, true)).trim() !== '11.19.1') throw failure('toolchain-mismatch');
+      if ((await run(['--version'], privateDirectory, true)).trim() !== supportedNpmVersion) throw CustomizationError.fixed('npm-mismatch');
       const configs = [];
       try {
         for (const repository of repositories.values()) {
@@ -199,7 +189,7 @@ export async function prepareCustomizationSources(input) {
         const destination = join(repository.directory, file.path);
         const metadata = await lstat(destination);
         if (!metadata.isFile() || Boolean(metadata.mode & 0o111) !== file.executable || digest(await readFile(destination)) !== file.sha256) {
-          throw failure('input-mutation');
+          throw CustomizationError.fixed('input-mutation');
         }
       }
     }
@@ -207,8 +197,8 @@ export async function prepareCustomizationSources(input) {
     const remap = node => {
       if (remapped.has(node)) return remapped.get(node);
       const repository = nodes.get(node);
-      const result = Object.freeze({ ...node, directory: join(repository.directory, node.subdirectory),
-        npm: node.npm.kind === 'locked' ? Object.freeze({ ...node.npm, directory: join(repository.directory, relative(repository.original, node.npm.directory)) }) : node.npm,
+      const result = Object.freeze({ ...node, repositoryDirectory: repository.directory, directory: join(repository.directory, node.subdirectory),
+        npm: node.npm.kind === 'locked' ? Object.freeze({ ...node.npm, directory: join(repository.directory, node.npm.path) }) : node.npm,
         extensions: Object.freeze(node.extensions.map(remap)) });
       remapped.set(node, result);
       return result;
@@ -220,7 +210,7 @@ export async function prepareCustomizationSources(input) {
   } catch (error) {
     await sources?.dispose();
     await dispose();
-    if (error instanceof CustomizationError || Object.hasOwn(diagnostics, error.code)) throw error;
-    throw failure('preparation-failed');
+    if (error instanceof CustomizationError) throw error;
+    throw CustomizationError.fixed('preparation-failed');
   }
 }

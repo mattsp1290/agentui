@@ -45,6 +45,9 @@ test('standalone locks, raw content and identities use only immutable committed 
   assert.equal(one.root.npm.identity, two.root.npm.identity);
   assert.notEqual(one.root.directory, two.root.directory);
   assert.equal(one.root.npm.kind, 'locked');
+  assert.equal(one.root.npm.path, '');
+  assert.equal(one.root.repositoryDirectory, one.root.directory);
+  assert.equal(one.root.npm.directory, join(one.root.repositoryDirectory, one.root.npm.path));
   assert.equal(one.root.npm.lockfile.path, 'package-lock.json');
   assert.equal(one.root.npm.lockfile.sha256, digest(JSON.stringify(lock)));
   assert.equal(await readFile(join(one.root.directory, 'source.ts'), 'utf8'), 'export const value = 1;\n');
@@ -142,7 +145,9 @@ test('actual npm workspace lock selects package metadata and preserves sibling i
   await write(repo.directory, 'package-lock.json', await readFile(new URL('./npm-workspace-lock.json', import.meta.url), 'utf8'));
   const result = await f.read(reference(repo, repo.commit(), 'packages/foo'));
   assert.equal(result.root.customization.shared, './source.ts');
-  assert.equal(result.root.npm.directory, dirname(dirname(result.root.directory)));
+  assert.equal(result.root.npm.path, '');
+  assert.equal(result.root.npm.directory, result.root.repositoryDirectory);
+  assert.equal(result.root.directory, join(result.root.repositoryDirectory, result.root.subdirectory));
   assert.equal(result.root.npm.workspaces[0].path, 'packages/foo/package.json');
   assert.equal(result.root.inputs.files.some(file => file.path === 'packages/util.ts'), true);
   assert.equal(await readFile(join(result.root.directory, '../util.ts'), 'utf8'), 'export const util = 42;\n');
