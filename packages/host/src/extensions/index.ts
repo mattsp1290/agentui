@@ -131,6 +131,7 @@ export function createServerExtensions() {
     if (closing) return closing;
     const previous = state;
     state = { kind: 'closing' };
+    // Cleanup can reenter close(), so publish first. The microtask reads retirement after initialization.
     closing = Promise.resolve().then(async () => {
       if (previous.kind === 'changing') {
         const result = await previous.settled;

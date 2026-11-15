@@ -281,6 +281,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     const draining = new Set(streams);
     retiring = draining;
     const authorities: Promise<void>[] = [];
+    // Cleanup can reenter close(), so publish first. The microtask reads authorityResults after initialization.
     closing = Promise.resolve().then(async () => {
       await Promise.allSettled(pending);
       for (const stream of draining) stop(stream);

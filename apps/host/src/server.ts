@@ -77,6 +77,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const http = createServer();
   function close(): Promise<void> {
     if (closePromise) return closePromise;
+    // Cleanup can reenter close(), so publish first. The microtask reads shutdown after initialization.
     closePromise = Promise.resolve().then(() => shutdown);
     const shutdown = (async () => {
       closing = true;
