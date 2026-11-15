@@ -2,6 +2,32 @@
 
 Run these commands on the Mac where you want the desktop client. Install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) first. Make Node.js, npm, and SSH available.
 
+## Install a harness before signing in
+
+To install a standalone harness on this machine, run one of these commands:
+
+```sh
+./agentui setup --agent codex
+./agentui setup --agent pi
+./agentui setup --agent claude
+```
+
+To install on an SSH target, add its destination:
+
+```sh
+./agentui setup --agent codex --ssh user@host
+```
+
+Setup supports macOS and Linux on ARM64 or x64. SSH must already connect without an interactive password prompt. Normal SSH host-key verification remains enabled. Setup needs Node on the client, but it does not need `npm ci`, application build artifacts, or provider credentials.
+
+Setup installs a matching Node runtime when needed, verifies a new Node archive against its recorded SHA-256 digest, and installs the selected harness under `~/.local/share/agentui/tools`. It disables npm lifecycle scripts and uses private npm configuration files. For Claude, setup verifies the selected native package and links its executable without running the package's installer script. A completed installation publishes atomically. Repeating setup reuses a harness that passes its package and executable version checks. A failed install does not replace an existing published harness.
+
+The command prints an `installed` JSON record with the executable path and version. Its `authentication` field is `not-checked`. Setup does not start the host, open the client, or sign in to a provider. It does not change global tools or shell profiles.
+
+Codex follows the app-server runtime pin. Pi follows the coding-agent package pin. Claude CLI 2.1.323 is explicitly mapped to Claude SDK 0.3.323 and checked against that SDK's `claudeCodeVersion` during verification. Updating that SDK requires reviewing the CLI mapping. Top-level harness versions are pinned. Their fresh npm dependency graphs are not frozen by a checked-in per-harness lockfile.
+
+Installing a CLI does not change the current chat integration. Pi chat still uses the embedded SDK. Claude chat still uses the separate Claude SDK host entry. The launcher chat selector accepts Codex or Pi. Native credential entry, encrypted secret storage, and first-run provider login are separate work.
+
 ## Start a local workspace
 
 From the AgentUI repository, run:
