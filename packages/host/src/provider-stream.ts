@@ -227,8 +227,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     } finally {
       stopping = true;
       await tail;
-      if (cleanupError) throw cleanupError;
     }
-  })();
+  })().then(() => { if (cleanupError) throw cleanupError; }, error => { throw cleanupError ?? error; });
   return { close, drained };
 }
