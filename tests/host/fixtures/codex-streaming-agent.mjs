@@ -31,7 +31,7 @@ createInterface({ input: process.stdin }).on('line', line => {
     return;
   }
   const reply = result => send({ id: message.id, result });
-  if (mode === `reject-${message.method}` && !rejected) {
+  if ((mode === `reject-${message.method}` || mode === 'reject-followup' && message.method === 'turn/start' && turnCount === 1) && !rejected) {
     rejected = true;
     send({ id: message.id, error: { code: -32000, message: 'Fixture denied this request' } });
     return;
@@ -53,16 +53,32 @@ createInterface({ input: process.stdin }).on('line', line => {
             notify('item/agentMessage/delta', { threadId: turn.threadId, turnId: turn.id, itemId: 'answer', delta: longText.slice(offset, offset + 80) });
           }
         } else if (mode.includes('approval') || mode.startsWith('pending-') || mode.startsWith('expire-')) {
-          turn.requestId = 0;
-          const file = mode === 'file-approval';
-          if (file) notify('item/started', { threadId: turn.threadId, turnId: turn.id,
+          turn.requestId = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? 'other-command-request' : mode.includes('command-approval') ? 'command-request' : mode === 'unknown-file-approval' || mode === 'malformed-file-approval' ? '0' : 0;
+          const file = mode.includes('file-approval');
+          if (mode.includes('command-approval') && (mode !== 'scoped-command-approval' || turn.threadId === 'thread-1')) {
+            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
+              item: { id: mode === 'unmatched-command-approval' ? 'different-tool' : 'tool', type: 'commandExecution', command: 'printf from-item', cwd: '/workspace/item' } });
+          }
+          if (mode === 'bounded-command-approval') {
+            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
+              item: { id: 'tool', type: 'commandExecution', command: '🙂汉'.repeat(10_000), cwd: '/workspace/' + '子'.repeat(5_000) } });
+          }
+          if (mode === 'evicted-command-approval') {
+            for (let index = 0; index < 64; index++) notify('item/started', { threadId: turn.threadId, turnId: turn.id,
+              item: { id: `later-${index}`, type: 'commandExecution', command: 'printf later', cwd: '/later' } });
+          }
+          if (mode === 'unknown-file-approval' || mode === 'empty-file-approval' || mode === 'malformed-file-approval') {
+            notify('item/started', { threadId: turn.threadId, turnId: turn.id,
+              item: { id: 'tool', type: 'fileChange', changes: mode === 'empty-file-approval' ? [] : mode === 'malformed-file-approval' ? [{ path: null, kind: null }] : [{ path: '/workspace/x', kind: 'new-protocol-kind', diff: '+x' }] } });
+          }
+          if (mode === 'file-approval') notify('item/started', { threadId: turn.threadId, turnId: turn.id,
             item: { id: 'tool', type: 'fileChange', changes: [
               { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
               { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
             ] } });
           send({ id: turn.requestId, method: file ? 'item/fileChange/requestApproval' : 'item/commandExecution/requestApproval',
             params: { threadId: turn.threadId, turnId: turn.id, itemId: 'tool', reason: 'Fixture permission',
-              ...(file ? { grantRoot: '/workspace' } : { cwd: '/workspace/subdirectory', ...(mode === 'fallback-approval' ? {} : { command: 'printf hello' }) }) } });
+              ...(file ? { grantRoot: '/workspace' } : mode === 'explicit-command-approval' ? { cwd: '/workspace/explicit', command: 'printf explicit' } : mode.includes('command-approval') && mode !== 'command-approval' ? {} : { cwd: '/workspace/subdirectory', ...(mode === 'fallback-approval' ? {} : { command: 'printf hello' }) }) } });
         } else {
           completedItem(turn, 'Hello');
           finish(turn);

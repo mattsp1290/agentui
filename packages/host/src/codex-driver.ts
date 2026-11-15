@@ -16,12 +16,15 @@ export interface CodexDriverOptions {
   readonly executable?: string;
   readonly args?: readonly string[];
 }
+type ApprovalDetails =
+  | { readonly kind: 'command'; readonly command: string | null; readonly cwd: string | null }
+  | { readonly kind: 'file'; readonly summary: string };
 interface ActiveTurn {
   readonly scope: ConversationScope;
   readonly threadId: string;
   readonly previousRunId: string | null;
   readonly messages: Map<string, string>;
-  readonly fileChanges: Map<string, string>;
+  readonly approvalDetails: Map<string, ApprovalDetails>;
   readonly rendered: Extract<TranscriptEvent, { kind: 'message-updated' }>[];
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
@@ -63,6 +66,31 @@ function bounded(text: string, limit = 8_000): string {
     end += character.length;
   }
   return text;
+}
+
+function displayText(value: unknown, limit: number): string | null {
+  return typeof value === 'string' && value.trim() ? bounded(value, limit) : null;
+}
+
+function fileSummary(value: unknown): string {
+  const missing = 'Codex did not provide file details.';
+  if (!Array.isArray(value) || value.length === 0) return missing;
+  let summary = '';
+  for (const entry of value) {
+    let detail = missing;
+    if (entry !== null && typeof entry === 'object' && 'path' in entry && 'kind' in entry) {
+      const path = displayText(entry.path, 2_000), kind = entry.kind;
+      if (path && kind !== null && typeof kind === 'object' && 'type' in kind &&
+        (kind.type === 'add' || kind.type === 'update' || kind.type === 'delete')) {
+        const movedTo = 'move_path' in kind ? displayText(kind.move_path, 2_000) : null;
+        const diff = 'diff' in entry ? displayText(entry.diff, 2_000) : null;
+        detail = `${path} (${kind.type})${movedTo ? ` → ${movedTo}` : ''}${diff ? `\n${diff}` : ''}`;
+      }
+    }
+    summary += `${summary ? '\n\n' : ''}${detail}`;
+    if (Buffer.byteLength(JSON.stringify(summary)) > 8_000) break;
+  }
+  return bounded(summary, 8_000);
 }
 
 export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
@@ -222,16 +250,17 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     } else if (method === 'item/started' || method === 'item/completed') {
       if (turn.run?.identity.runId !== params.turnId) return;
       const item = object(params.item);
-      if (item.type === 'fileChange' && Array.isArray(item.changes)) {
-        const changes = item.changes.map(value => {
-          const change = object(value), kind = object(change.kind);
-          return { path: nonempty(change.path), kind: nonempty(kind.type),
-            movedTo: typeof kind.move_path === 'string' ? kind.move_path : null,
-            diff: typeof change.diff === 'string' ? change.diff : '' };
-        });
-        const paths = changes.map(change => `${change.path} (${change.kind})${change.movedTo ? ` → ${change.movedTo}` : ''}`).join('\n');
-        const patches = changes.map(change => `${change.path}\n${bounded(change.diff, 2_000)}`).join('\n\n');
-        turn.fileChanges.set(nonempty(item.id), `${bounded(paths, 4_000)}\n\n${bounded(patches, 4_000)}`);
+      const itemId = displayText(item.id, 4_000);
+      if (itemId === item.id && itemId !== null && (item.type === 'commandExecution' || item.type === 'fileChange')) {
+        const details: ApprovalDetails = item.type === 'commandExecution'
+          ? { kind: 'command', command: displayText(item.command, 8_000), cwd: displayText(item.cwd, 2_000) }
+          : { kind: 'file', summary: fileSummary(item.changes) };
+        turn.approvalDetails.delete(itemId);
+        if (turn.approvalDetails.size >= 64) {
+          const oldest = turn.approvalDetails.keys().next().value;
+          if (oldest !== undefined) turn.approvalDetails.delete(oldest);
+        }
+        turn.approvalDetails.set(itemId, details);
       }
       if (method === 'item/completed' && item.type === 'agentMessage') {
         if (typeof item.text !== 'string') throw new Error('Invalid Codex message');
@@ -268,9 +297,12 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     const approval: Approval = { id, pendingId, turn, run: turn.run, waiter: null };
     approvals.set(canonicalJson(id), approval);
     const reason = typeof params.reason === 'string' && params.reason ? `\n\n${bounded(params.reason, 2_000)}` : '';
+    const details = typeof params.itemId === 'string' ? turn.approvalDetails.get(params.itemId) : undefined;
+    const commandText = displayText(params.command, 8_000) ?? (details?.kind === 'command' ? details.command : null);
+    const commandCwd = displayText(params.cwd, 2_000) ?? (details?.kind === 'command' ? details.cwd : null) ?? cwd;
     const action = method === 'item/commandExecution/requestApproval'
-      ? `${typeof params.command === 'string' ? `Run: ${bounded(params.command)}` : 'Allow Codex to run a command?'}\nWorking directory: ${typeof params.cwd === 'string' ? bounded(params.cwd, 2_000) : cwd}`
-      : `Allow Codex to change files?\n${typeof params.grantRoot === 'string' ? `Write access requested under: ${bounded(params.grantRoot, 2_000)}` : `Workspace: ${cwd}`}\n\n${typeof params.itemId === 'string' ? turn.fileChanges.get(params.itemId) ?? 'Codex did not provide file details.' : 'Codex did not provide file details.'}`;
+      ? `${commandText ? `Run: ${commandText}` : 'Allow Codex to run a command?'}\nWorking directory: ${commandCwd}`
+      : `Allow Codex to change files?\n${typeof params.grantRoot === 'string' ? `Write access requested under: ${bounded(params.grantRoot, 2_000)}` : `Workspace: ${cwd}`}\n\n${details?.kind === 'file' ? details.summary : 'Codex did not provide file details.'}`;
     publish(turn, [], [{ visible: { pendingId, runId: turn.run.identity.runId,
       choices: ['accept', 'decline'], prompt: `${action}${reason}` },
       continuation: { processId: rpc.processId, requestId: id, threadId: turn.threadId, turnId: turn.run.identity.runId },
@@ -306,7 +338,7 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), fileChanges: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
+      turn = { scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);
@@ -317,7 +349,13 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
       return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
     } catch (error) {
       if (turn) {
-        try { interrupted(turn, error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : 'Codex could not start this response. Check command recovery before trying again.'); }
+        try {
+          if (error instanceof CodexRpcError && method === 'turn/start' && !turn.run) {
+            publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:assistant-rejection`,
+              revision: 1, role: 'assistant', complete: true, text: `Codex rejected this request: ${bounded(error.message, 1_000)}` }]);
+          }
+          interrupted(turn, error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : 'Codex could not start this response. Check command recovery before trying again.');
+        }
         catch { outputFailed(turn); }
         active.delete(turn.threadId);
       }

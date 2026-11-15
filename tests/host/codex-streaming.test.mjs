@@ -28,7 +28,13 @@ function fixture(t, mode, rejectAppend = () => false) {
   host.createConversation(scope, driver.installation);
   host.createConversation(other, driver.installation);
   t.after(() => { driver.close(); host.close(); rmSync(dir, { recursive: true, force: true }); });
-  return { host, driver, outputs, port: host.conversation(scope),
+  return { get host() { return host; }, driver, outputs, get port() { return host.conversation(scope); },
+    async reopen() {
+      host.close();
+      await host.drained;
+      host = openLocalHost({ path: join(dir, 'host.sqlite'), projection: transcriptProjection,
+        driver, budgets: defaultHostBudgets(), authorize: () => true });
+    },
     document: (conversation = scope) => host.inspect(conversation).snapshot.document,
     messages: (conversation = scope) => host.inspect(conversation).snapshot.document.domain.messages.filter(message => message.role === 'assistant'),
     log: () => existsSync(logPath) ? readFileSync(logPath, 'utf8').trim().split('\n').filter(Boolean).map(JSON.parse) : [],
@@ -154,5 +160,119 @@ for (const mode of ['pending-complete', 'pending-disconnect']) {
     const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
     assert.equal(result.receipt.state.kind, 'uncertain');
     assert.deepEqual(f.document().decisions, {});
+  });
+}
+
+test('a turn/start rejection stores one completed notice across restart and exact retries', async t => {
+  const f = fixture(t, 'reject-turn/start');
+  const send = command('rejected-visible');
+  const result = await f.port.submit(send);
+  assert.equal(result.receipt.state.kind, 'rejected');
+  assert.equal(f.document().domain.currentRun, null);
+  assert.equal(f.document().domain.messages.filter(message => message.role === 'user').length, 1);
+  assert.equal(f.messages().length, 1);
+  assert.match(f.messages()[0].text, /Codex rejected this request: Fixture denied this request/);
+  assert.equal(f.messages()[0].complete, true);
+  assert.equal(f.outputs.flatMap(output => output.runs).length, 0);
+  assert.equal(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')).length, 0);
+  const stored = f.document();
+  await f.reopen();
+  assert.deepEqual(f.document(), stored);
+  assert.deepEqual(await f.port.submit(send), result);
+  assert.deepEqual(f.document(), stored);
+  assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
+  assert.equal((await f.port.submit(command('distinct-send'))).receipt.state.kind, 'completed');
+  await until(() => f.messages().some(message => message.text === 'Hello' && message.complete));
+});
+
+for (const mode of ['item-command-approval', 'explicit-command-approval', 'unmatched-command-approval', 'scoped-command-approval']) {
+  test(`${mode} uses only the matching turn item and explicit approval fields take precedence`, async t => {
+    const f = fixture(t, mode);
+    if (mode === 'scoped-command-approval') {
+      await f.host.conversation(other).submit(command('other-send', { kind: 'send', text: 'hello' }, other));
+      await until(() => Object.keys(f.document(other).decisions).length === 1);
+    }
+    await f.port.submit(command('send'));
+    await until(() => Object.keys(f.document().decisions).length === 1);
+    const decision = Object.values(f.document().decisions)[0];
+    if (mode === 'item-command-approval') {
+      assert.match(decision.prompt, /Run: printf from-item/);
+      assert.match(decision.prompt, /Working directory: \/workspace\/item/);
+    } else if (mode === 'explicit-command-approval') {
+      assert.match(decision.prompt, /Run: printf explicit/);
+      assert.match(decision.prompt, /Working directory: \/workspace\/explicit/);
+      assert.doesNotMatch(decision.prompt, /from-item|workspace\/item/);
+    } else {
+      assert.match(decision.prompt, /Allow Codex to run a command/);
+      assert.doesNotMatch(decision.prompt, /from-item|workspace\/item/);
+    }
+    const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
+    assert.equal(result.receipt.state.kind, 'completed');
+    await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
+    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, 'command-request');
+  });
+}
+
+for (const mode of ['unknown-file-approval', 'empty-file-approval', 'malformed-file-approval']) {
+  test(`${mode} keeps approval live with explicit missing details and its typed native ID`, async t => {
+    const f = fixture(t, mode);
+    await f.port.submit(command('send'));
+    await until(() => Object.keys(f.document().decisions).length === 1);
+    const decision = Object.values(f.document().decisions)[0];
+    assert.match(decision.prompt, /Codex did not provide file details/);
+    assert.equal(f.document().domain.currentRun.kind, 'running');
+    assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
+    const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
+    assert.equal(result.receipt.state.kind, 'completed');
+    await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
+    assert.deepEqual(f.document().decisions, {});
+    assert.equal(f.log().filter(message => !('method' in message)).at(-1).id, mode === 'empty-file-approval' ? 0 : '0');
+  });
+}
+
+
+test('a rejected follow-up preserves the previous native run', async t => {
+  const f = fixture(t, 'reject-followup');
+  await f.port.submit(command('first'));
+  await until(() => f.messages().some(message => message.complete));
+  const previousRun = f.document().domain.currentRun;
+  assert.equal(previousRun.kind, 'ended');
+  const runEvents = f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-'));
+  const result = await f.port.submit(command('followup'));
+  assert.equal(result.receipt.state.kind, 'rejected');
+  assert.deepEqual(f.document().domain.currentRun, previousRun);
+  assert.deepEqual(f.outputs.flatMap(output => output.events).filter(event => event.kind.startsWith('run-')), runEvents);
+  assert.match(f.messages().at(-1).text, /Codex rejected this request/);
+  assert.equal(f.messages().at(-1).complete, true);
+});
+
+test('a failed rejection-notice append preserves the conclusive native rejection', async t => {
+  const f = fixture(t, 'reject-turn/start', (_scope, output) => output.events.some(event => /Codex rejected this request/.test(event.text)));
+  const send = command('rejected-storage');
+  const result = await f.port.submit(send);
+  assert.equal(result.receipt.state.kind, 'rejected');
+  assert.deepEqual(await f.port.submit(send), result);
+  assert.equal(f.document().domain.currentRun, null);
+  assert.equal(f.log().filter(message => message.method === 'turn/start').length, 1);
+  assert.equal(f.log().filter(message => message.method === 'turn/interrupt').length, 0);
+});
+
+for (const mode of ['bounded-command-approval', 'evicted-command-approval']) {
+  test(`${mode} keeps optional command display bounded with a readable fallback`, async t => {
+    const f = fixture(t, mode);
+    await f.port.submit(command('send'));
+    await until(() => Object.keys(f.document().decisions).length === 1);
+    const decision = Object.values(f.document().decisions)[0];
+    if (mode === 'bounded-command-approval') {
+      assert.match(decision.prompt, /Run: 🙂汉/);
+      assert.match(decision.prompt, /Further details omitted/);
+      assert.ok(Buffer.byteLength(JSON.stringify(decision.prompt)) < 11_000);
+    } else {
+      assert.match(decision.prompt, /Allow Codex to run a command/);
+      assert.doesNotMatch(decision.prompt, /from-item|printf later/);
+    }
+    const result = await f.port.submit(command('approve', { kind: 'approve', pendingId: decision.pendingId, choiceId: 'accept' }));
+    assert.equal(result.receipt.state.kind, 'completed');
+    await until(() => f.messages().some(message => message.text === 'Approved.' && message.complete));
   });
 }
