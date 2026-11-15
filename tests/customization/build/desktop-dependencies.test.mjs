@@ -46,14 +46,14 @@ test('a locked package is compiled from its verified installation', { timeout: 6
 });
 
 
-test('a package alias cannot bring a second React implementation into the graph', { timeout: 60_000 }, async t => {
+for (const actualName of ['react', '@agentui/unlisted']) test(`a package alias cannot bring ${actualName} into the graph`, { timeout: 60_000 }, async t => {
   const f = await fixture(t), repo = await f.repository('alias');
-  const alias = await tarball(f, repo, 'my-react', '1.0.0', { name: 'react' });
+  const alias = await tarball(f, repo, 'my-react', '1.0.0', { name: actualName });
   const pkg = { name: 'fixture', version: '1.0.0', type: 'module', packageManager: 'npm@11.19.1', dependencies: { 'my-react': alias.resolved }, agentui: extension };
   await write(repo.directory, 'package.json', pkg);
   await write(repo.directory, 'package-lock.json', { name: pkg.name, version: pkg.version, lockfileVersion: 3, packages: {
     '': { name: pkg.name, version: pkg.version, dependencies: pkg.dependencies },
-    'node_modules/my-react': { ...alias, name: 'react' },
+    'node_modules/my-react': { ...alias, name: actualName },
   } });
   await write(repo.directory, 'index.tsx', source.replace("from 'sibling'", "from 'my-react'"));
   assert.throws(() => build(repo, repo.commit(), join(f.root, 'output')), /Duplicate shared customization dependency/);

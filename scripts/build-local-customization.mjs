@@ -46,7 +46,9 @@ try {
   owned = false;
   process.stdout.write(`${JSON.stringify({ directory: out, artifactId: verified.manifest.artifactId, root: prepared.root.identity })}\n`);
 } finally {
-  await prepared?.dispose();
-  if (scratch) await rm(scratch, { recursive: true, force: true });
-  if (owned) await rm(out, { recursive: true, force: true });
+  try { await prepared?.dispose(); }
+  finally {
+    try { if (scratch) await rm(scratch, { recursive: true, force: true }); }
+    finally { if (owned) await rm(out, { recursive: true, force: true }); }
+  }
 }

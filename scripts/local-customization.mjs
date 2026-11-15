@@ -32,38 +32,45 @@ export function desktopSelection(root) {
     const { directory: _directory, ...npm } = node.npm;
     const local = node.customization?.local;
     return { identity: node.identity, commit: node.commit, subdirectory: node.subdirectory, inputs: node.inputs, npm,
-      local: local ? { manifest: local.manifest, sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module.localeCompare(b.module)) } : null,
+      local: local ? { manifest: local.manifest, sources: [...local.sources].map(([module, source]) => ({ module, source })).sort((a, b) => a.module < b.module ? -1 : a.module > b.module ? 1 : 0) } : null,
       shared: node.customization?.shared ?? null, extensions: node.extensions.map(child => ({ packageIdentity: child.identity, commit: child.commit })) };
   });
   return { roots: [...new Set(nodes.map(node => node.repositoryDirectory))], entries,
     catalog: { schemaVersion: 1, root: root.identity, packages, entries: entries.map(({ source: _source, ...entry }) => entry) } };
 }
 
-function checkSource(code, id) {
+function checkSource(code, id, label) {
   const parsed = parseSync(id, code, { sourceType: 'module' });
   if (parsed.errors.length) throw new Error('Invalid customization source');
   if (parsed.comments.some(comment => /<reference\b|@jsx(?:ImportSource|Runtime)?\b/u.test(comment.value))) throw new Error('Unsupported ambient reference or JSX configuration');
-  function visit(node) {
+  const literal = node => node?.type === 'Literal' && typeof node.value === 'string';
+  function visit(node, parent) {
     if (!node || typeof node !== 'object') return;
-    if (node.type === 'MetaProperty' || node.type === 'TSImportEqualsDeclaration' ||
+    const specifier = ['ImportDeclaration', 'ExportNamedDeclaration', 'ExportAllDeclaration'].includes(node.type) ? node.source :
+      node.type === 'ImportExpression' ? node.source : node.type === 'CallExpression' && node.callee?.name === 'require' ? node.arguments[0] : null;
+    if (literal(specifier) && (isAbsolute(specifier.value) || specifier.value.includes('\0'))) throw new Error(`Unsupported customization import in ${label}`);
+    if ((node.type === 'MetaProperty' && node.meta.name === 'import' && !(parent?.type === 'MemberExpression' && parent.object === node && !parent.computed && parent.property.name === 'url')) || node.type === 'TSImportEqualsDeclaration' ||
       (node.type === 'TSModuleDeclaration' && (node.kind === 'global' || node.id.type === 'Literal')) ||
-      (node.type === 'ImportExpression' && (node.source.type !== 'Literal' || typeof node.source.value !== 'string' || node.options)) ||
-      (['CallExpression', 'NewExpression'].includes(node.type) && node.callee.type === 'Identifier' && ['require', 'eval', 'Function'].includes(node.callee.name))) {
-      throw new Error('Unsupported computed or ambient loading');
+      (node.type === 'ImportExpression' && (!literal(node.source) || node.options)) ||
+      (['CallExpression', 'NewExpression'].includes(node.type) && node.callee.type === 'Identifier' &&
+        (['eval', 'Function'].includes(node.callee.name) || (node.callee.name === 'require' && (node.type !== 'CallExpression' || node.optional || node.arguments.length !== 1 || !literal(node.arguments[0])))))) {
+      throw new Error(`Unsupported computed or ambient loading in ${label}`);
     }
     for (const value of Object.values(node)) {
-      if (Array.isArray(value)) value.forEach(visit);
-      else if (value && typeof value === 'object') visit(value);
+      if (Array.isArray(value)) value.forEach(child => visit(child, node));
+      else if (value && typeof value === 'object') visit(value, node);
     }
   }
   visit(parsed.program);
 }
 
 export function customizationPlugin(plan) {
-  const contained = id => plan.roots.some(root => {
+  const within = (root, id) => {
     const path = relative(root, id);
     return path !== '..' && !path.startsWith(`..${sep}`) && !isAbsolute(path);
-  });
+  };
+  const contained = id => plan.roots.some(root => within(root, id));
+  const reserved = name => (name ?? '').startsWith('@agentui/') || shared.test(name ?? '');
   const owners = new Map();
   async function owner(path) {
     let directory = dirname(path);
@@ -85,19 +92,21 @@ export function customizationPlugin(plan) {
     config: () => ({ tsconfig, resolve: { dedupe: ['react', 'react-dom', '@agentui/sdk', '@agentui/contracts', '@agentui/protocol'] },
       oxc: { jsx: { runtime: 'automatic', importSource: 'react' } },
       build: { rollupOptions: { input: [qualifier] } } }),
-    async resolveId(specifier, importer) {
+    async resolveId(specifier, importer, options) {
       if (specifier === qualifier) return qualifier;
       if (!importer || !contained(importer.split('?')[0])) return;
+      if (specifier.startsWith('\0')) return;
       if (shared.test(specifier)) {
         try { return fileURLToPath(import.meta.resolve(specifier)); }
         catch { throw new Error(`Unsupported shared customization import: ${specifier}`); }
       }
-      if (specifier.startsWith('/') || specifier.includes('\\') || /^(?:node:|[a-z]+:|#)/iu.test(specifier)) throw new Error(`Unsupported customization import: ${specifier}`);
-      const result = await this.resolve(specifier, importer, { skipSelf: true });
+      if (specifier.startsWith('@agentui/') || specifier.includes('\\') || /^(?:node:|[a-z]+:|#)/iu.test(specifier)) throw new Error(`Unsupported customization import: ${specifier}`);
+      const result = await this.resolve(specifier, importer, { skipSelf: true, kind: options.kind });
+      if (result?.id.startsWith('\0') && !result.external) return result;
       if (!result || result.external || !isAbsolute(result.id.split('?')[0])) throw new Error(`Unsupported customization import: ${specifier}`);
       const path = await realpath(result.id.split('?')[0]);
       if (!contained(path)) throw new Error(`Missing or unsupported contained customization source: ${specifier}`);
-      if (shared.test(await owner(path) ?? '')) throw new Error('Duplicate shared customization dependency');
+      if (reserved(await owner(path))) throw new Error('Duplicate shared customization dependency');
       return result;
     },
     async load(id) {
@@ -105,8 +114,9 @@ export function customizationPlugin(plan) {
       if (id === qualifier) return `import entries from ${JSON.stringify(selection)}; import {checkExtensionEntrypoint} from '@agentui/sdk'; globalThis.__agentuiQualification=(async()=>{for(const entry of entries){const loaded=await entry.load(); const result=checkExtensionEntrypoint(entry.manifest,'desktop',loaded.default); if(result.kind!=='compatible') throw new Error(result.reason);} return entries.map(entry=>entry.manifest.namespace);})();`;
       const path = id.split('?')[0];
       if (contained(path) && scripts.test(path)) {
-        if (shared.test(await owner(path) ?? '')) throw new Error('Duplicate shared customization dependency');
-        checkSource(await readFile(path, 'utf8'), path);
+        if (reserved(await owner(path))) throw new Error('Duplicate shared customization dependency');
+        const root = plan.roots.find(root => within(root, path));
+        checkSource(await readFile(path, 'utf8'), path, relative(root, path));
       }
     },
   };

@@ -31,7 +31,7 @@ function runtime(value: unknown): IosRuntimeIdentity {
 function asset(value: unknown): IosArtifact['assets'][number] {
   const input = record(value, ['path', 'sha256']);
   const path = nonempty(input.path);
-  if (path.startsWith('/') || path.includes('\\') || path.includes(':') ||
+  if (path !== path.normalize('NFC') || path.startsWith('/') || path.includes('\\') || path.includes(':') ||
       [...path].some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127) ||
       path.split('/').some(part => part === '' || part === '.' || part === '..')) {
     throw new Error('Invalid iOS artifact asset path');

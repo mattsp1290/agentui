@@ -88,7 +88,7 @@ for (const [label, change] of [
 });
 
 for (const path of ['', '/', '/absolute', '../escape', './main.hbc', 'a/../main.hbc',
-  'a//main.hbc', 'a/', 'a\\main.hbc', 'C:/main.hbc', 'C:main.hbc', 'main\0.hbc']) {
+  'a//main.hbc', 'a/', 'a\\main.hbc', 'C:/main.hbc', 'C:main.hbc', 'main\0.hbc', 'assets/cafe\u0301.png']) {
   test(`optional iOS contract rejects invalid path ${JSON.stringify(path)}`, () => {
     const input = fixture();
     input.artifact.assets[0].path = path;

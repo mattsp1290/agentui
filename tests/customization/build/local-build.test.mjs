@@ -4,12 +4,28 @@ import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync
 import { join, posix } from 'node:path';
 import { readArtifactBytes } from '../../../apps/host/build/tsc/artifact.js';
 import { repository, buildCustom } from './support.mjs';
+import { desktopSelection } from '../../../scripts/local-customization.mjs';
 
 function fixture(t) {
   const value = repository();
   t.after(() => rmSync(value.directory, { recursive: true, force: true }));
   return value;
 }
+test('catalog sources have locale-independent code-unit order', () => {
+  const node = { identity: 'root', commit: 'commit', subdirectory: '', inputs: [], npm: {}, repositoryDirectory: '/tmp/root', directory: '/tmp/root', extensions: [],
+    customization: { local: { manifest: { sdkVersion: '0.1.0', namespace: 'example', entries: [] }, sources: new Map([['./z.js', 'z'], ['./t.js', 't'], ['./s.js', 's'], ['./B.js', 'B']]) } } };
+  assert.deepEqual(desktopSelection(node).catalog.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
+});
+
+test('an ambient installed package outside prepared roots is rejected', { timeout: 30_000 }, t => {
+  const f = fixture(t), ambient = join(f.directory, 'node_modules/ambient-example');
+  mkdirSync(ambient, { recursive: true });
+  writeFileSync(join(ambient, 'package.json'), JSON.stringify({ name: 'ambient-example', main: 'index.js' }));
+  writeFileSync(join(ambient, 'index.js'), "export default 'ambient';");
+  f.write('desktop/index.tsx', "import 'ambient-example';");
+  assert.throws(() => buildCustom(f), /contained customization source|Unsupported customization import/);
+  assert.equal(existsSync(join(f.directory, 'browser')), false);
+});
 test('exact committed TSX/shared source produces a complete verified artifact and refuses overwrite', { timeout: 60_000 }, t => {
   const f = fixture(t), commit = f.commit(), out = join(f.directory, 'browser');
   f.write('shared/prompts.ts', "export const reviewPrompt = 'DIRTY PROMPT MUST NOT APPEAR';");
@@ -83,10 +99,11 @@ const cases = [
   ['parent escape', "import '../../escape.js';", /Unsupported customization import/],
   ['absolute import', "import '/etc/passwd';", /Unsupported customization import/],
   ['bare import', "import 'other-package';", /Unsupported customization import/],
+  ['unlisted AgentUI package', "import '@agentui/host';", /Unsupported customization import/],
   ['missing source', "import './missing.js';", /Unsupported customization import/],
   ['computed import', 'import(globalThis.moduleName);', /computed or ambient/],
   ['import meta', 'console.log(import.meta.glob("./*.tsx"));', /computed or ambient/],
-  ['require', 'require("react");', /computed or ambient/],
+  ['require', 'require(globalThis.moduleName);', /computed or ambient/],
   ['ambient reference', '/// <reference path="../../ambient.d.ts" />\nexport default {};', /ambient reference/],
 ];
 for (const [label, source, error] of cases) test(`unsupported ${label} cleans owned output and staging`, { timeout: 30_000 }, t => {
@@ -181,6 +198,25 @@ test('normal Vite raw assets remain available to prepared modules', { timeout: 3
   buildCustom(f);
   const artifact = readArtifactBytes(join(f.directory, 'browser'), 'browser-development');
   assert.match([...artifact.files.values()].map(bytes => bytes.toString()).join('\n'), /Review our current plan/);
+});
+
+test('literal dynamic imports and CSS URLs build from contained sources', { timeout: 30_000 }, t => {
+  const f = fixture(t);
+  f.write('desktop/lazy.js', "export default 'lazy loaded marker';");
+  f.write('desktop/style.css', 'body { color: rgb(1, 2, 3); }');
+  f.write('desktop/index.tsx', `import style from './style.css?url';
+    const lazy = () => import('./lazy.js');
+    if (new URL(style).pathname.endsWith('.css') === false) throw new Error('asset failed');
+    export default { kind: 'desktop', sdkVersion: '0.1.0', async activate() {
+      const loaded = await lazy();
+      const response = await fetch(style);
+      if (loaded.default !== 'lazy loaded marker' || !response.ok || !(await response.text()).includes('#010203')) throw new Error('asset loading failed');
+      return { modules: [], dispose() {} };
+    } };`);
+  buildCustom(f);
+  const artifact = readArtifactBytes(join(f.directory, 'browser'), 'browser-development');
+  assert.match([...artifact.files.values()].map(bytes => bytes.toString()).join('\n'), /lazy loaded marker/);
+  assert.ok([...artifact.files.keys()].some(path => /assets\/style-.*\.css$/u.test(path)));
 });
 
 test('equal child trees compile once while each pinned commit remains in provenance', { timeout: 30_000 }, t => {

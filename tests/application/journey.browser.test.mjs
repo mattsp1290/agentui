@@ -695,6 +695,7 @@ test('a prepared graph renders both hook modules and shares SDK generation state
   second.write('desktop/index.tsx', `import React from 'react'; import {pinFrontendTools} from '@agentui/sdk/tools';
     function View(){const [value] = React.useState('Second graph hook'); return <p>{value}</p>}
     export default {kind:'desktop',sdkVersion:'0.1.0',async activate(){
+      while (!window.graphGeneration) await new Promise(resolve => setTimeout(resolve, 0));
       const generation = await window.graphGeneration;
       const run = {conversation:{hostId:'host',conversationId:'conversation'},runId:'run',authority:{kind:'agentui-host',hostId:'host',binding:{namespace:'fixture',installationId:'i',opaqueSessionId:'s'}}};
       const pin = pinFrontendTools({generations:[generation],platform:'desktop',run,capabilities:undefined}); pin.release();

@@ -78,7 +78,7 @@ export function CustomizationModules({ customization, active, actions, enabled, 
     })();
     return () => { removed = true; void cleanup(); };
   }, [customization]);
-  return <aside className="customization-panel" aria-label="Customization">
+  return <aside className="customization-panel" aria-label={`Customization ${customization.manifest.namespace}`} data-customization-state={activation.kind}>
     {activation.kind === 'loading' && <p role="status">Loading custom tools…</p>}
     {activation.kind === 'failed' && <p role="alert">Custom tools could not load. {activation.message} Use Restore default view to continue without them.</p>}
     {activation.kind === 'ready' && active && actions && <ModuleBoundary fail={error => fail.current(error)}>

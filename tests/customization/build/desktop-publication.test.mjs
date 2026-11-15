@@ -5,7 +5,20 @@ import { mkdir, readFile, readdir, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import test from 'node:test';
 import { pathToFileURL } from 'node:url';
-import { repository, root } from './support.mjs';
+import { buildCustom, repository, root } from './support.mjs';
+
+for (const [label, activate] of [
+  ['host CSP eval', "globalThis['Func'+'tion']('return 1')(); return {modules:[],dispose(){}};"],
+  ['throwing activation', "throw new Error('Activation failed');"],
+  ['pending activation', 'return new Promise(() => {});'],
+  ['missing disposal', 'return {modules:[]};'],
+]) test(`desktop qualification rejects ${label} without publication`, { timeout: 30_000 }, async t => {
+  const f = repository();
+  t.after(() => rm(f.directory, { recursive: true, force: true }));
+  f.write('desktop/index.tsx', `export default {kind:'desktop',sdkVersion:'0.1.0',activate(){${activate}}};`);
+  assert.throws(() => buildCustom(f));
+  assert.deepEqual(await readdir(f.directory), ['source']);
+});
 
 test('desktop publication rejects staged mutation after the browser receives verified bytes', { timeout: 30_000 }, async t => {
   const f = repository();
