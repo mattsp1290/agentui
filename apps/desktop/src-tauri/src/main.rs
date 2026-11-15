@@ -13,7 +13,7 @@ struct NativeState {
 fn bundled(url: &tauri::Url) -> bool {
     url.scheme() == "tauri"
         && url.host_str() == Some("localhost")
-        && matches!(url.path(), "/" | "/index.html")
+        && matches!(url.path(), "" | "/" | "/index.html")
         && url.query().is_none()
 }
 #[tauri::command]
@@ -120,7 +120,11 @@ fn main() {
 mod tests {
     #[test]
     fn only_the_bundled_main_document_qualifies_for_native_admission() {
-        for value in ["tauri://localhost/", "tauri://localhost/index.html"] {
+        for value in [
+            "tauri://localhost",
+            "tauri://localhost/",
+            "tauri://localhost/index.html",
+        ] {
             assert!(super::bundled(&tauri::Url::parse(value).unwrap()));
         }
         for value in [

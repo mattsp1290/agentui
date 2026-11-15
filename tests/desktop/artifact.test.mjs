@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -155,7 +155,7 @@ test('native staging preserves both entries, every verified byte, and the input 
   const manifest = f.build('browser-development'), artifact = join(f.root, 'apps/desktop/web-dist-browser');
   const before = readArtifactBytes(artifact, 'browser-development');
   const out = join(f.root, 'native');
-  assert.deepEqual(await stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), { directory: out, manifest });
+  assert.deepEqual(await stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), { directory: realpathSync(out), manifest });
   assert.deepEqual(readArtifactBytes(out, 'browser-development'), before);
   assert.deepEqual(readArtifactBytes(artifact, 'browser-development'), before);
   assert.notDeepEqual(before.files.get('index.html'), before.files.get('browser.html'));
