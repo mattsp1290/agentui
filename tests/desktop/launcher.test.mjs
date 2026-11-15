@@ -35,14 +35,14 @@ for (const args of invalid) {
   test(`launcher validation rejects ${JSON.stringify(args)}`, () => {
     const result = spawnSync(process.execPath, [validator, ...args], { encoding: 'utf8' });
     assert.equal(result.status, 1);
-    assert.match(result.stderr, /Cannot connect to AgentUI host:.*(?:--host-url|http:\/\/127\.0\.0\.1:PORT\/browser\.html)/);
+    assert.match(result.stderr, /Cannot connect to AgentUI host:.*(?:--host-url|http:\/\/127\.0\.0\.1:PORT\/browser\.html)/s);
     assert.equal(result.stdout, '');
   });
   test(`launcher rejects ${JSON.stringify(args)} before building or opening`, { skip: process.platform !== 'darwin' }, t => {
     const result = launch(t, args);
     assert.equal(result.error, undefined);
     assert.notEqual(result.status, 0);
-    assert.match(result.stderr, /Cannot connect to AgentUI host:.*(?:--host-url|http:\/\/127\.0\.0\.1:PORT\/browser\.html)/);
+    assert.match(result.stderr, /Cannot connect to AgentUI host:.*(?:--host-url|http:\/\/127\.0\.0\.1:PORT\/browser\.html)/s);
     assert.equal(result.stdout, '');
     assert.doesNotMatch(result.stderr, /Build reached/);
   });
@@ -62,7 +62,7 @@ test('launcher forwards a valid host URL to its build step', { skip: process.pla
   assert.equal(result.error, undefined);
   assert.equal(result.status, 99);
   assert.match(result.stderr, /Build reached/);
-  assert.doesNotMatch(result.stderr, /Cannot connect to AgentUI host/);
+  assert.match(result.stderr, /npm exited with 99/);
 });
 
 test('validator rejects an invalid host URL through a symbolic link', { skip: process.platform === 'win32' }, t => {

@@ -24,7 +24,7 @@ The desktop app mounts an app-owned React shell in Tauri. Its public compilation
 Modules import the platform primitive package directly; the app entries do not re-export it.
 The root owns the browser workbench and its tooling because it checks integration across the theme and primitive packages.
 The adapter-test workspace separately owns package and ambient-boundary checks.
-The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Native connection and OS-protected storage adapters remain unimplemented. The [native credential contract](native-credentials.md) specifies their ownership and storage interfaces.
+The desktop workspace owns Tauri Rust setup and the native window lifecycle. The root launcher owns a trusted host process, locally or over SSH, and opens the existing host-served client in Tauri. It provisions private tools and built assets on the selected host. The separate bundled native entry retains its [protected credential path](native-credentials.md).
 Each package compiles independently with strict TypeScript.
 There are no source aliases. TypeScript package imports resolve built exports.
 Repository tests share root-owned compiler support.
@@ -54,7 +54,7 @@ An AgentUI-hosted run names the executing host, including hosts reached over SSH
 That host persists intent, receipts, ordered events, pending decisions, and uncertain outcomes independently of client connections.
 The connecting Mac stores routing references and does not become a second run authority.
 The Mac owns its local conversations and desired customization commit.
-Its Node host must outlive the Tauri client process.
+The launcher supervises its Node host for the client session. Closing the app or stopping the launcher ends that session. Durable host data survives relaunch.
 
 For a remote provider run, the remote service owns execution and approvals.
 AgentUI persists local command intent and observations.
