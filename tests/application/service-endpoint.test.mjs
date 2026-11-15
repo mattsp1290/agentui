@@ -26,7 +26,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const compatibility = { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
     let closing = false;
-    const options = { observability: NO_OBSERVABILITY, access, api: createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => closing }), isClosing: () => closing };
+    const options = { observability: NO_OBSERVABILITY, access, api: createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, credentialClass, isClosing: () => closing }), isClosing: () => closing };
     const handler = serviceEndpoint(credentialClass === 'native' ? { ...options, credentialClass } : { ...options, credentialClass, files: new Map() });
     const server = createServer((request, response) => { void handler(request, response).catch(() => response.destroy()); });
     t.after(async () => {

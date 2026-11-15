@@ -53,7 +53,7 @@ export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
 });
 export interface ServiceMetadata {
   readonly agents: readonly AgentDescriptor[];
-  readonly defaultAgentId: string;
+  readonly defaultAgentId: string | null;
   readonly hostId: string;
   readonly principalId: string;
   readonly compatibility: HostCompatibility;
@@ -182,10 +182,10 @@ function agentDescriptor(value: unknown): AgentDescriptor {
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
-  const runtime = record(input.nativeRuntime, ['engine', 'version', 'format']);
+  const runtime = input.nativeRuntime === null ? null : record(input.nativeRuntime, ['engine', 'version', 'format']);
   const artifact = record(input.appliedArtifact, ['artifactId', 'gitRevision']);
   return { wireVersion: count(input.wireVersion), extensionSdkVersion: identifier(input.extensionSdkVersion),
-    nativeRuntime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
+    nativeRuntime: runtime === null ? null : { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
     desiredGitRevision: identifier(input.desiredGitRevision),
     appliedArtifact: { artifactId: identifier(artifact.artifactId), gitRevision: identifier(artifact.gitRevision) } };
 }
@@ -227,8 +227,8 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
   metadata(value) {
     const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
     if (!Array.isArray(input.agents)) throw new Error('Invalid agents');
-    const agents = input.agents.map(agentDescriptor), defaultAgentId = identifier(input.defaultAgentId);
-    if (!agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
+    const agents = input.agents.map(agentDescriptor), defaultAgentId = input.defaultAgentId === null ? null : identifier(input.defaultAgentId);
+    if (defaultAgentId === null ? agents.some(agent => agent.availability.kind === 'ready') : !agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
     return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
   },
   catalog(value) {

@@ -41,7 +41,7 @@ For UI activation, check the lifetime first and retain it for cleanup before val
 Behaviour checks accept class instances, accessors, and callable objects with the required fields.
 They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
-The host accepts already imported server entries through `startBrowserHost({ providerExtensions })`.
+The host accepts already imported server entries through `startBrowserHost({ agentStartup: { kind: 'extensions' }, providerExtensions })`.
 It stages all registrations before connecting, rejects duplicate contributions or full instances, and closes registration when activation settles.
 Failed activation disposes earlier valid lifetimes; an entry that throws before returning a valid lifetime owns its partial activation cleanup.
 
@@ -132,7 +132,10 @@ UI refresh does not invoke server replacement.
 ## Select installed server extensions with the CLI
 
 `serve --config ./agents.json --extensions ./extensions.json --data-dir ./state` selects installed server packages alongside configured native agents.
-The native `--config` remains required, and `--extensions` is valid only for `serve`.
+`serve --extensions ./extensions.json --data-dir ./state` runs providers without native agents or recorded playback.
+Add `--trusted` for trusted browser access. `--extensions` is valid only for `serve`.
+With both files, the configured native default remains selected. Without native configuration, the default is the ready provider with the smallest stable ID in the current catalog, independent of discovery order.
+Empty, changing, or failed catalogs remain readable with no default. Creation is disabled while saved conversations and their original agent identities remain available.
 Omitting `--extensions` preserves the existing native-agent behavior.
 Selection and credential rotation take effect after a restart.
 

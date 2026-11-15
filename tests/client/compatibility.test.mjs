@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { checkCompatibility } from '@agentui/client';
-import { EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_SDK_RUNTIME, PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_SDK_RUNTIME, PI_RUNTIME, SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 
 const nativeRuntime = { engine: 'recorded', version: '1.0.0', format: 'recorded-v1' };
 const client = { supportedWireVersions: [1], supportedExtensionSdkVersions: ['0.2'], supportedNativeRuntimes: [nativeRuntime], expectedArtifactId: 'artifact-a' };
@@ -36,7 +36,7 @@ test('deployment and applied artifact mismatches remain distinct findings', () =
 });
 
 test('solo clients accept the exact Pi SDK chat runtime and reject other versions or formats', () => {
-  const piHost = { ...host, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION,
+  const piHost = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
     nativeRuntime: { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' } };
   assert.deepEqual(PI_RUNTIME, piHost.nativeRuntime);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, piHost), { kind: 'compatible' });
@@ -49,7 +49,7 @@ test('solo clients accept the exact Pi SDK chat runtime and reject other version
 });
 
 test('solo clients accept the exact Codex SDK subscription runtime and reject changed native identity', () => {
-  const sdkHost = { ...host, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: {
+  const sdkHost = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: {
     engine: 'codex-sdk', version: '0.169.0', format: 'codex-sdk-chat-chatgpt-gpt-6.1-sol-v1',
   } };
   assert.deepEqual(CODEX_SDK_RUNTIME, sdkHost.nativeRuntime);
@@ -62,7 +62,7 @@ test('solo clients accept the exact Codex SDK subscription runtime and reject ch
 
 for (const model of ['opus', 'sonnet']) {
   test(`solo clients accept the exact Claude ${model} runtime and reject changed identities`, () => {
-    const claudeHost = { ...host, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CLAUDE_SDK_RUNTIMES[model] };
+    const claudeHost = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CLAUDE_SDK_RUNTIMES[model] };
     assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, claudeHost), { kind: 'compatible' });
     for (const change of [{ version: '0.3.324' }, { format: 'claude-sdk-v2' }, { engine: 'other' }]) {
       const result = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...claudeHost,
@@ -74,7 +74,7 @@ for (const model of ['opus', 'sonnet']) {
 }
 
 test('current clients refuse pre-presentation SDK artifacts without changing the wire version', () => {
-  const current = { ...host, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
+  const current = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, current), { kind: 'compatible' });
   const old = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...current, extensionSdkVersion: '0.0.0' });
   assert.equal(old.kind, 'incompatible');
@@ -82,7 +82,7 @@ test('current clients refuse pre-presentation SDK artifacts without changing the
 });
 
 test('provider observation wire 5 requires matching artifacts and rejects wire 4', () => {
-  const current = { ...host, wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
+  const current = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, current), { kind: 'compatible' });
   assert.equal(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...current, wireVersion: 4 }).kind, 'incompatible');
   assert.equal(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [4] }, current).kind, 'incompatible');

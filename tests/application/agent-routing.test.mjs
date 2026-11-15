@@ -9,7 +9,7 @@ import { chromium } from 'playwright';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { readArtifactBytes } from '../../apps/host/build/tsc/artifact.js';
 import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
-import { EXTENSION_SDK_VERSION, CODEX_RUNTIME, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
+import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, CODEX_RUNTIME, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES } from '@agentui/contracts/compatibility';
 import { parseServiceRequest, parseServiceResponse } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { openLocalHost, createRecordedDriver } from '@agentui/host';
@@ -39,7 +39,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const paired = access.pair(access.invite('browser-development'), 'browser-development');
   const { principal } = paired;
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
-    compatibility: { wireVersion: 5, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
+    compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   const configuredAgents = [
     { installation: a, name: 'Project A', availability: { kind: 'ready' } }, { installation: b, availability: { kind: 'ready' } },
@@ -47,7 +47,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
     { installation: d, model: { id: 'remote-fixture', label: 'GPT-6.1 Sol' }, name: 'Project B', availability: { kind: 'ready' } },
     { installation: e, availability: { kind: 'ready' } },
   ];
-  let api = createApi({ ...options, host, installation: a, agents: configuredAgents });
+  let api = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: a, agents: configuredAgents } });
   const call = async request => parseServiceResponse(request, { ok: true, value: await api(principal, parseServiceRequest(request)) }).value;
   const metadata = await call({ op: 'metadata' });
   assert.doesNotMatch(JSON.stringify(metadata), /private-account|private\/workspace|same-installation-id/);
@@ -66,11 +66,11 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.deepEqual(calls, ['codex', 'sonnet']);
   assert.equal((await call({ op: 'search', query: 'no matches', after: null })).items.length, 0);
   assert.equal((await call({ op: 'conversation-agent', scope: scopeB })).id, sonnet.id);
-  const restricted = createApi({ ...options, host, installation: b, agents: [
+  const restricted = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: b, agents: [
     { installation: a, selectable: false, availability: { kind: 'ready' } },
     { installation: d, model: { id: 'older-version', label: 'Older version' }, selectable: false, availability: { kind: 'ready' } },
     { installation: b, availability: { kind: 'ready' } },
-  ] });
+  ] } });
   const restrictedMetadata = await restricted(principal, { op: 'metadata' });
   assert.deepEqual(restrictedMetadata.agents.map(agent => agent.id), [sonnet.id]);
   assert.equal((await restricted(principal, { op: 'conversation-agent', scope: scopeA })).availability.kind, 'ready');
@@ -100,7 +100,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
     await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
   };
   const originalApi = api;
-  api = createApi({ ...options, host, installation: e, agents: configuredAgents });
+  api = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: e, agents: configuredAgents } });
   await page.reload();
   await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
   const collidingChoice = page.getByRole('button', { name: 'Start new chat with Project B · GPT-6.1 Sol', exact: true });
@@ -110,7 +110,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.keyboard.press('Escape');
   const matchingAgents = configuredAgents.map(entry => entry.installation === d
     ? { ...entry, model: { id: CODEX_SDK_MODEL.id, label: 'Remote Sol name' } } : entry);
-  api = createApi({ ...options, host, installation: e, agents: matchingAgents });
+  api = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: e, agents: matchingAgents } });
   await page.reload();
   await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
   const sdkWelcomeChoice = page.getByRole('button', { name: 'Start new chat with Project B · Remote Sol name', exact: true });
@@ -129,7 +129,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await page.locator('.composer-picker-option[aria-current="true"]').count(), 1);
   assert.deepEqual(host.installation(sdkScope), e);
   await page.keyboard.press('Escape');
-  api = createApi({ ...options, host, installation: e, agents: configuredAgents });
+  api = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: e, agents: configuredAgents } });
   await page.reload();
   await open(sdkScope.conversationId);
   await page.getByRole('button', { name: 'Model, GPT-6.1 Sol', exact: true }).click();
@@ -250,7 +250,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(host.installation(droppedScope), null);
   host.close(); await host.drained;
   host = openLocalHost({ path, projection: transcriptProjection, driver: [driver(b, 'sonnet')], authorize: scope => scope.hostId === access.hostId });
-  api = createApi({ ...options, host, installation: b, agents: [{ installation: b, availability: { kind: 'ready' } }] });
+  api = createApi({ ...options, host, agentSelection: { kind: 'native', defaultInstallation: b, agents: [{ installation: b, availability: { kind: 'ready' } }] } });
   assert.equal((await call({ op: 'metadata' })).defaultAgentId, sonnet.id);
   const removed = await call({ op: 'conversation-agent', scope: scopeA });
   assert.equal(removed.id, codex.id); assert.equal(removed.availability.kind, 'unavailable');

@@ -31,10 +31,10 @@ export function listenerLog() {
   const emitter = new EventEmitter();
   return { emitter, get active() { return emitter.listenerCount('update'); }, maximum: 0, events: [], deliveries: [] };
 }
-export function entry(t, { label = 'entry', listeners = listenerLog(), ...hooks } = {}) {
+export function entry(t, { label = 'entry', namespace = 'example-crew', listeners = listenerLog(), ...hooks } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-server-entry-'));
   t.after(() => { fixtures.delete(directory); rmSync(directory, { recursive: true, force: true }); });
-  const instance = { namespace: 'example-crew', installationId: 'crew-personal', generation: label, protocolVersion: 'crew-v2' };
+  const instance = { namespace, installationId: 'crew-personal', generation: label, protocolVersion: 'crew-v2' };
   const { crewBackend, crew, crewPresentation } = createCrewFixture(instance);
   const calls = { import: 0, activate: 0, connect: 0, discover: 0, close: 0, dispose: 0, commands: 0, resolve: 0, creates: [], lookups: [] };
   const fixture = { calls, hooks, listeners, context: null, credential: null, label };
@@ -49,12 +49,13 @@ export function entry(t, { label = 'entry', listeners = listenerLog(), ...hooks 
       return hooks[kind](operation, fixture);
     });
   }
-  const connected = { ...crewBackend,
+  const connected = { ...crewBackend, ...(hooks.capabilities ? { capabilities: hooks.capabilities } : {}),
     async discover() {
       calls.discover++;
       return fixture.context.credentials.use({ credential: fixture.credential, service }, async value => {
         assert.equal(value, secret);
-        await hooks.discover?.(fixture);
+        const discovered = await hooks.discover?.(fixture);
+        if (discovered !== undefined) return discovered;
         return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: label }, name: label }] };
       });
     },
