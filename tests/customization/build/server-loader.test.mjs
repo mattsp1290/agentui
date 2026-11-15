@@ -47,6 +47,20 @@ test('loader deregisters after import and export failures and denies nonartifact
   }
 });
 
+test('retained loader applies the shared SDK, builtin, and forbidden import policy', async t => {
+  const f = await retained(t, entry('return {load:specifier => import(specifier), dispose(){}};'));
+  const [loaded] = await loadServerArtifact(f.verified, import.meta.resolve('@agentui/sdk'));
+  try {
+    const lifetime = loaded.entry.activate({});
+    assert.equal((await lifetime.load('@agentui/sdk')).parseExtensionManifest, SDK.parseExtensionManifest);
+    assert.equal(typeof (await lifetime.load('fs')).readFile, 'function');
+    assert.equal((await lifetime.load('node:path')).basename('/fixture/allowed'), 'allowed');
+    for (const specifier of ['module', 'node:module', '@agentui/host', 'node:unknown', 'ordinary', 'toString']) {
+      await assert.rejects(lifetime.load(specifier), { message: 'Unsupported server artifact import' });
+    }
+  } finally { await loaded.dispose(); }
+});
+
 test('lazy imports remain available through lifetime disposal and are unavailable after module disposal', async t => {
   const f = await retained(t, entry("return {lazy:() => import('./unused.mjs'), async dispose(){return (await import('./lazy.mjs')).value}};"));
   const [loaded] = await loadServerArtifact(f.verified, import.meta.resolve('@agentui/sdk'));

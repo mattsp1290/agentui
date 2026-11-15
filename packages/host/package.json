@@ -32,6 +32,10 @@
       "types": "./dist/customization/index.d.ts",
       "import": "./dist/customization/index.js"
     },
+    "./server-artifact-policy": {
+      "types": "./dist/customization/server-artifact-policy.d.ts",
+      "import": "./dist/customization/server-artifact-policy.js"
+    },
     "./claude-sdk": {
       "types": "./dist/claude-sdk-driver.d.ts",
       "import": "./dist/claude-sdk-driver.js"

@@ -3,7 +3,7 @@ import { readFile } from 'node:fs/promises';
 import { dirname, join, relative, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { build } from 'esbuild';
-export { classifyHostSpecifier } from './server-customization-abi-policy.mjs';
+export { classifyHostSpecifier } from '@agentui/host/server-artifact-policy';
 
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
 
