@@ -41,4 +41,6 @@ A nonterminal or unknown request blocks another send. Crew's `uncertain` receipt
 
 The archive under `vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/` was built from a clean Git archive of that exact revision. Its manifest records the source package tree, both archive digests, build versions and npm integrity. The retained MIT license covers the package. The pin identifies the merged public SDK source. The controlled example tests do not establish release qualification.
 
+AgentUI pins the example's Zod dependency to `4.6.6` and applies a root npm override to `@birbcrew/client@0.1.0` so both use that patched version. This consuming-runtime policy addresses [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). The retained archive and its original `4.4.3` dependency declaration remain unchanged. Root overrides do not travel with packed libraries. A separate consumer must configure its own dependency policy, as the installed-example test does.
+
 The root SDK and `/contract` imports need no AG-UI runtime. This example does not import `/agui`. AgentUI's existing pinned AG-UI fork remains unchanged. The SDK supports Node 22 and 24 independently of Crew's full service runtime. AgentUI's host tests require the repository's pinned Node 24 runtime.
