@@ -1,6 +1,6 @@
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, RunIdentity } from '@agentui/contracts';
-import type { DispatchIdentity, DispatchObservation, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
+import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity } from '@agentui/contracts';
+import type { DispatchIdentity, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
 export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
 export function commandKey(scope: ConversationScope, id: string): string { return canonicalJson([...scopeKey(scope), id]); }
@@ -26,6 +26,8 @@ export interface HostOutput<E> {
 export type CommandResult<E> =
   | { readonly kind: 'completed'; readonly output: HostOutput<E> }
   | { readonly kind: 'rejected'; readonly reason: string };
+export type NotDispatched = Extract<ReceiptState, { readonly kind: 'not-dispatched' }>;
+export type ProviderDispatchObservation<T> = NativeDispatchObservation<T> | NotDispatched;
 export interface CapturedTarget {
   readonly installation: Installation;
   readonly identity: DispatchIdentity;
@@ -41,7 +43,10 @@ export interface ProviderDriver<E> {
   readonly source: 'recorded' | 'codex' | 'codex-sdk' | 'claude-sdk' | 'pi';
   readonly installation: Installation;
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
-  dispatch(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
+  /** Return not-dispatched only before issuing any native request or response, publishing an event,
+   * or producing output for this command. It is permanently terminal and is never looked up.
+   * After any such effect, return native evidence or outcome-unknown, or throw if the outcome is unknown. */
+  dispatch(command: ClientCommand, target: CapturedTarget): Promise<ProviderDispatchObservation<CommandResult<E>>>;
   lookup?(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
 }
 export type ObservedResult =
@@ -51,7 +56,7 @@ export interface StoredCommand {
   readonly command: ClientCommand;
   readonly target: CapturedTarget;
   readonly receipt: Receipt;
-  readonly observation: DispatchObservation<ObservedResult> | null;
+  readonly observation: ProviderDispatchObservation<ObservedResult> | null;
 }
 export interface HostBudgets {
   readonly maxCommandBytes: number;

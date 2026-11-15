@@ -238,9 +238,9 @@ export function createApplicationController(deps: {
   async function submitCommand(owner: Session | null, target: OpenConversation, operation: () => Promise<SubmitResult>): Promise<SubmitResult> {
     if (!owner || session !== owner) throw new Error('This application has closed.');
     if (state.busy) throw new Error('Another operation is in progress.');
+    requireTarget(owner, target);
     publish({ busy: true, error: '' });
     try {
-      requireTarget(owner, target);
       if (target.agent.availability.kind !== 'ready') throw new Error(target.agent.availability.reason);
       const result = await current(owner, operation());
       if (result.kind === 'rejected') publish({ error: result.reason });

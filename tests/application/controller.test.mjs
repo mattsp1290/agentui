@@ -623,21 +623,20 @@ for (const replacement of ['conversation', 'view', 'session']) {
     const records = structuredClone([...f.drafts]);
     for (const invoke of [() => f.actions.commands.send('old'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
       await assert.rejects(invoke());
+      assert.strictEqual(f.app.getSnapshot(), replacementState);
     }
     assert.deepEqual([...f.drafts], records);
     assert.equal(f.submitted.length, 0);
     assert.equal(f.target.store.getSnapshot().outbox.length, 0);
-    if (replacement === 'session') assert.strictEqual(f.app.getSnapshot(), replacementState);
   });
 }
 
-for (const blocked of ['disconnected', 'feed-ended', 'storage', 'revoked', 'incompatible']) {
+for (const blocked of ['disconnected', 'feed-ended', 'storage', 'incompatible']) {
   test(`SDK ${blocked} refusal persists and sends nothing`, async t => {
     const f = await openCommands(t);
     if (blocked === 'disconnected') f.target.store.disconnect();
     if (blocked === 'feed-ended') { f.feeds.at(-1).finish({ kind: 'failed', reason: 'Lost feed' }); await Promise.resolve(); }
     if (blocked === 'storage') f.leases[0].failure(new Error('Storage unavailable'));
-    if (blocked === 'revoked') f.unauthorized[0]();
     if (blocked === 'incompatible') { f.behavior.runtime = { engine: 'unknown', version: '1', format: 'unknown' }; await f.app.reconnect(); }
     const records = structuredClone([...f.drafts]);
     for (const invoke of [() => f.actions.commands.send('blocked'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
@@ -648,6 +647,33 @@ for (const blocked of ['disconnected', 'feed-ended', 'storage', 'revoked', 'inco
     assert.equal(f.app.getSnapshot().busy, false);
   });
 }
+
+test('revoked SDK commands and caught UI submission preserve the access explanation without local changes', async t => {
+  const f = await openCommands(t);
+  await f.target.store.setDraft('Keep the unsent draft');
+  f.unauthorized[0]();
+  const revoked = f.app.getSnapshot();
+  assert.match(revoked.error, /previous access may have been revoked/);
+  assert.equal(revoked.host.kind, 'unpaired');
+  assert.equal(revoked.busy, false);
+  const records = structuredClone([...f.drafts]), updates = [];
+  const unsubscribe = f.app.subscribe(() => updates.push(f.app.getSnapshot()));
+  t.after(unsubscribe);
+  for (const invoke of [() => f.actions.commands.send('blocked'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
+    await assert.rejects(invoke(), /compatible paired host/);
+    assert.strictEqual(f.app.getSnapshot(), revoked);
+    assert.deepEqual([...f.drafts], records);
+    assert.deepEqual(f.target.store.getSnapshot().outbox, []);
+    assert.deepEqual(f.submitted, []);
+  }
+  await assert.doesNotReject(f.actions.submit(() => f.target.store.send()));
+  assert.strictEqual(f.app.getSnapshot(), revoked);
+  assert.deepEqual(updates, []);
+  assert.deepEqual([...f.drafts], records);
+  assert.equal(f.target.store.getSnapshot().draft, 'Keep the unsent draft');
+  assert.deepEqual(f.target.store.getSnapshot().outbox, []);
+  assert.deepEqual(f.submitted, []);
+});
 
 for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES.sonnet, PI_RUNTIME]) {
   for (const state of ['running', 'stopping', 'incomplete']) {

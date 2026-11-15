@@ -1,8 +1,8 @@
 import { canonicalJson, parseDecision, parseRunIdentity, sameScope } from '@agentui/contracts';
 import type { ConversationScope, Json, Projection } from '@agentui/contracts';
 import { createDispatchOperation, parseSessionReference } from '@mattsp1290/switchboard';
-import type { DispatchEvidence, DispatchIdentity, DispatchObservation } from '@mattsp1290/switchboard';
-import type { CapturedTarget, HostOutput, Installation, NativeRun, ObservedResult, ProviderDriver, StoredCommand } from './durable-model.js';
+import type { DispatchEvidence, DispatchIdentity } from '@mattsp1290/switchboard';
+import type { CapturedTarget, HostOutput, Installation, NativeRun, NotDispatched, ObservedResult, ProviderDispatchObservation, ProviderDriver, StoredCommand } from './durable-model.js';
 import { array, cloneJson, nonempty, object, positiveInteger } from './codec.js';
 import type { SettlementObservation } from './settlement.js';
 
@@ -72,10 +72,14 @@ export function capturedTarget(value: unknown, scope: ConversationScope): Captur
   return target;
 }
 
-export function observation(value: unknown, target: CapturedTarget): DispatchObservation<ObservedResult> {
+function notDispatched(reason: unknown): NotDispatched {
+  return { kind: 'not-dispatched', reason: nonempty(reason) };
+}
+
+export function observation(value: unknown, target: CapturedTarget): ProviderDispatchObservation<ObservedResult> {
   const input = object(value);
   if (input.kind === 'outcome-unknown') return { kind: 'outcome-unknown' };
-  if (input.kind === 'not-dispatched' && (input.reason === 'aborted' || input.reason === 'intent-failed')) return { kind: input.kind, reason: input.reason };
+  if (input.kind === 'not-dispatched') return notDispatched(input.reason);
   if (input.kind !== 'accepted' && input.kind !== 'conclusive') throw new Error('Invalid observation');
   const parsedEvidence = parseEvidence(input.evidence, target.identity);
   if (input.kind === 'accepted') return { kind: 'accepted', evidence: parsedEvidence };
@@ -96,19 +100,28 @@ export function captureTarget(input: Omit<CapturedTarget, 'identity'>, hostOpera
 }
 
 export async function dispatchNative<E>(stored: StoredCommand, driverFor: (target: Installation) => ProviderDriver<E> | undefined,
-  verifyIntent: () => void): Promise<DispatchObservation<ObservedResult>> {
+  verifyIntent: () => void): Promise<ProviderDispatchObservation<ObservedResult>> {
+  let localRefusal: NotDispatched | undefined;
   const operation = createDispatchOperation({ mode: 'fresh', identity: stored.target.identity,
     signal: new AbortController().signal, recordIntent: verifyIntent,
-    dispatchNative: () => {
+    dispatchNative: async () => {
       const captured = driverFor(stored.target.installation);
       if (!captured) throw new Error('Captured agent is unavailable');
-      return captured.dispatch(stored.command, stored.target);
+      const observed = await captured.dispatch(stored.command, stored.target);
+      if (observed.kind === 'not-dispatched') {
+        localRefusal = notDispatched(observed.reason);
+        // Switchboard accepts only native observations. This placeholder stays private
+        // while the one-shot handle and its lifecycle events remain unexposed.
+        return { kind: 'outcome-unknown' };
+      }
+      return observed;
     },
   });
-  return (await operation.run()).observation;
+  const observed = (await operation.run()).observation;
+  return localRefusal ?? observed;
 }
 
-export async function reconcileNative<E>(stored: StoredCommand, driver: ProviderDriver<E> | undefined): Promise<DispatchObservation<ObservedResult>> {
+export async function reconcileNative<E>(stored: StoredCommand, driver: ProviderDriver<E> | undefined): Promise<ProviderDispatchObservation<ObservedResult>> {
   const lookup = driver?.lookup;
   const previous = stored.observation === null || stored.observation.kind === 'not-dispatched'
     ? { kind: 'outcome-unknown' } as const : stored.observation;
@@ -119,13 +132,13 @@ export async function reconcileNative<E>(stored: StoredCommand, driver: Provider
   return result.kind === 'ok' ? result.value.observation : { kind: 'outcome-unknown' };
 }
 
-export function settlementObservation(value: DispatchObservation<ObservedResult>): SettlementObservation<DispatchEvidence> {
+export function settlementObservation(value: ProviderDispatchObservation<ObservedResult>): SettlementObservation<DispatchEvidence> {
   if (value.kind === 'outcome-unknown' || value.kind === 'not-dispatched') return value;
   return { ...value, evidence: { correlation: canonicalJson(value.evidence.identity),
     operation: value.evidence.nativeOperation, source: value.evidence } };
 }
 
-export function nativeObservation(value: SettlementObservation<DispatchEvidence>): DispatchObservation<ObservedResult> {
+export function nativeObservation(value: SettlementObservation<DispatchEvidence>): ProviderDispatchObservation<ObservedResult> {
   if (value.kind === 'outcome-unknown' || value.kind === 'not-dispatched') return value;
   return { ...value, evidence: { ...value.evidence.source, nativeOperation: value.evidence.operation } };
 }
