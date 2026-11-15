@@ -5,7 +5,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { ThemeScope } from '@agentui/ui-primitives/desktop';
 import { EXTENSION_SDK_VERSION, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
 import { validateConversationModules, validateUiExtensionContributions } from '@agentui/sdk/react';
-import { createNotesFixture, manifest, textTool } from './fixture.ts';
+import { callableEntry, createNotesFixture, manifest, ServerEntry, textTool, UiEntry } from './fixture.ts';
 import { crew } from '../providers/contracts/crew.ts';
 
 const entry = { kind: 'desktop', sdkVersion: EXTENSION_SDK_VERSION, activate() {} };
@@ -104,4 +104,42 @@ test('module validation accepts React component wrappers supported by the public
   }
   assert.match(renderToStaticMarkup(createElement(memo(() => 'memo'))), /memo/u);
   assert.match(renderToStaticMarkup(createElement(forwardRef(() => 'ref'))), /ref/u);
+});
+
+test('in-process contracts accept class instances, getters and callable objects', async () => {
+  const metadata = parseExtensionManifest(manifest);
+  const server = new ServerEntry();
+  const serverMetadata = parseExtensionManifest({ ...manifest, entries: [{ kind: 'server', module: './server.js' }] });
+  assert.equal(checkExtensionEntrypoint(serverMetadata, 'server', server).kind, 'compatible');
+  validateExtensionLifetime(server.activate());
+  const result = { kind: 'rejected', reason: 'disabled' };
+  const sent = [];
+  for (const loaded of [new UiEntry(), callableEntry]) {
+    assert.equal(checkExtensionEntrypoint(metadata, 'desktop', loaded).kind, 'compatible');
+    const active = loaded.activate();
+    validateExtensionLifetime(active);
+    validateUiExtensionContributions(active);
+    assert.equal(active.modules[0].label, 'Notes');
+    assert.equal(active.modules[0].actions[0].label, 'Summarize');
+    assert.equal(await active.modules[0].actions[0].run({ commands: {
+      async send(text) { sent.push(text); return result; },
+    } }), result);
+    await active.dispose();
+  }
+  assert.deepEqual(sent, ['Summarize', 'Summarize']);
+});
+
+test('manifest metadata remains plain exact data while behavior values allow prototypes', () => {
+  class Metadata { constructor() { Object.assign(this, manifest); } }
+  for (const value of [new Metadata(), { ...manifest, get namespace() { return 'notes'; } },
+    { ...manifest, extra: true }, { ...manifest, [Symbol('extra')]: true },
+    { ...manifest, entries: [{ ...manifest.entries[0], extra: true }] }]) {
+    assert.throws(() => parseExtensionManifest(value));
+  }
+  for (const value of [null, [], false, 1, 'entry']) {
+    assert.equal(checkExtensionEntrypoint(parseExtensionManifest(manifest), 'desktop', value).code, 'entry-export');
+    assert.throws(() => validateExtensionLifetime(value));
+    assert.throws(() => validateUiExtensionContributions(value));
+    assert.throws(() => validateConversationModules([value]));
+  }
 });

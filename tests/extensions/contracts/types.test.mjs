@@ -9,7 +9,7 @@ test('UI authors retain typed actions, tool decoders, platform and process bound
   config: 'apps/desktop/tsconfig.json',
   prefix: fixture + `
 import { memo } from 'react';
-import type { ConversationModule, ModuleAction, UiExtensionContext } from '@agentui/sdk/react';
+import type { UiExtensionContext } from '@agentui/sdk/react';
 export const ui: UiExtensionContext = { namespace: 'notes', frontendTools: { add() {} } };
 ui.frontendTools.add(textTool);
 export const wrapped: ConversationModule = { id: 'memo', label: 'Memo', component: memo(() => null) };

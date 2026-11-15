@@ -14,7 +14,8 @@ A manifest can declare each target once.
 
 Call `parseExtensionManifest` on unknown metadata, then `checkExtensionEntrypoint(manifest, target, loadedExport)` before activation.
 An incompatible result names an unsupported version, an undeclared or mismatched target, or an invalid entry export.
-Parsing accepts declared version strings so compatibility checking can report unsupported versions separately.
+Parsing accepts declared version strings within the currently known manifest field shape so compatibility checking can report unsupported versions separately.
+It does not parse speculative future manifest shapes.
 Path checking validates syntax. The future loader must check filesystem containment and existence.
 The caller has already imported the entry. Importing full-trust code can itself execute code.
 
@@ -27,6 +28,10 @@ A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`
 Its activation returns modules and a required `dispose` function, either directly or through a promise.
 Call `validateUiExtensionContributions` on the returned contribution before rendering or invoking modules.
 The activation owner withdraws contributions and calls disposal on deactivation.
+It must also dispose a valid lifetime if later contribution validation fails.
+For UI activation, check the lifetime first and retain it for cleanup before validating modules.
+Behaviour checks accept class instances, accessors, and callable objects with the required fields.
+They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
 These contracts do not implement an activation manager or recovery after failed activation.
 
@@ -47,6 +52,8 @@ Preserve rejected admission and uncertain receipt states for the caller.
 Resolving an action does not establish native execution success.
 
 The eventual production UI bridge must use the existing client command and outbox path.
+Its `send(text)` implementation must submit explicit text as an intent.
+It must not call `setDraft(text)` followed by send, which would overwrite the user's draft.
 The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.

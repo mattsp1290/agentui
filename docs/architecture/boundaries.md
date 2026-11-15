@@ -76,7 +76,7 @@ Pets, MCP control, and Crew are the three planned example extensions.
 Crew transport, authentication, and cursors belong in `examples/crew` when implemented.
 Core host code uses generic provider identities.
 The SDK exports [backend provider contracts](provider-contracts.md) and [extension authoring contracts](extension-sdk.md).
-Typed frontend-tool registration is available. Provider lifecycle runtime and frontend-tool delivery remain downstream tasks.
+Typed frontend-tool registration is a contract only. Provider lifecycle runtime, frontend-tool registration runtime, and frontend-tool delivery remain downstream tasks.
 Switchboard and Crew frontend-tool requests are prerequisites, not evidence of delivery.
 
 Committed customization references will include an immutable Git revision and optional contained subdirectory.

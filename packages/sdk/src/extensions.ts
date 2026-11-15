@@ -78,7 +78,7 @@ export function checkExtensionEntrypoint(manifest: ExtensionManifest, expected: 
     return { kind: 'incompatible', code: 'entry-kind', reason: 'Target is not declared in manifest' };
   }
   let entry: Record<string, unknown>;
-  try { entry = record(defaultExport); } catch {
+  try { entry = behaviour(defaultExport); } catch {
     return { kind: 'incompatible', code: 'entry-export', reason: 'Expected entry object' };
   }
   if (entry.kind !== expected) return { kind: 'incompatible', code: 'entry-kind', reason: 'Loaded entry has wrong kind' };
@@ -92,5 +92,13 @@ export function checkExtensionEntrypoint(manifest: ExtensionManifest, expected: 
 }
 
 export function validateExtensionLifetime(value: unknown): asserts value is ExtensionLifetime {
-  if (typeof record(value).dispose !== 'function') throw new Error('Expected extension disposal');
+  if (typeof behaviour(value).dispose !== 'function') throw new Error('Expected extension disposal');
+}
+
+/** In-process values may use prototypes, accessors, or callable objects. */
+export function behaviour(value: unknown): Record<string, unknown> {
+  if ((typeof value !== 'object' && typeof value !== 'function') || value === null || Array.isArray(value)) {
+    throw new Error('Expected behaviour object');
+  }
+  return value as Record<string, unknown>;
 }

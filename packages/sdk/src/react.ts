@@ -1,9 +1,9 @@
 import type { ComponentType } from 'react';
 import type { ConversationDocument, ConversationScope, SubmitResult } from '@agentui/contracts';
 import type { Transcript } from '@agentui/contracts/conversation';
-import { nonempty, record } from '@agentui/contracts/decode';
+import { nonempty } from '@agentui/contracts/decode';
 import type { RunAgentInput } from '@agentui/protocol';
-import { validateExtensionLifetime } from './extensions.js';
+import { behaviour, validateExtensionLifetime } from './extensions.js';
 import type { EXTENSION_SDK_VERSION, ExtensionLifetime } from './extensions.js';
 
 export interface ConversationCommands {
@@ -54,7 +54,7 @@ export interface UiExtensionEntry<K extends 'desktop' | 'ios'> {
 export function validateConversationModules(value: unknown): asserts value is readonly ConversationModule[] {
   const ancestors = new Set<unknown>();
   function named(value: unknown, ids: Set<string>): Record<string, unknown> {
-    const item = record(value);
+    const item = behaviour(value);
     const id = nonempty(item.id);
     if (!id.trim() || !nonempty(item.label).trim()) throw new Error('Expected nonblank module or action name');
     if (ids.has(id)) throw new Error(`Duplicate module or action ID: ${id}`);
@@ -90,5 +90,5 @@ export function validateConversationModules(value: unknown): asserts value is re
 
 export function validateUiExtensionContributions(value: unknown): asserts value is UiExtensionContributions {
   validateExtensionLifetime(value);
-  validateConversationModules(record(value).modules);
+  validateConversationModules(behaviour(value).modules);
 }
