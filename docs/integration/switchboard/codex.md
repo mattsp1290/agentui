@@ -12,8 +12,9 @@ The [runtime pin](../../../vendor/switchboard.json) identifies Switchboard
 The [development-only pin](../../../vendor/dev-qualification/switchboard.json)
 identifies `71d204015f573e1399d8ba19a33a2d4b4067fa1a` and its qualification alias.
 Neither installed public API exports a Codex adapter or a `./codex` entrypoint.
-The read-only public-export probe checked both archive digests and imported both
-public entrypoints. It launched no native process and accessed no credentials.
+The read-only public-export probe checked both archive digests and imported the
+core and `./agui` entrypoints of each artifact. It launched no native process and
+accessed no credentials.
 
 Generic adapter lifecycle, session discovery, and session inspection contracts
 are not native implementations. `parseInteractionContinuation` validates replies.
@@ -64,14 +65,16 @@ native thread ID in `opaque`. It selects installation `codex-local-v1`.
 The session binding includes the engine, account `local`, the resolved workspace,
 native version, and native format.
 
-The [SQLite store](../../../packages/host/src/sqlite-store.ts) compares installation
-bindings exactly. A blind CLI bump changes that binding and rejects old records.
+The [SQLite store](../../../packages/host/src/sqlite-store.ts), driver dispatch,
+and recovery compare stored installations exactly. A blind CLI bump changes that
+installation. Old conversations then fail dispatch and recovery skips them.
 Establish whether the public adapter can accept the existing references before
 changing versions. If the binding must change, use a narrow, explicit transition
 for AgentUI-owned records that preserves saved transcripts and receipts.
-Expire process-bound approvals through the existing
-[recovery path](../../../apps/host/src/codex-recovery.ts). Keep unknown outcomes
-unknown. Resume compatibility across 0.167.2 and 0.169.0 is not established here.
+Transition a record's installation before relying on the existing
+[recovery path](../../../apps/host/src/codex-recovery.ts) to expire process-bound
+approvals. Keep unknown outcomes unknown. Resume compatibility across 0.167.2
+and 0.169.0 is not established here.
 
 Use small ordinary follow-up tests for owned-session create, streaming, follow-up,
 restart-resume, foreign-reference rejection, typed Allow and Deny, stale decisions,
