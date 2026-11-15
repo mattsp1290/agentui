@@ -9,6 +9,7 @@ import { createConnection } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
+import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { preview } from 'vite';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 
@@ -792,4 +793,38 @@ test('managed restore retries a failed default conversation boundary', { timeout
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Recover the default composer');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+});
+
+test('revoked extension commands retain the visible access explanation', { timeout: 45_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await connected(page);
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '${EXTENSION_SDK_VERSION}', activate() {
+    return { modules: [{ id: 'commands', label: 'Commands', component({ commands }) {
+      window.capturedCommands = commands;
+      return React.createElement('span', null, 'Captured extension commands');
+    } }], dispose() {} };
+  } } })`);
+  await page.getByText('Captured extension commands', { exact: true }).waitFor();
+  await draft(page, 'Keep the unsent draft');
+  const principalId = await page.evaluate(async () => (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })).json()).value.principalId);
+  await host.control({ op: 'revoke', id: principalId });
+  await page.getByLabel('Pairing code').waitFor();
+  const alert = page.locator('.application-alert');
+  const explanation = await alert.textContent();
+  assert.match(explanation, /previous access may have been revoked/);
+  for (const kind of ['send', 'approve', 'cancel']) {
+    const rejected = await page.evaluate(async kind => {
+      try {
+        if (kind === 'send') await window.capturedCommands.send('refused');
+        if (kind === 'approve') await window.capturedCommands.approve('refused', 'allow');
+        if (kind === 'cancel') await window.capturedCommands.cancel('refused');
+        return false;
+      } catch { return true; }
+    }, kind);
+    assert.equal(rejected, true);
+    assert.equal(await alert.textContent(), explanation);
+  }
+  assert.equal((await host.entries()).length, 0);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep the unsent draft');
 });

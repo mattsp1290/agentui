@@ -49,3 +49,12 @@ test('store notifies only successful write commits after other connections can o
   assert.deepEqual(heads, [0, 1]);
   assert.equal(store.head(scope), 1);
 });
+
+
+test('opening incomplete version two refuses before adding provider creation metadata', t => {
+  const f = fixture(t), host = f.open(); host.close();
+  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
+  const before = readFileSync(f.path);
+  assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
+  assert.deepEqual(readFileSync(f.path), before);
+});

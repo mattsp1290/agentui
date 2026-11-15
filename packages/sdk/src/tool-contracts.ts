@@ -17,6 +17,7 @@ export interface UiExtensionContext {
 }
 export interface FrontendToolGeneration {
   readonly namespace: string;
+  readonly activationId: string;
   /** Captured diagnostic and owner correlation label; uniqueness is not enforced. */
   readonly generation: string;
   readonly platform: FrontendPlatform;
@@ -30,13 +31,14 @@ export interface FrontendToolGeneration {
 export interface FrontendToolPin {
   readonly run: RunIdentity;
   readonly definitions: readonly Readonly<FrontendTool>[];
-  invoke(name: string, args: unknown): Promise<FrontendToolOutcome>;
+  readonly bindings: readonly Readonly<{ name: string; activationId: string }>[];
+  invoke(name: string, args: unknown, activationId: string): Promise<FrontendToolOutcome>;
   /** Release on every run outcome, including cancellation and failure. In-flight calls still drain. */
   release(): void;
 }
 export type FrontendToolOutcome =
   | { readonly kind: 'completed'; readonly output: string }
-  | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'invalid-arguments' | 'decode-failed' };
+  | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'activation-mismatch' | 'invalid-arguments' | 'decode-failed' };
 export interface FrontendToolActivation<L> {
   readonly generation: FrontendToolGeneration;
   /** Dispose through generation.retire(), which waits for pins and calls to drain. */

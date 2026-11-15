@@ -10,6 +10,7 @@ import type { ConversationInstallation, ProviderInstallation, StoredCreation, Cr
 import type { createProviderRegistry } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
+import { registerFrontendToolsHost } from './frontend-tools-context.js';
 
 export interface LocalHostOptions<E, P> {
   readonly path: string;
@@ -65,7 +66,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
   };
-  return {
+  const host: LocalHost<E, P> = {
     drained,
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
@@ -175,4 +176,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       finishClosing();
     },
   };
+  registerFrontendToolsHost(host, {
+    db: store.db,
+    transaction: work => store.transaction(work),
+    findInstallation: scope => store.findInstallation(scope),
+    authorized,
+  });
+  return host;
 }

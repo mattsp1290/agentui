@@ -38,7 +38,7 @@ export class SqliteStore<E, P> {
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
-  private transaction<T>(work: () => T, write = true): T {
+  transaction<T>(work: () => T, write = true): T {
     this.db.exec(write ? 'BEGIN IMMEDIATE' : 'BEGIN');
     let result: T;
     try { result = work(); this.db.exec('COMMIT'); }

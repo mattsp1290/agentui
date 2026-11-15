@@ -87,7 +87,7 @@ test('future versions and corrupt projection fail without replacing the database
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Unsupported database version/);
   assert.deepEqual(readFileSync(f.path), before);
-  db.exec("PRAGMA user_version=1; UPDATE conversations SET document='not-json'");
+  db.exec("PRAGMA user_version=2; UPDATE conversations SET document='not-json'");
   assert.throws(() => f.open(), /JSON/);
   assert.equal(db.prepare('SELECT document FROM conversations').get().document, 'not-json');
   db.close();
