@@ -14,3 +14,4 @@ export type { Installation, NativeRun, NativeDecision, HostOutput, CommandResult
 
 export { createCodexDriver } from './codex-driver.js';
 export type { CodexDriverOptions, CodexTranscriptEvent } from './codex-driver.js';
+export { CapacityError as HostCapacityError } from './sqlite-store.js';

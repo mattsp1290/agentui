@@ -21,6 +21,7 @@ export interface HostOutput<E> {
   readonly events: readonly E[];
   readonly runs: readonly NativeRun[];
   readonly decisions: readonly NativeDecision[];
+  readonly expiredDecisions?: readonly string[];
 }
 export type CommandResult<E> =
   | { readonly kind: 'completed'; readonly output: HostOutput<E> }
@@ -38,6 +39,7 @@ export interface CapturedTarget {
  */
 export interface ProviderDriver<E> {
   readonly source: 'recorded' | 'codex';
+  readonly installation?: Installation;
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
   dispatch(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
   lookup?(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;

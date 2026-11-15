@@ -25,7 +25,10 @@ fn local_host_url() -> Result<Option<tauri::Url>, Box<dyn std::error::Error>> {
 }
 
 fn main() {
-    let host_url = local_host_url().expect("invalid local AgentUI host address");
+    let host_url = local_host_url().unwrap_or_else(|error| {
+        eprintln!("Cannot connect to AgentUI host: {error}");
+        None
+    });
     tauri::Builder::default()
         .setup(move |app| {
             if let Some(url) = &host_url {

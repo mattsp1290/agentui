@@ -50,6 +50,7 @@ export function output<E>(value: unknown, projection: Pick<Projection<E, unknown
   scope: ConversationScope): HostOutput<E> {
   const input = object(value);
   return { events: array(input.events).map(event => projection.decodeEvent(event)),
+    ...(input.expiredDecisions === undefined ? {} : { expiredDecisions: array(input.expiredDecisions).map(nonempty) }),
     runs: array(input.runs).map(run => nativeRun(run, installed, scope)),
     decisions: array(input.decisions).map(value => {
       const input = object(value);

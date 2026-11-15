@@ -18,6 +18,7 @@ import { createApi } from './api.js';
 import { FeedRegistry } from './feed-registry.js';
 import { browserHandler } from './http-handler.js';
 import { startControl } from './control.js';
+import { recoverCodexConversations } from './codex-recovery.js';
 
 export interface BrowserHostOptions {
   readonly directory: string;
@@ -84,6 +85,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       const hostId = access.hostId;
       host = openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
         driver: codex, authorize: scope => scope.hostId === hostId });
+      recoverCodexConversations(host, hostId, codex.installation);
     } else {
       host = openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId: access.hostId, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) });

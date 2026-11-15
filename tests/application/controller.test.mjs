@@ -402,3 +402,18 @@ test('an initial metadata failure ends loading without enabling commands', async
   assert.equal(applicationEnabled(f.app.getSnapshot()), false);
   assert.equal(f.app.getSnapshot().busy, false);
 });
+
+test('a native rejected receipt is explained to the user without repeating the request', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.behavior.submit = async command => ({ kind: 'receipt', receipt: { scope,
+    clientCommandId: command.clientCommandId, hostOperationId: 'native-refusal', sequence: 1,
+    state: { kind: 'rejected', reason: 'Codex requires login before this request can start.' } } });
+  await f.app.start();
+  const target = f.app.getSnapshot().active;
+  await target.store.setDraft('My first message');
+  await f.app.conversationActions(target).submit(() => target.store.send());
+  assert.match(f.app.getSnapshot().error, /Codex requires login/);
+  assert.equal(f.submitted.length, 1);
+  assert.equal(f.app.getSnapshot().busy, false);
+});

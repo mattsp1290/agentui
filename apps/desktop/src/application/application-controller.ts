@@ -281,6 +281,7 @@ export function createApplicationController(deps: {
           requireTarget(owner, target);
           const result = await current(owner, operation());
           if (result.kind === 'rejected') throw new Error(result.reason);
+          if (result.kind === 'receipt' && result.receipt.state.kind === 'rejected') throw new Error(result.receipt.state.reason);
         }),
         reconcile: id => run(async owner => {
           requireTarget(owner, target);

@@ -18,11 +18,15 @@ interface Deferred<T> {
   timer: ReturnType<typeof setTimeout>;
 }
 
+export class CodexRpcError extends Error {
+  constructor(readonly code: number, message: string) { super(message); }
+}
+
 type Message =
   | { kind: 'notification'; method: string; params: unknown }
   | { kind: 'request'; id: string | number; method: string; params: unknown }
   | { kind: 'result'; id: string | number; result: unknown }
-  | { kind: 'error'; id: string | number; message: string };
+  | { kind: 'error'; id: string | number; message: string; code: number };
 
 function isId(value: unknown): value is string | number {
   return typeof value === 'string' || (typeof value === 'number' && Number.isSafeInteger(value));
@@ -48,7 +52,7 @@ function parseMessage(line: string): Message {
     !('code' in value.error) || typeof value.error.code !== 'number' || !Number.isSafeInteger(value.error.code)) {
     throw new Error('Invalid Codex error');
   }
-  return { kind: 'error', id: value.id, message: value.error.message };
+  return { kind: 'error', id: value.id, message: value.error.message, code: value.error.code };
 }
 
 const MAX_FRAME_BYTES = 8 * 1024 * 1024;
@@ -163,7 +167,7 @@ export class CodexRpc {
         this.pending.delete(message.id);
         clearTimeout(pending.timer);
         if (message.kind === 'result') pending.resolve(message.result);
-        else pending.reject(new Error(message.message));
+        else pending.reject(new CodexRpcError(message.code, message.message));
       }
     } catch {
       this.fail(new Error('Invalid Codex message or callback failure'));
