@@ -142,7 +142,14 @@ Decision records preserve full scoped choice references and labels. Public decis
 Only provider presentation events or snapshots establish assistant output and terminal run outcomes.
 
 Shutdown closes upstream feeds and drains admitted callbacks and feed endings before closing the backend, extension lifetime and database.
-A stopped feed keeps its last committed checkpoint. Restart resumes that checkpoint; automatic reconnect, resync policy, projection migration and generation replacement remain open work.
+A stopped feed keeps its last committed checkpoint. Restart resumes that checkpoint.
+When a feed ends with `resync`, the host rejects further callbacks from that feed, drains callbacks already admitted, then requests and commits a fresh snapshot before observing from its cursor.
+Each observation acquisition permits one automatic snapshot and replacement feed without distinct committed feed event progress. A second `resync` without that progress stops observation before another snapshot request.
+A distinct feed event that advances the checkpoint revision renews this allowance. Duplicate events and snapshots do not.
+Snapshot refusal, unavailable results, validation errors and authorization failures stop observation while preserving saved history and receipts. They do not count as cleanup failures.
+Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
+The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
+Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
 The current integration uses wire version 4, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
@@ -217,7 +224,8 @@ Observation callbacks resolve only after durable application. Delivery is serial
 A rejected callback is not an acknowledgement. The provider stops delivery and ends the feed with `disconnected` and the last acknowledged cursor, or `null` if none exists.
 The end cursor includes only acknowledged items. The snapshot cursor describes exactly its projected state.
 Expired cursors, incompatible projections, or an unbridgeable snapshot-to-feed gap require `resync` and a fresh snapshot.
-Observation support requires fresh snapshot recovery. If a snapshot call reports `unsupported`, the host keeps observation stopped and reports that limitation.
+Observation support requires fresh snapshot recovery, subject to the host's bounded recovery policy above.
+If a snapshot call reports `unsupported`, the host keeps observation stopped. Reporting this limitation to the user remains open work because the current observation API has no diagnostic channel.
 Opaque cursors have no numeric or lexical ordering requirement.
 Feed termination resolves `ended` with its reason and last acknowledged cursor, or `null`, and never rejects.
 `close()` is idempotent and prevents new `receive` calls. It resolves `ended` with `closed` without waiting for an in-flight callback.

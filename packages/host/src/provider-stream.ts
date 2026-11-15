@@ -63,6 +63,12 @@ export async function observeProvider<M extends ProviderModel, I extends string>
   authorize: () => void, store: ProviderStreamStore): Promise<ProviderStream> {
   const storedBinding = creationBinding(binding, original.intent, original.installation);
   let committed = store.providerCheckpoint(original);
+  let stopping = false;
+  const ensureRunning = () => {
+    if (stopping) throw new Error('Provider stream closed');
+    authorize();
+    if (stopping) throw new Error('Provider stream closed');
+  };
   const bounded = (value: unknown): Json => {
     const result = copyJson(value);
     if (Buffer.byteLength(canonicalJson(result)) > 1_000_000) throw new Error('Provider observation exceeds limit');
@@ -83,12 +89,13 @@ export async function observeProvider<M extends ProviderModel, I extends string>
   };
   restore();
   const apply = (value: unknown, source: 'snapshot' | 'feed') => {
-    if (source === 'snapshot') authorize();
+    if (source === 'snapshot') ensureRunning();
     const item = record(bounded(value));
     if (item.kind !== 'snapshot' && item.kind !== 'event') throw new Error('Invalid provider item');
     record(item, item.kind === 'snapshot' ? ['kind', 'snapshot'] : ['kind', 'cursor', 'eventId', 'event']);
     const event = item.kind === 'event' ? { id: identifier(item.eventId), payload: canonicalJson(item) } : null;
-    committed = store.commitProvider(original, committed?.revision ?? null, event, () => {
+    const revision = committed?.revision ?? null;
+    committed = store.commitProvider(original, revision, event, () => {
       const runs = new Map<string, ProviderRun>();
       const run = (value: unknown) => {
         const parsed = providerRun(value, storedBinding, original.installation);
@@ -129,48 +136,99 @@ export async function observeProvider<M extends ProviderModel, I extends string>
         change = { checkpoint: { projectionVersion: committed.projectionVersion, state: bounded(decode(presentation.decodeState, state)), cursor: bounded(nextCursor) }, runs: [],
           output: { kind: 'events', events: result.events.map(parseTranscriptEvent) } };
       }
-      if (source === 'snapshot') authorize();
+      if (source === 'snapshot') ensureRunning();
       return { ...change, runs: [...runs.values()] };
     });
     restore();
+    return event !== null && committed.revision > (revision ?? 0);
   };
   if (!committed) {
+    ensureRunning();
     const result = await connected.snapshot(binding);
-    authorize();
+    ensureRunning();
     if (result.kind !== 'available') throw new Error('Provider snapshot unavailable');
     apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot');
   }
   if (!committed) throw new Error('Provider baseline missing');
-  let stopped = false, failed = false, feedClosed = false;
+  let failed = false;
+  let cleanupError: Error | undefined;
   let rejectClose!: (error: Error) => void;
   const closeFailure = new Promise<never>((_resolve, reject) => { rejectClose = reject; });
   void closeFailure.catch(() => {});
-  let feed: ProviderFeed<M, I> | undefined;
   let tail = Promise.resolve();
+  let closeAttempt = () => {};
   const close = () => {
-    stopped = true;
-    if (!feed || feedClosed) return;
-    feedClosed = true;
-    try { feed.close(); } catch (error) { rejectClose(new Error('Provider stream cleanup failed')); throw error; }
+    stopping = true;
+    closeAttempt();
   };
   const fail = () => { failed = true; try { close(); } catch {} };
-  authorize();
-  try { feed = connected.observe({ binding, after: cursor(committed.cursor) }, value => {
-    if (stopped) return Promise.reject(new Error('Provider stream closed'));
-    let copied: Json;
-    try { copied = bounded(value); authorize(); }
-    catch { fail(); return Promise.reject(new Error('Invalid provider item')); }
-    const task = tail.then(() => {
-      if (failed) throw new Error('Provider stream failed');
-      apply(copied, 'feed');
+  const openAttempt = () => {
+    ensureRunning();
+    if (!committed) throw new Error('Provider baseline missing');
+    let phase: 'accepting' | 'closing' | 'released' = 'accepting';
+    let feed: ProviderFeed<M, I> | undefined;
+    let progressed = false;
+    const accepting = () => phase === 'accepting';
+    const release = () => {
+      if (phase === 'released') return;
+      phase = 'closing';
+      if (!feed) return;
+      phase = 'released';
+      try { feed.close(); }
+      catch (error) {
+        cleanupError = new Error('Provider stream cleanup failed');
+        rejectClose(cleanupError);
+        throw error;
+      }
+    };
+    closeAttempt = release;
+    const after = cursor(committed.cursor);
+    ensureRunning();
+    feed = connected.observe({ binding, after }, value => {
+      if (stopping || !accepting()) return Promise.reject(new Error('Provider stream closed'));
+      let copied: Json;
+      try {
+        copied = bounded(value); ensureRunning();
+        if (!accepting()) throw new Error('Provider stream closed');
+      } catch { fail(); return Promise.reject(new Error('Invalid provider item')); }
+      const task = tail.then(() => {
+        if (failed) throw new Error('Provider stream failed');
+        if (apply(copied, 'feed')) progressed = true;
+      });
+      tail = task.catch(fail);
+      return task;
     });
-    tail = task.catch(fail);
-    return task;
-  }); } catch (error) { failed = true; stopped = true; await tail; throw error; }
-  if (stopped) fail();
-  const drained = Promise.race([feed.ended, closeFailure]).finally(async () => {
-    stopped = true;
-    await tail;
-  }).then(() => {});
+    if (stopping || !accepting()) { try { release(); } catch {} }
+    const ended = feed.ended.then(end => { phase = 'released'; return end; }, error => { phase = 'released'; throw error; });
+    return { ended, progressed: () => progressed };
+  };
+  let first: ReturnType<typeof openAttempt>;
+  try { first = openAttempt(); }
+  catch (error) { failed = true; stopping = true; await tail; throw error; }
+  const drained = (async () => {
+    let attempt = first, recoverySpent = false;
+    try {
+      while (true) {
+        const end = await Promise.race([attempt.ended, closeFailure]);
+        await tail;
+        if (stopping || failed || end.kind !== 'resync') return;
+        if (attempt.progressed()) recoverySpent = false;
+        if (recoverySpent) return;
+        recoverySpent = true;
+        try {
+          ensureRunning();
+          const result = await connected.snapshot(binding);
+          ensureRunning();
+          if (result.kind !== 'available') return;
+          apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot');
+          attempt = openAttempt();
+        } catch { return; }
+      }
+    } finally {
+      stopping = true;
+      await tail;
+      if (cleanupError) throw cleanupError;
+    }
+  })();
   return { close, drained };
 }
