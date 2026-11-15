@@ -97,15 +97,18 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await chooser.locator('option', { hasText: 'Project B · Codex' }).count(), 1);
   await chooser.selectOption(sonnet.id);
   assert.match(await page.locator('.composer-footer').textContent(), /Local Codex/);
-  let loseCreate = true;
+  let loseCreate = true, dropCreate = false, droppedScope;
   await page.route('**/api/v1', async route => {
-    if (loseCreate && route.request().postDataJSON().op === 'create') {
+    if (dropCreate && route.request().postDataJSON().op === 'create') {
+      dropCreate = false; droppedScope = route.request().postDataJSON().scope; await route.abort();
+    } else if (loseCreate && route.request().postDataJSON().op === 'create') {
       loseCreate = false; await route.fetch(); await route.abort();
     } else await route.continue();
   });
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
   await page.reload();
+  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(codex.id);
   await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
   await page.waitForFunction(() => document.querySelector('.composer-footer')?.textContent?.includes('Sonnet'));
   await page.getByRole('heading', { name: 'Plan review', exact: true }).waitFor();
@@ -147,6 +150,11 @@ test('authorized agent API and browser route two recorded agents and retain unav
   await page.waitForFunction(() => document.querySelector('.scope-label')?.textContent === 'legacy-absent');
   assert.deepEqual(host.installation({ ...scopeA, conversationId: 'legacy-absent' }), b);
   await open('a');
+  await chooser.selectOption(codex.id);
+  dropCreate = true;
+  await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  await page.getByRole('button', { name: 'Recover creation', exact: true }).waitFor();
+  assert.equal(host.installation(droppedScope), null);
   host.close(); await host.drained;
   host = openLocalHost({ path, projection: transcriptProjection, driver: [driver(b, 'sonnet')], authorize: scope => scope.hostId === access.hostId });
   api = createApi({ ...options, host, installation: b, agents: [{ installation: b, availability: { kind: 'ready' } }] });
@@ -158,7 +166,15 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const replay = await call({ op: 'submit', command: { version: 1, scope: scopeA, clientCommandId: 'same-id', body: { kind: 'send', text: 'hello' } } });
   assert.equal(replay.receipt.state.kind, 'completed');
   assert.deepEqual(calls, ['codex', 'sonnet', 'sonnet', 'codex']);
+  await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: 'Choose a configured agent.' }).waitFor();
+  assert.equal(host.installation(droppedScope), null);
+  await page.getByRole('combobox', { name: 'Agent for pending creation', exact: true }).selectOption(sonnet.id);
+  await page.getByRole('button', { name: 'Recover creation', exact: true }).click();
+  await page.waitForFunction(id => document.querySelector('.scope-label')?.textContent === id, droppedScope.conversationId);
+  assert.deepEqual(host.installation(droppedScope), b);
   await page.reload();
+  await open('a');
   await page.getByText(/no longer configured.*Saved history/).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: 'Review the plan', exact: true }).isDisabled(), true);

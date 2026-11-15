@@ -10,7 +10,7 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -31,7 +31,7 @@ function fixture() {
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: '0.0.0',
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: 2, extensionSdkVersion: '0.0.0',
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
@@ -655,6 +655,69 @@ test('legacy absent creation accepts only an explicit selection and persists it 
   f.behavior.defaultId = 'replacement';
   await f.app.recoverCreation();
   assert.deepEqual(f.selected, ['other', 'other']);
+});
+
+test('absent pending creation replaces a removed saved agent only after an explicit available choice', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const pending = { scope, agentId: 'default' };
+  f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
+  f.behavior.agentLookup = async value => f.captured.get(value.conversationId) ?? null;
+  await f.app.start();
+  f.behavior.defaultId = 'replacement';
+  f.behavior.create = async () => {
+    if (f.selected.at(-1) === 'default') {
+      f.captured.delete(scope.conversationId);
+      throw new ServiceError('invalid', 'Choose a configured agent.');
+    }
+    assert.deepEqual(f.views.get('original-view/host').pendingCreation, { scope, agentId: 'replacement' });
+  };
+  await f.app.recoverCreation();
+  assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, pending);
+  assert.equal(f.app.getSnapshot().active, null);
+  await f.app.recoverCreation('replacement');
+  assert.deepEqual(f.selected, ['default', 'replacement']);
+  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'replacement');
+  assert.deepEqual(f.created, [scope, scope]);
+});
+
+test('invalid or unavailable recovery choices preserve legacy and captured pending intents', async t => {
+  for (const agentId of [null, 'gone']) {
+    const f = fixture(); t.after(() => f.app.dispose());
+    const pending = { scope, agentId };
+    f.views.set('original-view/host', { ...empty(), pendingCreation: pending });
+    f.behavior.agentLookup = async value => f.captured.get(value.conversationId) ?? null;
+    await f.app.start();
+    f.behavior.agents = [f.descriptor('other'), { ...f.descriptor(), availability: { kind: 'unavailable', reason: 'Agent offline' } }];
+    f.behavior.create = async () => {
+      if (f.selected.at(-1) !== 'other') {
+        f.captured.delete(scope.conversationId);
+        throw new ServiceError('unavailable', 'Choose an available agent.');
+      }
+    };
+    for (const selected of ['unknown', 'default']) {
+      await f.app.recoverCreation(selected);
+      assert.deepEqual(f.views.get('original-view/host').pendingCreation, pending);
+      assert.deepEqual(f.created, []);
+      assert.match(f.app.getSnapshot().error, /available agent/);
+    }
+    await f.app.recoverCreation('other');
+    assert.equal(f.app.getSnapshot().active.agent.id, 'other');
+    assert.deepEqual(f.created, [scope]);
+  }
+});
+
+test('an existing pending scope keeps its actual agent despite a different explicit recovery choice', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), pendingCreation: { scope, agentId: 'default' } });
+  const original = { ...f.descriptor('original-agent'), availability: { kind: 'unavailable', reason: 'Agent removed' } };
+  f.behavior.agentLookup = async () => original;
+  await f.app.start();
+  await f.app.recoverCreation('other');
+  assert.deepEqual(f.selected, ['original-agent']);
+  assert.deepEqual(f.created, [scope]);
+  assert.equal(f.app.getSnapshot().active.agent.id, 'original-agent');
+  assert.equal(f.app.getSnapshot().saved.pendingCreation, null);
 });
 
 test('active descriptors override default controls and unavailable history stays readable', async t => {
