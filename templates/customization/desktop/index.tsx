@@ -18,7 +18,7 @@ function ReviewPlan({ commands }: ConversationModuleProps) {
       if (result.kind === 'rejected') setStatus(`Could not submit. ${result.reason}`);
       else {
         const receipt = result.receipt.state;
-        setStatus(receipt.kind === 'accepted' ? 'Review submitted.' :
+        setStatus(receipt.kind === 'accepted' || receipt.kind === 'completed' ? 'Review request sent. Follow the response in the conversation.' :
           receipt.kind === 'uncertain' ? 'Submission needs confirmation. Use the conversation recovery controls.' :
           `Review ${receipt.kind}.${'reason' in receipt ? ` ${receipt.reason}` : ''}`);
       }
