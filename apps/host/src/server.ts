@@ -5,12 +5,14 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import type { ConversationScope } from '@agentui/contracts';
-import { CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
+import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME } from '@agentui/contracts/compatibility';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { createCodexDriver, openLocalHost } from '@agentui/host';
 import type { LocalHost } from '@agentui/host';
 import type { createPiDriver } from '@agentui/host/pi';
+import type { ClaudeSdkModel } from '@agentui/contracts/compatibility';
+import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from './access.js';
@@ -32,6 +34,7 @@ export interface BrowserHostOptions {
   readonly provider?:
     | { readonly kind: 'codex'; readonly cwd: string }
     | { readonly kind: 'codex-sdk'; readonly cwd: string }
+    | { readonly kind: 'claude-sdk'; readonly cwd: string; readonly model: ClaudeSdkModel }
     | { readonly kind: 'pi'; readonly cwd: string };
 }
 function piApiKey(): string {
@@ -41,12 +44,18 @@ function piApiKey(): string {
   }
   return apiKey.trim();
 }
+function claudeApiKey(): string {
+  const apiKey = process.env.AGENTUI_ANTHROPIC_API_KEY;
+  if (!apiKey?.trim()) throw new Error('Set AGENTUI_ANTHROPIC_API_KEY in the host environment before starting Claude.');
+  return apiKey.trim();
+}
 export async function startBrowserHost(options: BrowserHostOptions) {
-  const provider = options.provider?.kind === 'pi' ? { ...options.provider, apiKey: piApiKey() } : options.provider;
+  const provider = options.provider?.kind === 'pi' ? { ...options.provider, apiKey: piApiKey() }
+    : options.provider?.kind === 'claude-sdk' ? { ...options.provider, apiKey: claudeApiKey() } : options.provider;
   const owner = ownDirectory(options.directory);
   let access: Access | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
-  let driver: ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | Awaited<ReturnType<typeof createPiDriver>> | undefined;
+  let driver: ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>> | undefined;
   let feeds: FeedRegistry | undefined;
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let closePromise: Promise<void> | undefined;
@@ -85,7 +94,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
     if (provider) {
       if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) {
-        throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind === 'pi' ? 'Pi' : 'Codex'}.`);
+        throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind === 'pi' ? 'Pi' : provider.kind === 'claude-sdk' ? 'Claude' : 'Codex'}.`);
       }
     }
     if (provider?.kind === 'codex') {
@@ -115,6 +124,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           driver = await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd,
             sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: provider.apiKey, append, currentRunId });
           break;
+        case 'claude-sdk': {
+          const sdkDriver = (await import('@agentui/host/claude-sdk')).createClaudeSdkDriver({ cwd: provider.cwd,
+            sessionDirectory: join(owner.directory, 'claude-sessions', provider.model), apiKey: provider.apiKey,
+            model: provider.model, append, currentRunId });
+          driver = sdkDriver;
+          await sdkDriver.ready();
+          break;
+        }
         case 'codex-sdk': {
           const sdkDriver = (await import('@agentui/host/codex-sdk')).createCodexSdkDriver({ cwd: provider.cwd, append, currentRunId });
           driver = sdkDriver;
@@ -137,7 +154,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const runtimes = { codex: CODEX_RUNTIME, 'codex-sdk': CODEX_SDK_RUNTIME, pi: PI_RUNTIME };
     const compatibility = provider ? { ...artifact.compatibility,
-      nativeRuntime: runtimes[provider.kind] } : artifact.compatibility;
+      nativeRuntime: provider.kind === 'claude-sdk' ? CLAUDE_SDK_RUNTIMES[provider.model] : runtimes[provider.kind] } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
       access, host, compatibility, feeds: registry, installation: driver?.installation ?? recordedInstallation,
       isClosing: () => closing,

@@ -14,9 +14,11 @@ export const PROVIDER_RECOVERY = {
     continuationAdvice: 'Check any unconfirmed actions before retrying them.' },
   'codex-sdk': { displayName: 'Codex', warningCode: 'AGENTUI_CODEX_SDK_RECOVERY_CAPACITY',
     continuationAdvice: 'You can send another message to continue.' },
+  'claude-sdk': { displayName: 'Claude', warningCode: 'AGENTUI_CLAUDE_SDK_RECOVERY_CAPACITY',
+    continuationAdvice: 'You can send another message to continue.' },
   pi: { displayName: 'Pi', warningCode: 'AGENTUI_PI_RECOVERY_CAPACITY',
     continuationAdvice: 'You can send another message to continue.' },
-} satisfies Record<'codex' | 'codex-sdk' | 'pi', RecoveryPolicy>;
+} satisfies Record<'codex' | 'codex-sdk' | 'claude-sdk' | 'pi', RecoveryPolicy>;
 
 export function recoverProviderConversations(
   host: LocalHost<TranscriptEvent, Transcript>, hostId: string, installation: Installation, policy: RecoveryPolicy,
