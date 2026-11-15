@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { existsSync, readFileSync, readdirSync, rmSync, writeFileSync, mkdirSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, posix } from 'node:path';
 import { readArtifactBytes } from '../../../apps/host/build/tsc/artifact.js';
 import { repository, buildCustom } from './support.mjs';
 
@@ -18,6 +18,19 @@ test('exact committed TSX/shared source produces a complete verified artifact an
   const artifact = readArtifactBytes(out, 'browser-development');
   assert.equal(JSON.parse(readFileSync(join(out, 'customization-identity.json'))).commit, commit);
   assert.ok(artifact.files.has('browser.html'));
+  assert.ok(artifact.files.has('index.html'));
+  function graph(entry, visited = new Set()) {
+    if (visited.has(entry)) return '';
+    visited.add(entry);
+    const code = artifact.files.get(entry).toString();
+    return code + [...code.matchAll(/["'`](\.\/[^"'`]+\.js)["'`]/gu)].map(([, specifier]) => {
+      const path = posix.join(posix.dirname(entry), specifier);
+      return artifact.files.has(path) ? graph(path, visited) : '';
+    }).join('\n');
+  }
+  for (const entry of ['index.html', 'browser.html']) {
+    assert.ok(graph(entry).includes('Review our current plan'), `${entry} must reach the committed module`);
+  }
   const js = [...artifact.files].filter(([path]) => path.endsWith('.js')).map(([, bytes]) => bytes.toString()).join('\n');
   assert.match(js, /Review our current plan/);
   assert.doesNotMatch(js, /DIRTY PROMPT|UNTRACKED MUST/);

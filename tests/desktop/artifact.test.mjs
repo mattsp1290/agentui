@@ -6,8 +6,9 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { readArtifact, readInstalledArtifact } from '../../apps/host/build/tsc/artifact.js';
+import { readArtifact, readArtifactBytes, readInstalledArtifact } from '../../apps/host/build/tsc/artifact.js';
 import { parseArtifactManifest, artifactIdentityText } from '@agentui/contracts/artifact';
+import { stageNativeArtifact } from '../../scripts/stage-native-artifact.mjs';
 
 const generator = fileURLToPath(new URL('../../scripts/artifact-manifest.mjs', import.meta.url));
 function fixture(t) {
@@ -146,6 +147,50 @@ test('browser development build records its own asset identity and cannot pass a
   assert.throws(() => readInstalledArtifact(directory), /requires a host artifact/);
   f.put('apps/desktop/web-dist-browser/assets/main.js', 'tampered browser code');
   assert.throws(() => readArtifact(directory, 'browser-development'), /digest mismatch/);
+});
+
+test('native staging preserves both entries, every verified byte, and the input artifact', async t => {
+  const f = fixture(t);
+  f.put('apps/desktop/web-dist-browser/browser.html', '<!doctype html><title>Cookie browser</title>');
+  const manifest = f.build('browser-development'), artifact = join(f.root, 'apps/desktop/web-dist-browser');
+  const before = readArtifactBytes(artifact, 'browser-development');
+  const out = join(f.root, 'native');
+  assert.deepEqual(await stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), { directory: out, manifest });
+  assert.deepEqual(readArtifactBytes(out, 'browser-development'), before);
+  assert.deepEqual(readArtifactBytes(artifact, 'browser-development'), before);
+  assert.notDeepEqual(before.files.get('index.html'), before.files.get('browser.html'));
+  writeFileSync(join(out, 'sentinel'), 'existing output');
+  await assert.rejects(stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), /EEXIST/);
+  assert.equal(readFileSync(join(out, 'sentinel'), 'utf8'), 'existing output');
+});
+
+test('native staging uses retained bytes even if input files change after verification', async t => {
+  const f = fixture(t);
+  f.put('apps/desktop/web-dist-browser/browser.html', '<title>Browser</title>');
+  const manifest = f.build('browser-development'), artifact = join(f.root, 'apps/desktop/web-dist-browser');
+  const before = readArtifactBytes(artifact, 'browser-development'), out = join(f.root, 'native');
+  const staging = stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out });
+  f.put('apps/desktop/web-dist-browser/index.html', 'changed after verification');
+  rmSync(join(artifact, 'assets'), { recursive: true });
+  await staging;
+  assert.deepEqual(readArtifactBytes(out, 'browser-development'), before);
+});
+
+test('native staging rejects wrong IDs, tampering, symlinks, and old browser-only output before creating a stage', async t => {
+  const f = fixture(t), artifact = join(f.root, 'apps/desktop/web-dist-browser'), out = join(f.root, 'native');
+  f.put('apps/desktop/web-dist-browser/browser.html', '<title>Browser</title>');
+  const manifest = f.build('browser-development');
+  await assert.rejects(stageNativeArtifact({ artifact, artifactId: '0'.repeat(64), out }), /artifact ID does not match/);
+  f.put('apps/desktop/web-dist-browser/assets/main.js', 'tampered');
+  await assert.rejects(stageNativeArtifact({ artifact, artifactId: manifest.artifactId, out }), /digest mismatch/);
+  const updated = f.build('browser-development');
+  symlinkSync(join(f.root, 'package.json'), join(artifact, 'outside.json'));
+  await assert.rejects(stageNativeArtifact({ artifact, artifactId: updated.artifactId, out }), /escapes installed directory/);
+  rmSync(join(artifact, 'outside.json'));
+  rmSync(join(artifact, 'index.html'));
+  const old = f.build('browser-development');
+  await assert.rejects(stageNativeArtifact({ artifact, artifactId: old.artifactId, out }), /rebuild the customization/);
+  assert.throws(() => readFileSync(join(out, 'index.html')), /ENOENT/);
 });
 
 

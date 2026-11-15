@@ -614,6 +614,11 @@ test('committed custom artifact sends one exact prompt, retains drafts and resto
   custom.write('shared/prompts.ts', "export const reviewPrompt = 'DIRTY PROMPT';");
   buildCustom(custom, commit);
   const host = await fixture(t, join(custom.directory, 'browser')), page = await host.page();
+  await page.addInitScript(() => {
+    window.__TAURI_INTERNALS__ = { invoke() { throw new Error('Browser entry used native authority'); } };
+  });
+  await page.goto(`${host.origin}/`);
+  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'cookie pairing restored at host root');
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const prompt = 'Review our current plan. Identify the next useful step and any unresolved decision.';
