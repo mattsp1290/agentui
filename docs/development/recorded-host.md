@@ -67,11 +67,15 @@ Run `npm run verify` for the repository gates. Application tests launch the actu
 The same development listener accepts native-class requests only at literal `http://127.0.0.1:<port>`. Create a native invitation through the private control socket:
 
 ```sh
-node apps/host/dist/main.js invite-native --data-dir /absolute/private/agentui-host
+npm run host:invite-native -- --data-dir /absolute/private/agentui-host
 ```
 
 The result contains the host ID and a 32-character, 192-bit invitation code. Codes expire after five minutes and work once. `POST /native/v1/pair` accepts exactly `{version:1,hostId,code}`. A wrong host ID does not consume the invitation. Successful pairing returns the private envelope `{ok:true,value:{hostId,principalId,secret}}`; it does not set a cookie. The credential expires after one hour.
 
-`POST /native/v1` accepts the existing closed service requests except `pair`, with exactly one `Authorization: Bearer <secret>` header. Both native routes require JSON, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Browser and native invitations and credentials cannot substitute for one another. Revocation uses the existing device command and wakes pending observations.
+`POST /native/v1` accepts the existing closed service requests except `pair`, with exactly one `Authorization: Bearer <secret>` header. The `Bearer` scheme is case-sensitive. Both native routes require exactly `Content-Type: application/json` with no parameters, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Browser and native invitations and credentials cannot substitute for one another. Revocation uses the existing device command and wakes pending observations.
+
+The shared connection engine takes a `ServiceExecutor` that returns raw service envelopes. Executors must map transport credential rejection, including HTTP 401, to `ServiceError('unauthorized', message)`. They must reject a success envelope delivered with a non-success transport status, and throw `ServiceProtocolError` for framing failures so observations resynchronize.
+
+An executor that explicitly commits a credential must check the supplied `signal` and must not commit after `signal.aborted` becomes true. The engine advances its credential generation only after the pairing request resolves successfully. Credential replacement and that generation change are not atomic. The inherited race remains deferred until a production adapter defines coordinated credential ownership.
 
 The application test uses a private in-memory credential in separate client processes and the same connection engine as the browser. It proves protocol pairing, observation, client-exit recovery, and one outcome for the original command ID. It is not a production JavaScript bearer adapter. Production credentials still require Rust or Swift ownership and protected storage. This prerequisite does not qualify native IPC, installed macOS or iOS apps, TLS, LAN access, or remote phone access. Loopback host IDs are enrollment checks, not cryptographic server authentication.
