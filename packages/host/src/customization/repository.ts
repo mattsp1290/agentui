@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { dirname, join, resolve } from 'node:path';
 import { promisify } from 'node:util';
-import { commitId, containedPath, CustomizationError, hasDependencies, validateNpmManifest, parseCustomizationPackage, repositoryAddress, byPath, identity } from './contract.js';
+import { commitId, containedPath, CustomizationError, hasDependencies, npmLockPackages, manifestMatchesLockEntry, parseCustomizationPackage, repositoryAddress, byPath, identity } from './contract.js';
 import { SourceBudget, MAX_SOURCE_BYTES } from './budget.js';
 import type { CustomizationSource } from './contract.js';
 
@@ -133,7 +133,11 @@ export async function readCustomizationSnapshot(input: {
     const lock: unknown = files.has('package-lock.json') ? JSON.parse(await readFile(join(tree.directory, 'package-lock.json'), 'utf8')) : undefined;
     const pkg = record(packageJson);
     const customization = parseCustomizationPackage(pkg, files);
-    if (customization && hasDependencies(pkg)) validateNpmManifest(pkg, { lock, packagePath: '', packageManager: pkg.packageManager });
+    if (customization && hasDependencies(pkg)) {
+      const entry = record(npmLockPackages(lock, pkg.packageManager)['']);
+      manifestMatchesLockEntry(pkg, entry);
+      if (entry.name !== pkg.name) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
+    }
     return { commit: tree.commit, directory: tree.directory, ...(customization ? { customization } : {}), dispose: tree.dispose };
   } catch (error) {
     await tree.dispose();

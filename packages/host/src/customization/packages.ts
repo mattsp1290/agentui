@@ -1,7 +1,7 @@
 import { record } from '@agentui/contracts/decode';
 import { readFile } from 'node:fs/promises';
 import { join, posix } from 'node:path';
-import { containedPath, CustomizationError, dependencyGroups, hasDependencies, parseCustomizationPackage, validateNpmManifest, npmLocalPath, parentDirectory, byPath, identity, type CustomizationSource } from './contract.js';
+import { containedPath, CustomizationError, dependencyGroups, hasDependencies, parseCustomizationPackage, npmLockPackages, manifestMatchesLockEntry, npmLocalPath, parentDirectory, byPath, identity, type CustomizationSource } from './contract.js';
 import { SourceBudget } from './budget.js';
 import type { RepositoryTree, SourceFile } from './repository.js';
 
@@ -29,9 +29,9 @@ interface AnalysisContext {
 }
 interface DeclarationContext { readonly lookupPath: string; readonly sourceDirectory: string }
 interface Declaration { readonly name: string; readonly spec: string; readonly peer: boolean; readonly optional: boolean }
-type LockSource = { readonly kind: 'workspace'; readonly target: string } | { readonly kind: 'tarball'; readonly archive: string }
+type LockSource = { readonly kind: 'workspace'; readonly target: string; readonly resolved: string } | { readonly kind: 'tarball'; readonly archive: string }
   | { readonly kind: 'remote'; readonly url: string; readonly integrityValid: boolean } | { readonly kind: 'none' };
-interface LockEntry { readonly source: LockSource; readonly context: DeclarationContext; readonly declarations: readonly Declaration[] }
+interface LockEntry { readonly record: Record<string, unknown>; readonly source: LockSource; readonly context: DeclarationContext; readonly declarations: readonly Declaration[] }
 const manifestPath = (path: string) => posix.join(path, 'package.json');
 const isInstalledPath = (path: string) => path.split('/').includes('node_modules');
 const filePayload = (value: unknown) => typeof value === 'string' && value.startsWith('file:') ? value.slice(5) : undefined;
@@ -150,7 +150,7 @@ function lockSource(owner: NpmOwner, entry: Record<string, unknown>, installed: 
     if (typeof entry.resolved !== 'string') throw new Error('Invalid local link');
     const target = npmLocalPath(owner.root.path, entry.resolved);
     if (!owner.members.has(target)) throw new Error('Local links require a declared workspace');
-    return { kind: 'workspace', target };
+    return { kind: 'workspace', target, resolved: entry.resolved };
   }
   if (installed && (typeof entry.version !== 'string' || !entry.version)) throw new Error('Invalid locked version');
   const archive = filePayload(entry.resolved);
@@ -160,8 +160,8 @@ function lockSource(owner: NpmOwner, entry: Record<string, unknown>, installed: 
   if (!installed && entry.resolved === undefined) return { kind: 'none' };
   throw new Error('Unsupported locked source');
 }
-function lockEntries(ctx: AnalysisContext, owner: NpmOwner, lock: unknown, targets: Set<string>): ReadonlyMap<string, LockEntry> {
-  const entries = Object.entries(record(record(lock).packages));
+function lockEntries(ctx: AnalysisContext, owner: NpmOwner, packages: Record<string, unknown>, targets: Set<string>): ReadonlyMap<string, LockEntry> {
+  const entries = Object.entries(packages);
   if (entries.length > 10_000) throw new CustomizationError('resource-limit', 'Customization source lock entry limit exceeded.');
   const result = new Map<string, LockEntry>();
   for (const [path, value] of entries) {
@@ -177,7 +177,7 @@ function lockEntries(ctx: AnalysisContext, owner: NpmOwner, lock: unknown, targe
     const sourceDirectory = source.kind === 'workspace' ? source.target : source.kind === 'tarball' ? parentDirectory(source.archive) : directory;
     if (source.kind === 'workspace') targets.add(source.target);
     if (installed && source.kind === 'tarball') targets.add(source.archive);
-    result.set(path, { source, context: { lookupPath: path, sourceDirectory }, declarations: declarations(ctx, entry, ['dependencies', 'optionalDependencies', 'peerDependencies']) });
+    result.set(path, { record: entry, source, context: { lookupPath: path, sourceDirectory }, declarations: declarations(ctx, entry, ['dependencies', 'optionalDependencies', 'peerDependencies']) });
   }
   return result;
 }
@@ -229,25 +229,34 @@ function capture(ctx: AnalysisContext, owner: NpmOwner, targets: ReadonlySet<str
   return [...files.values()].sort(byPath);
 }
 async function npmInputs(ctx: AnalysisContext, selected: Member, owner: NpmOwner): Promise<NpmInputs> {
-  const lock = owner.lockfile ? await readJson(ctx, owner.lockfile.path) : undefined;
+  const lockfile = owner.lockfile;
+  const lock = lockfile ? await readJson(ctx, lockfile.path) : undefined;
   const packages = [owner.root, ...owner.members.values()];
   if (!owner.members.size && !packages.some(member => hasDependencies(member.manifest))) return { kind: 'absent' };
-  if (!owner.lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  if (!lockfile) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  const rawPackages = npmLockPackages(lock, owner.root.manifest.packageManager);
   const targets = new Set<string>();
-  const entries = lockEntries(ctx, owner, lock, targets);
+  const entries = lockEntries(ctx, owner, rawPackages, targets);
   for (const { path, manifest } of packages) {
     ctx.budget.check();
     if (manifest.packageManager !== undefined && manifest.packageManager !== owner.root.manifest.packageManager) throw new CustomizationError('invalid-package', 'Conflicting npm package manager pin.');
-    validateNpmManifest(manifest, { lock, packagePath: posix.relative(owner.root.path, path), packageManager: owner.root.manifest.packageManager });
-    validateDeclarations(ctx, entries, { lookupPath: posix.relative(owner.root.path, path), sourceDirectory: path }, declarations(ctx, manifest, dependencyGroups), targets);
+    const packagePath = posix.relative(owner.root.path, path);
+    const entry = entries.get(packagePath);
+    if (!entry) throw new Error('Missing lock entry');
+    manifestMatchesLockEntry(manifest, entry.record);
+    const link = entries.get(`node_modules/${String(manifest.name)}`)?.source;
+    const linkedName = packagePath !== '' && link?.kind === 'workspace' && link.resolved === packagePath;
+    if (packagePath !== '' && !linkedName) throw new CustomizationError('invalid-package', 'Workspace requires a matching canonical lockfile link.');
+    if (entry.record.name !== manifest.name && !(entry.record.name === undefined && linkedName)) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
+    validateDeclarations(ctx, entries, { lookupPath: packagePath, sourceDirectory: path }, declarations(ctx, manifest, dependencyGroups), targets);
   }
   for (const entry of entries.values()) validateDeclarations(ctx, entries, entry.context, entry.declarations, targets);
   const workspaces = [...owner.members.values()].map(member => member.file);
   const localInputs = capture(ctx, owner, targets);
   ctx.budget.check();
   return Object.freeze({ kind: 'locked', packageManager: 'npm@11.19.1', directory: join(ctx.tree.directory, owner.root.path),
-    identity: identity(['agentui-npm-v1', ctx.tree.inputs.identity, owner.root.path, selected.file, owner.root.file, owner.lockfile, workspaces, localInputs]),
-    packageJson: owner.root.file, lockfile: owner.lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
+    identity: identity(['agentui-npm-v1', ctx.tree.inputs.identity, owner.root.path, selected.file, owner.root.file, lockfile, workspaces, localInputs]),
+    packageJson: owner.root.file, lockfile, workspaces: Object.freeze(workspaces), localInputs: Object.freeze(localInputs) });
 }
 export async function selectPackage(tree: RepositoryTree, subdirectory: string, budget: SourceBudget): Promise<SelectedPackage> {
   try {

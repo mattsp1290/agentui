@@ -100,6 +100,75 @@ test('standalone locks, raw content and identities use only immutable committed 
   assert.deepEqual(await readdir(f.scratchParent), []);
 });
 
+test('v1 locks without packages report the required v3 lock through both public APIs', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('v1-lock');
+  await shared(repo, '', { packageManager: manager, dependencies: { value: '1.0.0' } });
+  await write(repo.directory, 'package-lock.json', { lockfileVersion: 1, dependencies: { value: registry } });
+  const ref = reference(repo, repo.commit());
+  const expected = { code: 'invalid-package', message: 'Dependencies require a committed npm v3 lockfile.' };
+  await assert.rejects(readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent }), expected);
+  await assert.rejects(f.read(ref), expected);
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('active roots may omit matching names and versions through both public APIs', async t => {
+  for (const identity of [{}, { name: 'notes' }, { version: '1.0.0' }]) await t.test(JSON.stringify(identity), async t => {
+    const f = await fixture(t);
+    const repo = await f.repository('optional-identity');
+    const pkg = { ...identity, packageManager: manager, dependencies: { value: '1.0.0' } };
+    await shared(repo, '', pkg);
+    await write(repo.directory, 'package-lock.json', lockFor(pkg, { 'node_modules/value': registry }));
+    const ref = reference(repo, repo.commit());
+    const snapshot = await readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent });
+    assert.equal(snapshot.customization.shared, './source.ts');
+    await snapshot.dispose();
+    const graph = await f.read(ref);
+    assert.equal(graph.root.npm.kind, 'locked');
+    assert.equal(graph.root.customization.shared, './source.ts');
+    await graph.dispose();
+    assert.deepEqual(await readdir(f.scratchParent), []);
+  });
+});
+
+test('snapshot validates only the lock root and ignores irrelevant malformed installed entries', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('snapshot-root-only');
+  const pkg = { name: 'notes', version: '1.0.0', packageManager: manager, dependencies: { value: '1.0.0' } };
+  await shared(repo, '', pkg);
+  await write(repo.directory, 'package-lock.json', lockFor(pkg, { 'node_modules/value': registry, 'node_modules/irrelevant': 7 }));
+  const ref = reference(repo, repo.commit());
+  const snapshot = await readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent });
+  assert.equal(snapshot.customization.shared, './source.ts');
+  await snapshot.dispose();
+  await assert.rejects(f.read(ref), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('snapshot retains exact missing-lock and manager-pin diagnostics', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('snapshot-diagnostics');
+  const pkg = { packageManager: 'pnpm@9', dependencies: { value: '1.0.0' } };
+  await shared(repo, '', pkg);
+  await assert.rejects(readCustomizationSnapshot({ ...reference(repo, repo.commit()), scratchParent: f.scratchParent }),
+    { code: 'invalid-package', message: 'Dependencies require a committed npm v3 lockfile.' });
+  await write(repo.directory, 'package-lock.json', lockFor(pkg));
+  await assert.rejects(readCustomizationSnapshot({ ...reference(repo, repo.commit()), scratchParent: f.scratchParent }),
+    { code: 'invalid-package', message: 'Dependencies require npm@11.19.1.' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
+test('dependency-free active roots still parse committed lock JSON eagerly', async t => {
+  const f = await fixture(t);
+  const repo = await f.repository('eager-lock-json');
+  await shared(repo);
+  await write(repo.directory, 'package-lock.json', '{broken');
+  const ref = reference(repo, repo.commit());
+  await assert.rejects(readCustomizationSnapshot({ ...ref, scratchParent: f.scratchParent }), { code: 'invalid-package' });
+  await assert.rejects(f.read(ref), { code: 'invalid-package' });
+  assert.deepEqual(await readdir(f.scratchParent), []);
+});
+
 test('actual npm workspace lock selects package metadata and preserves sibling import inputs', async t => {
   const f = await fixture(t);
   const repo = await f.repository('workspace');
@@ -734,6 +803,30 @@ test('workspace canonical links remain mandatory when the member lock entry has 
     await assert.rejects(f.read(reference(repo, repo.commit(), 'packages/foo')), { code: 'invalid-package' });
     assert.deepEqual(await readdir(f.scratchParent), []);
   });
+});
+
+test('workspace links reject normalized-only spellings even with an explicitly named member', async t => {
+  for (const resolved of ['packages/foo', 'packages/./foo', './packages/foo', 'packages/foo/', 'packages/bar/../foo']) {
+    await t.test(resolved, async t => {
+      const f = await fixture(t);
+      const repo = await f.repository('workspace-link-spelling');
+      const pkg = { name: 'root', version: '1.0.0', packageManager: manager, workspaces: ['packages/foo'] };
+      await write(repo.directory, 'package.json', pkg);
+      await shared(repo, 'packages/foo', { name: 'foo', version: '1.0.0' });
+      await write(repo.directory, 'package-lock.json', lockFor(pkg, {
+        'packages/foo': { name: 'foo', version: '1.0.0' }, 'node_modules/foo': { link: true, resolved },
+      }));
+      const ref = reference(repo, repo.commit(), 'packages/foo');
+      if (resolved === 'packages/foo') {
+        const graph = await f.read(ref);
+        assert.equal(graph.root.npm.kind, 'locked');
+        await graph.dispose();
+      } else await assert.rejects(f.read(ref), resolved.endsWith('/')
+        ? { code: 'path', message: 'Repository paths must be relative and cannot traverse directories or contain .git.' }
+        : { code: 'invalid-package', message: 'Workspace requires a matching canonical lockfile link.' });
+      assert.deepEqual(await readdir(f.scratchParent), []);
+    });
+  }
 });
 
 test('local declarations disagreeing with a registry lock target report invalid-package', async t => {

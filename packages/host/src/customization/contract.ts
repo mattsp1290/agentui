@@ -100,13 +100,14 @@ export const dependencyGroups = ['dependencies', 'devDependencies', 'optionalDep
 export function hasDependencies(pkg: Record<string, unknown>): boolean {
   return dependencyGroups.some(key => pkg[key] !== undefined && Object.keys(record(pkg[key])).length > 0);
 }
-export interface NpmContext { readonly lock: unknown; readonly packagePath: string; readonly packageManager: unknown }
-export function validateNpmManifest(packageJson: Record<string, unknown>, context: NpmContext): void {
-  if (context.lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
-  if (context.packageManager !== 'npm@11.19.1') throw new CustomizationError('invalid-package', 'Dependencies require npm@11.19.1.');
-  const lock = record(context.lock);
-  if (lock.lockfileVersion !== 3) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
-  const entry = record(record(lock.packages)[context.packagePath]);
+export function npmLockPackages(lock: unknown, packageManager: unknown): Record<string, unknown> {
+  if (lock === undefined) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  if (packageManager !== 'npm@11.19.1') throw new CustomizationError('invalid-package', 'Dependencies require npm@11.19.1.');
+  const value = record(lock);
+  if (value.lockfileVersion !== 3) throw new CustomizationError('invalid-package', 'Dependencies require a committed npm v3 lockfile.');
+  return record(value.packages);
+}
+export function manifestMatchesLockEntry(packageJson: Record<string, unknown>, entry: Record<string, unknown>): void {
   for (const key of dependencyGroups) {
     const declared = packageJson[key] === undefined ? {} : record(packageJson[key]);
     const locked = entry[key] === undefined ? {} : record(entry[key]);
@@ -116,11 +117,6 @@ export function validateNpmManifest(packageJson: Record<string, unknown>, contex
     }
   }
   if (entry.version !== packageJson.version) throw new CustomizationError('invalid-package', 'Lockfile version disagrees with package.json.');
-  const link = record(lock.packages)[`node_modules/${String(packageJson.name)}`];
-  const workspace = context.packagePath !== '';
-  const linkedName = workspace && link !== undefined && record(link).link === true && record(link).resolved === context.packagePath;
-  if (workspace && !linkedName) throw new CustomizationError('invalid-package', 'Workspace requires a matching canonical lockfile link.');
-  if (entry.name !== packageJson.name && !(entry.name === undefined && linkedName)) throw new CustomizationError('invalid-package', 'Lockfile name disagrees with package.json.');
 }
 
 export function parseCustomizationPackage(input: unknown, files: ReadonlySet<string>): CustomizationSource | undefined {
