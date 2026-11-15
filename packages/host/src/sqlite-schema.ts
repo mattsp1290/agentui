@@ -70,6 +70,9 @@ export function openDatabase(path: string): DatabaseSync {
     if (allTables.has('provider_creations') && db.prepare('SELECT 1 FROM provider_creations WHERE NOT json_valid(original) OR (observation IS NOT NULL AND NOT json_valid(observation)) LIMIT 1').get()) {
       throw new Error('Corrupt creation metadata');
     }
+    if (allTables.has('provider_checkpoints') && db.prepare('SELECT 1 FROM provider_checkpoints WHERE NOT json_valid(original) OR NOT json_valid(data) OR floor<1 LIMIT 1').get()) {
+      throw new Error('Corrupt provider checkpoint');
+    }
     const mode = db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
     if (mode !== 'wal') throw new Error('Database requires WAL mode');
     db.exec('PRAGMA synchronous=FULL;');

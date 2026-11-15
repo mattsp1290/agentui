@@ -33,9 +33,9 @@ export const AGENT_PRESENTATION = {
     live: false, hostLabel: 'Browser development · Recorded playback', buildLabel: 'Browser development · Recorded host', settings: savedConversations,
   },
   provider: {
-    assistant: 'Provider', placeholder: 'Messaging is not available yet', footer: 'Provider conversation · Messaging is not available yet',
-    live: false, hostLabel: 'Provider', buildLabel: 'Provider',
-    settings: 'Your host saves this provider conversation. Messaging will be available in a later update.',
+    assistant: 'Provider', placeholder: 'Write to your provider…', footer: 'Provider conversation · Saved by your host',
+    live: true, hostLabel: 'Provider', buildLabel: 'Provider',
+    settings: 'Your host saves this provider conversation and its responses.',
   },
   local: {
     assistant: 'Assistant', placeholder: 'Write a message…', footer: 'Local agent',
@@ -48,6 +48,9 @@ export function agentPresentation(runtime: NativeRuntimeIdentity | Extract<Agent
   if (runtime && 'kind' in runtime) return { agent: 'provider' as const, presentation: {
     ...AGENT_PRESENTATION.provider, assistant: runtime.label, hostLabel: runtime.label,
     buildLabel: runtime.label,
+    ...(!runtime.commands.includes('send') ? { placeholder: 'Messaging is not available for this provider',
+      footer: 'Provider conversation · Messaging is not available for this provider',
+      settings: 'Your host saves this provider conversation. This provider does not offer messaging.' } : {}),
   } };
   let agent: Agent;
   switch (runtime?.engine) {

@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { CommandRecovery } from './CommandRecovery.js';
-import { AGENT_PRESENTATION } from './agent-presentation.js';
+import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
@@ -20,7 +20,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
-  const presentation = AGENT_PRESENTATION[agent];
+  const presentation = 'kind' in active.agent ? agentPresentation(active.agent).presentation : AGENT_PRESENTATION[agent];
   const view = useConversation(active.store);
   const [editor, setEditor] = useState<DraftEditor>({ kind: 'saved', text: view.draft });
   const editVersion = useRef(0);
