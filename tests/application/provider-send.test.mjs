@@ -10,6 +10,8 @@ import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { createBrowserConnection } from '@agentui/client/service';
 import { createProviderRegistry } from '@agentui/host';
+import { createServerExtensions } from '@agentui/host/extensions';
+import { entry } from '../host/extensions/fixtures.mjs';
 import { fixture as hostFixture, scope as hostScope, snapshot } from '../host/fixture.mjs';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { crew, crewBackend, crewPresentation } from '../extensions/providers/contracts/crew.ts';
@@ -31,7 +33,7 @@ function extension({ native = false, create, lookup, submit, reconcile, request,
   const base = native ? localBackend : crewBackend, provider = native ? local : crew;
   const presentation = { ...(native ? localPresentation : crewPresentation) };
   if (generation) presentation.instance = { ...presentation.instance, generation };
-  const calls = { creates: [], lookups: [], submits: [], reconciles: [], translations: 0 };
+  const calls = { creates: [], lookups: [], submits: [], reconciles: [], translations: 0, close: 0, dispose: 0 };
   const originalRequest = presentation.request;
   presentation.request = (text, binding) => { calls.translations++; return request ? request(text, binding) : originalRequest(text, binding); };
   if (decode) presentation.decodeRequest = decode;
@@ -49,14 +51,14 @@ function extension({ native = false, create, lookup, submit, reconcile, request,
     async create(operation) { calls.creates.push(structuredClone(operation)); return create ? create(operation, { confirmed, context, credential }) : confirmed(operation); },
     async reconcileCreation(operation) { calls.lookups.push(structuredClone(operation)); return lookup ? lookup(operation, { confirmed, context, credential }) : confirmed(operation); },
     async submit(operation) { calls.submits.push(structuredClone(operation)); return submit ? submit(operation, { effect, context, credential }) : effect(operation); },
-    async reconcileCommand(operation) { calls.reconciles.push(structuredClone(operation)); return reconcile ? reconcile(operation, { effect, context, credential }) : effect(operation); }, async close() {},
+    async reconcileCommand(operation) { calls.reconciles.push(structuredClone(operation)); return reconcile ? reconcile(operation, { effect, context, credential }) : effect(operation); }, async close() { calls.close++; },
   };
-  return { calls, connected, confirmed, effect, rename(value) { name = value; }, value: {
+  return { calls, connected, confirmed, effect, get context() { return context; }, get credential() { return credential; }, rename(value) { name = value; }, value: {
     manifest: { namespace: presentation.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
     entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(value) {
       context = value;
       value.providers.add('service', { ...provider, async connect(request) { credential = request.credential; return { kind: 'connected', backend: connected }; } }, presentation);
-      return { async dispose() {} };
+      return { async dispose() { calls.dispose++; } };
     } },
     installations: [{ id: 'service', instance: presentation.instance, service, expectedAuthority: native ? 'agentui-host' : 'remote-provider',
       authentication: { kind: 'secret', revision, resolve: async () => secret } }],
@@ -297,4 +299,57 @@ test('lookup while fresh submission is running cannot weaken its receipt, and sh
   const b = extension(); await f.restart([b]);
   assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'accepted');
   assert.deepEqual(b.calls.reconciles, a.calls.submits); assert.equal(b.calls.submits.length, 0);
+});
+
+for (const lookup of [false, true]) {
+  test(`entered credential-backed ${lookup ? 'original lookup' : 'send'} defers replacement without retiring its owner`, { timeout: 10000 }, async t => {
+    const entered = Promise.withResolvers(), release = Promise.withResolvers(), service = 'http://127.0.0.1:12345';
+    const held = async (operation, { context, credential, effect }) => context.credentials.use({ credential, service }, async token => {
+      assert.equal(token, secret); entered.resolve(); await release.promise; return effect(operation);
+    });
+    const a = extension({ submit: lookup ? () => { throw new Error('Reply lost'); } : held, ...(lookup ? { reconcile: held } : {}) });
+    const next = entry(t, { label: 'replacement' }), f = await fixture(t, [a]), scope = await create(f);
+    if (lookup) {
+      assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'uncertain');
+      const unresolved = await create(f, 'unresolved');
+      await f.client.conversation(unresolved).submit(send(unresolved));
+    }
+    const working = lookup ? f.client.reconcile(scope, 'send') : f.client.conversation(scope).submit(send(scope));
+    try {
+      await entered.promise;
+      const targets = f.inspect(db => db.prepare('SELECT target FROM commands ORDER BY conversation').all());
+      const credentials = f.inspect(db => db.prepare('SELECT handle,revoked FROM service_provider_credentials').all());
+      assert.equal(f.running.extensionStatus().pending, 1);
+      assert.deepEqual(await f.running.replaceProviderExtensions([next.value]), { kind: 'deferred', reason: 'active-work' });
+      assert.equal(f.running.extensionStatus().pending, 1);
+      assert.equal(next.calls.import, 0); assert.equal(a.calls.close + a.calls.dispose, 0);
+      assert.equal(await a.context.credentials.use({ credential: a.credential, service }, async token => token), secret);
+      assert.deepEqual(f.inspect(db => db.prepare('SELECT handle,revoked FROM service_provider_credentials').all()), credentials);
+      assert.deepEqual(JSON.parse(targets[0].target).operation, a.calls.submits[0]);
+      if (lookup) assert.deepEqual(a.calls.reconciles, [a.calls.submits[0]]);
+      release.resolve();
+      const result = await working;
+      assert.equal((lookup ? result : result.receipt).state.kind, 'accepted');
+      assert.equal(f.running.extensionStatus().pending, 0);
+      assert.deepEqual(await f.running.replaceProviderExtensions([next.value]), { kind: 'replaced', generation: 2 });
+      assert.equal(next.calls.import, 1); assert.equal(a.calls.close, 1); assert.equal(a.calls.dispose, 1);
+      await assert.rejects(a.context.credentials.use({ credential: a.credential, service }, async () => assert.fail('retired credential')), /credential use refused/);
+      if (lookup) {
+        assert.equal((await f.client.reconcile(f.scope('unresolved'), 'send')).state.kind, 'uncertain');
+        assert.equal(next.calls.commands, 0); assert.equal(a.calls.submits.length, 2); assert.equal(a.calls.reconciles.length, 1);
+      }
+      assert.deepEqual(f.inspect(db => db.prepare('SELECT target FROM commands ORDER BY conversation').all()), targets);
+    } finally { release.resolve(); await working; }
+  });
+}
+
+test('inactive owner refuses fresh sends and preserves lookup uncertainty without entering effects', async () => {
+  const owner = createServerExtensions();
+  for (const closing of [false, true]) {
+    if (closing) await owner.close();
+    assert.throws(() => owner.captureCommand(null, { kind: 'send', text: 'text' }, 'operation'), /Provider unavailable/);
+    assert.deepEqual(await owner.executeCommand(null, true, () => assert.fail('inactive fresh effect')),
+      { kind: 'not-dispatched', reason: 'provider-local-refusal' });
+    assert.deepEqual(await owner.executeCommand(null, false, () => assert.fail('inactive lookup effect')), { kind: 'outcome-unknown' });
+  }
 });

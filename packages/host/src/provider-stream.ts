@@ -82,8 +82,8 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     if (committed) { decode(presentation.decodeState, committed.state); cursor(committed.cursor); }
   };
   restore();
-  const apply = (value: unknown) => {
-    authorize();
+  const apply = (value: unknown, source: 'snapshot' | 'feed') => {
+    if (source === 'snapshot') authorize();
     const item = record(bounded(value));
     if (item.kind !== 'snapshot' && item.kind !== 'event') throw new Error('Invalid provider item');
     record(item, item.kind === 'snapshot' ? ['kind', 'snapshot'] : ['kind', 'cursor', 'eventId', 'event']);
@@ -129,7 +129,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
         change = { checkpoint: { projectionVersion: committed.projectionVersion, state: bounded(decode(presentation.decodeState, state)), cursor: bounded(nextCursor) }, runs: [],
           output: { kind: 'events', events: result.events.map(parseTranscriptEvent) } };
       }
-      authorize();
+      if (source === 'snapshot') authorize();
       return { ...change, runs: [...runs.values()] };
     });
     restore();
@@ -138,27 +138,39 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     const result = await connected.snapshot(binding);
     authorize();
     if (result.kind !== 'available') throw new Error('Provider snapshot unavailable');
-    apply({ kind: 'snapshot', snapshot: result.snapshot });
+    apply({ kind: 'snapshot', snapshot: result.snapshot }, 'snapshot');
   }
   if (!committed) throw new Error('Provider baseline missing');
-  let stopped = false, failed = false;
+  let stopped = false, failed = false, feedClosed = false;
+  let rejectClose!: (error: Error) => void;
+  const closeFailure = new Promise<never>((_resolve, reject) => { rejectClose = reject; });
+  void closeFailure.catch(() => {});
   let feed: ProviderFeed<M, I> | undefined;
   let tail = Promise.resolve();
-  const close = () => { stopped = true; feed?.close(); };
+  const close = () => {
+    stopped = true;
+    if (!feed || feedClosed) return;
+    feedClosed = true;
+    try { feed.close(); } catch (error) { rejectClose(new Error('Provider stream cleanup failed')); throw error; }
+  };
+  const fail = () => { failed = true; try { close(); } catch {} };
   authorize();
   try { feed = connected.observe({ binding, after: cursor(committed.cursor) }, value => {
     if (stopped) return Promise.reject(new Error('Provider stream closed'));
     let copied: Json;
-    try { copied = bounded(value); }
-    catch { failed = true; close(); return Promise.reject(new Error('Invalid provider item')); }
+    try { copied = bounded(value); authorize(); }
+    catch { fail(); return Promise.reject(new Error('Invalid provider item')); }
     const task = tail.then(() => {
       if (failed) throw new Error('Provider stream failed');
-      apply(copied);
+      apply(copied, 'feed');
     });
-    tail = task.catch(() => { failed = true; close(); });
+    tail = task.catch(fail);
     return task;
   }); } catch (error) { failed = true; stopped = true; await tail; throw error; }
-  if (stopped) feed.close();
-  const drained = feed.ended.finally(async () => { stopped = true; await tail; }).then(() => {});
+  if (stopped) fail();
+  const drained = Promise.race([feed.ended, closeFailure]).finally(async () => {
+    stopped = true;
+    await tail;
+  }).then(() => {});
   return { close, drained };
 }
