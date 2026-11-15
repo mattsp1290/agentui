@@ -64,7 +64,8 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     try {
       const receipt = await client.requestStatus({ conversationId: binding.authority.binding.opaqueSessionId, requestId },
         { signal: AbortSignal.timeout(10000) });
-      state = { ...state, run: { requestId, status: receipt.status } };
+      state = { ...state, run: { requestId, status: receipt.status,
+        cancellation: receipt.cancellation ?? null } };
     } catch { /* Missing or unavailable status is not proof of completion. */ }
   }
   async function publish() {

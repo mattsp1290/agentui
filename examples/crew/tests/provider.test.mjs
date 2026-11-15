@@ -126,8 +126,8 @@ test('Crew lost submit remains original-only GET recovery and does not turn miss
 
 async function direct(remote) {
   const { value } = remote.extension(), installation = value.installations[0];
-  let provider;
-  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend) { provider = backend; } },
+  let provider, presentation;
+  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
     credentials: { use: (_request, action) => action('private-crew-test') } });
   const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
     credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
@@ -136,7 +136,7 @@ async function direct(remote) {
     agent: (await backend.discover()).agents[0].ref };
   const created = await backend.create(operation);
   assert.equal(created.kind, 'confirmed');
-  return { backend, binding: created.value };
+  return { backend, binding: created.value, presentation };
 }
 
 for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
@@ -502,4 +502,15 @@ for (const mismatch of ['approvalId', 'decision']) test(`Crew mismatched ${misma
     body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } })).receipt.state.kind, 'uncertain');
   assert.equal(saved(f).decisions[0].status, 'reserved');
   assert.equal(remote.calls.filter(call => call.path.endsWith('/human')).length, 1);
+});
+
+
+test('Crew historical uncertain run checkpoint decodes without inventing termination evidence', async t => {
+  const remote = await service(t), { backend, binding, presentation } = await direct(remote);
+  t.after(() => backend.close());
+  const state = presentation.decodeState({ binding, messages: [], run: { requestId: randomUUID(), status: 'uncertain' } });
+  assert.equal(state.run.status, 'uncertain');
+  assert.equal(state.run.cancellation, null);
+  assert.deepEqual(presentation.snapshot(state, { run: () => ({ runId: 'original-run' }) }),
+    { messages: [], currentRun: { kind: 'running', runId: 'original-run' } });
 });
