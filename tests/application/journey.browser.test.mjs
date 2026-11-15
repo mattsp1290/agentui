@@ -83,6 +83,8 @@ async function draft(page, text) {
 }
 
 async function revealRecovery(page) {
+  const settings = page.getByRole('button', { name: 'Settings', exact: true });
+  if (await settings.count()) await settings.click();
   const menu = page.locator('.recovery-menu');
   if (await menu.getAttribute('open') === null) await menu.locator('summary').click();
 }
@@ -129,6 +131,7 @@ test('desktop connection action opens the paired host app and keeps conversation
   await revealRecovery(page);
   await page.getByRole('button', { name: 'Restore default view' }).click();
   await connected(page);
+  await revealRecovery(page);
   await Promise.all([page.waitForEvent('load'), page.getByRole('button', { name: 'Reload app' }).click()]);
   await connected(page);
   assert.equal(await page.locator('.scope-label').textContent(), conversation);
@@ -143,7 +146,9 @@ test('built browser app pairs two views, streams, races approval and recovers or
   await alice.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(alice);
   const conversation = await alice.locator('.scope-label').textContent();
+  await bob.getByRole('button', { name: 'Settings', exact: true }).click();
   await bob.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await bob.getByRole('button', { name: 'Chats', exact: true }).click();
   await bob.getByRole('button', { name: new RegExp(`Open conversation ${conversation}$`) }).click();
   await connected(bob);
   await draft(alice, 'First recorded message');
@@ -227,7 +232,9 @@ test('built browser app pairs two views, streams, races approval and recovers or
   await alice.context().setOffline(true);
   await alice.getByRole('status').first().filter({ hasText: /failed|disconnected/ }).waitFor();
   await alice.context().setOffline(false);
+  await alice.getByRole('button', { name: 'Settings', exact: true }).click();
   await alice.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await alice.getByRole('button', { name: 'Chats', exact: true }).click();
   await connected(alice);
   assert.equal(typeof watches.at(-1).after, 'number', 'ordinary interruption replays from applied cursor');
   await alice.reload();
@@ -400,7 +407,9 @@ test('browser catalog reads every page and opens a conversation beyond the first
       if (!response.ok) throw new Error('Catalog setup failed');
     }
   }, host.hostId);
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
   const catalog = page.getByRole('navigation', { name: 'Host conversations', exact: true });
   await wait(async () => await catalog.getByRole('button').count() === 101, 'first bounded catalog page');
   await catalog.getByRole('button', { name: 'More conversations', exact: true }).click();

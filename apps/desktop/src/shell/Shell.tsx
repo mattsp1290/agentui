@@ -47,22 +47,26 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children, defaultView, protectedContent, status, buildLabel }: {
+export function DesktopShell({ children, defaultView, protectedContent, navigation, activeView, onRestore, status, buildLabel }: {
   readonly children?: ReactNode;
   readonly defaultView?: ReactNode;
   readonly protectedContent?: ReactNode;
+  readonly navigation?: ReactNode;
+  readonly activeView?: 'chats' | 'settings';
+  readonly onRestore?: () => void;
   readonly status?: ReactNode;
   readonly buildLabel?: string;
 }) {
   const [view, setView] = useState<{ readonly kind: 'initial' } | { readonly kind: 'default'; readonly revision: number }>({ kind: 'initial' });
-  return <ThemeScope className="desktop-shell">
+  return <ThemeScope className="desktop-shell" data-workspace-view={activeView}>
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
       <details className="recovery-menu"><summary>View options</summary><nav aria-label="Recovery controls">
-        <Button tone="secondary" onClick={() => setView((current) => ({ kind: 'default', revision: current.kind === 'default' ? current.revision + 1 : 1 }))}>Restore default view</Button>
+        <Button tone="secondary" onClick={() => { onRestore?.(); setView((current) => ({ kind: 'default', revision: current.kind === 'default' ? current.revision + 1 : 1 })); }}>Restore default view</Button>
         <Button tone="secondary" onClick={() => window.location.reload()}>Reload app</Button>
       </nav></details>
     </header>
+    {navigation}
     {protectedContent}
     <main id="main-content">
       <ContentBoundary key={view.kind === 'initial' ? 0 : view.revision}>
