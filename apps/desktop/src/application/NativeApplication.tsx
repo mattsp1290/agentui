@@ -19,8 +19,11 @@ export function NativeApplication() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [invitation, setInvitation] = useState('');
+  const [forgetSessionId, setForgetSessionId] = useState<Session['id'] | null>(null);
+  const forgetButton = useRef<HTMLButtonElement>(null);
   async function replace(command: Parameters<typeof macAccess>[0]): Promise<void> {
     if (pending.current) return;
+    setForgetSessionId(null);
     pending.current = true; setBusy(true); setError('');
     try {
       const action = command.kind === 'status' ? command : { ...command, observation: (await macAccess({ kind: 'status' }, nativeInvoke)).observation };
@@ -53,7 +56,15 @@ export function NativeApplication() {
       <input id="native-invitation" value={invitation} onChange={event => setInvitation(event.target.value)} autoComplete="off" maxLength={4096} disabled={busy} />
       <button disabled={busy || !session || session.access.kind === 'unreadable' || !invitation.trim()}>Pair this Mac</button>
     </form>
-    {session && <button disabled={busy} onClick={() => { if (window.confirm('Forget local pairing? Drafts and unresolved commands stay saved. Remote device access is not revoked.')) void replace({ kind: 'forget', observation: session.access.observation }); }}>Forget local pairing</button>}
+    {session && <>
+      <button ref={forgetButton} type="button" disabled={busy} onClick={() => setForgetSessionId(session.id)}>Forget local pairing</button>
+      {forgetSessionId === session.id && <div role="group" aria-labelledby="forget-local-pairing-question">
+        <p id="forget-local-pairing-question">Forget local pairing?</p>
+        <p>Drafts and unresolved commands stay saved. Remote device access is not revoked.</p>
+        <button type="button" autoFocus disabled={busy} onClick={() => { setForgetSessionId(null); forgetButton.current?.focus(); }}>Cancel</button>
+        <button type="button" disabled={busy} onClick={() => void replace({ kind: 'forget', observation: session.access.observation })}>Forget pairing</button>
+      </div>}
+    </>}
     <p>Forgetting is local. Use the host device revoke command to revoke server access. No command is replayed on reconnect.</p>
     {busy && <p role="status">Updating native connection…</p>}
   </section>;
