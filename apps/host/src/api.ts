@@ -3,7 +3,7 @@ import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
-import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, DiscoveredProvider, createProviderRegistry } from '@agentui/host';
+import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, DiscoveredProvider, ProviderCreationOperations } from '@agentui/host';
 import { recordedInstallation } from '@agentui/host/recorded';
 import type { Access, CredentialClass, Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
@@ -19,8 +19,7 @@ export function createApi(options: {
   readonly compatibility: HostCompatibility; readonly feeds: FeedRegistry;
   readonly installation?: Installation;
   readonly agents?: readonly InstalledAgent[];
-  readonly providers?: ReturnType<typeof createProviderRegistry>;
-  readonly providerCatalog?: readonly DiscoveredProvider[];
+  readonly providers?: ProviderCreationOperations & { catalog(): readonly DiscoveredProvider[] };
   readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
 }) {
   const { access, host, feeds } = options;
@@ -32,21 +31,6 @@ export function createApi(options: {
   }));
   const defaultAgentId = describeAgent(defaultInstallation, { kind: 'ready' }).id;
   if (agents.size !== configured.length || ![...agents.values()].some(agent => agent.id === defaultAgentId)) throw new Error('Invalid configured agents');
-  const providerAgents = new Map((options.providerCatalog ?? []).flatMap(provider => provider.agents.map(agent => {
-    const installation: ProviderInstallation = { kind: 'provider', contributionId: provider.contributionId,
-      instance: provider.instance, agent, presentationVersion: 1, expectedAuthority: provider.expectedAuthority };
-    const descriptor = describeProviderAgent(installation, provider.capabilities.create ? { kind: 'ready' }
-      : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, provider.capabilities.reconcile ? [
-        ...(provider.capabilities.send ? ['send' as const] : []), ...(provider.capabilities.cancel ? ['cancel' as const] : []),
-        ...(provider.capabilities.decide ? ['approve' as const] : []),
-      ] : []);
-    return [descriptor.id, { installation, descriptor }] as const;
-  })));
-  const describe = (installation: ConversationInstallation) => 'kind' in installation
-    ? providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor ?? describeProviderAgent(installation,
-      { kind: 'unavailable', reason: 'This conversation’s provider is no longer configured.' })
-    : agents.get(canonicalJson(installation)) ?? describeAgent(installation,
-    { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
@@ -54,18 +38,42 @@ export function createApi(options: {
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
+  function providerChoices() {
+    return new Map((options.providers?.catalog() ?? []).flatMap(provider => provider.agents.map(agent => {
+      const installation: ProviderInstallation = { kind: 'provider', contributionId: provider.contributionId,
+        instance: provider.instance, agent, presentationVersion: 1, expectedAuthority: provider.expectedAuthority };
+      const descriptor = describeProviderAgent(installation, provider.capabilities.create ? { kind: 'ready' }
+        : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, provider.capabilities.reconcile ? [
+          ...(provider.capabilities.send ? ['send' as const] : []), ...(provider.capabilities.cancel ? ['cancel' as const] : []),
+          ...(provider.capabilities.decide ? ['approve' as const] : []),
+        ] : []);
+      return [descriptor.id, { installation, descriptor }] as const;
+    })));
+  }
+  function describe(installation: ConversationInstallation, providerAgents: ReturnType<typeof providerChoices>) {
+    return 'kind' in installation
+      ? providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor ?? describeProviderAgent(installation,
+        { kind: 'unavailable', reason: 'This conversation’s provider is no longer configured.' })
+      : agents.get(canonicalJson(installation)) ?? describeAgent(installation,
+      { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
+  }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
     switch (request.op) {
-      case 'metadata': return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...agents.values(), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+      case 'metadata': {
+        const providerAgents = providerChoices();
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...agents.values(), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+      }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
       })) satisfies ServiceValueMap['catalog'];
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
       case 'conversation-agent': {
+        const providerAgents = providerChoices();
         const installation = host.creation(request.scope)?.installation ?? host.installation(request.scope);
-        return installation ? describe(installation) : null;
+        return installation ? describe(installation, providerAgents) : null;
       }
       case 'create': {
+        const providerAgents = providerChoices();
         const original = host.creation(request.scope);
         const provider = original?.installation ?? providerAgents.get(request.agentId)?.installation;
         if (provider) {
@@ -83,12 +91,12 @@ export function createApi(options: {
         const existing = host.installation(request.scope);
         if (existing) {
           if ('kind' in existing) throw new ServiceError('unavailable', 'The original provider creation record is unavailable.');
-          if (describe(existing).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
+          if (describe(existing, providerAgents).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
           return request.scope;
         }
-        const selected = configured.find(entry => describe(entry.installation).id === request.agentId);
+        const selected = configured.find(entry => describe(entry.installation, providerAgents).id === request.agentId);
         if (!selected) throw new ServiceError('create-rejected', 'This conversation was not created. Choose an available agent for a new conversation.');
-        const descriptor = describe(selected.installation);
+        const descriptor = describe(selected.installation, providerAgents);
         if (descriptor.availability.kind !== 'ready') throw new ServiceError('unavailable', descriptor.availability.reason);
         host.createConversation(request.scope, selected.installation);
         return request.scope satisfies ServiceValueMap['create'];

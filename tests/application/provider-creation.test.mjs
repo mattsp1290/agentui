@@ -343,10 +343,11 @@ test('live rediscovery accepts an already selected agent after its display name 
   a.rename('After');
   const catalog = await f.running.discoverProviders();
   assert.equal(catalog[0].agents[0].name, 'After');
+  assert.equal((await selected(f, 'After')).id, agent.id);
   const scope = f.scope('rediscovered');
   assert.deepEqual(await f.client.create(scope, agent.id), scope);
   assert.equal(a.calls.creates.length, 1);
-  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations').get().original).installation.agent.name), 'Before');
+  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations').get().original).installation.agent.name), 'After');
 });
 
 test('direct creation retry accepts a display rename while retaining its captured intent and rejecting foreign identity', async t => {

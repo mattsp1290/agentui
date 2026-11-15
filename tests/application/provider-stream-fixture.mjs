@@ -88,7 +88,7 @@ export async function providerService(t, { native = false } = {}) {
   t.after(() => { server.closeAllConnections(); server.close(); });
   const service = `http://127.0.0.1:${server.address().port}`;
   const extension = ({ revision = '1', generation = 'original', mutate, onAck, holdReceive, controls = false } = {}) => {
-    const installed = { ...instance, generation }, calls = { observe: [], ack: [], failures: [], connected: [], closed: 0, disposed: 0, ready: 0 };
+    const installed = { ...instance, generation }, calls = { observe: [], ack: [], failures: [], connected: [], closed: 0, disposed: 0, ready: 0, feedClosed: 0 };
     let context, credential;
     const request = (path, input, signal) => context.credentials.use({ credential, service }, async token => {
       const response = await fetch(`${service}${path}`, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(input), signal });
@@ -140,11 +140,12 @@ export async function providerService(t, { native = false } = {}) {
           } catch (error) { if (!stopped) calls.failures.push(error); }
           finally { close(); }
         })();
-        return { close, ended: end.promise };
+        calls.disconnect = close;
+        return { close() { calls.feedClosed++; close(); }, ended: end.promise };
       },
       async close() { calls.closed++; },
     };
-    return { calls, presentation, backend, value: {
+    return { calls, presentation, backend, get context() { return context; }, get credential() { return credential; }, value: {
       manifest: { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './provider.js' }] },
       entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(value) {
         context = value;
@@ -157,9 +158,9 @@ export async function providerService(t, { native = false } = {}) {
         authentication: { kind: 'secret', revision, resolve: async () => secret } }],
     } };
   };
-  return { extension, requests, conversations, clients, ref, cursor, makeEvent, emit, command(handler) { commandHandler = handler; }, beforeReply() { beforeReply = true; } };
+  return { extension, service, requests, conversations, clients, ref, cursor, makeEvent, emit, command(handler) { commandHandler = handler; }, beforeReply() { beforeReply = true; } };
 }
-export async function fixture(t, extensions) {
+export async function fixture(t, extensions, { shutdownFailure = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-stream-'));
   let running, cookie, port;
   const control = op => new Promise((resolve, reject) => {
@@ -178,7 +179,11 @@ export async function fixture(t, extensions) {
     if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
-  t.after(async () => { await running.close(); rmSync(directory, { recursive: true, force: true }); });
+  t.after(async () => {
+    if (shutdownFailure) await assert.rejects(running.close(), /Host shutdown failed/);
+    else await running.close();
+    rmSync(directory, { recursive: true, force: true });
+  });
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
   return { client, directory, inspect, control, get running() { return running; }, get cookie() { return cookie; },
     scope: id => ({ hostId: running.hostId, conversationId: id }),

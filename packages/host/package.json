@@ -39,6 +39,10 @@
     "./observability": {
       "types": "./dist/observability.d.ts",
       "import": "./dist/observability.js"
+    },
+    "./extensions": {
+      "types": "./dist/extensions/index.d.ts",
+      "import": "./dist/extensions/index.js"
     }
   },
   "files": [
