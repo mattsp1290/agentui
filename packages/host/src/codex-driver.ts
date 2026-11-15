@@ -1,0 +1,382 @@
+import { randomUUID } from 'node:crypto';
+import { resolve } from 'node:path';
+import type { ClientCommand, ConversationScope } from '@agentui/contracts';
+import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
+import { canonicalJson } from '@agentui/contracts';
+import { nonempty, object } from './codec.js';
+import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
+import { CodexRpc, CodexRpcError } from './codex-rpc.js';
+
+export interface CodexTranscriptEvent {
+  readonly kind: 'message-updated';
+  readonly messageId: string;
+  readonly revision: number;
+  readonly role: 'user' | 'assistant';
+  readonly text: string;
+  readonly complete: boolean;
+}
+export interface CodexDriverOptions {
+  readonly cwd: string;
+  readonly version: string;
+  readonly append: (scope: ConversationScope, output: HostOutput<CodexTranscriptEvent>) => void;
+  readonly executable?: string;
+  readonly args?: readonly string[];
+}
+interface ActiveTurn {
+  readonly scope: ConversationScope;
+  readonly threadId: string;
+  readonly messages: Map<string, string>;
+  readonly fileChanges: Map<string, string>;
+  readonly rendered: CodexTranscriptEvent[];
+  timer: ReturnType<typeof setTimeout> | undefined;
+  revision: number;
+  complete: boolean;
+  run: NativeRun | null;
+}
+interface Approval {
+  readonly id: string | number;
+  readonly pendingId: string;
+  readonly turn: ActiveTurn;
+  readonly run: NativeRun;
+  waiter: { resolve: () => void; reject: (error: Error) => void } | null;
+}
+type Observation = NativeDispatchObservation<CommandResult<CodexTranscriptEvent>>;
+const empty = (): HostOutput<CodexTranscriptEvent> => ({ events: [], runs: [], decisions: [] });
+const scopeKey = (scope: ConversationScope) => canonicalJson(scope);
+
+function messageParts(text: string): string[] {
+  const parts: string[] = [];
+  let start = 0, offset = 0, bytes = 0;
+  for (const character of text) {
+    const cost = Buffer.byteLength(JSON.stringify(character)) - 2;
+    if (bytes + cost > 24_000) {
+      parts.push(text.slice(start, offset));
+      start = offset; bytes = 0;
+    }
+    bytes += cost; offset += character.length;
+  }
+  parts.push(text.slice(start));
+  return parts;
+}
+
+function bounded(text: string, limit = 8_000): string {
+  let end = 0, bytes = 0;
+  for (const character of text) {
+    bytes += Buffer.byteLength(JSON.stringify(character)) - 2;
+    if (bytes > limit) return `${text.slice(0, end)}\n[Further details omitted]`;
+    end += character.length;
+  }
+  return text;
+}
+
+export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<CodexTranscriptEvent> & {
+  readonly installation: Installation; close(): void;
+} {
+  const cwd = resolve(options.cwd);
+  const installation: Installation = { installationId: 'codex-local-v1', binding: {
+    engine: 'codex', nativeVersion: nonempty(options.version), account: 'local', authorizedScope: cwd,
+    nativeFormat: 'codex-app-server-v2',
+  } };
+  const active = new Map<string, ActiveTurn>();
+  const busy = new Set<string>();
+  const loaded = new Set<string>();
+  const approvals = new Map<string, Approval>();
+  let closing = false;
+  let disconnected = false;
+  const rpc = new CodexRpc({ cwd,
+    ...(options.executable === undefined ? {} : { executable: options.executable }),
+    ...(options.args === undefined ? {} : { args: options.args }),
+    onNotification: (method, value) => handleCallback(value, () => notification(method, value)),
+    onRequest: (id, method, value) => handleCallback(value, () => request(id, method, value)),
+    onClose() {
+      disconnected = true;
+      for (const turn of active.values()) {
+        if (closing) break;
+        try { interrupted(turn, 'Codex disconnected. This turn was interrupted. Restart the host to connect again.'); }
+        catch { outputFailed(turn); }
+      }
+      active.clear(); busy.clear();
+    },
+  });
+  let initialization: Promise<void> | null = null;
+  function initialize(): Promise<void> {
+    initialization ??= rpc.request('initialize', {
+      clientInfo: { name: 'agentui', version: '0.0.0' }, capabilities: { experimentalApi: false },
+    }).then(() => rpc.notify('initialized', {})).catch(error => { initialization = null; throw error; });
+    return initialization;
+  }
+  function publish(turn: ActiveTurn, events: readonly CodexTranscriptEvent[],
+    decisions: HostOutput<CodexTranscriptEvent>['decisions'] = [], runs: readonly NativeRun[] = []) {
+    if (closing) return;
+    options.append(turn.scope, { events, runs, decisions });
+  }
+  function renderMessage(turn: ActiveTurn, newRun = false) {
+    clearTimeout(turn.timer); turn.timer = undefined;
+    if (!turn.run) return;
+    const parts = messageParts([...turn.messages.values()].join('\n\n'));
+    const count = Math.max(parts.length, turn.rendered.length);
+    for (let index = 0; index < count; index++) {
+      const text = parts[index] ?? '';
+      const previous = turn.rendered[index];
+      if (previous?.text === text && previous.complete === turn.complete) continue;
+      const event: CodexTranscriptEvent = { kind: 'message-updated',
+        messageId: `${turn.threadId}:${turn.run.identity.runId}:assistant${index === 0 ? '' : `:${index}`}`,
+        role: 'assistant', text, revision: ++turn.revision, complete: turn.complete };
+      publish(turn, [event], [], newRun && index === 0 ? [turn.run] : []);
+      turn.rendered[index] = event;
+    }
+  }
+  function message(turn: ActiveTurn, id: string, text: string) {
+    if (turn.complete) return;
+    turn.messages.set(id, text);
+    turn.timer ??= setTimeout(() => {
+      try { renderMessage(turn); } catch { outputFailed(turn); }
+    }, 150);
+    turn.timer.unref();
+  }
+  function expireApprovals(turn: ActiveTurn) {
+    const expiredDecisions: string[] = [];
+    for (const [key, approval] of approvals) {
+      if (approval.turn !== turn) continue;
+      approvals.delete(key);
+      approval.waiter?.reject(new Error('Codex approval expired before confirmation'));
+      expiredDecisions.push(approval.pendingId);
+    }
+    if (expiredDecisions.length) options.append(turn.scope, { ...empty(), expiredDecisions });
+  }
+  function interrupted(turn: ActiveTurn, text: string) {
+    expireApprovals(turn);
+    if (turn.complete) return;
+    turn.messages.set(`status:${randomUUID()}`, text);
+    turn.complete = true;
+    renderMessage(turn);
+  }
+  function status(turn: ActiveTurn, text: string) {
+    message(turn, `status:${randomUUID()}`, text);
+  }
+  function outputFailed(turn: ActiveTurn) {
+    clearTimeout(turn.timer); turn.timer = undefined;
+    active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
+    turn.complete = true;
+    try { expireApprovals(turn); } catch { /* Storage can also reject expiry while full. */ }
+    for (const [index, previous] of turn.rendered.entries()) {
+      if (previous.complete) continue;
+      const event = { ...previous, revision: ++turn.revision, complete: true };
+      try { publish(turn, [event]); turn.rendered[index] = event; } catch { /* Try the remaining stored parts. */ }
+    }
+    try {
+      publish(turn, [{ kind: 'message-updated', messageId: `codex-storage:${randomUUID()}`,
+        revision: 1, role: 'assistant', complete: true,
+        text: 'This response stopped because AgentUI could not store more output. Try a new conversation.' }]);
+    } catch { process.emitWarning('Could not store Codex output', { code: 'AGENTUI_CODEX_STORAGE' }); }
+    if (turn.run && !disconnected && !closing) {
+      void rpc.request('turn/interrupt', { threadId: turn.threadId, turnId: turn.run.identity.runId }).catch(() => {});
+    }
+  }
+  function handleCallback(value: unknown, callback: () => void) {
+    try { callback(); }
+    catch {
+      const threadId = value !== null && typeof value === 'object' && 'threadId' in value ? value.threadId : null;
+      const turn = typeof threadId === 'string' ? active.get(threadId) : undefined;
+      if (turn) outputFailed(turn);
+      else process.emitWarning('Could not handle Codex output', { code: 'AGENTUI_CODEX_OUTPUT' });
+    }
+  }
+  function run(turn: ActiveTurn, turnId: string): NativeRun {
+    const value: NativeRun = { identity: { conversation: turn.scope, runId: turnId,
+      authority: { kind: 'agentui-host', hostId: turn.scope.hostId,
+        binding: { namespace: 'codex-app-server', installationId: installation.installationId, opaqueSessionId: turn.threadId } } },
+      reference: { kind: 'session', formatVersion: 1, binding: installation.binding, opaque: turn.threadId },
+    };
+    if (turn.run && turn.run.identity.runId !== turnId) throw new Error('Unexpected Codex turn');
+    if (!turn.run) {
+      turn.run = value;
+      renderMessage(turn, true);
+    }
+    return value;
+  }
+  function notification(method: string, value: unknown): void {
+    if (closing || !['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/started', 'item/completed', 'serverRequest/resolved', 'error'].includes(method)) return;
+    const params = object(value);
+    if (method === 'serverRequest/resolved') {
+      const approval = approvals.get(canonicalJson(params.requestId));
+      if (approval && params.threadId === approval.turn.threadId) {
+        approvals.delete(canonicalJson(approval.id));
+        if (approval.waiter) approval.waiter.resolve();
+        else options.append(approval.turn.scope, { ...empty(), expiredDecisions: [approval.pendingId] });
+      }
+      return;
+    }
+    const turn = active.get(nonempty(params.threadId));
+    if (!turn) return;
+    if (method === 'turn/started') {
+      run(turn, nonempty(object(params.turn).id));
+    } else if (method === 'item/agentMessage/delta') {
+      if (turn.run?.identity.runId !== params.turnId) return;
+      const id = nonempty(params.itemId);
+      if (typeof params.delta !== 'string') throw new Error('Invalid Codex text delta');
+      message(turn, id, (turn.messages.get(id) ?? '') + params.delta);
+    } else if (method === 'item/started' || method === 'item/completed') {
+      if (turn.run?.identity.runId !== params.turnId) return;
+      const item = object(params.item);
+      if (item.type === 'fileChange' && Array.isArray(item.changes)) {
+        const changes = item.changes.map(value => {
+          const change = object(value), kind = object(change.kind);
+          return { path: nonempty(change.path), kind: nonempty(kind.type),
+            movedTo: typeof kind.move_path === 'string' ? kind.move_path : null,
+            diff: typeof change.diff === 'string' ? change.diff : '' };
+        });
+        const paths = changes.map(change => `${change.path} (${change.kind})${change.movedTo ? ` → ${change.movedTo}` : ''}`).join('\n');
+        const patches = changes.map(change => `${change.path}\n${bounded(change.diff, 2_000)}`).join('\n\n');
+        turn.fileChanges.set(nonempty(item.id), `${bounded(paths, 4_000)}\n\n${bounded(patches, 4_000)}`);
+      }
+      if (method === 'item/completed' && item.type === 'agentMessage') {
+        if (typeof item.text !== 'string') throw new Error('Invalid Codex message');
+        message(turn, nonempty(item.id), item.text);
+      }
+      if (method === 'item/completed') renderMessage(turn);
+    } else if (method === 'turn/completed') {
+      const completed = object(params.turn);
+      if (turn.run?.identity.runId !== completed.id) return;
+      if (completed.status === 'failed') status(turn, 'Codex could not finish this response. You can send another message.');
+      if (completed.status === 'interrupted') status(turn, 'Codex stopped this response.');
+      expireApprovals(turn);
+      turn.complete = true;
+      renderMessage(turn);
+      active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
+    } else if (method === 'error' && params.willRetry !== true) {
+      status(turn, 'Codex reported an error while responding.');
+    }
+  }
+  function request(id: string | number, method: string, value: unknown): void {
+    if (method !== 'item/commandExecution/requestApproval' && method !== 'item/fileChange/requestApproval') {
+      rpc.rejectRequest(id, 'This interaction is not supported by AgentUI yet.');
+      return;
+    }
+    const params = object(value);
+    const turn = active.get(nonempty(params.threadId));
+    if (!turn?.run || turn.run.identity.runId !== params.turnId) {
+      rpc.rejectRequest(id, 'Approval does not belong to an active AgentUI turn.');
+      return;
+    }
+    renderMessage(turn);
+    const pendingId = randomUUID();
+    const approval: Approval = { id, pendingId, turn, run: turn.run, waiter: null };
+    approvals.set(canonicalJson(id), approval);
+    const reason = typeof params.reason === 'string' && params.reason ? `\n\n${bounded(params.reason, 2_000)}` : '';
+    const action = method === 'item/commandExecution/requestApproval'
+      ? `${typeof params.command === 'string' ? `Run: ${bounded(params.command)}` : 'Allow Codex to run a command?'}\nWorking directory: ${typeof params.cwd === 'string' ? bounded(params.cwd, 2_000) : cwd}`
+      : `Allow Codex to change files?\n${typeof params.grantRoot === 'string' ? `Write access requested under: ${bounded(params.grantRoot, 2_000)}` : `Workspace: ${cwd}`}\n\n${typeof params.itemId === 'string' ? turn.fileChanges.get(params.itemId) ?? 'Codex did not provide file details.' : 'Codex did not provide file details.'}`;
+    publish(turn, [], [{ visible: { pendingId, runId: turn.run.identity.runId,
+      choices: ['accept', 'decline'], prompt: `${action}${reason}` },
+      continuation: { processId: rpc.processId, requestId: id, threadId: turn.threadId, turnId: turn.run.identity.runId },
+    }]);
+  }
+  function acknowledged(command: ClientCommand, target: CapturedTarget, output: HostOutput<CodexTranscriptEvent>, nativeId: string): Observation {
+    const result: Observation = { kind: 'conclusive', evidence: {
+      identity: target.identity, source: 'native-acknowledgement',
+      nativeOperation: { namespace: 'codex-app-server', id: nativeId },
+      observation: { namespace: 'codex-app-server', schemaVersion: 2,
+        data: { processId: rpc.processId, command: command.body.kind, nativeId } },
+    }, result: { kind: 'completed', output } };
+    return result;
+  }
+  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string } }, target: CapturedTarget): Promise<Observation> {
+    const key = scopeKey(command.scope);
+    busy.add(key);
+    let turn: ActiveTurn | null = null;
+    let method = 'initialize';
+    try {
+      await initialize();
+      let threadId: string;
+      if (target.run) {
+        threadId = target.run.reference.opaque;
+        if (!loaded.has(threadId)) {
+          method = 'thread/resume';
+          await rpc.request('thread/resume', { threadId, cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only' });
+          loaded.add(threadId);
+        }
+      } else {
+        method = 'thread/start';
+        const response = object(await rpc.request('thread/start', { cwd, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', ephemeral: false }));
+        threadId = nonempty(object(response.thread).id);
+        loaded.add(threadId);
+      }
+      turn = { scope: command.scope, threadId, messages: new Map(), fileChanges: new Map(), rendered: [], timer: undefined, run: null, revision: 0, complete: false };
+      active.set(threadId, turn);
+      publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
+        revision: 1, role: 'user', text: command.body.text, complete: true }]);
+      method = 'turn/start';
+      const result = object(await rpc.request('turn/start', { threadId,
+        input: [{ type: 'text', text: command.body.text, text_elements: [] }], clientUserMessageId: command.clientCommandId }));
+      const nativeRun = run(turn, nonempty(object(result.turn).id));
+      return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
+    } catch (error) {
+      if (turn) {
+        try { interrupted(turn, error instanceof CodexRpcError ? `Codex rejected this request: ${bounded(error.message, 1_000)}` : 'Codex could not start this response. Check command recovery before trying again.'); }
+        catch { outputFailed(turn); }
+        active.delete(turn.threadId);
+      }
+      busy.delete(key);
+      if (error instanceof CodexRpcError) return { kind: 'conclusive', evidence: {
+        identity: target.identity, source: 'native-acknowledgement', nativeOperation: null,
+        observation: { namespace: 'codex-app-server', schemaVersion: 2,
+          data: { processId: rpc.processId, command: command.body.kind, method, phase: 'native-request-rejected', code: error.code } },
+      }, result: { kind: 'rejected', reason: `Codex rejected this request: ${bounded(error.message, 1_000)}` } };
+      throw error;
+    }
+  }
+  return {
+    source: 'codex', installation,
+    capability(command) {
+      if (closing || disconnected) return { kind: 'unsupported', reason: 'Codex is disconnected. Restart the host to connect again.' };
+      if (command.body.kind === 'send' && busy.has(scopeKey(command.scope))) return { kind: 'unsupported', reason: 'Codex is still responding. Wait for it to finish.' };
+      return { kind: 'supported' };
+    },
+    async dispatch(command, target) {
+      if (canonicalJson(target.installation) !== canonicalJson(installation)) throw new Error('Wrong Codex installation');
+      switch (command.body.kind) {
+        case 'send': return send({ ...command, body: command.body }, target);
+        case 'approve': {
+          if (!target.decision || !target.run) throw new Error('Approval target is missing');
+          const continuation = object(target.decision.continuation);
+          const approval = approvals.get(canonicalJson(continuation.requestId));
+          if (continuation.processId !== rpc.processId || !approval || approval.pendingId !== target.decision.visible.pendingId ||
+            approval.run.identity.runId !== target.run.identity.runId || scopeKey(approval.turn.scope) !== scopeKey(command.scope)) {
+            throw new Error('Codex approval expired with its connection');
+          }
+          let timeout: ReturnType<typeof setTimeout> | undefined;
+          const resolved = new Promise<void>((resolve, reject) => {
+            timeout = setTimeout(() => reject(new Error('Codex did not confirm this approval')), 15_000);
+            timeout.unref();
+            approval.waiter = { resolve, reject };
+          });
+          try { await Promise.all([rpc.respond(approval.id, { decision: command.body.choiceId }), resolved]); }
+          finally { clearTimeout(timeout); approval.waiter = null; }
+          approvals.delete(canonicalJson(approval.id));
+          return acknowledged(command, target, empty(), `${approval.turn.threadId}:${canonicalJson(approval.id)}`);
+        }
+        case 'cancel': {
+          if (!target.run) throw new Error('Cancel target is missing');
+          const threadId = target.run.reference.opaque;
+          const turn = active.get(threadId);
+          if (!turn || turn.run?.identity.runId !== command.body.runId) throw new Error('Codex turn is no longer active');
+          try { renderMessage(turn); } catch { outputFailed(turn); }
+          await rpc.request('turn/interrupt', { threadId, turnId: command.body.runId });
+          return acknowledged(command, target, empty(), command.body.runId);
+        }
+      }
+    },
+    close() {
+      if (closing) return;
+      try {
+        for (const turn of active.values()) {
+          try { interrupted(turn, 'Codex stopped when the host closed. You can send another message after reconnecting.'); }
+          catch { outputFailed(turn); }
+        }
+        active.clear(); busy.clear();
+      }
+      finally { closing = true; rpc.close(); }
+    },
+  };
+}

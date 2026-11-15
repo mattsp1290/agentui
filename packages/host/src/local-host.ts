@@ -1,6 +1,6 @@
 import { CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { ConversationPort, ConversationScope, Projection, Receipt } from '@agentui/contracts';
+import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot } from '@agentui/contracts';
 import { createDispatchOperation } from '@mattsp1290/switchboard';
 import { budgets, commandKey } from './durable-model.js';
 import { installation, nonempty } from './codec.js';
@@ -20,6 +20,7 @@ export interface LocalHost<E, P> {
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
+  inspect(scope: ConversationScope): { readonly installation: Installation; readonly snapshot: Snapshot<P> };
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
@@ -59,6 +60,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
+    inspect(scope) { return store.inspect(authorized(scope)); },
     listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
       const hostIdValue = identifier(hostId), cursor = after === null ? null : identifier(after);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > CORE_CATALOG_PAGE) throw new Error('Invalid catalog limit');
@@ -82,7 +84,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             authorized(command.scope);
             if (!sameScope(scope, command.scope)) return { kind: 'rejected', reason: 'scope-mismatch' };
           } catch { return { kind: 'rejected', reason: 'invalid-or-unauthorized-command' }; }
-          const admitted = store.admit(command, options.driver.capability(command));
+          const admitted = store.admit(command, options.driver.capability(command), options.driver.installation);
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;

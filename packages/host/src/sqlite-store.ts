@@ -12,7 +12,7 @@ type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; 
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
 function json(value: unknown): unknown { return JSON.parse(nonempty(value)); }
 class OutputApplicationError extends Error {}
-class CapacityError extends Error {}
+export class CapacityError extends Error {}
 const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
 export class SqliteStore<E, P> {
@@ -69,6 +69,9 @@ export class SqliteStore<E, P> {
     const document = parseDocument(json(row.document), value => this.projection.decodeState(value), scope, cursor);
     return { scope, projectionVersion: this.projection.version, cursor, document };
   }
+  inspect(scope: ConversationScope): { readonly installation: Installation; readonly snapshot: Snapshot<P> } {
+    return { installation: installation(json(this.conversation(scope).installation)), snapshot: this.snapshot(scope) };
+  }
   head(scope: ConversationScope): number {
     const row = this.db.prepare('SELECT head, version FROM conversations WHERE host=? AND conversation=?').get(...key(scope));
     if (!row || row.version !== this.projection.version) throw new Error('Unknown or incompatible conversation');
@@ -117,7 +120,7 @@ export class SqliteStore<E, P> {
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
-  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }): Admission {
+  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation): Admission {
     try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
       if (existing) return canonicalJson(existing.command) === canonicalJson(command)
@@ -126,6 +129,9 @@ export class SqliteStore<E, P> {
       if (Buffer.byteLength(canonicalJson(command)) > this.limits.maxCommandBytes) return { kind: 'rejected', reason: 'command-too-large' };
       if (!this.db.prepare('SELECT 1 FROM conversations WHERE host=? AND conversation=?').get(...key(command.scope))) return { kind: 'rejected', reason: 'unknown-conversation' };
       const scope = command.scope, installed = installation(json(this.conversation(scope).installation));
+      if (expectedInstallation && canonicalJson(installed) !== canonicalJson(expectedInstallation)) {
+        return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
+      }
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       let run = null, pending = null;
       if (command.body.kind === 'approve') {
@@ -141,6 +147,11 @@ export class SqliteStore<E, P> {
         const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId);
         if (!row) return { kind: 'rejected', reason: 'unknown-run' };
         run = nativeRun(json(row.data), installed, scope);
+      } else if (command.body.kind === 'send') {
+        const outstanding = this.db.prepare("SELECT 1 FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted') LIMIT 1").get(...key(scope));
+        if (outstanding) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
+        const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? ORDER BY rowid DESC LIMIT 1').get(...key(scope));
+        if (row) run = nativeRun(json(row.data), installed, scope);
       }
       const operation = randomUUID();
       const target: CapturedTarget = { installation: installed, run, decision: pending,
@@ -180,8 +191,14 @@ export class SqliteStore<E, P> {
       this.db.prepare("INSERT INTO pending_decisions(host, conversation, id, run, data, status, operation) VALUES (?, ?, ?, ?, ?, 'open', NULL)")
       .run(...key(scope), pending.visible.pendingId, pending.visible.runId, canonicalJson(pending));
     }
+    const expired: HostEvent<E>[] = [];
+    for (const pendingId of parsed.expiredDecisions ?? []) {
+      const changed = this.db.prepare("UPDATE pending_decisions SET status='closed', operation=NULL WHERE host=? AND conversation=? AND id=? AND status<>'closed'")
+        .run(...key(scope), pendingId);
+      if (changed.changes) expired.push({ kind: 'decision-closed', pendingId });
+    }
     return [...parsed.events.map(event => ({ kind: 'domain', event }) as const),
-      ...parsed.decisions.map(pending => ({ kind: 'decision-opened', decision: pending.visible }) as const)];
+      ...parsed.decisions.map(pending => ({ kind: 'decision-opened', decision: pending.visible }) as const), ...expired];
   }
   append(scope: ConversationScope, value: HostOutput<E>): void {
     this.transaction(() => {

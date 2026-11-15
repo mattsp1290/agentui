@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. A separate browser development entry connects the desktop shell to a persistent recorded host. Native host connections remain separate work.
+The macOS desktop package launches a Tauri shell with a disconnected landing page and built-in recovery controls. The iOS package builds a React Native app with a disconnected landing screen. The local Codex app supports paired conversations, streamed replies and explicit approvals. The desktop launcher can open its loopback host with `--host-url`; this native launch option still needs a macOS smoke test. The same screens work in a browser. Read [local Codex setup](docs/development/codex-host.md) to connect your existing login.
 
 Use Node 24.22.3 and npm 11.19.1.
 
