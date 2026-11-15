@@ -153,6 +153,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
     catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
+    search: (query, after = null) => request({ op: 'search', query, after }),
     create: scope => request({ op: 'create', scope }),
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
     conversation(value) {

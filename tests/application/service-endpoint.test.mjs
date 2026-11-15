@@ -47,6 +47,9 @@ for (const credentialClass of ['browser-development', 'native']) {
       return { status: response.status, body: await response.json() };
     };
     assert.equal((await call({ op: 'metadata' })).body.value.principalId, paired.principal.id);
+    assert.deepEqual(await call({ op: 'search', query: 'missing', after: null }), {
+      status: 200, body: { ok: true, value: { items: [], after: null } },
+    });
     const diagnostic = 'private backend diagnostic';
     compatibility.desiredGitRevision = diagnostic.padEnd(SERVICE_MAX_RESPONSE_BYTES, 'x');
     assert.deepEqual(await call({ op: 'metadata' }), {

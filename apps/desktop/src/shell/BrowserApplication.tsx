@@ -9,12 +9,16 @@ import { agentPresentation } from '../application/agent-presentation.js';
 import '../application/application.css';
 import customization from '../application/customization-selection.js';
 import { CustomizationModules } from '../application/CustomizationModules.js';
+import { ConversationSearch } from '../application/ConversationSearch.js';
+import { conversationLabel } from '@agentui/contracts/conversation';
 
 export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
   const { controller, snapshot: app } = useApplication();
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const enabled = applicationEnabled(app);
+  const searchConnection = app.host.kind === 'ready' && !app.storageFailure
+    ? JSON.stringify([app.host.metadata.hostId, app.host.metadata.principalId]) : null;
   const runtime = 'metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null;
   const { agent, presentation } = agentPresentation(runtime);
   const conversation = app.active
@@ -43,9 +47,10 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.conversationId} needs confirmation. Recovery uses the saved conversation ID.</p>
         <button disabled={!enabled} onClick={() => void controller.recoverCreation()}>Recover creation</button>
       </div>}
+      <ConversationSearch controller={controller} connectionKey={searchConnection} enabled={enabled} active={app.active?.scope ?? null}>
       {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
         {app.catalog.items.map(({ scope, preview }) => {
-          const label = preview ?? `New chat · ${scope.conversationId.slice(-8)}`;
+          const label = conversationLabel({ scope, preview });
           return <button key={scope.conversationId} disabled={!enabled}
             title={scope.conversationId} aria-label={`${label} · Open conversation ${scope.conversationId}`}
             aria-current={scope.conversationId === app.active?.scope.conversationId ? 'page' : undefined}
@@ -57,6 +62,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
         {app.savedViews.items.map(viewId => <button key={viewId} disabled={!enabled} onClick={() => void controller.reopenView(viewId)}>Reopen saved view {viewId}</button>)}
         {app.savedViews.after !== null && <button disabled={!enabled} onClick={() => void controller.moreSavedViews()}>More saved views</button>}
       </nav>}
+      </ConversationSearch>
     </div>
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;

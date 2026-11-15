@@ -14,6 +14,9 @@ export function conversationPreview(transcript: Transcript): string | null {
   if (!text) return null;
   return text.length > CONVERSATION_PREVIEW_LENGTH ? `${text.slice(0, CONVERSATION_PREVIEW_LENGTH - 1).replace(/[\uD800-\uDBFF]$/u, '').trimEnd()}…` : text;
 }
+export function conversationLabel(entry: { readonly scope: { readonly conversationId: string }; readonly preview: string | null }): string {
+  return entry.preview ?? `New chat · ${entry.scope.conversationId.slice(-8)}`;
+}
 export type RunOutcome = 'completed' | 'interrupted' | 'failed' | 'connection-lost';
 export type CurrentRun =
   | { readonly kind: 'running'; readonly runId: string }

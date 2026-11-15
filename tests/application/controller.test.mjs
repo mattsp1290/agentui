@@ -11,7 +11,7 @@ function fixture() {
   const views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
   const behavior = { runtime: RECORDED_RUNTIME, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
-    submit: async () => { throw new Error('Reply lost'); } };
+    search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
       async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
@@ -35,6 +35,7 @@ function fixture() {
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value) { created.push(value); await behavior.create(); return value; },
+    search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
     conversation(selected) { return { scope: selected,
       async submit(command) { submitted.push(command); return behavior.submit(command); },
@@ -46,6 +47,40 @@ function fixture() {
   return { app, views, drafts, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
+
+test('background search leaves active state usable and rejects stale, foreign and nonadvancing pages', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const active = f.app.getSnapshot().active;
+  await active.store.setDraft('Unsent during search');
+  const gate = deferred(), signal = new AbortController();
+  f.behavior.search = () => gate.promise;
+  const pending = f.app.search('garden', null, signal.signal);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  assert.equal(f.app.getSnapshot().active, active);
+  signal.abort();
+  gate.resolve({ items: [], after: 'last-scanned' });
+  await assert.rejects(pending, /Search connection changed/);
+  const live = new AbortController().signal;
+  f.behavior.search = async () => ({ items: [], after: 'a' });
+  await assert.rejects(f.app.search('garden', 'a', live), /did not advance/);
+  f.behavior.search = async () => ({ items: [], after: '😀' });
+  assert.deepEqual(await f.app.search('garden', '\uE000', live), { items: [], after: '😀' });
+  f.behavior.search = async () => ({ items: [{ scope: { ...scope, hostId: 'foreign' }, preview: null, excerpt: null }], after: null });
+  await assert.rejects(f.app.search('garden', null, live), /another host/);
+  const replaced = deferred();
+  f.behavior.search = () => replaced.promise;
+  const outdated = f.app.search('garden', null, live);
+  f.host('new-host');
+  await f.app.reconnect();
+  replaced.resolve({ items: [], after: null });
+  await assert.rejects(outdated, /Search connection changed/);
+  f.behavior.search = async () => { throw new ServiceError('unauthorized', 'Revoked'); };
+  await assert.rejects(f.app.search('garden', null, live), /Revoked/);
+  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Unsent during search');
+});
 
 test('creation recovery persists and reuses the original identity before sending', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
