@@ -18,7 +18,7 @@ export type RequestObservation = {
   readonly credentialClass: CredentialClass;
   readonly outcome: 'ok' | ServiceFailureKind;
   readonly startTime: number;
-  readonly statusCode: number;
+  readonly statusCode: number | null;
 };
 
 export interface HostObservability {
@@ -84,7 +84,7 @@ export function createHostObservability(configuration: ObservabilityConfiguratio
       if (closed) return;
       const span = tracer.startSpan('agentui.host.request', { kind: SpanKind.SERVER, startTime: observation.startTime,
         attributes: { 'agentui.operation': observation.operation, 'agentui.credential_class': observation.credentialClass,
-          'agentui.outcome': observation.outcome, 'http.response.status_code': observation.statusCode } }, ROOT_CONTEXT);
+          'agentui.outcome': observation.outcome, ...(observation.statusCode === null ? {} : { 'http.response.status_code': observation.statusCode }) } }, ROOT_CONTEXT);
       if (observation.outcome !== 'ok') span.setStatus({ code: SpanStatusCode.ERROR });
       span.end(performance.timeOrigin + performance.now());
     },

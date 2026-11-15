@@ -70,7 +70,8 @@ export function serviceEndpoint(options: EndpointOptions) {
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
     const startTime = performance.timeOrigin + performance.now();
     const result = await handle(request, response).catch((error: unknown): RequestResult => ({ operation: 'admission', outcome: writeServiceFailure(response, error) }));
-    if (result !== 'asset') options.observability.record({ ...result, credentialClass: options.credentialClass, startTime, statusCode: response.statusCode });
+    if (result !== 'asset') options.observability.record({ ...result, credentialClass: options.credentialClass, startTime,
+      statusCode: response.headersSent ? response.statusCode : null });
   };
 }
 

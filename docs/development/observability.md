@@ -60,7 +60,7 @@ Each request span has kind `SERVER` and these attributes:
 | `agentui.operation` | The admitted service operation, including `pair`. Failures before admission use `admission`. |
 | `agentui.credential_class` | `browser-development` or `native`. |
 | `agentui.outcome` | `ok`, `unauthorized`, `forbidden`, `invalid`, `unavailable`, or `create-rejected`. |
-| `http.response.status_code` | The response code associated with the outcome. |
+| `http.response.status_code` | The response code actually written. Omitted if no response headers were sent. |
 
 Duration covers admission, dispatch, and response serialization. It ends when the endpoint writes the response. It does not measure client delivery or the lifetime of a provider run. Failures have OpenTelemetry status `ERROR` without an error description.
 
@@ -88,7 +88,7 @@ Build first, then run the receiver and bundled-host tests:
 
 ```sh
 npm run build
-node --test tests/application/observability.test.mjs tests/application/genai-observability.test.mjs tests/application/telemetry-export.test.mjs
+node --test tests/application/*observability.test.mjs tests/application/telemetry-export.test.mjs
 ```
 
 The tests inspect actual OTLP JSON sent by the bundled host. They check content exclusions, disabled mode, receiver failures, and Switchboard GenAI spans from a controlled native fixture. They do not attest to receipt in a live Datadog account.
