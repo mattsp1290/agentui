@@ -158,7 +158,7 @@ for (const mode of ['pending-complete', 'pending-disconnect']) {
 }
 
 for (const method of ['initialize', 'thread/start', 'turn/start']) {
-  test(`a ${method} rejection stores one completed notice across restart and exact retries`, async t => {
+  test(`${method} rejection stores one completed notice across restart and exact retries`, async t => {
     const f = fixture(t, `reject-${method}`);
     const send = command('rejected-visible');
     const result = await f.port.submit(send);
@@ -186,6 +186,8 @@ for (const method of ['initialize', 'thread/start', 'turn/start']) {
 
 test('a resume rejection retains the previous completed run and messages across exact retries', async t => {
   const f = fixture(t, 'reject-thread/resume');
+  await f.host.conversation(other).submit(command('other-first', { kind: 'send', text: 'hello' }, other));
+  await until(() => f.document(other).domain.currentRun?.kind === 'ended');
   await f.port.submit(command('first'));
   await until(() => f.document().domain.currentRun?.kind === 'ended');
   const previous = f.document().domain;
@@ -211,7 +213,7 @@ test('a resume rejection retains the previous completed run and messages across 
   assert.equal((await f.port.submit(command('resume-new-id'))).receipt.state.kind, 'completed');
   await until(() => f.messages().filter(message => message.text === 'Hello' && message.complete).length === 2);
   assert.deepEqual(f.log().filter(message => message.method === 'thread/resume').map(message => message.params.threadId),
-    [runs[0].reference.opaque, runs[0].reference.opaque]);
+    [runs.at(-1).reference.opaque, runs.at(-1).reference.opaque]);
 });
 
 for (const { mode, includes, excludes } of [

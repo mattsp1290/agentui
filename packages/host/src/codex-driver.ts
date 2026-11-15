@@ -313,18 +313,22 @@ export function createCodexDriver(options: CodexDriverOptions): ProviderDriver<C
     } catch (error) {
       const rejection = error instanceof CodexRpcError
         ? { reason: `Codex rejected this request: ${bounded(error.message, 1_000)}`, code: error.code } : null;
-      if (turn) {
-        try {
-          if (rejection && !turn.run) {
-            publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:assistant-rejection`,
-              revision: 1, role: 'assistant', complete: true, text: rejection.reason }]);
-          } else {
-            interrupted(turn, rejection?.reason ?? 'Codex could not start this response. Check command recovery before trying again.');
+      try {
+        if (!turn?.run) {
+          if (!closing) {
+            options.append(command.scope, { ...empty(), events: [{ kind: 'message-updated',
+              messageId: `${target.identity.hostOperationId}:${rejection ? 'assistant-rejection' : 'assistant-unconfirmed'}`,
+              revision: 1, role: 'assistant', complete: true,
+              text: rejection?.reason ?? 'Codex did not confirm whether this response started. Check command recovery and any unconfirmed actions before trying again.' }] });
           }
+        } else {
+          interrupted(turn, rejection?.reason ?? 'Codex could not start this response. Check command recovery before trying again.');
         }
-        catch { outputFailed(turn); }
-        active.delete(turn.threadId);
+      } catch {
+        if (turn) outputFailed(turn);
+        else process.emitWarning('Could not store Codex output', { code: 'AGENTUI_CODEX_STORAGE' });
       }
+      if (turn) active.delete(turn.threadId);
       busy.delete(key);
       if (!rejection) throw error;
       return { kind: 'conclusive', evidence: {
