@@ -4,6 +4,7 @@ import type { BackendProvider, ProviderModel } from './providers.js';
 
 export { EXTENSION_SDK_VERSION };
 export type ExtensionEntryKind = 'server' | 'desktop' | 'ios';
+export type FrontendPlatform = Exclude<ExtensionEntryKind, 'server'>;
 export interface ExtensionEntry {
   readonly kind: ExtensionEntryKind;
   readonly module: string;
@@ -41,10 +42,20 @@ function entryKind(value: unknown): ExtensionEntryKind {
   if (value !== 'server' && value !== 'desktop' && value !== 'ios') throw new Error('Invalid extension entry kind');
   return value;
 }
+export function frontendPlatform(value: unknown): FrontendPlatform {
+  const kind = entryKind(value);
+  if (kind === 'server') throw new Error('Invalid frontend platform');
+  return kind;
+}
 function text(value: unknown): string {
   const result = nonempty(value);
   if (!result.trim()) throw new Error('Expected nonblank string');
   return result;
+}
+export function extensionNamespace(value: unknown): string {
+  const namespace = nonempty(value);
+  if (!/^[a-z][a-z0-9-]{0,31}$/u.test(namespace)) throw new Error('Invalid extension namespace');
+  return namespace;
 }
 function parseEntry(value: unknown): ExtensionEntry {
   const input = record(value, ['kind', 'module']);
@@ -65,7 +76,7 @@ export function parseExtensionManifest(value: unknown): ExtensionManifest {
   if (!first) throw new Error('Expected extension entries');
   const kinds = [first, ...entries].map(entry => entry.kind);
   if (new Set(kinds).size !== kinds.length) throw new Error('Duplicate extension entry kind');
-  return { namespace: text(input.namespace), trust: 'full', sdkVersion: text(input.sdkVersion), entries: [first, ...entries] };
+  return { namespace: extensionNamespace(input.namespace), trust: 'full', sdkVersion: text(input.sdkVersion), entries: [first, ...entries] };
 }
 
 /** Checks an already imported export. Importing full-trust code can itself execute code. */
