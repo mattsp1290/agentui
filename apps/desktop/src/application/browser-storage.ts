@@ -56,10 +56,11 @@ function viewKeyRange(after: string | null): IDBKeyRange {
 }
 
 export class BrowserViewStorage implements OwnedViewStorage {
-  private closed = false;
+  private closing: Promise<void> | null = null;
+  private readonly transactions = new Set<Promise<void>>();
   private constructor(readonly viewId: string, private readonly db: IDBDatabase, private readonly unlock: () => void, onFailure: (error: unknown) => void) {
     db.onversionchange = () => {
-      this.close();
+      void this.close();
       onFailure(new Error('Local storage changed in another app version. Reload this view before continuing.'));
     };
   }
@@ -81,6 +82,7 @@ export class BrowserViewStorage implements OwnedViewStorage {
   }
 
   static async reopen(viewId: string, onFailure: (error: unknown) => void): Promise<BrowserViewStorage> {
+    if (!globalThis.indexedDB || !navigator.locks) throw new Error('This browser cannot safely save an exclusive view. IndexedDB and Web Locks are required.');
     const release = await claim(viewId);
     if (!release) throw new Error('This saved view is already open in another tab.');
     let db: IDBDatabase | undefined;
@@ -92,10 +94,9 @@ export class BrowserViewStorage implements OwnedViewStorage {
   }
 
   async savedViews(hostId: string, after: string | null = null): ReturnType<OwnedViewStorage['savedViews']> {
-    if (this.closed) throw new Error('This view no longer owns local storage.');
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction('records');
       const range = viewKeyRange(after);
+      const transaction = this.begin('readonly');
       const request = transaction.objectStore('records').openCursor(range);
       const ids: string[] = [];
       let unreadable = 0;
@@ -121,10 +122,21 @@ export class BrowserViewStorage implements OwnedViewStorage {
     });
   }
 
+  private begin(mode: IDBTransactionMode): IDBTransaction {
+    if (this.closing) throw new Error('This view no longer owns local storage. Reload the app.');
+    const transaction = this.db.transaction('records', mode);
+    const settled = new Promise<void>(resolve => {
+      transaction.addEventListener('complete', () => resolve(), { once: true });
+      transaction.addEventListener('abort', () => resolve(), { once: true });
+    });
+    this.transactions.add(settled);
+    void settled.then(() => this.transactions.delete(settled));
+    return transaction;
+  }
+
   private transaction(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
-    if (this.closed) return Promise.reject(new Error('This view no longer owns local storage. Reload the app.'));
     return new Promise((resolve, reject) => {
-      const transaction = this.db.transaction('records', mode);
+      const transaction = this.begin(mode);
       const request = operation(transaction.objectStore('records'));
       transaction.oncomplete = () => { const value: unknown = request.result; resolve(value); };
       transaction.onerror = () => reject(transaction.error ?? new Error('Local storage transaction failed.'));
@@ -155,11 +167,11 @@ export class BrowserViewStorage implements OwnedViewStorage {
     };
   }
 
-  close(): void {
-    if (this.closed) return;
-    this.closed = true;
-    this.db.close();
-    this.unlock();
+  close(): Promise<void> {
+    return this.closing ??= Promise.all(this.transactions).then(() => {
+      this.db.close();
+      this.unlock();
+    });
   }
 }
 

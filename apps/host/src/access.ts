@@ -28,7 +28,7 @@ export class Access {
     const secret = randomBytes(DEVICE_SECRET_BYTES).toString('base64url');
     const principal = { id: randomUUID(), hostId: this.hostId, credentialClass };
     this.db.prepare("INSERT INTO service_devices(id,digest,host,credential_class,expires,policy,revoked) VALUES(?,?,?,?,?,'owner',0)")
-      .run(principal.id, digest(secret), this.hostId, credentialClass, now + 3_600_000);
+      .run(principal.id, digest(secret), this.hostId, credentialClass, now + (credentialClass === 'native' ? 30 * 24 * 3_600_000 : 3_600_000));
     this.invitations.delete(key);
     return { principal, secret };
   }

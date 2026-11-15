@@ -15,6 +15,10 @@
     "./service": {
       "types": "./dist/service.d.ts",
       "import": "./dist/service.js"
+    },
+    "./mac": {
+      "types": "./dist/mac.d.ts",
+      "import": "./dist/mac.js"
     }
   },
   "files": [
@@ -25,7 +29,8 @@
     "check": "tsc -p tsconfig.json --noEmit && tsc -p tsconfig.react.json --noEmit && tsc -p tsconfig.service.json --noEmit"
   },
   "dependencies": {
-    "@agentui/contracts": "0.0.0"
+    "@agentui/contracts": "0.0.0",
+    "@tauri-apps/api": "2.12.4"
   },
   "peerDependencies": {
     "react": "^19.3.0"

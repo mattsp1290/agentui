@@ -43,7 +43,7 @@ export interface ApplicationController {
   getSnapshot(): ApplicationSnapshot;
   subscribe(listener: () => void): () => void;
   start(): Promise<void>;
-  dispose(): void;
+  dispose(): Promise<void>;
   pair(code: string): Promise<void>;
   reconnect(): Promise<void>;
   reopenView(viewId: string): Promise<void>;
@@ -89,6 +89,7 @@ export function createApplicationController(deps: {
 }): ApplicationController {
   let state = initialSnapshot();
   let session: Session | null = null;
+  let disposal: Promise<void> | null = null;
   const listeners = new Set<() => void>();
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved'>>): void {
@@ -139,7 +140,7 @@ export function createApplicationController(deps: {
     let storage: OwnedViewStorage | null = null;
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
     storage = await (viewId === null ? deps.ownedViewStorage.open(failed) : deps.ownedViewStorage.reopen(viewId, failed));
-    if (session !== owner) { storage.close(); throw new Error('This application has closed.'); }
+    if (session !== owner) { await storage.close(); throw new Error('This application has closed.'); }
     return storage;
   }
   async function save(owner: Session, next: SavedView): Promise<void> {
@@ -265,22 +266,27 @@ export function createApplicationController(deps: {
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     start() {
       if (session) return Promise.resolve();
+      const closing = disposal;
       const next: Session = { view: null, connection: deps.createConnection({ onUnauthorized: () => {
         fail(next, { kind: 'access-revoked' });
       } }) };
       session = next;
       publish(initialSnapshot());
       return run(async owner => {
-        try { owner.view = { storage: await acquire(owner, null), saved: null }; }
+        try {
+          if (closing) await current(owner, closing);
+          owner.view = { storage: await acquire(owner, null), saved: null };
+        }
         catch (cause) { failStorage(owner, null, cause); if (session === owner) publish({ host: { kind: 'unavailable' } }); return; }
         await refresh(owner);
       });
     },
     dispose() {
+      if (!session && disposal) return disposal;
       const owner = session;
       session = null;
       disconnectActive();
-      owner?.view?.storage.close();
+      return disposal = Promise.all([disposal, owner?.view?.storage.close()]).then(() => {});
     },
     pair: code => run(async owner => {
       local(owner);
@@ -291,11 +297,16 @@ export function createApplicationController(deps: {
     reconnect: () => run(refresh),
     reopenView: viewId => run(async owner => {
       requireHost(owner);
-      const next = await acquire(owner, viewId);
+      const next = owner.view?.storage.viewId === viewId ? null : await acquire(owner, viewId);
       disconnectActive();
-      owner.view?.storage.close();
-      owner.view = { storage: next, saved: null };
-      publish(DETACHED_VIEW);
+      const closing = disposal = Promise.all([disposal, owner.view?.storage.close()]).then(() => {});
+      owner.view = next ? { storage: next, saved: null } : null;
+      publish({ ...DETACHED_VIEW, host: { kind: 'loading' } });
+      try {
+        await current(owner, Promise.resolve(closing));
+        owner.view = { storage: next ?? await acquire(owner, viewId), saved: null };
+      }
+      catch (cause) { await next?.close(); failStorage(owner, null, cause); if (session === owner) publish({ host: { kind: 'unavailable' } }); return; }
       await refresh(owner);
     }),
     moreConversations: () => run(async owner => {

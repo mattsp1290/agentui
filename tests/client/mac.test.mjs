@@ -1,0 +1,45 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createMacConnection, macAccess } from '@agentui/client/mac';
+import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+
+test('Mac adapter uses immutable native observations through the real shared engine including search and chooser', async t => {
+  const original = globalThis.window;
+  t.after(() => { globalThis.window = original; });
+  const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];
+  const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, commands: ['send', 'approve'], availability: { kind: 'ready' } };
+  const metadata = { agents: [descriptor], defaultAgentId: 'agent', hostId: 'host', principalId: 'principal', compatibility: {
+    wireVersion: 2, extensionSdkVersion: '0.0.0', nativeRuntime: RECORDED_RUNTIME,
+    desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' },
+  } };
+  const old = Promise.withResolvers();
+  let current = 'old', oldNotifications = 0, newNotifications = 0;
+  globalThis.window = { __TAURI_INTERNALS__: { async invoke(name, { command }) {
+    assert.equal(name, 'native_access'); calls.push(command);
+    if (command.kind === 'status') return { kind: 'ready', observation: current, hostId: 'host', principalId: 'principal' };
+    if (command.observation === 'old') return old.promise;
+    const request = command.request;
+    const value = request.op === 'metadata' ? metadata : request.op === 'search' ? { items: [{ scope, preview: 'Hello', excerpt: 'Message match' }], after: null }
+      : request.op === 'create' ? scope : request.op === 'conversation-agent' ? descriptor : [];
+    return { status: 200, body: JSON.stringify({ ok: true, value }) };
+  } } };
+  const previous = createMacConnection(await macAccess({ kind: 'status' }), { onUnauthorized: () => oldNotifications++ });
+  const pending = previous.metadata();
+  current = 'new';
+  const next = createMacConnection(await macAccess({ kind: 'status' }), { onUnauthorized: () => newNotifications++ });
+  assert.deepEqual(await next.metadata(), metadata);
+  assert.equal((await next.search('match')).items[0].excerpt, 'Message match');
+  assert.deepEqual(await next.create(scope, descriptor.id), scope);
+  assert.deepEqual(await next.conversationAgent(scope), descriptor);
+  old.resolve({ status: 401, body: JSON.stringify({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }) });
+  await assert.rejects(pending, error => error.kind === 'unauthorized');
+  assert.equal(oldNotifications, 1); assert.equal(newNotifications, 0);
+  assert.deepEqual(await next.metadata(), metadata);
+  await assert.rejects(next.pair('invitation'), /native pairing controls/);
+  assert.equal(calls.some(command => command.kind === 'execute' && command.request.op === 'pair'), false);
+  assert.deepEqual(new Set(calls.filter(command => command.kind === 'execute').map(command => command.observation)), new Set(['old', 'new']));
+  const disconnected = createMacConnection({ kind: 'absent', observation: 'absent' });
+  const before = calls.length;
+  await assert.rejects(disconnected.metadata(), error => error.kind === 'unauthorized');
+  assert.equal(calls.length, before);
+});

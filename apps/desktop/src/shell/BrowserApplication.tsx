@@ -11,9 +11,14 @@ import customization from '../application/customization-selection.js';
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
+import type { ApplicationController } from '../application/application-controller.js';
 
-export function BrowserApplication({ children, artifact }: { readonly children?: ReactNode; readonly artifact?: ReactNode }) {
-  const { controller, snapshot: app } = useApplication();
+export function BrowserApplication({ children, artifact, controller: supplied, connectionControls, reconnect, suspended = false }: {
+  readonly children?: ReactNode; readonly artifact?: ReactNode; readonly controller?: ApplicationController;
+  readonly connectionControls?: ReactNode; readonly reconnect?: () => void;
+  readonly suspended?: boolean;
+}) {
+  const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const [selectedAgent, setSelectedAgent] = useState<string | null>(null);
@@ -21,7 +26,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
   const pendingScope = app.saved.pendingCreation?.scope;
   const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
   const recoveryAgent = recoveryChoice?.scopeKey === pendingScopeKey ? recoveryChoice.agentId : undefined;
-  const enabled = applicationEnabled(app);
+  const enabled = applicationEnabled(app) && !suspended;
   const metadata = 'metadata' in app.host ? app.host.metadata : null;
   const choices = metadata?.agents ?? [];
   const selected = choices.find(agent => agent.id === selectedAgent) ?? choices.find(agent => agent.id === metadata?.defaultAgentId);
@@ -50,7 +55,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
-    {app.host.kind === 'unpaired' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
+    {app.host.kind === 'unpaired' && connectionControls === undefined && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
         <label className="agent-choice">Agent for new chat<select aria-label="Agent for new chat" disabled={!enabled || app.saved.pendingCreation !== null} value={selected?.id ?? ''} onChange={event => setSelectedAgent(event.target.value)}>{options}</select></label>
@@ -83,7 +88,7 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
   const views = <>
-    <div className="chat-view" hidden={selectedView !== 'chats'}>{conversation}
+    <div className="chat-view" hidden={selectedView !== 'chats'} inert={suspended}>{conversation}
       {children === undefined && customization && customizationEnabled && <CustomizationModules customization={customization}
         active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />}
     </div>
@@ -92,7 +97,8 @@ export function BrowserApplication({ children, artifact }: { readonly children?:
       <section className="settings-section"><h2>Connection</h2>
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>
         <p>{presentation.settings}</p>
-        <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => void controller.reconnect()}>Reconnect</button>
+        {connectionControls}
+        <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => reconnect ? reconnect() : void controller.reconnect()}>Reconnect</button>
       </section>
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>

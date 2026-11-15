@@ -7,7 +7,9 @@ import { chromium } from 'playwright';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 async function fixture(t) {
   const bundle = await build({ stdin: { contents: `import { BrowserViewStorage } from './apps/desktop/src/application/browser-storage.ts';
-    globalThis.BrowserViewStorage = BrowserViewStorage;`, resolveDir: root }, bundle: true, write: false, format: 'iife' });
+    import { createConversationStore } from '@agentui/client';
+    import { transcriptProjection } from '@agentui/contracts/conversation';
+    Object.assign(globalThis, { BrowserViewStorage, createConversationStore, transcriptProjection });`, resolveDir: root }, bundle: true, write: false, format: 'iife' });
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
@@ -140,4 +142,106 @@ test('legacy pending scopes migrate without inventing a selected agent or changi
   assert.deepEqual(result.migrated, { version: 2, route: scope, pendingCreation: { scope, agentId: null } });
   assert.deepEqual(result.reread, result.migrated);
   assert.deepEqual(result.draft, { draft: 'Keep this draft' });
+});
+
+test('close holds the view lock until admitted writes and saved-view scans finish', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const original = IDBDatabase.prototype.transaction;
+    let holding = true;
+    IDBDatabase.prototype.transaction = function (...args) {
+      const transaction = original.apply(this, args);
+      const store = transaction.objectStore('records');
+      const keepAlive = () => { if (holding) store.get('hold').onsuccess = keepAlive; };
+      keepAlive();
+      return transaction;
+    };
+    const scope = { hostId: 'host', conversationId: 'draining' };
+    const admitted = owner.drafts(() => {}).save({ scope, draft: 'Admitted before close' });
+    const listing = owner.savedViews('host');
+    const closing = owner.close();
+    const samePromise = closing === owner.close();
+    let settled = false;
+    void closing.then(() => { settled = true; });
+    const lockDuringDrain = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => lock !== null);
+    const settledDuringDrain = settled;
+    let rejected;
+    try { await owner.readView('host'); } catch (error) { rejected = error.message; }
+    holding = false;
+    IDBDatabase.prototype.transaction = original;
+    await Promise.all([admitted, listing, closing]);
+    const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
+    const retained = await successor.drafts(() => {}).load(scope);
+    await successor.close();
+    return { samePromise, lockDuringDrain, settledDuringDrain, rejected, retained };
+  });
+  assert.equal(result.samePromise, true);
+  assert.equal(result.lockDuringDrain, false);
+  assert.equal(result.settledDuringDrain, false);
+  assert.match(result.rejected, /no longer owns local storage/);
+  assert.equal(result.retained.draft, 'Admitted before close');
+});
+
+test('close drains a saved-view scan through abort before releasing ownership', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const original = IDBDatabase.prototype.transaction;
+    let transaction;
+    IDBDatabase.prototype.transaction = function (...args) { transaction = original.apply(this, args); return transaction; };
+    const listing = owner.savedViews('host').catch(error => error.message);
+    IDBDatabase.prototype.transaction = original;
+    let aborted = false;
+    transaction.addEventListener('abort', () => { aborted = true; });
+    transaction.abort();
+    await owner.close();
+    const lockReleased = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => lock !== null);
+    return { aborted, lockReleased, failure: await listing };
+  });
+  assert.equal(result.aborted, true);
+  assert.equal(result.lockReleased, true);
+  assert.match(result.failure, /saved view/i);
+});
+
+test('late whole-record settlement from an old store cannot overwrite successor drafts or replay commands', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const scope = { hostId: 'host', conversationId: 'late-settlement' };
+    let reply, entered;
+    const submitted = [];
+    const enteredSubmission = new Promise(resolve => { entered = resolve; });
+    const port = { scope, receipt: async () => null,
+      submit(command) { submitted.push(command); entered(); return new Promise(resolve => { reply = resolve; }); },
+      watch() { return { ended: new Promise(() => {}), close() {} }; } };
+    const makeStore = storage => globalThis.createConversationStore({ scope, port, projection: globalThis.transcriptProjection,
+      drafts: storage.drafts(() => {}), createCommandId: () => 'original-command' });
+    const old = makeStore(owner);
+    await old.ready;
+    await old.setDraft('Original message');
+    const sending = old.send().catch(error => error.message);
+    await enteredSubmission;
+    old.disconnect();
+    await owner.close();
+    const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
+    const current = makeStore(successor);
+    await current.ready;
+    await current.connect();
+    await current.setDraft('Successor unfinished draft');
+    const before = await successor.drafts(() => {}).load(scope);
+    reply({ kind: 'receipt', receipt: { scope, clientCommandId: 'original-command', hostOperationId: 'operation', sequence: 1,
+      state: { kind: 'accepted' } } });
+    const failure = await sending;
+    const retained = await successor.drafts(() => {}).load(scope);
+    current.disconnect();
+    await successor.close();
+    return { before, retained, failure, submitted };
+  });
+  assert.match(result.failure, /no longer owns local storage/);
+  assert.equal(result.retained.draft, 'Successor unfinished draft');
+  assert.deepEqual(result.retained, result.before);
+  assert.equal(result.retained.outbox.length, 1);
+  assert.deepEqual(result.retained.outbox[0].command, result.submitted[0]);
+  assert.equal(result.submitted.length, 1);
 });

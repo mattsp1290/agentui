@@ -122,7 +122,7 @@ test('native loopback routes reject ambiguous credentials, class substitution an
   assert.equal((await f.call('/native/v1', { op: 'metadata' }, auth)).body.value.principalId, device.principalId);
   const devices = await f.control('devices');
   const expires = devices.find(value => value.id === device.principalId).expires;
-  assert.ok(expires > Date.now() + 3_500_000 && expires <= Date.now() + 3_600_000);
+  assert.ok(expires > Date.now() + 30 * 24 * 3_600_000 - 100_000 && expires <= Date.now() + 30 * 24 * 3_600_000);
   assert.equal((await f.call('/native/v1', { op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
   const { feedId } = (await f.call('/native/v1', { op: 'watch', scope, after: null, projectionVersion: 1 }, auth)).body.value;
   denied(await f.call('/api/v1', { op: 'pull', feedId, ack: null }, { Origin: f.origin, Cookie: cookie }));
@@ -190,8 +190,8 @@ test('native invitations and credentials retain exact expiry and durable revocat
   const expired = access.invite('native', 1000);
   assert.throws(() => access.pair(expired, 'native', 301000));
   const { principal, secret } = access.pair(access.invite('native', 1000), 'native', 1000);
-  assert.deepEqual(access.authenticate(secret, 'native', 3600999), principal);
-  assert.equal(access.authenticate(secret, 'native', 3601000), null);
+  assert.deepEqual(access.authenticate(secret, 'native', 1000 + 30 * 24 * 3_600_000 - 1), principal);
+  assert.equal(access.authenticate(secret, 'native', 1000 + 30 * 24 * 3_600_000), null);
   access.revoke(principal.id);
   access.close();
   access = new Access(openAccessDatabase(path));
