@@ -17,11 +17,16 @@ export function recoverCodexConversations(
       if (canonicalJson(current.installation) !== installed) continue;
       const unfinished = current.snapshot.document.domain.messages.filter(message =>
         message.role === 'assistant' && !message.complete);
+      const run = current.snapshot.document.domain.currentRun;
+      const activeRun = run && run.kind !== 'ended' ? run : null;
       const expiredDecisions = Object.keys(current.snapshot.document.decisions);
-      if (unfinished.length === 0 && expiredDecisions.length === 0) continue;
+      if (!activeRun && unfinished.length === 0 && expiredDecisions.length === 0) continue;
       host.append(scope, {
-        events: unfinished.map(message => ({ ...message, kind: 'message-updated',
-          revision: message.revision + 1, complete: true })),
+        events: [
+          ...unfinished.map((message): TranscriptEvent => ({ ...message, kind: 'message-updated',
+            revision: message.revision + 1, complete: true })),
+          ...(activeRun ? [{ kind: 'run-ended' as const, runId: activeRun.runId, outcome: 'connection-lost' as const }] : []),
+        ],
         runs: [], decisions: [], expiredDecisions,
       });
       try {

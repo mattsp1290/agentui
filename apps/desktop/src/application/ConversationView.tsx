@@ -18,6 +18,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
   const view = useConversation(active.store);
   const [editor, setEditor] = useState<DraftEditor>({ kind: 'saved', text: view.draft });
   const editVersion = useRef(0);
+  const stopGuard = useRef<{ readonly store: OpenConversation['store']; readonly runId: string } | null>(null);
+  const [stopPending, setStopPending] = useState<typeof stopGuard.current>(null);
   useEffect(() => {
     setEditor(previous => previous.kind === 'saved' && previous.text !== view.draft ? { kind: 'saved', text: view.draft } : previous);
   }, [view.draft]);
@@ -33,7 +35,25 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
     }
   }
   const connected = enabled && view.connection.kind === 'connected';
-  const responding = agent === 'codex' && view.document.domain.messages.some(message => message.role === 'assistant' && !message.complete);
+  const run = agent === 'codex' ? view.document.domain.currentRun : null;
+  const responding = agent === 'codex' && (Boolean(run && run.kind !== 'ended') ||
+    (!run && view.document.domain.messages.some(message => message.role === 'assistant' && !message.complete)));
+  const retainedCancel = run && view.outbox.some(entry => entry.command.body.kind === 'cancel' && entry.command.body.runId === run.runId);
+  const stopping = run?.kind === 'stopping' || Boolean(retainedCancel) ||
+    (stopPending?.store === active.store && stopPending.runId === run?.runId);
+  function stop(): void {
+    if (!connected || run?.kind !== 'running' || stopping ||
+      (stopGuard.current?.store === active.store && stopGuard.current.runId === run.runId)) return;
+    const target = { store: active.store, runId: run.runId };
+    stopGuard.current = target;
+    setStopPending(target);
+    void actions.submit(() => target.store.cancel(target.runId)).finally(() => {
+      if (stopGuard.current === target) {
+        stopGuard.current = null;
+        setStopPending(null);
+      }
+    });
+  }
   const canSend = connected && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="scope-label">{active.scope.conversationId}</p></header>
@@ -53,7 +73,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, age
       <label htmlFor="message">Message</label>
       <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={agent === 'codex' ? 'Write to Codex…' : agent === 'recorded' ? 'Write to the recorded assistant…' : 'Write a message…'} rows={3} />
       {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
-      <div className="composer-footer"><span>{agent === 'codex' ? 'Local Codex · Approvals required for changes' : agent === 'recorded' ? 'Recorded playback · No live model' : 'Local agent'}</span><button disabled={!canSend}>Send</button></div>
+      <div className="composer-footer"><span>{agent === 'codex' ? 'Local Codex · Approvals required for changes' : agent === 'recorded' ? 'Recorded playback · No live model' : 'Local agent'}</span><button disabled={!canSend}>Send</button>
+        {run && run.kind !== 'ended' && <button type="button" disabled={!connected || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
     </form>
     <CommandRecovery view={view} actions={actions} enabled={enabled} retry={id => active.store.retry(id)} />
   </section>;

@@ -11,6 +11,7 @@ const notify = (method, params) => send({ method, params });
 const threadId = 'fixture-thread';
 let sequence = 0;
 let active;
+let previous;
 
 function finish(turn, status = 'completed', text = 'Hello from the fixture.') {
   if (active !== turn) return;
@@ -19,6 +20,7 @@ function finish(turn, status = 'completed', text = 'Hello from the fixture.') {
     threadId, turnId: turn.id, item: { id: turn.itemId, type: 'agentMessage', text },
   });
   notify('turn/completed', { threadId, turn: { id: turn.id, status, error: null, items: [] } });
+  previous = turn;
   active = undefined;
 }
 
@@ -42,6 +44,10 @@ createInterface({ input: process.stdin }).on('line', line => {
       active = turn;
       reply({ turn: { id: turn.id, status: 'inProgress', error: null, items: [] } });
       notify('turn/started', { threadId, turn: { id: turn.id, status: 'inProgress', error: null, items: [] } });
+      if (previous) {
+        notify('turn/started', { threadId, turn: { id: previous.id } });
+        notify('turn/completed', { threadId, turn: { id: previous.id, status: 'interrupted' } });
+      }
       setTimeout(() => {
         notify('item/agentMessage/delta', { threadId, turnId: turn.id, itemId: turn.itemId, delta: 'Hello' });
         if (mode === 'exit') { process.exit(23); return; }
@@ -65,12 +71,19 @@ createInterface({ input: process.stdin }).on('line', line => {
           }
           if (existsSync(`${logPath}.complete-${turn.id}`)) finish(turn);
         }, 5);
-      }, 10);
+      }, mode === 'before-text' ? 500 : 10);
       break;
     }
     case 'turn/interrupt': {
+      if (mode === 'reject-stop') {
+        send({ id: message.id, error: { code: -32000, message: 'Cannot interrupt now' } });
+        break;
+      }
       reply({});
-      finish(active, 'interrupted');
+      if (mode === 'delayed-stop' || mode === 'natural-race') {
+        const turn = active;
+        setTimeout(() => finish(turn, mode === 'natural-race' ? 'completed' : 'interrupted'), 300);
+      } else finish(active, 'interrupted');
       break;
     }
     default: throw new Error(`Unexpected fixture method ${message.method}`);

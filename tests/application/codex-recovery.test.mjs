@@ -147,7 +147,7 @@ test('a full default snapshot still finishes the old stream and allows startup w
   const before = original.inspect(scope).snapshot;
   const last = { messageId: 'partial', revision: 1, role: 'assistant', text: '', complete: false };
   const withLast = { ...before, cursor: Number.MAX_SAFE_INTEGER, document: { ...before.document,
-    domain: { messages: [...before.document.domain.messages, last] } } };
+    domain: { ...before.document.domain, messages: [...before.document.domain.messages, last] } } };
   last.text = 'x'.repeat(HOST_DEFAULT_SNAPSHOT_BYTES - Buffer.byteLength(canonicalJson(withLast)) - 10);
   original.append(scope, { ...empty(), events: [{ kind: 'message-updated', ...last }] });
   original.close();
@@ -180,4 +180,48 @@ test('restart propagates corrupt stored transcript errors', async t => {
   } finally { db.close(); }
   const reopened = f.open();
   assert.throws(() => recoverCodexConversations(reopened, scope.hostId, installation), /Invalid|Expected|Unexpected|Missing/);
+});
+
+for (const kind of ['running', 'stopping']) {
+  test(`restart ends a ${kind} run before any response text`, async t => {
+    const f = fixture(t), original = f.open();
+    original.createConversation(scope, installation);
+    const runId = 'silent-run';
+    original.append(scope, { ...empty(), events: [
+      { kind: 'run-started', runId, previousRunId: null },
+      ...(kind === 'stopping' ? [{ kind: 'run-stop-requested', runId, clientCommandId: 'old-stop' }] : []),
+    ] });
+    original.close();
+    await original.drained;
+    const reopened = f.open();
+    recoverCodexConversations(reopened, scope.hostId, installation);
+    const recovered = reopened.inspect(scope).snapshot;
+    assert.deepEqual(recovered.document.domain.currentRun, { kind: 'ended', runId, outcome: 'connection-lost' });
+    assert.match(recovered.document.domain.messages[0].text, /connection was interrupted/);
+    recoverCodexConversations(reopened, scope.hostId, installation);
+    assert.deepEqual(reopened.inspect(scope).snapshot, recovered);
+    assert.deepEqual(f.dispatches, []);
+  });
+}
+
+test('restart accepts an existing message-only SQLite snapshot at projection version one', async t => {
+  const f = fixture(t), original = f.open();
+  original.createConversation(scope, installation);
+  original.close();
+  await original.drained;
+  const db = new DatabaseSync(f.path);
+  try {
+    db.prepare('UPDATE conversations SET document=?').run(JSON.stringify({
+      domain: { messages: [{ messageId: 'legacy', revision: 1, role: 'assistant', text: 'Old partial', complete: false }] },
+      receipts: {}, decisions: {},
+    }));
+  } finally { db.close(); }
+  const reopened = f.open();
+  recoverCodexConversations(reopened, scope.hostId, installation);
+  const recovered = reopened.inspect(scope).snapshot;
+  assert.equal(recovered.projectionVersion, 1);
+  assert.equal(recovered.document.domain.currentRun, null);
+  assert.deepEqual(recovered.document.domain.messages[0], {
+    messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,
+  });
 });

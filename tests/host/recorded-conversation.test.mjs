@@ -209,3 +209,34 @@ test('a killed recorded process recovers final evidence with the original comman
   assert.equal((await port.submit(command('crash'))).receipt.state.kind, 'completed');
   assert.equal(f.entries().length, 1);
 });
+
+test('transcript lifecycle survives messages and ignores late events for a prior run', () => {
+  let state = transcriptProjection.initial();
+  const apply = event => { state = transcriptProjection.apply(state, parseTranscriptEvent(event)); };
+  apply({ kind: 'run-started', runId: 'first', previousRunId: null });
+  apply({ kind: 'run-stop-requested', runId: 'first', clientCommandId: 'stop' });
+  apply({ kind: 'message-updated', messageId: 'partial', revision: 1, role: 'assistant', text: 'Partial', complete: false });
+  assert.equal(state.currentRun.kind, 'stopping');
+  apply({ kind: 'run-ended', runId: 'first', outcome: 'completed' });
+  apply({ kind: 'run-started', runId: 'first', previousRunId: null });
+  assert.equal(state.currentRun.kind, 'ended');
+  apply({ kind: 'run-started', runId: 'second', previousRunId: 'first' });
+  for (const event of [
+    { kind: 'run-started', runId: 'first', previousRunId: null },
+    { kind: 'run-stop-requested', runId: 'first', clientCommandId: 'late-stop' },
+    { kind: 'run-stop-rejected', runId: 'first', clientCommandId: 'stop' },
+    { kind: 'run-ended', runId: 'first', outcome: 'interrupted' },
+  ]) apply(event);
+  assert.deepEqual(state.currentRun, { kind: 'running', runId: 'second' });
+  apply({ kind: 'run-ended', runId: 'second', outcome: 'completed' });
+  apply({ kind: 'run-started', runId: 'first', previousRunId: null });
+  assert.deepEqual(state.currentRun, { kind: 'ended', runId: 'second', outcome: 'completed' });
+  assert.equal(state.messages[0].text, 'Partial');
+  assert.deepEqual(parseTranscript(state), state);
+  assert.deepEqual(parseTranscript({ messages: [] }), { messages: [], currentRun: null });
+  for (const currentRun of [undefined, {}, { kind: 'running', runId: 'run', extra: true },
+    { kind: 'stopping', runId: 'run' }, { kind: 'ended', runId: 'run', outcome: 'unknown' }]) {
+    assert.throws(() => parseTranscript({ messages: [], currentRun }));
+  }
+  assert.throws(() => parseTranscript({ messages: [], extra: true }));
+});
