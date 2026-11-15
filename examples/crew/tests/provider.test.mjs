@@ -138,6 +138,60 @@ async function direct(remote) {
   return { backend, binding: created.value };
 }
 
+test('host shutdown drains a Crew baseline observer before observation admission', { timeout: 5000 }, async t => {
+  const remote = await service(t), extension = remote.extension();
+  const activate = extension.value.entry.activate;
+  const baseline = Promise.withResolvers(), release = Promise.withResolvers();
+  let credentialUses = 0, observations = 0, closed = false;
+  let cleanup;
+  extension.value.entry = { ...extension.value.entry, activate(context) {
+    return activate({ ...context,
+      credentials: { ...context.credentials, use(request, action) {
+        return context.credentials.use(request, async token => {
+          credentialUses++;
+          try { return await action(token); } finally { credentialUses--; }
+        });
+      } },
+      providers: { add(id, provider, presentation) {
+        return context.providers.add(id, { ...provider, async connect(request) {
+          const connection = await provider.connect(request);
+          assert.equal(connection.kind, 'connected');
+          const backend = connection.backend;
+          cleanup = () => backend.close();
+          return { ...connection, backend: { ...backend,
+            async snapshot(binding) {
+              const result = await backend.snapshot(binding);
+              assert.equal(result.kind, 'available');
+              baseline.resolve();
+              await release.promise;
+              return result;
+            },
+            observe(...args) { observations++; return backend.observe(...args); },
+          } };
+        } }, presentation);
+      } },
+    });
+  } };
+  const f = await fixture(t, [extension]), creating = f.create();
+  try {
+    await baseline.promise;
+    assert.equal(remote.streams.size, 1);
+    assert.equal(credentialUses, 1);
+    const closing = f.running.close().then(() => { closed = true; });
+    release.resolve();
+    await creating;
+    await until(() => closed);
+    await closing;
+    assert.equal(observations, 0);
+    assert.equal(credentialUses, 0);
+    await until(() => remote.streams.size === 0);
+    assert.equal(remote.calls.some(call => call.path.endsWith('/cancel')), false);
+  } finally {
+    release.resolve();
+    if (!closed) await cleanup?.();
+  }
+});
+
 test('Crew same-source handoff awaits admitted callbacks and close drains without remote cancellation', async t => {
   const remote = await service(t), { backend, binding } = await direct(remote);
   t.after(() => backend.close());
