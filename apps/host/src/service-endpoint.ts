@@ -65,7 +65,8 @@ async function admitBrowser(request: IncomingMessage, access: Access): Promise<A
   const cookieName = browserCookieName(access.hostId);
   const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith(`${cookieName}=`)) ?? [];
   const [cookie] = cookies;
-  const principal = cookies.length === 1 && cookie !== undefined ? access.authenticate(cookie.slice(cookieName.length + 1), 'browser-development') : null;
+  const secret = cookies.length === 1 && cookie !== undefined ? cookie.slice(cookieName.length + 1) : undefined;
+  const principal = access.authenticate(secret, 'browser-development');
   if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
   return { kind: 'service', principal, message };
 }
