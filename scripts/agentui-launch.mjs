@@ -13,6 +13,7 @@ const sshOptions = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o'
 const usage = `Usage: ./agentui [--ssh USER@HOST] [--workspace PATH] [--agent codex|pi] [--port PORT]
                  [--no-open] [--skip-build]
        ./agentui --host-url http://127.0.0.1:PORT/browser.html
+       ./agentui setup --agent codex|pi|claude [--ssh USER@HOST]
 
 Starts a trusted single-user host and opens the Mac client without pairing.
 The SSH form installs the matching tools and host on the selected machine.
