@@ -36,6 +36,7 @@ import type { ProviderInstallation } from './provider-credentials.js';
 export interface BrowserHostOptions {
   readonly directory: string;
   readonly assetsDirectory: string;
+  readonly hostArtifactDirectory?: string;
   readonly port?: number;
   readonly progressMs?: number;
   readonly provider?: NativeProvider;
@@ -108,7 +109,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   }
   try {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
-    const artifact = readInstalledArtifact(dirname(fileURLToPath(import.meta.url)));
+    const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
     access = new Access(accessDatabase, options.accessMode);
     providers = createProviderRegistry((options.providerExtensions ?? []).map(extension => ({
