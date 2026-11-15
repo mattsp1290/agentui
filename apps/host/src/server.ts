@@ -174,13 +174,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       authority: createProviderAuthority(accessDatabase, extension.manifest.namespace, extension.installations),
     })));
     await providers.activate();
-    await providers.discover();
+    const providerCatalog = await providers.discover();
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
       const page = host.listConversations(access.hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
+        if ('kind' in installation) { after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
           recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
@@ -194,7 +195,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     feeds = registry;
     const compatibility = configured ? { ...artifact.compatibility, nativeRuntime: describeAgent(defaultInstallation, { kind: 'ready' }).runtime } : artifact.compatibility;
     const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, installation: defaultInstallation, ...(configured ? { agents } : {}),
+      access, host, compatibility, feeds: registry, providers, providerCatalog, installation: defaultInstallation, ...(configured ? { agents } : {}),
       isClosing: () => closing,
     };
     const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });

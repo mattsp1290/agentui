@@ -25,7 +25,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
   const pendingScope = app.saved.pendingCreation?.scope;
   const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
-  const recoveryAgent = recoveryChoice?.scopeKey === pendingScopeKey ? recoveryChoice.agentId : undefined;
+  const recoveryAgent = app.saved.pendingCreation?.agentId === null && recoveryChoice?.scopeKey === pendingScopeKey ? recoveryChoice.agentId : undefined;
   const enabled = applicationEnabled(app) && !suspended;
   const metadata = 'metadata' in app.host ? app.host.metadata : null;
   const choices = metadata?.agents ?? [];
@@ -37,7 +37,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </option>);
   const searchConnection = app.host.kind === 'ready' && !app.storageFailure
     ? JSON.stringify([app.host.metadata.hostId, app.host.metadata.principalId]) : null;
-  const runtime = app.active?.agent.runtime ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
+  const runtime = (app.active ? ('runtime' in app.active.agent ? app.active.agent.runtime : app.active.agent) : null) ?? ('metadata' in app.host ? app.host.metadata.compatibility.nativeRuntime : null);
   const { agent, presentation } = agentPresentation(runtime);
   const conversation = app.active
     ? <ConversationView
@@ -62,12 +62,12 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     {app.host.kind === 'unpaired' && connectionControls === undefined && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
-        <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected?.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
+        <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
       </div>
       {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
-        <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
+        {app.saved.pendingCreation.agentId === null && <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
           <option value="">Check the saved chat first</option>{options}
-        </select></label>
+        </select></label>}
         <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
       </div>}
       <ConversationSearch controller={controller} connectionKey={searchConnection} enabled={enabled} active={app.active?.scope ?? null}>

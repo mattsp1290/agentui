@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { AgentDescriptor } from '@agentui/contracts/service';
 import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
-type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'other';
+type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'provider' | 'other';
 type Picker = { readonly kind: 'closed' } | { readonly kind: 'harness' } | { readonly kind: 'model'; readonly harness: Harness };
-const harnessLabels = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', other: 'Local agent' };
+const harnessLabels = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', provider: 'Provider', other: 'Local agent' };
 const modelLabels = [
   { runtime: CODEX_RUNTIME, label: 'Host default' },
   { runtime: CODEX_SDK_RUNTIME, label: 'GPT-6.1 Sol' },
@@ -14,6 +14,7 @@ const modelLabels = [
   { runtime: RECORDED_RUNTIME, label: 'No live model' },
 ];
 function harness(agent: AgentDescriptor | null): Harness {
+  if (agent && !('runtime' in agent)) return 'provider';
   switch (agent?.runtime.engine) {
     case 'pi': return 'pi';
     case 'claude-sdk': return 'claude';
@@ -24,6 +25,7 @@ function harness(agent: AgentDescriptor | null): Harness {
 }
 function model(agent: AgentDescriptor | null): string {
   if (!agent) return 'Select model';
+  if (!('runtime' in agent)) return agent.label;
   return modelLabels.find(({ runtime }) => runtime.engine === agent.runtime.engine && runtime.version === agent.runtime.version && runtime.format === agent.runtime.format)?.label ?? agent.label;
 }
 function Chevron() {
@@ -47,7 +49,7 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
   const selectedHarness = picker.kind === 'model' ? picker.harness : currentHarness;
   const modelChoices = agent && !agents.some(entry => entry.id === agent.id) ? [agent, ...agents] : agents;
   const open = enabled && picker.kind !== 'closed';
-  const groups: readonly Harness[] = ['pi', 'claude', 'codex', ...(['recorded', 'other'] satisfies Harness[]).filter(kind => agents.some(entry => harness(entry) === kind) || Boolean(agent && currentHarness === kind))];
+  const groups: readonly Harness[] = ['pi', 'claude', 'codex', ...(['recorded', 'provider', 'other'] satisfies Harness[]).filter(kind => agents.some(entry => harness(entry) === kind) || Boolean(agent && currentHarness === kind))];
   function close(restoreFocus = false): void {
     setPicker({ kind: 'closed' });
     if (restoreFocus) trigger.current?.focus();
