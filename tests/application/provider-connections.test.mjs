@@ -239,7 +239,7 @@ test('provider cleanup failure remains visible and retains directory ownership',
   assert.throws(() => ownDirectory(configured.directory), /Another host owns/);
 });
 
-test('shutdown drains separately admitted credential work before backend closure and extension disposal', async t => {
+test('shutdown closes the backend but drains admitted credential work before disposal and completion', async t => {
   const configured = options(t), fixture = extension(), entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const host = await startBrowserHost({ ...configured, providerExtensions: [fixture.value] });
   const use = fixture.context.credentials.use({ credential: fixture.credential, service: 'http://127.0.0.1:12345' }, async () => {
@@ -247,9 +247,12 @@ test('shutdown drains separately admitted credential work before backend closure
   });
   const rejected = assert.rejects(use, /^Error: Provider credential use refused$/);
   await entered.promise;
-  const closing = host.close();
-  await new Promise(resolve => setImmediate(resolve));
-  assert.equal(fixture.calls.close, 0); assert.equal(fixture.calls.dispose, 0);
-  finish.resolve(); await rejected; await closing;
+  let closed = false;
+  const closing = host.close().then(() => { closed = true; });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 0);
+    assert.equal(closed, false);
+  } finally { finish.resolve(); await rejected; await closing; }
   assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 1);
 });

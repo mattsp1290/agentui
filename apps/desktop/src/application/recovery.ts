@@ -12,7 +12,7 @@ export function recoveryModel(view: Pick<ClientView<unknown>, 'outbox' | 'docume
   for (const receipt of Object.values(view.document.receipts)) {
     if (own.has(receipt.clientCommandId)) continue;
     if (receipt.state.kind === 'uncertain') uncertain.push(receipt);
-    else if (receipt.state.kind === 'pending') pending.push(receipt);
+    else if (receipt.state.kind === 'pending' || receipt.state.kind === 'accepted') pending.push(receipt);
   }
   return { retained: view.outbox.filter(entry => !submitting.has(entry.command.clientCommandId)), uncertain, pending };
 }

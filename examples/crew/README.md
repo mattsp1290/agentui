@@ -1,6 +1,37 @@
-# Crew public client example
+# Crew public provider example
 
-This standalone integration example attaches an AgentUI conversation to an existing Crew conversation and member through the packed `@birbcrew/client` HTTP SDK. Crew remains the remote authority. The example does not create members, start native engines, register a provider SDK extension, or implement a server provider lifecycle. That public extension contract is still pending.
+`crewProvider` from `@agentui/example-crew/provider` supplies a public `ServerExtensionEntry`, `BackendProvider`, and `ProviderPresentation`. It discovers one configured existing member and creates fresh AgentUI conversations. The ordinary provider chooser, transcript, approval buttons, and Stop control use the host's existing durable command store.
+
+## Run the provider
+
+Build the repository with its pinned Node 24 runtime using `npm ci && npm run build`. Save a private configuration file with these fields and your existing service values.
+
+```json
+{
+  "service": "http://127.0.0.1:18089",
+  "memberId": "11111111-1111-4111-8111-111111111111",
+  "installationId": "personal-crew",
+  "generation": "1",
+  "credentialRevision": "owner-1",
+  "tokenFile": "/absolute/private/owner.token",
+  "directory": "/absolute/private/agentui-crew",
+  "port": 8787
+}
+```
+
+Run `node examples/crew/run.mjs /absolute/private/crew-provider.json`. Pair the browser with `node apps/host/dist/main.js invite --data-dir /absolute/private/agentui-crew`. Select **Provider**, select the Crew member, and start a new chat. Set `nativeConfig` to an existing AgentUI agent configuration path to keep native agents available in the same host.
+
+Keep the installation, generation, credential revision, member, and service stable when reopening. The token is read only through the host's configured credential resolver. The provider uses the original creation UUID as the remote conversation UUID and the original send operation UUID as the remote request UUID. Recovery uses GET for those original identities. Missing status and conflicting admission remain uncertain. After a reply, use **Check pending command** to settle an accepted send through its original request status before sending again. Completed, failed, and cancelled requests settle the send receipt; their transcript outcomes remain distinct.
+
+The public observer owns remote history. The adapter admits explicit message payloads and complete state snapshots through awaited callbacks, retains the same observer between baseline and subscription, and replaces the baseline on reopen. Its cursor records an observation epoch, admitted sequence, and known request identities. It is not a remote replay cursor. Assistant content comes from observed messages; run completion comes from the original request's public status. Closing aborts and drains local observation without cancelling remote work. Each connection is limited to 8 MiB of response bytes; restart the host for a fresh baseline if that limit ends observation. Redirects are refused.
+
+Approval cards offer **Approve once** only when Crew marks the call's public arguments complete and the observed `record_work_item` arguments match the original request. Crew deliberately redacts an optional note. Cards without completeness proof show an explicit warning and offer only **Deny**. Standing grants and review of note-bearing calls remain deferred. Questions use the known empty `choose_next_step` argument contract and retain the offered **Inspect** and **Test** choices, including after reopening a paused child call. Child transcripts remain hidden. Crew's decision API does not accept the host command UUID or expose a GET receipt for an exact choice. A lost decision reply therefore remains uncertain even if its card disappears. Stop retains the original request ID and reports native termination only when Crew confirms it. Real protected-write, cancellation-race, cold-worker replacement, and broad provider-availability qualification remain separate work.
+
+The provider imports the retained `@birbcrew/client/agui` observer and the frozen AG-UI client/core/encoder/proto archives. No vendor bytes or wire, SDK, projection, or npm versions change. `examples/crew/tests/provider.test.mjs` exercises the public HTTP/SSE boundary, SQLite reopen, approvals, Stop, callback drain, and GET-only uncertainty recovery. Controlled responses do not qualify a production Crew deployment.
+
+## Legacy standalone HTTP helper
+
+This standalone integration example attaches an AgentUI conversation to an existing Crew conversation and member through the packed `@birbcrew/client` HTTP SDK. Crew remains the remote authority. The example does not create members, start native engines, register a provider SDK extension, or implement a server provider lifecycle. The registered provider above does not use this helper or its separate journal.
 
 `connectCrewConversation` verifies the existing conversation through GET. Its local journal binds the AgentUI host/conversation scope, Crew installation, Crew conversation, member, original request UUID and exact request body. A send saves that intent before HTTP submission. A lost reply leaves it available after process recreation. `retry()` submits the original identity and body. `reconcile()` reads request status through GET and updates the local receipt; it never dispatches or creates a request. A missing status remains unresolved. No automatic retry runs.
 
@@ -43,4 +74,4 @@ The archive under `vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/`
 
 AgentUI pins the example's Zod dependency to `4.6.6` and applies a root npm override to `@birbcrew/client@0.1.0` so both use that patched version. This consuming-runtime policy addresses [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5). The retained archive and its original `4.4.3` dependency declaration remain unchanged. Root overrides do not travel with packed libraries. A separate consumer must configure its own dependency policy, as the installed-example test does.
 
-The root SDK and `/contract` imports need no AG-UI runtime. This example does not import `/agui`. AgentUI's existing pinned AG-UI fork remains unchanged. The SDK supports Node 22 and 24 independently of Crew's full service runtime. AgentUI's host tests require the repository's pinned Node 24 runtime.
+The root SDK and `/contract` imports need no AG-UI runtime. The legacy helper does not import `/agui`. AgentUI's existing pinned AG-UI fork remains unchanged. The SDK supports Node 22 and 24 independently of Crew's full service runtime. AgentUI's host tests require the repository's pinned Node 24 runtime.
