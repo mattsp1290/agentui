@@ -24,7 +24,7 @@ The desktop app mounts an app-owned React shell in Tauri. Its public compilation
 Modules import the platform primitive package directly; the app entries do not re-export it.
 The root owns the browser workbench and its tooling because it checks integration across the theme and primitive packages.
 The adapter-test workspace separately owns package and ambient-boundary checks.
-The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Connection lifecycle and OS-protected credential storage remain gated on host pairing and shared client state.
+The desktop workspace owns Tauri Rust setup and the native window lifecycle. It starts no host process and exposes no application IPC commands. Native connection and OS-protected storage adapters remain unimplemented. The [native credential contract](native-credentials.md) specifies their ownership and storage interfaces.
 Each package compiles independently with strict TypeScript.
 There are no source aliases. TypeScript package imports resolve built exports.
 Repository tests share root-owned compiler support.

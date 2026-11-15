@@ -14,7 +14,7 @@ npm run verify
 
 Build before running standalone `npm run check` or `npm test`. Consumers resolve emitted package exports in dependency order.
 
-Read [architecture boundaries](docs/architecture/boundaries.md), [Apple qualification](docs/architecture/apple-qualification.md), and [Switchboard artifact provenance](vendor/README.md).
+Read [architecture boundaries](docs/architecture/boundaries.md), the [native credential contract](docs/architecture/native-credentials.md), [Apple qualification](docs/architecture/apple-qualification.md), and [Switchboard artifact provenance](vendor/README.md).
 The [AG-UI conformance matrix](docs/protocol/README.md) separates canonical wire coverage, installed projection fixtures and pending product qualification.
 
 Linux CI runs the same package checks and browser fixtures with the pinned toolchain.
