@@ -1,0 +1,128 @@
+[
+  {
+    "args": [],
+    "accepted": true,
+    "normalized": null
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html"
+    ],
+    "accepted": true,
+    "normalized": "http://127.0.0.1:8123/browser.html"
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1/browser.html"
+    ],
+    "accepted": true,
+    "normalized": "http://127.0.0.1/browser.html"
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.1:80/a/../browser.html"
+    ],
+    "accepted": true,
+    "normalized": "http://127.0.0.1/browser.html"
+  },
+  {
+    "args": [
+      "--host-url"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--other"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "bad-url"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "https://127.0.0.1:8123/browser.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://example.com:8123/browser.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://localhost:8123/browser.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/other.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://user:pass@127.0.0.1:8123/browser.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html?token=x"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html#fragment"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html?"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html#"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:99999/browser.html"
+    ],
+    "accepted": false
+  },
+  {
+    "args": [
+      "--host-url",
+      "http://127.0.0.1:8123/browser.html",
+      "--extra"
+    ],
+    "accepted": false
+  }
+]
