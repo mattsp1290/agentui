@@ -2,7 +2,8 @@ import type { ComponentType } from 'react';
 import type { ConversationDocument, ConversationScope, SubmitResult } from '@agentui/contracts';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
-import type { RunAgentInput } from '@agentui/protocol';
+import type { FrontendToolContributions } from './tool-contracts.js';
+export type { FrontendToolContribution, FrontendToolContributions } from './tool-contracts.js';
 import { behaviour, validateExtensionLifetime } from './extensions.js';
 import type { EXTENSION_SDK_VERSION, ExtensionLifetime } from './extensions.js';
 
@@ -29,14 +30,6 @@ export interface ConversationModule {
   readonly actions?: readonly ModuleAction[];
 }
 
-export interface FrontendToolContribution<Input> {
-  readonly definition: NonNullable<RunAgentInput['tools']>[number];
-  decodeInput(value: unknown): Input;
-  execute(input: Input, context: { readonly conversation: ConversationScope }): Promise<string>;
-}
-export interface FrontendToolContributions {
-  add<Input>(tool: FrontendToolContribution<Input>): void;
-}
 export interface UiExtensionContext {
   readonly namespace: string;
   readonly frontendTools: FrontendToolContributions;

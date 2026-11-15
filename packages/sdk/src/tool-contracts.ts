@@ -1,0 +1,39 @@
+import type { ConversationScope, RunIdentity } from '@agentui/contracts';
+import type { AgentCapabilities, RunAgentInput } from '@agentui/protocol';
+import type { ExtensionLifetime } from './extensions.js';
+
+export type FrontendPlatform = 'desktop' | 'ios';
+export type FrontendTool = NonNullable<RunAgentInput['tools']>[number];
+export interface FrontendToolContribution<Input> {
+  readonly definition: FrontendTool;
+  decodeInput(value: unknown): Input;
+  execute(input: Input, context: { readonly conversation: ConversationScope }): Promise<string>;
+}
+export interface FrontendToolContributions { add<Input>(tool: FrontendToolContribution<Input>): void }
+export interface FrontendToolGeneration {
+  readonly namespace: string;
+  readonly generation: string;
+  readonly platform: FrontendPlatform;
+  retire(): Promise<void>;
+}
+export interface FrontendToolPin {
+  readonly run: RunIdentity;
+  readonly definitions: readonly FrontendTool[];
+  invoke(name: string, args: unknown): Promise<FrontendToolOutcome>;
+  release(): void;
+}
+export type FrontendToolOutcome =
+  | { readonly kind: 'completed'; readonly output: string }
+  | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'invalid-arguments' | 'decode-failed' };
+export interface FrontendToolGenerationOptions {
+  readonly namespace: string;
+  readonly generation: string;
+  readonly platform: FrontendPlatform;
+  activate(tools: FrontendToolContributions): ExtensionLifetime | Promise<ExtensionLifetime>;
+}
+export interface FrontendToolPinOptions {
+  readonly generations: readonly FrontendToolGeneration[];
+  readonly platform: FrontendPlatform;
+  readonly run: RunIdentity;
+  readonly capabilities: AgentCapabilities | undefined;
+}

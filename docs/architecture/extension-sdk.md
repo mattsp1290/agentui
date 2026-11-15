@@ -60,12 +60,25 @@ Theme and platform controls remain direct imports from `@agentui/theme/react` an
 
 ## Register a typed frontend tool
 
-The UI context exposes `frontendTools.add(tool)`.
-A `FrontendToolContribution<Input>` has the actual `RunAgentInput['tools'][number]` protocol definition, an `unknown`-to-`Input` decoder, and an `execute` handler returning `Promise<string>`.
-The handler receives the captured conversation scope.
-The fixture captures one concrete tool without a model call.
+The UI context exposes `frontendTools.add(tool)`. Each contribution supplies a protocol tool definition, a decoder from `unknown`, and an async handler returning a string. The handler receives the pinned conversation scope. Import the runtime from `@agentui/sdk/tools` when implementing an activation owner:
 
-This registration contract does not implement frontend-tool delivery or justify advertising `tools.clientProvided` support.
-Schema validation, collisions, platform availability, generation ownership, and pinned per-run definitions remain downstream work.
-Runtime dispatch and execution claims also remain downstream work.
-Installed extensions appear in the app after the later loader and activation work.
+```ts
+const generation = await createFrontendToolGeneration({
+  namespace: 'notes', generation: 'activation-1', platform: 'desktop',
+  activate(frontendTools) { return entry.activate({ namespace: 'notes', frontendTools }); },
+});
+const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run, capabilities });
+const outcome = await pin.invoke('notes__text_length', { text: 'hello' });
+pin.release();
+await generation.retire();
+```
+
+The activation owner retains the generation and retires it when replaced or when later module validation fails. Retirement immediately excludes new pins. Existing pins and calls remain usable until released or settled. Disposal runs once after all pins and calls drain; its failure rejects every retirement caller. A pin snapshots the run and definitions. It exposes definitions only when `tools.clientProvided` is true and `tools.supported` is not false. Released pins refuse calls. Handler errors reject and are never retried. A loader must match tool calls to the correct pin; `RunIdentity` does not contain an AG-UI thread ID.
+
+Tool names combine a lowercase namespace matching `[a-z][a-z0-9-]*`, two underscores, and a local name matching `[A-Za-z][A-Za-z0-9_-]*`. The combined name is limited to 64 characters. Duplicate local names and duplicate selected namespaces are rejected. Platform belongs to the activation generation, not individual tools.
+
+Parameters use a bounded JSON copy and an object-root draft-07 JSON Schema. The supported keywords are draft-07 validation, applicator, and annotation keywords. Unknown keywords, `$id`, nested or non-draft-07 `$schema`, unknown formats, external or unresolved references, and recursive references are rejected. References must be local JSON pointers to schema positions. Annotation values such as `default`, `enum`, `const`, and `examples` are data. Arguments are copied, validated, then decoded without coercion or defaults. Extensions are fully trusted; schema regular expressions can consume excessive time on hostile input.
+
+The validator uses `@cfworker/json-schema` 4.1.6 and the [official draft-07 meta-schema](https://json-schema.org/draft-07/schema). The source meta-schema is 4,979 bytes with SHA-256 `692e1d165e47afcb5f11b2ce1c639635ffa834035d6ecb6bcf3087481dae8404`. The tools subpath owns this dependency; root and React runtime imports do not load it. A browser test exercises the bundle under the desktop CSP. This does not qualify WKWebView or native Hermes.
+
+This contract does not implement frontend-tool delivery, authorization, durable call claims, stream parsing, or protocol continuation. It does not by itself justify advertising `tools.clientProvided`. Installed extensions appear in the app after later loader and activation work.
