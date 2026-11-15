@@ -28,9 +28,9 @@ function registerTool<Input>(namespace: string, tool: FrontendToolContribution<I
   const definition: FrontendTool = { name, description: copied.description,
     ...(copied.parameters === undefined ? {} : { parameters: copied.parameters }),
     ...(metadata === undefined ? {} : { metadata }) };
-  const validate = compileParameters(definition.parameters);
   const decodeInput = tool.decodeInput; const handler = tool.execute;
   if (typeof decodeInput !== 'function' || typeof handler !== 'function') throw new Error('Tool requires decodeInput and execute functions');
+  const validate = compileParameters(definition.parameters);
   const decode = decodeInput.bind(tool); const execute = handler.bind(tool);
   return Object.freeze({ definition: freeze(definition), async call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> {
     let value: unknown;
@@ -79,6 +79,7 @@ export async function createFrontendToolGeneration<A extends (value: unknown) =>
   const platform = frontendPlatform(options.platform);
   const namespace = extensionNamespace(options.namespace);
   if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
+  if (typeof activate !== 'function' || typeof accept !== 'function') throw new Error('Tool activation requires activate and accept functions');
   const tools = new Map<string, Registered>();
   let open = true; let failure: { error: unknown } | undefined;
   const contributions = { add<Input>(tool: FrontendToolContribution<Input>): void {
@@ -89,26 +90,25 @@ export async function createFrontendToolGeneration<A extends (value: unknown) =>
       tools.set(registered.definition.name, registered);
     } catch (error) { failure ??= { error }; throw error; }
   } };
+  let lifetime: unknown; let registered: Registered[];
+  try { lifetime = await activate.call(options, contributions); }
+  finally { open = false; registered = [...tools.values()]; tools.clear(); }
+  let dispose: (() => Promise<void>) | undefined;
   try {
-    let lifetime: unknown;
-    try { lifetime = await activate.call(options, contributions); } finally { open = false; }
-    let dispose: (() => Promise<void>) | undefined;
-    try {
-      const method = behaviour(lifetime).dispose;
-      if (typeof method !== 'function') throw new Error('Expected extension disposal');
-      dispose = async () => { await method.call(lifetime); };
-      if (failure) throw failure.error;
-      const validate: (value: unknown) => asserts value is AcceptedContributions<A> = accept;
-      validate(lifetime);
-      return { generation: generationHandle({ namespace, generation, platform }, dispose, [...tools.values()]), contributions: lifetime };
-    } catch (error) {
-      if (dispose) {
-        try { await dispose(); }
-        catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
-      }
-      throw error;
+    const method = behaviour(lifetime).dispose;
+    if (typeof method !== 'function') throw new Error('Expected extension disposal');
+    dispose = async () => { await method.call(lifetime); };
+    if (failure) throw failure.error;
+    const validate: (value: unknown) => asserts value is AcceptedContributions<A> = accept;
+    validate(lifetime);
+    return { generation: generationHandle({ namespace, generation, platform }, dispose, registered), contributions: lifetime };
+  } catch (error) {
+    if (dispose) {
+      try { await dispose(); }
+      catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
     }
-  } finally { tools.clear(); }
+    throw error;
+  }
 }
 export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
   const platform = frontendPlatform(options.platform);

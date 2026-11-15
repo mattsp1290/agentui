@@ -13,8 +13,7 @@ const { generation } = await createFrontendToolGeneration({
         description: 'x',
         parameters: {
           type: 'object',
-          definitions: { word: { type: 'string', pattern: '^\\p{L}+$', format: 'regex' } },
-          properties: { v: { $ref: '#/definitions/word' } }, required: ['v'],
+          properties: { v: { type: 'string', pattern: '^\\p{L}+$', format: 'regex' } }, required: ['v'],
         },
       },
       decodeInput(value) {

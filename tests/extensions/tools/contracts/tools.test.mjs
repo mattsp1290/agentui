@@ -129,8 +129,7 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
       description: 'x',
       parameters: {
         type: 'object',
-        definitions: { item: { type: 'string' } },
-        properties: { value: { $ref: '#/definitions/item' } },
+        properties: { value: { type: 'string' } },
         required: ['value'],
       },
     };
@@ -172,42 +171,15 @@ test('schema, capability, snapshot, and receiver boundaries', async () => {
 
 test('invalid schemas poison registration and clean up', async (t) => {
   const cases = [
-    ['empty id dependency collides with the root URI', { type: 'object', dependencies: { id: [] } }, /duplicate|Duplicate/u],
-    [
-      'dependency named id rebases references',
-      { type: 'object', dependencies: { id: ['x'], a: { properties: { y: { $ref: '#/b' } } }, b: { type: 'string' } } },
-      /Unresolved schema reference/u,
-    ],
-    [
-      'dependency named id with an otherwise valid local reference is unsupported',
-      { type: 'object', definitions: { s: { type: 'string' } }, dependencies: { id: ['kind'], kind: { properties: { x: { $ref: '#/definitions/s' } } } } },
-      /Unresolved schema reference/u,
-    ],
+    ['empty id dependency collides with the root URI', { type: 'object', dependencies: { id: [] } }, /Unsupported tool schema/u],
     [
       'invalid schema',
       { type: 'object', properties: { x: { minimum: 'no' } } },
       /Invalid draft-07 schema/u,
     ],
     ['unknown keyword', { type: 'object', future: true }, /Unsupported schema keyword/u],
-    [
-      'reference siblings',
-      { type: 'object', properties: { x: { $ref: '#/definitions/s', maxLength: 2 } } },
-      /sibling assertions/u,
-    ],
-    [
-      'external reference',
-      { type: 'object', properties: { x: { $ref: 'https://example.com/schema' } } },
-      /Only local schema references/u,
-    ],
-    [
-      'base URI reference',
-      {
-        type: 'object',
-        definitions: { s: { type: 'string' } },
-        properties: { x: { $ref: 'https://github.com/cfworker#/definitions/s' } },
-      },
-      /Only local schema references/u,
-    ],
+    ['nested ref', { type: 'object', properties: { x: { $ref: '#' } } }, /Unsupported schema keyword: \$ref/u],
+    ['definitions', { type: 'object', definitions: { x: { type: 'string' } } }, /Unsupported schema keyword: definitions/u],
     [
       'root dialect',
       { type: 'object', $schema: 'http://json-schema.org/draft-06/schema#' },
@@ -223,39 +195,9 @@ test('invalid schemas poison registration and clean up', async (t) => {
     ],
     ['unsupported id', { type: 'object', $id: 'x' }, /Unsupported schema keyword/u],
     [
-      'reference to data',
-      {
-        type: 'object',
-        properties: {
-          a: { type: 'string', readOnly: false },
-          b: { $ref: '#/properties/a/readOnly' },
-        },
-      },
-      /Unresolved schema reference/u,
-    ],
-    [
-      'encoded reference',
-      {
-        type: 'object',
-        definitions: { a: { type: 'object', properties: { b: { type: 'string' } } } },
-        properties: { x: { $ref: '#/definitions/a%2Fproperties%2Fb' } },
-      },
-      /Unresolved schema reference/u,
-    ],
-    [
       'unknown format',
       { type: 'object', properties: { x: { type: 'string', format: 'uuid' } } },
       /Unsupported schema format/u,
-    ],
-    [
-      'missing reference',
-      { type: 'object', properties: { x: { $ref: '#/missing' } } },
-      /Unresolved schema reference/u,
-    ],
-    [
-      'recursive reference',
-      { type: 'object', properties: { x: { $ref: '#' } } },
-      /Recursive schema references/u,
     ],
   ];
   for (const [label, schema, expected] of cases)
@@ -945,6 +887,32 @@ test('tool definition fields share one JSON budget after optional undefined norm
   } });
   const p = pin([g]);
   assert.deepEqual(p.definitions, [{ name: 'demo__x', description: '' }]);
+  p.release();
+  await g.retire();
+});
+
+test('local schema references are unsupported', async () => {
+  await assert.rejects(make({ activate(tools) {
+    tools.add({ definition: { name: 'x', description: '', parameters: { type: 'object', $ref: '#/properties/y', properties: { y: { type: 'string' } } } }, decodeInput: x => x, async execute() { return ''; } });
+    return { dispose() {} };
+  } }), /Unsupported schema keyword: \$ref/u);
+});
+
+
+test('activation options are callable before activation starts', async () => {
+  let activated = false;
+  await assert.rejects(make({ accept: 'no', activate() { activated = true; } }), /requires activate and accept/u);
+  await assert.rejects(make({ activate: 'no' }), /requires activate and accept/u);
+  assert.equal(activated, false);
+});
+
+test('annotation data may contain reference-shaped keys', async () => {
+  const g = await make({ activate(tools) {
+    tools.add({ definition: { name: 'x', description: '', parameters: { type: 'object', default: { $ref: '#', definitions: {} }, examples: [{ $ref: '#', definitions: {} }] } }, decodeInput: x => x, async execute() { return 'ok'; } });
+    return { dispose() {} };
+  } });
+  const p = pin([g]);
+  assert.equal((await p.invoke('demo__x', {})).output, 'ok');
   p.release();
   await g.retire();
 });

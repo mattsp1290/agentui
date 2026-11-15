@@ -33,7 +33,7 @@ test('bundled tools run under the desktop CSP', async () => {
   try {
     browser = await chromium.launch({ headless: true });
     const page = await browser.newPage();
-    await page.goto(`http://127.0.0.1:${server.address().port}`);
+    await page.goto(`http://127.0.0.1:${server.address().port}/nested/path?query=1`);
     await page.waitForFunction(() => document.body.textContent.includes('completed'));
     assert.deepEqual(JSON.parse(await page.locator('body').textContent()), {
       outcome: { kind: 'completed', output: 'ok' },

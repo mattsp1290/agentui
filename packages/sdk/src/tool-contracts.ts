@@ -12,14 +12,14 @@ export interface FrontendToolContribution<Input> {
 export interface FrontendToolContributions { add<Input>(tool: FrontendToolContribution<Input>): void }
 export interface FrontendToolGeneration {
   readonly namespace: string;
-  /** Captured diagnostic and durable correlation label; uniqueness is not enforced. */
+  /** Captured diagnostic and owner correlation label; uniqueness is not enforced. */
   readonly generation: string;
   readonly platform: FrontendPlatform;
   retire(): Promise<void>;
 }
 export interface FrontendToolPin {
   readonly run: RunIdentity;
-  readonly definitions: readonly FrontendTool[];
+  readonly definitions: readonly Readonly<FrontendTool>[];
   invoke(name: string, args: unknown): Promise<FrontendToolOutcome>;
   release(): void;
 }
@@ -37,6 +37,7 @@ export interface FrontendToolGenerationOptions<A extends (value: unknown) => voi
   readonly generation: string;
   readonly platform: FrontendPlatform;
   activate(tools: FrontendToolContributions): unknown;
+  // TypeScript does not enforce the lifetime constraint on an inferred assertion target.
   readonly accept: A & (AcceptedContributions<A> extends ExtensionLifetime ? unknown : never);
 }
 export interface FrontendToolPinOptions {

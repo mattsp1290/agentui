@@ -81,6 +81,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           "function accept(value: unknown): asserts value is { modules: string[]; dispose(): void } { void value; } const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept, activate() { return {}; } }); result.contributions.dispose();",
           /Property 'dispose' does not exist/u,
         ],
+        ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.definitions[0].name = 'changed';", /read-only property/u],
         ['void document;', /Cannot find name 'document'/u],
       ],
     });
