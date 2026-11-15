@@ -166,7 +166,7 @@ test('real host pairs independent devices and protects metadata, scope and expli
   assert.deepEqual(await f.ok(catalog, alice.cookie), []);
   assert.deepEqual(await f.ok({ op: 'create', scope }, alice.cookie), scope);
   assert.deepEqual(await f.ok({ op: 'create', scope }, bob.cookie), scope);
-  assert.deepEqual(await f.ok(catalog, bob.cookie), [scope]);
+  assert.deepEqual(await f.ok(catalog, bob.cookie), [{ scope, preview: null }]);
   assert.deepEqual(await f.ok({ ...catalog, after: scope.conversationId }, alice.cookie), []);
   assert.deepEqual((await f.control('devices')).map(item => item.id).sort(),
     [alice.metadata.principalId, bob.metadata.principalId].sort());
@@ -280,7 +280,7 @@ test('fixed-port process restart preserves device identity, catalog and evidence
   assert.equal(f.origin, origin);
   assert.equal(f.hostId, hostId);
   assert.deepEqual(await f.ok({ op: 'metadata' }, alice.cookie), alice.metadata);
-  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }, alice.cookie), [scope]);
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }, alice.cookie), [{ scope, preview: intent.body.text }]);
   assert.deepEqual(await f.ok({ op: 'receipt', scope, id: intent.clientCommandId }, alice.cookie), receipt);
   assert.deepEqual(await snapshot(), before);
   assert.deepEqual((await f.ok({ op: 'submit', command: intent }, alice.cookie)).receipt, receipt);

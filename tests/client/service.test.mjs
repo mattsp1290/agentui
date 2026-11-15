@@ -37,6 +37,16 @@ test('canonical service schema rejects unknown operations, fields, and out of ra
   assert.throws(() => parseServiceResponse({ op: 'metadata' }, { ok: true, value: nested }), /structural limit/);
 });
 
+test('catalog entries keep bounded display previews separate from scope identity', async () => {
+  const entries = [{ scope, preview: 'A recognizable first prompt' }, { scope: { ...scope, conversationId: 'empty' }, preview: null }];
+  const connection = createBrowserConnection({ fetch: async () => reply(entries) });
+  assert.deepEqual(await connection.catalog(), entries);
+  for (const preview of ['', 'x'.repeat(81), ' leading', 'trailing ', 'two\nlines', 42]) {
+    assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview }] }));
+  }
+  assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [scope] }));
+});
+
 test('browser uses same origin JSON endpoint and returns only validated domain values', async () => {
   const calls = [];
   const connection = createBrowserConnection({ fetch: async (url, init) => {

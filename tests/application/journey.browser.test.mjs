@@ -398,6 +398,65 @@ test('incompatible metadata and unsupported draft storage block commands without
   assert.deepEqual(await host.entries(), []);
 });
 
+test('saved chat labels follow first prompts through new chats, reopening and reload with separate drafts', { timeout: 60_000 }, async t => {
+  const host = await fixture(t), page = await host.page();
+  const catalog = page.getByRole('navigation', { name: 'Host conversations', exact: true });
+  const create = async () => {
+    const previous = await page.locator('.scope-label').count() ? await page.locator('.scope-label').textContent() : null;
+    await page.getByRole('button', { name: 'New recorded conversation', exact: true }).click();
+    await wait(async () => await page.locator('.scope-label').count() > 0 && await page.locator('.scope-label').textContent() !== previous, 'new chat opens');
+    await connected(page);
+    return page.locator('.scope-label').textContent();
+  };
+  const first = await create();
+  const firstPrompt = 'Plan a balcony garden with herbs';
+  const firstButton = catalog.getByRole('button', { name: new RegExp(`Open conversation ${first}$`) });
+  const emptyLabel = await firstButton.textContent();
+  await page.reload();
+  await connected(page);
+  assert.equal(await firstButton.textContent(), emptyLabel);
+  await draft(page, firstPrompt);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(async () => await firstButton.textContent() === firstPrompt, 'first prompt becomes the label without reload');
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+  await draft(page, 'Garden draft stays here');
+
+  const second = await create();
+  const secondPrompt = `Write a travel checklist\n\n${'packing essentials '.repeat(20)}`;
+  const secondButton = catalog.getByRole('button', { name: new RegExp(`Open conversation ${second}$`) });
+  await draft(page, secondPrompt);
+  await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(async () => (await secondButton.textContent()).startsWith('Write a travel checklist packing essentials'), 'second prompt becomes a readable label');
+  const boundedLabel = await secondButton.textContent();
+  assert.ok(boundedLabel.length <= 80);
+  assert.equal(boundedLabel.includes('\n'), false);
+  assert.equal(boundedLabel.endsWith('…'), true);
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+  await draft(page, 'Travel draft stays here');
+
+  const third = await create();
+  const thirdButton = catalog.getByRole('button', { name: new RegExp(`Open conversation ${third}$`) });
+  const thirdLabel = await thirdButton.textContent();
+  assert.equal(await firstButton.textContent(), firstPrompt);
+  assert.equal(await secondButton.textContent(), boundedLabel);
+  await page.reload();
+  await connected(page);
+  assert.equal(await thirdButton.textContent(), thirdLabel);
+  assert.equal(await firstButton.textContent(), firstPrompt);
+  assert.equal(await secondButton.textContent(), boundedLabel);
+  for (const [button, id, prompt, savedDraft] of [
+    [firstButton, first, firstPrompt, 'Garden draft stays here'],
+    [secondButton, second, secondPrompt, 'Travel draft stays here'],
+  ]) {
+    await button.click();
+    await wait(async () => await page.locator('.scope-label').textContent() === id, 'selected chat opens');
+    await connected(page);
+    assert.equal(await page.locator('.scope-label').textContent(), id);
+    assert.equal(await page.locator('.message-user p').first().textContent(), prompt);
+    assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), savedDraft);
+  }
+});
+
 test('browser catalog reads every page and opens a conversation beyond the first hundred', { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.evaluate(async hostId => {
