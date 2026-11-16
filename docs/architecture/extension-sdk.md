@@ -29,6 +29,7 @@ A server entry implements `ServerExtensionEntry`.
 Its context supplies `providers.add(id, provider, presentation)`, a generic method preserving the concrete `BackendProvider<Model, Installation>` type.
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
+Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
 SDK 0.4.0 makes this activation-context method required. Existing 0.3.0 extensions must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
