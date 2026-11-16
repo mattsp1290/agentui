@@ -313,10 +313,11 @@ Theme and platform controls remain direct imports from `@agentui/theme/react` an
 
 ## Arrange conversation content
 
-The optional top-level `contentLayout` contribution arranges the selected conversation's transcript and modules.
+The optional top-level `contentLayout` contribution arranges the selected conversation's transcript and modules on desktop.
 `ConversationContentLayoutProps` has exactly two readonly `ReactNode` properties, `transcript` and `modules`.
 The transcript already reflects independent transcript override selection. The modules include nested views, actions, and namespace diagnostics.
-Render each supplied node once. The layout receives no commands, draft editor, conversation selector, or lifetime handle.
+Render each supplied node once and treat it as an opaque presentation value.
+The typed layout props add no commands, draft editor, conversation selector, or lifetime API.
 
 ```tsx
 import type { ConversationContentLayoutProps } from '@agentui/sdk/react';
@@ -338,7 +339,7 @@ Layout selection waits for every selected namespace to settle. Multiple ready cl
 An omitted layout uses that same default arrangement. Without an active conversation, namespace diagnostics remain visible in catalog order and layouts do not render.
 
 While a layout suspends, the host shows native messages, command and file activity, and a loading notice.
-Custom transcript components and module actions are withheld until the layout is ready, so a retained hidden layout cannot duplicate extension trees.
+Custom transcript components, module views and actions, and namespace diagnostics wait until the layout is ready, so a retained hidden layout cannot duplicate extension trees.
 Suspension does not retire a namespace. A render failure retires the failing namespace once and restores the default arrangement.
 A nearer module or transcript boundary owns its failure. A layout in another namespace remains selected.
 Restore default view disables the contributions without replacing the composer or its persisted draft.

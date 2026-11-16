@@ -51,7 +51,7 @@ async function fixture(t, width = 1000) {
   const requests = [], errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.route('**/*', async route => {
-    if (route.request().url() === 'https://reply.test/') await route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root" class="desktop-shell aui-theme" data-workspace-view="chats"><nav class="view-rail"></nav><aside class="application-controls"></aside><main><div class="chat-view" id="conversation"></div></main><footer class="shell-footer"></footer></div>' });
+    if (route.request().url() === 'https://reply.test/') await route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root" class="desktop-shell aui-theme" data-workspace-view="chats"><nav class="view-rail"></nav><aside class="application-controls"></aside><main id="main-content"><div class="chat-view" id="conversation"></div></main><footer class="shell-footer"></footer></div>' });
     else { requests.push(route.request().url()); await route.abort(); }
   });
   await page.goto('https://reply.test/');
@@ -199,7 +199,7 @@ test('command disclosure keeps its identity and escaped retained output through 
   assert.equal(await disclosure.evaluate(node => node.open), true);
   const layout = await page.evaluate(() => {
     const composer = document.querySelector('.composer').getBoundingClientRect();
-    const transcript = document.querySelector('.transcript');
+    const transcript = document.querySelector('.conversation-content');
     return { width: document.documentElement.scrollWidth, viewport: innerWidth,
       composerTop: composer.top, composerBottom: composer.bottom, height: innerHeight,
       scrolls: transcript.scrollHeight > transcript.clientHeight };

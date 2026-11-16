@@ -85,6 +85,6 @@ A failed namespace is disposed once. Restore default view removes both contribut
 
 The template returns `contentLayout: ReviewLayout`. Its `ConversationContentLayoutProps` contains only the host-created `transcript` and `modules` nodes.
 The transcript includes any selected transcript override. Render each node once with ordinary React and CSS.
-The host owns permissions, approvals, the composer, Stop, and recovery outside this arrangement.
-Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom views and actions wait.
+This desktop arrangement keeps permissions, approvals, the composer, Stop, and recovery under their existing host owners.
+Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom transcript and module views, actions, and namespace diagnostics wait.
 SDK compatibility is `0.5.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.

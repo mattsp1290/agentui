@@ -45,7 +45,7 @@ function DefaultView() {
       <div className="note-divider" />
       <div className="note-number">02</div>
       <Text as="h2" variant="label">A workspace you can change</Text>
-      <Text variant="muted">Custom layouts are planned. Recovery controls belong to the app and remain outside the conversation view.</Text>
+      <Text variant="muted">Custom layouts can arrange your conversation and tools. Recovery controls belong to the app and remain outside the conversation view.</Text>
       <div className="build-label">LOCAL CODEX WORKSPACE</div>
     </aside>
   </div>;
