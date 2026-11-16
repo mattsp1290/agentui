@@ -34,8 +34,25 @@ async function raceAbort<T>(request: () => Promise<T>, signals: readonly AbortSi
   try { return await Promise.race([request(), cancelled]); }
   finally { for (const signal of signals) signal.removeEventListener('abort', cancel); }
 }
-export function createFrontendSends(deps: { changed(): void; failed(viewId: string, error: unknown): void; unauthorized(): void }) {
+export interface GenerationSource extends GenerationSink {
+  snapshot(): GenerationSnapshot;
+}
+export function createGenerationSource(): GenerationSource {
   let token: object | null = null, generations: GenerationSnapshot = { kind: 'transitioning' };
+  return {
+    begin(owner) { token = owner; generations = { kind: 'transitioning' }; },
+    publish(owner, value) { if (token === owner) generations = value; },
+    clear(owner) { if (token === owner) { token = null; generations = { kind: 'transitioning' }; } },
+    snapshot: () => generations,
+  };
+}
+export type FrontendSends = ReturnType<typeof createFrontendSends>;
+export function createFrontendSends(deps: {
+  readonly generations: Pick<GenerationSource, 'snapshot'>;
+  changed(): void;
+  failed(viewId: string, error: unknown): void;
+  unauthorized(): void;
+}) {
   let closed = false;
   let authority: Authority = { session: null, lifetime: new AbortController() };
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -132,12 +149,6 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
   return {
     recover,
-    start(): void { closed = false; failedViews.clear(); },
-    source: {
-      begin(owner) { token = owner; generations = { kind: 'transitioning' }; },
-      publish(owner, value) { if (token === owner) generations = value; },
-      clear(owner) { if (token === owner) { token = null; generations = { kind: 'transitioning' }; } },
-    } satisfies GenerationSink,
     snapshot(): readonly CapturedSend[] {
       return [...entries.values()].filter(entry => matches(entry.reference)).map<CapturedSend>(entry => ({ key: entry.key, command: entry.reference.command,
         viewId: entry.viewId, ...entry.state })).concat([...recent.values()].filter(row => authority.session?.principalId === row.ownerId && authority.session.hostId === row.command.scope.hostId));
@@ -166,6 +177,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
           if (failedViews.has(viewId)) throw new Error('Local storage failed. Reload before capturing tools.');
           if (closed || !session || session.hostId !== scope.hostId) throw new Error('Reconnect before capturing tools.');
           if (eligibility() !== 'ag-ui-capture-and-bind') return null;
+          const generations = deps.generations.snapshot();
           if (generations.kind !== 'ready') throw new Error('Custom tools are changing. Wait for them to load, then send again.');
           const retained = retainFrontendTools({ generations: generations.generations, platform: 'desktop' });
           if (!retained.definitions.length) { retained.release(); return null; }
@@ -220,7 +232,6 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
       await Promise.allSettled([...entries.values()].map(unavailable));
-      entries.clear();
     },
   };
 }

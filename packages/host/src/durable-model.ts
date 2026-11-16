@@ -1,6 +1,6 @@
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity } from '@agentui/contracts';
-import type { ProviderCapture, ProviderObservation } from './provider-commands.js';
+import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity, OfferedCommand } from '@agentui/contracts';
+import type { MatchedProviderCommand, ProviderObservation, V1Command } from './provider-commands.js';
 import type { DispatchIdentity, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
 export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
@@ -54,17 +54,19 @@ export type ObservedResult =
   | { readonly kind: 'completed'; readonly output: unknown }
   | { readonly kind: 'rejected'; readonly reason: string };
 export interface NativeStoredCommand {
-  readonly command: ClientCommand;
+  readonly command: V1Command;
   readonly target: CapturedTarget;
   readonly receipt: Receipt;
   readonly observation: ProviderDispatchObservation<ObservedResult> | null;
 }
-export type StoredCommand = NativeStoredCommand | ProviderCapture & {
+export type ProviderStoredCommand = MatchedProviderCommand & {
   readonly kind: 'provider';
-  readonly command: ClientCommand;
   readonly receipt: Receipt;
   readonly observation: ProviderObservation | null;
 };
+export type OfferedStoredCommand = Extract<ProviderStoredCommand, { readonly command: OfferedCommand }>;
+export type StoredCommand = NativeStoredCommand | ProviderStoredCommand;
+export function isOffered(stored: StoredCommand): stored is OfferedStoredCommand { return stored.command.version === 2; }
 export interface HostBudgets {
   readonly maxCommandBytes: number;
   readonly maxEventBytes: number;

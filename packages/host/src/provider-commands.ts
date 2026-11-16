@@ -1,6 +1,6 @@
 import { aguiInput, assertOfferSuffix } from './agui-input.js';
 import { canonicalJson, copyJson, parseRunIdentity, parsePermissionScope } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope, FrontendOffer } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope, FrontendOffer, OfferedCommand } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { ConversationRef, ConversationRefKind, ProviderConversation, ProviderInstance } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
@@ -36,6 +36,15 @@ export interface ProviderCapture {
   readonly target: ProviderTarget;
   readonly agui: AguiRunKey | null;
 }
+export type V1Command = Extract<ClientCommand, { readonly version: 1 }>;
+export type MatchedProviderCommand =
+  | (ProviderCapture & { readonly command: V1Command })
+  | (ProviderCapture & { readonly agui: AguiRunKey; readonly command: OfferedCommand });
+export const TAGGED_SEND_KEY_SQL = `json_extract(target, '$.kind')='provider'
+  AND json_extract(target, '$.operation.kind')='send'
+  AND json_extract(target, '$.operation.protocol')='ag-ui'
+  AND json_extract(target, '$.operation.request.threadId')=?
+  AND json_extract(target, '$.operation.request.runId')=?`;
 export function parseProviderCapture(value: unknown, scope: ConversationScope): ProviderCapture {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
   const operation = record(input.operation);
@@ -64,18 +73,17 @@ export function parseProviderCapture(value: unknown, scope: ConversationScope): 
   else throw new Error('Invalid provider command');
   return { target: { kind: 'provider', installation: original.installation, credential: original.credential, operation: captured }, agui };
 }
-export function matchProviderCommand(capture: ProviderCapture, body: ClientCommand['body']): void {
-  const operation = capture.target.operation;
-  if (body.kind === 'revoke-permission' && operation.kind === 'revoke-permission' && body.permissionId === operation.permission.ref.opaqueId && body.scope === operation.scope) return;
-  if (body.kind === 'send' && operation.kind === 'send') {
-    if ('frontend' in body) {
-      if (capture.agui === null) throw new Error('Invalid offered command target');
-      assertOfferSuffix(operation.request, body.frontend);
-    }
-    return;
+export function matchProviderCommand(capture: ProviderCapture, command: ClientCommand): MatchedProviderCommand {
+  const operation = capture.target.operation, body = command.body;
+  if (command.version === 2) {
+    if (operation.kind !== 'send' || capture.agui === null) throw new Error('Invalid offered command target');
+    assertOfferSuffix(operation.request, command.body.frontend);
+    return { target: capture.target, agui: capture.agui, command };
   }
-  if (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) return;
-  if (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId) return;
+  if ((body.kind === 'revoke-permission' && operation.kind === 'revoke-permission' && body.permissionId === operation.permission.ref.opaqueId && body.scope === operation.scope) ||
+    (body.kind === 'send' && operation.kind === 'send') ||
+    (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) ||
+    (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId)) return { ...capture, command };
   throw new Error('Invalid provider command association');
 }
 export function providerReference<I extends string, K extends ConversationRefKind>(value: unknown,
