@@ -1,4 +1,13 @@
 use security_framework::os::macos::keychain::SecKeychain;
+use std::sync::Mutex;
+
+// The interaction flag is process-wide, and the suppression guard always re-enables it.
+pub(crate) static INTERACTION: Mutex<()> = Mutex::new(());
+
+pub enum ReadMode {
+    Quiet,
+    UserInitiated,
+}
 
 pub struct Keychain {
     pub handle: SecKeychain,
@@ -12,8 +21,12 @@ fn failure(error: security_framework::base::Error) -> &'static str {
     }
 }
 impl Keychain {
-    pub fn read(&self) -> Result<Option<Vec<u8>>, &'static str> {
-        let _interaction = SecKeychain::disable_user_interaction().map_err(failure)?;
+    pub fn read(&self, mode: ReadMode) -> Result<Option<Vec<u8>>, &'static str> {
+        let _lock = INTERACTION.lock().map_err(|_| "keychain-unavailable")?;
+        let _interaction = match mode {
+            ReadMode::Quiet => Some(SecKeychain::disable_user_interaction().map_err(failure)?),
+            ReadMode::UserInitiated => None,
+        };
         match self
             .handle
             .find_generic_password(&self.service, "mac-default")
@@ -28,6 +41,7 @@ impl Keychain {
         expected: &Option<Vec<u8>>,
         intended: &Option<Vec<u8>>,
     ) -> Result<(), &'static str> {
+        let _lock = INTERACTION.lock().map_err(|_| "keychain-unavailable")?;
         let _interaction = SecKeychain::disable_user_interaction().map_err(failure)?;
         match self
             .handle

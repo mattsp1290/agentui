@@ -4,7 +4,7 @@ import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 import { createMacConnection, macAccess } from '@agentui/client/mac';
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
-test('native access failures give safe recovery for the reported category on status and execution', async () => {
+test('native access failures give safe recovery for the reported category on status, restore and execution', async () => {
   const secret = 'private-token-and-profile-path';
   const generic = 'Native connection unavailable. Reconnect, or restart AgentUI if the problem continues. Local work is retained.';
   const guidance = [
@@ -16,7 +16,7 @@ test('native access failures give safe recovery for the reported category on sta
   for (const [cause, expected] of guidance) {
     const invoke = async () => { throw cause; };
     const connection = createMacConnection({ kind: 'ready', observation: 'current', hostId: 'host', principalId: 'principal' }, invoke);
-    for (const run of [() => macAccess({ kind: 'status' }, invoke), () => connection.metadata()]) {
+    for (const run of [() => macAccess({ kind: 'status' }, invoke), () => macAccess({ kind: 'restore' }, invoke), () => connection.metadata()]) {
       await assert.rejects(run, error => {
         assert.ok(error instanceof ServiceError);
         assert.equal(error.kind, 'unavailable');
@@ -44,6 +44,19 @@ test('invalid native responses report a protocol problem without Keychain recove
     assert.doesNotMatch(error.message, /Keychain|private-token-and-profile-path/);
     return true;
   });
+});
+
+test('restore forwards only the explicit command and validates the existing access result', async () => {
+  for (const access of [
+    { kind: 'ready', observation: 'restored', hostId: 'host', principalId: 'principal' },
+    { kind: 'absent', observation: 'absent' },
+    { kind: 'unreadable', observation: 'unreadable' },
+  ]) {
+    const calls = [];
+    assert.deepEqual(await macAccess({ kind: 'restore' }, async command => { calls.push(command); return access; }), access);
+    assert.deepEqual(calls, [{ kind: 'restore' }]);
+  }
+  await assert.rejects(macAccess({ kind: 'restore' }, async () => ({ kind: 'unknown', observation: 'current' })), /Invalid native connection response/);
 });
 
 test('Mac adapter uses immutable native observations through the real shared engine including search and chooser', async () => {

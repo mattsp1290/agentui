@@ -23,7 +23,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
       globalThis.heldAction = null;
       await new Promise((resolve, reject) => { globalThis.releaseNative = resolve; globalThis.rejectNative = reject; });
     }
-    if (command.kind === 'status') { access = globalThis.nativeStatus ?? { ...access, observation: 'status-' + globalThis.nativeCalls.length }; return access; }
+    if (command.kind === 'status' || command.kind === 'restore') { access = globalThis.nativeStatus ?? { ...access, observation: 'status-' + globalThis.nativeCalls.length }; return access; }
     if (command.kind === 'forget') { access = { kind: 'absent', observation: 'forgotten' }; return access; }
     if (command.kind === 'pair') throw 'pairing-failed';
     if (command.kind !== 'execute') throw new Error('Unexpected access action');
@@ -48,7 +48,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   };`, resolveDir: root, loader: 'jsx' },
   bundle: true, write: false, format: 'iife', jsx: 'automatic', loader: { '.css': 'empty' }, define: { 'process.env.NODE_ENV': '"production"' } });
 
-async function fixture(t) {
+async function fixture(t, initialFailure = null) {
   const browser = await chromium.launch();
   t.after(() => browser.close());
   const page = await browser.newPage();
@@ -57,11 +57,15 @@ async function fixture(t) {
   await page.route('http://localhost/**', route => route.fulfill({ contentType: 'text/html', body: '<!doctype html><div id="root"></div>' }));
   await page.goto('http://localhost/native-forget');
   await page.addScriptTag({ content: bundle.outputFiles[0].text });
-  await page.evaluate(() => globalThis.mountNative());
+  await page.evaluate(failure => { globalThis.nativeFailure = failure; return globalThis.mountNative(); }, initialFailure);
+  t.after(() => assert.deepEqual(errors, []));
+  if (initialFailure) {
+    await page.getByRole('alert').filter({ hasText: 'Restore Keychain access' }).waitFor();
+    return page;
+  }
   await page.getByRole('button', { name: 'New recorded conversation', exact: true }).waitFor();
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === 'New recorded conversation').disabled);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  t.after(() => assert.deepEqual(errors, []));
   return page;
 }
 
@@ -134,8 +138,9 @@ test('pair failure and reconnect discard an open Forget request before changing 
   await page.getByRole('button', { name: 'Pair this Mac', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Pairing failed.' }).waitFor();
   assert.equal(await question.count(), 0);
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind !== 'execute').map(call => call.kind)), ['status', 'status', 'pair']);
   await forget.click();
-  await page.evaluate(() => { globalThis.heldAction = 'status'; });
+  await page.evaluate(() => { globalThis.heldAction = 'restore'; });
   await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
   await page.waitForFunction(() => typeof globalThis.releaseNative === 'function');
   assert.equal(await question.count(), 0);
@@ -145,5 +150,34 @@ test('pair failure and reconnect discard an open Forget request before changing 
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   assert.equal(await question.count(), 0);
   assert.equal(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind === 'forget').length), 0);
+  assert.deepEqual(await page.evaluate(() => globalThis.savedRecords()), records);
+});
+
+test('cold denied startup restores directly, deduplicates both Reconnect controls and retains drafts through denial and retry', async t => {
+  const page = await fixture(t, 'keychain-denied');
+  const records = await page.evaluate(() => globalThis.savedRecords());
+  const reconnect = page.getByRole('button', { name: 'Reconnect', exact: true });
+  await page.evaluate(() => { globalThis.nativeFailure = null; globalThis.heldAction = 'restore'; });
+  await reconnect.evaluate(button => { button.click(); button.click(); });
+  await page.waitForFunction(() => typeof globalThis.rejectNative === 'function');
+  assert.equal(await reconnect.isDisabled(), true);
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls), [{ kind: 'status' }, { kind: 'restore' }]);
+  await page.evaluate(() => globalThis.rejectNative('keychain-denied'));
+  await page.getByRole('alert').filter({ hasText: 'Restore Keychain access' }).waitFor();
+  assert.deepEqual(await page.evaluate(() => globalThis.savedRecords()), records);
+  await reconnect.click();
+  await page.getByRole('button', { name: 'New recorded conversation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind !== 'execute')), [
+    { kind: 'status' }, { kind: 'restore' }, { kind: 'restore' },
+  ]);
+  assert.equal(await page.evaluate(() => globalThis.nativeCalls.some(call => call.kind === 'execute' && call.request.op === 'metadata')), true);
+  await page.evaluate(() => { globalThis.releaseNative = null; globalThis.heldAction = 'restore'; });
+  await reconnect.evaluate(button => { button.click(); button.click(); });
+  await page.waitForFunction(() => typeof globalThis.releaseNative === 'function');
+  assert.equal(await reconnect.isDisabled(), true);
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind !== 'execute').map(call => call.kind)), ['status', 'restore', 'restore', 'restore']);
+  await page.evaluate(() => globalThis.releaseNative());
+  await page.getByRole('button', { name: 'New recorded conversation', exact: true }).waitFor();
   assert.deepEqual(await page.evaluate(() => globalThis.savedRecords()), records);
 });

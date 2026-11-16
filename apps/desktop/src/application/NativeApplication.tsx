@@ -26,7 +26,8 @@ export function NativeApplication() {
     setForgetSessionId(null);
     pending.current = true; setBusy(true); setError('');
     try {
-      const action = command.kind === 'status' ? command : { ...command, observation: (await macAccess({ kind: 'status' }, nativeInvoke)).observation };
+      const action = command.kind === 'pair' || command.kind === 'forget'
+        ? { ...command, observation: (await macAccess({ kind: 'status' }, nativeInvoke)).observation } : command;
       const access = await macAccess(action, nativeInvoke);
       await current.current?.controller.dispose();
       if (!alive.current) return;
@@ -69,9 +70,9 @@ export function NativeApplication() {
     {busy && <p role="status">Updating native connection…</p>}
   </section>;
   return session?.access.kind === 'ready'
-    ? <BrowserApplication key={session.id} controller={session.controller} connectionControls={controls} suspended={busy} reconnect={() => void replace({ kind: 'status' })} />
+    ? <BrowserApplication key={session.id} controller={session.controller} connectionControls={controls} suspended={busy} reconnect={() => void replace({ kind: 'restore' })} />
     : <ThemeScope className="desktop-shell"><Surface className="landing"><h1>Connect this Mac</h1>
         {session?.access.kind === 'unreadable' && <p role="alert">The protected record is unreadable. Update AgentUI, or explicitly discard this local pairing. Local work is retained.</p>}
-        {controls}<button disabled={busy} onClick={() => void replace({ kind: 'status' })}>Reconnect</button>
+        {controls}<button disabled={busy} onClick={() => void replace({ kind: 'restore' })}>Reconnect</button>
       </Surface></ThemeScope>;
 }
