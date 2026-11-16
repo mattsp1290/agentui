@@ -105,19 +105,19 @@ async function publishFresh(out, produce) {
 export async function buildServerCustomization({ reference, out }) {
   assertSupportedNode();
   const [abi, builder] = await Promise.all([serverCustomizationAbi(), builderIdentity()]);
+  const runtime = { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity };
   return publishFresh(out, async (staged, owner) => {
     const prepared = await prepareCustomizationSources({ reference, scratchParent: owner });
     try {
       const { catalog, ...compilation } = planServerCatalog(prepared.root, EXTENSION_SDK_VERSION);
       const assets = await compileCatalog({ ...compilation, directory: staged, abi });
       const body = { schemaVersion: 1, kind: 'server-customization', root: prepared.root.identity, packages: catalog.packages, sdkVersion: EXTENSION_SDK_VERSION,
-        builder,
-        runtime: { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity }, catalog: serverCatalogFile,
+        builder, runtime, catalog: serverCatalogFile,
         entries: catalog.entries, assets };
       const manifest = parseServerCustomizationArtifact({ ...body, artifactId: serverCustomizationArtifactId(body) });
       await writeFile(join(staged, 'customization.json'), JSON.stringify(manifest) + '\n', { flag: 'wx', mode: 0o600 });
-      const expected = { artifactId: manifest.artifactId, sdkVersion: manifest.sdkVersion, nodeVersion: process.versions.node,
-        nodeModules: process.versions.modules, abiIdentity: abi.identity };
+      const expected = { artifactId: manifest.artifactId, sdkVersion: manifest.sdkVersion, nodeVersion: runtime.version,
+        nodeModules: runtime.modules, abiIdentity: runtime.abiIdentity };
       await qualifyServerCatalog({ directory: staged, manifest, abi });
       await readServerCustomizationArtifact({ directory: staged, expected }).catch(() => { throw CustomizationError.fixed('artifact-changed'); });
       return manifest;

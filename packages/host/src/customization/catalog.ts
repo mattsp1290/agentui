@@ -46,9 +46,13 @@ export function customizationCatalog(packages: readonly CustomizationArtifactPac
   if (!root || lookup.size !== packages.length) throw invalidGraph();
   const ordered = customizationPreorder({ packageIdentity: root.identity, commit: root.commit }, edge => edge.packageIdentity, edge => {
     const pkg = lookup.get(edge.packageIdentity);
-    if (!pkg || pkg.commit !== edge.commit) throw invalidGraph();
+    if (!pkg) throw invalidGraph();
     return pkg.extensions;
-  }).map(edge => lookup.get(edge.packageIdentity)!);
+  }).map(edge => {
+    const pkg = lookup.get(edge.packageIdentity)!;
+    if (pkg.commit !== edge.commit) throw invalidGraph();
+    return pkg;
+  });
   const namespaces = new Set<string>();
   const entries: CustomizationCatalog['entries'][number][] = [];
   for (const pkg of ordered) {

@@ -1,0 +1,57 @@
+{
+  "schema_version": "bead-swarm-history-v1",
+  "iteration": 1,
+  "branch": "bead-swarm/iteration-1-server-artifact-contract-cleanup",
+  "slug": "server-artifact-contract-cleanup",
+  "main_branch": "main",
+  "main_branch_source": "default",
+  "execution_mode": "orchestrator-subagent",
+  "degraded_reason": null,
+  "selected_beans": [
+    "agentui-xenp"
+  ],
+  "beans_done": [
+    "agentui-xenp"
+  ],
+  "beans_blocked": [],
+  "beans_partial": [],
+  "merge_target": "main",
+  "validation": [
+    "Pinned Node24.22.3/npm11.19.1 toolchain check:PASS",
+    "npm run verify:PASS;2075tests passed,4skipped",
+    "Focused emitted server artifact tests:PASS;72tests",
+    "Independent contract reviewer focused tests:PASS;78tests",
+    "node scripts/verify-agui-fork.mjs:PASS",
+    "git diff --check:PASS"
+  ],
+  "review_mode": "reviewer-subagents",
+  "review_assurance": "normal",
+  "findings_fixed_re_reviewed": true,
+  "review_artifacts_local_only": true,
+  "review_blocker_summary": [],
+  "reviews": [
+    {
+      "reviewer": "artifact-correctness",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/server-artifact-contract-cleanup/standard/artifact-correctness"
+    },
+    {
+      "reviewer": "graph-contracts",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/server-artifact-contract-cleanup/standard/graph-contracts"
+    },
+    {
+      "reviewer": "thermo-nuclear-code-quality-review",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/server-artifact-contract-cleanup/strict/thermo-nuclear-code-quality-review",
+      "rubric_sha": "bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7",
+      "rubric_url": "https://raw.githubusercontent.com/cursor/plugins/bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md"
+    }
+  ],
+  "reviewed_source_revision": "2c7f0dbbe7977f6fe7515961379b4a02a765ec96",
+  "pull_request": "https://github.com/mattsp1290/agentui/pull/81",
+  "status": "complete"
+}
