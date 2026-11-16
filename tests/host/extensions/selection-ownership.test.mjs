@@ -57,6 +57,37 @@ test('pre-correction version 1 journal restarts with the exact original grant di
   } finally { reopened.close(); }
 });
 
+test('packaged durable host with missing boot history refuses selection without importing artifacts', async t => {
+  const runtime = await packagedHost(t), f = await fixture(t, runtime);
+  const options = { ...f.options, extensions: { kind: 'durable-artifacts', entries: [f.selected(f.first, 'artifact-a')] } };
+  let host = await runtime.startBrowserHost(options);
+  await host.close();
+  const database = new DatabaseSync(join(options.directory, 'host.sqlite'));
+  let selections;
+  try {
+    database.prepare('UPDATE service_extension_boots SET outcome=?').run('{"kind":"applying"}');
+    database.exec('DROP TABLE service_extension_boots');
+    selections = database.prepare('SELECT * FROM service_extension_selections').all();
+  } finally { database.close(); }
+  const imports = f.state.modules.length;
+  host = await runtime.startBrowserHost(options);
+  try {
+    const status = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', id: null });
+    assert.deepEqual(status, { ok: true, value: { kind: 'journal-invalid' } });
+    const selected = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-select', command: {
+      id: 'retry', expectedRevision: 0, selection: { version: 1, artifacts: [] },
+    } });
+    assert.equal(selected.ok, false);
+    assert.equal(f.state.modules.length, imports);
+    assert.deepEqual(host.extensionStatus(), { kind: 'empty' });
+  } finally { await host.close(); }
+  const reopened = new DatabaseSync(join(options.directory, 'host.sqlite'));
+  try {
+    assert.equal(reopened.prepare("SELECT 1 FROM sqlite_schema WHERE name='service_extension_boots'").get(), undefined);
+    assert.deepEqual(reopened.prepare('SELECT * FROM service_extension_selections').all(), selections);
+  } finally { reopened.close(); }
+});
+
 for (const kind of ['transient', 'durable-artifacts']) test(`${kind} startup observes saved providers once and settled boot verifies each artifact once`, async t => {
   const runtime = await packagedHost(t), f = await fixture(t, runtime);
   const options = { ...f.options, extensions: { kind, entries: [f.selected(f.first, 'artifact-a')] } };

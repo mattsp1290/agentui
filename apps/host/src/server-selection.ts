@@ -12,6 +12,11 @@ import { SelectionRefusal, RECEIPT_LIMIT, parseBootOutcome, parseSelection, pars
 import type { BootOutcome, OperationSummary, SelectionCommand, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
+const journalTables = new Map([
+  ['service_extension_selection_schema', 'singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, host TEXT NOT NULL'],
+  ['service_extension_selections', 'id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE, intent TEXT NOT NULL, receipt TEXT NOT NULL, digest TEXT NOT NULL'],
+  ['service_extension_boots', 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), outcome TEXT NOT NULL'],
+]);
 type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
 type Boot = { readonly id: string; readonly selection: string; outcome: BootOutcome };
@@ -57,12 +62,13 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   }
   try {
     transaction(() => {
-      db.exec(`CREATE TABLE IF NOT EXISTS service_extension_selection_schema (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, host TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS service_extension_selections (id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE, intent TEXT NOT NULL, receipt TEXT NOT NULL, digest TEXT NOT NULL);
-        CREATE TABLE IF NOT EXISTS service_extension_boots (sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), outcome TEXT NOT NULL);`);
-      db.prepare('INSERT OR IGNORE INTO service_extension_selection_schema VALUES(1,1,?)').run(deps.database.hostId);
+      const tables = db.prepare("SELECT name, type FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
+      if (tables.length === 0) {
+        for (const [name, columns] of journalTables) db.exec(`CREATE TABLE ${name} (${columns})`);
+        db.prepare('INSERT INTO service_extension_selection_schema VALUES(1,1,?)').run(deps.database.hostId);
+      } else if (tables.length !== journalTables.size || tables.some(table => table.type !== 'table' || typeof table.name !== 'string' || !journalTables.has(table.name.toLowerCase()))) throw new Error();
       const schema = db.prepare('SELECT * FROM service_extension_selection_schema').all();
-      if (schema.length !== 1 || schema[0]?.version !== 1 || schema[0]?.host !== deps.database.hostId) throw new Error();
+      if (schema.length !== 1 || schema[0]?.singleton !== 1 || schema[0]?.version !== 1 || schema[0]?.host !== deps.database.hostId) throw new Error();
       for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
         const selection = decodeSelection(row);
         if (selection.revision !== selections.size) throw new Error();
