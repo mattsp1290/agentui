@@ -27,6 +27,9 @@ async function git(args: string[], cwd: string, env: NodeJS.ProcessEnv, budget: 
     return stdout;
   } catch (error) {
     if (error instanceof CustomizationError) throw error;
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') {
+      throw CustomizationError.fixed('resource-limit');
+    }
     budget.check();
     // Git diagnostics can contain repository credentials. Only retain a fixed classification.
     const stderr = error && typeof error === 'object' && 'stderr' in error && Buffer.isBuffer(error.stderr) ? error.stderr.toString('utf8') : '';
@@ -114,7 +117,7 @@ export async function readCommittedRepository(input: {
     await rm(objects, { recursive: true, force: true });
     return { commit: canonical, directory, inputs, dispose };
   } catch (error) {
-    await dispose();
+    await dispose().catch(() => {});
     if (error instanceof CustomizationError) throw error;
     throw new CustomizationError('retrieval-failed', 'Could not materialize the committed customization snapshot.');
   }
@@ -142,7 +145,7 @@ export async function readCustomizationSnapshot(input: {
     }
     return { commit: tree.commit, directory: tree.directory, ...(customization ? { customization } : {}), dispose: tree.dispose };
   } catch (error) {
-    await tree.dispose();
+    await tree.dispose().catch(() => {});
     if (error instanceof CustomizationError) throw error;
     throw new CustomizationError('invalid-package', 'Expected valid committed package.json and package-lock.json JSON.');
   }

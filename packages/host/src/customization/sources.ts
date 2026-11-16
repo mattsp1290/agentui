@@ -80,7 +80,7 @@ export async function resolveCustomizationSources(input: {
   try {
     return { root: await visit(input.reference, 0, false), dispose };
   } catch (error) {
-    await dispose();
+    await dispose().catch(() => {});
     if (error instanceof CustomizationError) throw error;
     throw new CustomizationError('retrieval-failed', 'Could not resolve committed customization sources.');
   }

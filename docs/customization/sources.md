@@ -27,6 +27,8 @@ try {
 
 Optional `extensions` entries declare immutable external sources. The resolver retrieves them recursively in declaration order. Repeated references share the same package object. External packages require meaningful `agentui` metadata. Before resolution, the caller must trust the pinned root and every source declared transitively by its committed descendants. Resolving the root authorizes all descendant repository locations with the same host Git access and credentials, including local paths and remote repositories. Relative repository paths at every depth use the captured invocation working directory. Local path aliases share an acquisition after absolute path normalization. Remote address spellings remain distinct acquisition addresses, including SSH and HTTPS spellings with different authentication semantics.
 
+Local repository paths may contain spaces. File URLs use ordinary URL encoding. Remote locations cannot contain raw whitespace, control characters, backslashes, or embedded credentials. Malformed caller locations and commit IDs report `invalid-input`; malformed external references in committed metadata report a fixed `invalid-package` diagnostic.
+
 ```json
 {
   "repository": "git@example.org:me/widgets.git",
@@ -60,6 +62,8 @@ One resolution owns private storage for its complete graph. Concurrent calls hav
 The existing `readCustomizationSnapshot` operation remains available for a single root snapshot with unresolved external references. Its npm validation compares only the root manifest with the root lock entry. It parses the lockfile only when the root selects customization and declares dependencies. It permits 20000 files, 256 MiB, and 256 external references in root metadata. Dispose each successful snapshot or resolved graph when its consumer finishes.
 
 The graph API checks the npm manager and v3 lock header once before decoding entries. When both the header and entries are invalid, the header error takes precedence.
+
+Git output exceeding its bounded buffer reports `resource-limit` without retaining command output. A failed read preserves its original diagnostic if cleanup also fails. Explicit disposal of a successful result reports cleanup failures to the caller.
 
 ## Prepared sources
 

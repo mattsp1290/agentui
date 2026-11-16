@@ -8,8 +8,10 @@ import { resolveCustomizationSources } from '@agentui/host/customization';
 export const manager = 'npm@11.19.1';
 export const digest = value => createHash('sha256').update(value).digest('hex');
 export const integrity = 'sha512-' + Buffer.alloc(64, 42).toString('base64');
+const gitEnv = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+  GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
 export function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  return execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', env: gitEnv, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 export async function write(directory, path, value) {
   await mkdir(dirname(join(directory, path)), { recursive: true });
