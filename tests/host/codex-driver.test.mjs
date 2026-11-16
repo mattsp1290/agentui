@@ -58,6 +58,12 @@ function fixture(t, mode = 'stream') {
     },
     log: () => log().filter(message => message.direction === 'in'),
     turnIds: () => log().filter(message => message.direction === 'out' && message.method === 'turn/started' && message.params.turn.status === 'inProgress').map(message => message.params.turn.id),
+    turnStartResponses() {
+      const messages = log();
+      const ids = new Set(messages.filter(message => message.direction === 'in' && message.method === 'turn/start').map(message => message.id));
+      return messages.filter(message => message.direction === 'out' && ids.has(message.id) && message.result).map(message => message.result.turn.id);
+    },
+    releaseStart: () => writeFileSync(`${logPath}.release-start`, ''),
     finishMessage: runId => writeFileSync(`${logPath}.item-${runId}`, ''),
     finish: runId => writeFileSync(`${logPath}.complete-${runId}`, ''),
   };
@@ -230,9 +236,16 @@ test('run is authoritative before response text and persists in a fresh snapshot
   session.host.createConversation(scope, session.driver.installation);
   await session.port.submit(command('send'));
   const beforeText = (await snapshot(session.port)).document;
-  assert.deepEqual(beforeText.domain.currentRun, { kind: 'running', runId: f.turnIds()[0] });
+  const [runId] = f.turnStartResponses();
+  assert.match(runId, /^fixture-turn-/);
+  assert.deepEqual(f.turnIds(), []);
+  assert.deepEqual(beforeText.domain.currentRun, { kind: 'running', runId });
   assert.deepEqual(assistant(beforeText), []);
   assert.deepEqual((await snapshot(session.host.conversation(scope))).document.domain, beforeText.domain);
+  f.releaseStart();
+  const afterText = await observe(session.port, document => assistant(document).some(message => message.text === 'Hello'));
+  assert.deepEqual(f.turnIds(), [runId]);
+  assert.deepEqual(afterText.domain.currentRun, { kind: 'running', runId });
 });
 
 test('Stop admitted before turn completion refuses without native or output effects after completion', { timeout: 5000 }, async t => {

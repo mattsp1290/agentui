@@ -3,7 +3,7 @@ import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
-import type { ConversationScope, SubmitResult, ProviderObservationStatus } from '@agentui/contracts';
+import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions } from '@agentui/contracts';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
@@ -27,6 +27,11 @@ export interface ConversationObservation {
   readonly status: ProviderObservationStatus | { readonly kind: 'unknown' };
   readonly retrying: boolean;
 }
+type AvailablePermissions = Extract<ConversationPermissions, { kind: 'available' }>;
+export type PermissionState =
+  | { readonly kind: 'fresh'; readonly listing: AvailablePermissions }
+  | { readonly kind: 'loading' | 'stale'; readonly listing: AvailablePermissions | null; readonly reason: string }
+  | { readonly kind: 'unsupported'; readonly reason: string };
 export interface ApplicationSnapshot {
   readonly host: HostState;
   readonly catalog: Page<ConversationCatalogEntry>;
@@ -35,6 +40,7 @@ export interface ApplicationSnapshot {
   readonly savedViewNotice: string;
   readonly active: OpenConversation | null;
   readonly observation: ConversationObservation | null;
+  readonly permissionState: PermissionState;
   readonly error: string;
   readonly storageFailure: string;
   readonly busy: boolean;
@@ -70,8 +76,8 @@ type ApplicationFailure =
 interface Session { view: OwnedView | null; readonly connection: ServiceConnection }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  active: null, observation: null, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'active' | 'observation' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+  active: null, observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'active' | 'observation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -105,8 +111,37 @@ export function createApplicationController(deps: {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW });
     for (const listener of listeners) listener();
   }
+  let permissionRead = 0;
+  function stalePermissions(reason: string): void {
+    permissionRead++;
+    const previous = state.permissionState;
+    publish({ permissionState: { kind: 'stale', listing: 'listing' in previous ? previous.listing : null, reason } });
+  }
+  async function readPermissions(owner: Session, target: OpenConversation): Promise<ConversationPermissions> {
+    requireTarget(owner, target);
+    const version = ++permissionRead, previous = state.permissionState;
+    publish({ permissionState: { kind: 'loading', listing: 'listing' in previous ? previous.listing : null, reason: 'Refreshing permissions…' } });
+    try {
+      const result = await current(owner, owner.connection.conversationPermissions(target.scope));
+      requireTarget(owner, target);
+      if (version === permissionRead) publish({ permissionState: result.kind === 'available'
+        ? { kind: 'fresh', listing: result } : result.kind === 'unsupported' ? { kind: 'unsupported', reason: result.reason }
+          : { kind: 'stale', listing: 'listing' in previous ? previous.listing : null, reason: result.reason } });
+      return result;
+    } catch (cause) {
+      if (session === owner && state.active === target && version === permissionRead) {
+        stalePermissions(message(cause));
+        if (cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
+      }
+      throw cause;
+    }
+  }
+  function refreshPermissions(owner: Session, target: OpenConversation): void {
+    if (session === owner && state.active === target && state.host.kind === 'ready') void readPermissions(owner, target).catch(() => {});
+  }
   function stopObservation(): void { observationPoll?.stop(); observationPoll = null; }
   function disconnectActive(): void {
+    stalePermissions('Reconnect to refresh permissions.');
     stopObservation();
     unsubscribeActive?.();
     unsubscribeActive = null;
@@ -211,7 +246,8 @@ export function createApplicationController(deps: {
     if (state.active && sameScope(state.active.scope, scope)) {
       publish({ active: { ...state.active, agent } });
       observeActive(owner, state.active);
-      await current(owner, state.active.store.connect()); return;
+      await current(owner, state.active.store.connect());
+      refreshPermissions(owner, state.active); return;
     }
     disconnectActive();
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
@@ -220,18 +256,26 @@ export function createApplicationController(deps: {
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
     const active = { scope, store, agent, viewId: storage.viewId };
-    publish({ active });
+    publish({ active, permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
     observeActive(owner, active);
+    let connected = false;
     unsubscribeActive = store.subscribe(() => {
       if (session !== owner || state.active?.store !== store) return;
       const snapshot = store.getSnapshot();
-      if (snapshot.connection.kind !== 'connected') return;
+      if (snapshot.connection.kind !== 'connected') {
+        if (connected) stalePermissions('Reconnect to refresh permissions.');
+        connected = false;
+        return;
+      }
+      if (!connected && state.active) refreshPermissions(owner, state.active);
+      connected = true;
       const preview = conversationPreview(snapshot.document.domain);
       const existing = state.catalog.items.find(entry => sameScope(entry.scope, scope));
       if (existing && existing.preview !== preview) publish({ catalog: { ...state.catalog,
         items: state.catalog.items.map(entry => entry === existing ? { scope: entry.scope, preview } : entry) } });
     });
     await current(owner, store.connect());
+    refreshPermissions(owner, active);
   }
   async function readCatalog(owner: Session, hostId: string, after: string | null = null): Promise<void> {
     const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE));
@@ -253,6 +297,7 @@ export function createApplicationController(deps: {
   }
   async function refresh(owner: Session): Promise<void> {
     stopObservation();
+    stalePermissions('Reconnecting to refresh permissions.');
     const storage = local(owner);
     publish({ host: { kind: 'loading' } });
     try {
@@ -295,6 +340,7 @@ export function createApplicationController(deps: {
     if (!owner || session !== owner) throw new Error('This application has closed.');
     if (state.busy) throw new Error('Another operation is in progress.');
     requireTarget(owner, target);
+    stalePermissions('A command is in progress. Permissions will refresh afterward.');
     publish({ busy: true, error: '' });
     try {
       if (target.agent.availability.kind !== 'ready') throw new Error(target.agent.availability.reason);
@@ -305,7 +351,7 @@ export function createApplicationController(deps: {
     } catch (cause) {
       fail(owner, classifyFailure(cause));
       throw cause;
-    } finally { if (session === owner) publish({ busy: false }); }
+    } finally { if (session === owner) { publish({ busy: false }); refreshPermissions(owner, target); } }
   }
   async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
     const view = requireSaved(owner), host = requireHost(owner);
@@ -460,13 +506,19 @@ export function createApplicationController(deps: {
         },
         permissions: { async read() {
           if (!owner) throw new Error('Connect the conversation before continuing.');
-          requireTarget(owner, target);
-          const result = await current(owner, owner.connection.conversationPermissions(target.scope));
-          requireTarget(owner, target);
-          return result;
+          return readPermissions(owner, target);
         } },
         commands: {
-          revokePermission: (permissionId, scope) => submitCommand(owner, target, () => target.store.revokePermission(permissionId, scope)),
+          revokePermission: (permissionId, scope) => {
+            if (!owner) return Promise.reject(new Error('Connect the conversation before continuing.'));
+            try { requireTarget(owner, target); } catch (cause) { return Promise.reject(cause); }
+            const current = state.permissionState;
+            if (state.active !== target || current.kind !== 'fresh' ||
+              !current.listing.permissions.some(row => row.permissionId === permissionId && row.scope === scope)) {
+              return Promise.reject(new Error('Refresh permissions before revoking this permission.'));
+            }
+            return submitCommand(owner, target, () => target.store.revokePermission(permissionId, scope));
+          },
           send: text => invoke('send', () => {
             if (typeof text !== 'string') throw new Error('An explicit message is required.');
             return target.store.send(text);

@@ -149,7 +149,7 @@ test('built browser app pairs two views, streams, races approval and recovers or
     if (request.url().endsWith('/api/v1')) { const value = request.postDataJSON(); if (value.op === 'watch') watches.push(value); }
   });
   await alice.context().setOffline(true);
-  await alice.getByRole('status').first().filter({ hasText: /failed|disconnected/ }).waitFor();
+  await alice.getByRole('status').filter({ hasText: /^Conversation (failed|disconnected)/ }).waitFor();
   await alice.context().setOffline(false);
   await alice.getByRole('button', { name: 'Settings', exact: true }).click();
   await alice.getByRole('button', { name: 'Reconnect', exact: true }).click();

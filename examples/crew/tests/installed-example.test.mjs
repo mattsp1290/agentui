@@ -31,7 +31,9 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     }
     return join(directory, packed.filename);
   });
-  const sdk = join(root, 'vendor/crew-client/d595188879d902a980f956591f8cd2c35d0c4f4b/birbcrew-client-0.1.0.tgz');
+  const examplePackage = new URL('../package.json', import.meta.url);
+  const example = JSON.parse(readFileSync(examplePackage, 'utf8'));
+  const sdk = fileURLToPath(new URL(example.dependencies['@birbcrew/client'].slice('file:'.length), examplePackage));
   const lock = JSON.parse(readFileSync(join(root, 'package-lock.json'), 'utf8'));
   const dependencies = ['zod', 'react', '@cfworker/json-schema', '@types/uuid', 'compare-versions', 'fast-json-patch',
     'rxjs', 'tslib', 'untruncate-json', 'uuid', '@bufbuild/protobuf', '@protobuf-ts/protoc'];
@@ -59,6 +61,8 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     assert.equal(typeof fileIntents, 'function');
     assert.equal(typeof crewProvider, 'function');
     assert.equal(typeof CrewClient, 'function');
+    assert.equal(typeof CrewClient.prototype.listGrants, 'function');
+    assert.equal(typeof CrewClient.prototype.revokeGrant, 'function');
     const consumerRequire = createRequire(join(process.cwd(), 'package.json'));
     const exampleRequire = createRequire(consumerRequire.resolve('@agentui/example-crew'));
     const crewRequire = createRequire(exampleRequire.resolve('@birbcrew/client'));

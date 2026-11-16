@@ -1004,11 +1004,69 @@ test('module permission reads reject stale conversation results and revoke retai
   await assert.rejects(pending, /conversation/);
   await assert.rejects(actions.commands.revokePermission('permission', 'agent'), /conversation/);
   assert.deepEqual(f.submitted, []);
+  f.behavior.permissions = async () => ({ kind: 'available', observedAt: new Date().toISOString(),
+    permissions: [{ permissionId: 'permission', scope: 'agent', actionLabel: 'Work items', detail: 'All conversations' }] });
   await f.app.open(scope);
   const current = f.app.getSnapshot().active;
+  await f.app.conversationActions(current).permissions.read();
   await current.store.setDraft('Keep my draft');
   await assert.rejects(f.app.conversationActions(current).commands.revokePermission('permission', 'agent'), /Reply lost/);
   assert.deepEqual(f.submitted[0].body, { kind: 'revoke-permission', permissionId: 'permission', scope: 'agent' });
   assert.deepEqual(current.store.getSnapshot().outbox[0].command, f.submitted[0]);
   assert.equal(current.store.getSnapshot().draft, 'Keep my draft');
+});
+
+test('permission freshness follows opening, failed commands, reconnect and newer reads', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const listing = { kind: 'available', observedAt: '2026-11-16T01:00:00Z',
+    permissions: [{ permissionId: 'grant', scope: 'conversation', actionLabel: 'Work items', detail: 'This conversation' }] };
+  let reads = 0;
+  f.behavior.permissions = async () => { reads++; return listing; };
+  await f.app.start();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().permissionState.kind, 'fresh');
+  assert(reads > 0);
+  let actions = f.app.conversationActions(f.app.getSnapshot().active);
+  const old = deferred();
+  f.behavior.permissions = () => old.promise;
+  const pending = actions.permissions.read();
+  assert.equal(f.app.getSnapshot().permissionState.kind, 'loading');
+  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Refresh permissions/);
+  f.behavior.permissions = async () => ({ ...listing, permissions: [] });
+  await actions.permissions.read();
+  old.resolve(listing); await pending;
+  assert.deepEqual(f.app.getSnapshot().permissionState.listing.permissions, []);
+  f.behavior.permissions = async () => { throw new Error('List unavailable'); };
+  await assert.rejects(actions.permissions.read(), /List unavailable/);
+  assert.equal(f.app.getSnapshot().permissionState.kind, 'stale');
+  assert.equal(f.app.getSnapshot().permissionState.listing.observedAt, listing.observedAt);
+  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Refresh permissions/);
+  f.behavior.permissions = async () => { reads++; return listing; };
+  const before = reads;
+  await f.app.reconnect(); await new Promise(resolve => setImmediate(resolve));
+  assert(reads > before);
+  actions = f.app.conversationActions(f.app.getSnapshot().active);
+  await actions.permissions.read();
+  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Reply lost/);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().permissionState.kind, 'fresh');
+  assert.equal(f.submitted.length, 1);
+  assert.equal(f.app.getSnapshot().active.store.getSnapshot().outbox.length, 1);
+});
+
+test('permission reads from a disposed session cannot populate its replacement', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const old = deferred(), actions = f.app.conversationActions(f.app.getSnapshot().active);
+  f.behavior.permissions = () => old.promise;
+  const pending = actions.permissions.read();
+  await f.app.dispose();
+  f.behavior.permissions = async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] });
+  await f.app.start(); await new Promise(resolve => setImmediate(resolve));
+  old.resolve({ kind: 'available', observedAt: '2026-11-16T00:00:00Z', permissions: [
+    { permissionId: 'old', scope: 'agent', actionLabel: 'Old', detail: 'Old session' }] });
+  await assert.rejects(pending, /closed/);
+  assert.deepEqual(f.app.getSnapshot().permissionState.listing.permissions, []);
 });
