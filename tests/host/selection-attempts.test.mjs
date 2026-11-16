@@ -443,6 +443,9 @@ const attemptFaults = [
   ['ignore', 'SELECT RAISE(IGNORE)'],
   ['tail', `INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('extra',NEW.selection,'{"kind":"boot"}','{"kind":"applied-empty"}')`],
   ['newer-selection', `INSERT INTO service_extension_selections SELECT 'unexpected',revision+1,intent,receipt,digest FROM service_extension_selections WHERE id=NEW.selection`],
+  ['selected-intent', "UPDATE service_extension_selections SET intent='{}' WHERE id=NEW.selection"],
+  ['selected-receipt', "UPDATE service_extension_selections SET receipt=receipt||' ' WHERE id=NEW.selection"],
+  ['selected-digest', "UPDATE service_extension_selections SET digest='PRIVATE_DIGEST' WHERE id=NEW.selection"],
 ];
 for (const phase of ['admission', 'applying', 'final']) for (const [fault, sql] of attemptFaults) {
   test(`transaction integrity ${phase} ${fault}`, async t => {

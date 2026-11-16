@@ -174,6 +174,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     if (inspectNamespace() !== 2) throw new Error('Invalid selection journal');
     const row = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
     if (row?.id !== selection.id || row.revision !== selection.revision) throw new SelectionRefusal('revision-conflict');
+    assertStoredSelection(selection);
   }
   function persist(attempt: Attempt, selection: Selection, outcome: AttemptOutcome): void {
     transaction(() => {
@@ -278,9 +279,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         const sequence = count(inserted.lastInsertRowid);
         if (inserted.changes !== 1 || !sequence) throw new Error('Selection journal write failed');
         assertStoredAttempt({ ...attempt, sequence, outcome });
-        const latestSelection = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
-        if (latestSelection?.id !== selection.id || latestSelection.revision !== selection.revision ||
-          db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
+        try { authority(selection); }
+        catch { throw new Error('Selection journal write failed'); }
+        if (db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
         return { namespace: 2, value: 'admitted' };
       });
     } catch (error) {
