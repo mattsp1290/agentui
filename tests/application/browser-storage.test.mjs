@@ -315,3 +315,50 @@ test('late whole-record settlement from an old store cannot overwrite successor 
   assert.deepEqual(result.retained.outbox[0].command, result.submitted[0]);
   assert.equal(result.submitted.length, 1);
 });
+
+test('draft image bytes change with their records in one transaction and stay outside saved views', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const drafts = owner.drafts(() => {});
+    const scope = { hostId: 'host', conversationId: 'image-draft' };
+    const records = image => ({ version: 2, scope, draft: '', draftRevision: 1, outbox: [], image });
+    await drafts.save(records('first'), { put: { selectionId: 'first', bytes: new Uint8Array([1, 2]) } });
+    await drafts.save(records('second'), { put: { selectionId: 'second', bytes: new Uint8Array([3]) }, remove: ['first'] });
+    const replaced = [await drafts.loadImage(scope, 'first'), [...await drafts.loadImage(scope, 'second')], (await drafts.load(scope)).image];
+    const refused = await drafts.save({ ...records('third'), unclonable: () => {} }, { put: { selectionId: 'third', bytes: new Uint8Array([4]) }, remove: ['second'] })
+      .then(() => 'saved', error => error.name);
+    const afterRefusal = [await drafts.loadImage(scope, 'third'), [...await drafts.loadImage(scope, 'second')], (await drafts.load(scope)).image];
+    await drafts.save(records(null), { remove: ['second'] });
+    const removed = await drafts.loadImage(scope, 'second');
+    const views = await owner.savedViews('host', null);
+    await owner.close();
+    return { replaced, refused, afterRefusal, removed, views };
+  });
+  assert.deepEqual(result.replaced, [null, [3], 'second']);
+  assert.equal(result.refused, 'DataCloneError');
+  assert.deepEqual(result.afterRefusal, [null, [3], 'second']);
+  assert.equal(result.removed, null);
+  assert.deepEqual(result.views, { ids: [], unreadable: 0, after: null });
+});
+
+test('a replaced draft port for the same conversation cannot overwrite its successor', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const failures = [];
+    const scope = { hostId: 'host', conversationId: 'replaced' };
+    const records = (draft, image) => ({ version: 2, scope, draft, draftRevision: 1, outbox: [], image });
+    const stale = owner.drafts(error => failures.push(error)), current = owner.drafts(error => failures.push(error));
+    await stale.load(scope);
+    await stale.save(records('old', 'first'), { put: { selectionId: 'first', bytes: new Uint8Array([1]) } });
+    await current.load(scope);
+    await current.save(records('new', 'second'), { put: { selectionId: 'second', bytes: new Uint8Array([2]) }, remove: ['first'] });
+    await stale.save(records('old', 'first'));
+    const saved = await current.load(scope);
+    const bytes = [await current.loadImage(scope, 'first'), [...await current.loadImage(scope, 'second')]];
+    await owner.close();
+    return { draft: saved.draft, image: saved.image, bytes, failures: failures.length };
+  });
+  assert.deepEqual(result, { draft: 'new', image: 'second', bytes: [null, [2]], failures: 0 });
+});

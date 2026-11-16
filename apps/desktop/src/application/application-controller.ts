@@ -4,6 +4,7 @@ import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions } from '@agentui/contracts';
+import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
@@ -51,6 +52,8 @@ export interface ConversationActions {
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
   retryObservation(): Promise<void>;
+  /** Reads an image of this conversation for preview; failures never mark the application failed. */
+  readImage(imageId: ImageId): Promise<Uint8Array>;
 }
 export interface ApplicationController {
   getSnapshot(): ApplicationSnapshot;
@@ -252,7 +255,7 @@ export function createApplicationController(deps: {
     disconnectActive();
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
     const store = createConversationStore({ scope, port: owner.connection.conversation(scope), projection: transcriptProjection,
-      drafts: storage.drafts(failed), createCommandId: deps.createId });
+      drafts: storage.drafts(failed), createCommandId: deps.createId, images: { upload: input => owner.connection.uploadImage(input) } });
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
     const active = { scope, store, agent, viewId: storage.viewId };
@@ -501,6 +504,11 @@ export function createApplicationController(deps: {
         return operation();
       });
       return {
+        async readImage(imageId) {
+          if (!owner || session !== owner) throw new Error('This application has closed.');
+          requireTarget(owner, target);
+          return (await owner.connection.readImage(target.scope, imageId)).bytes;
+        },
         async retryObservation() {
           if (owner && session === owner && state.active === target) await observationPoll?.retry();
         },

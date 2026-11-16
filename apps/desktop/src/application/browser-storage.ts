@@ -58,6 +58,7 @@ function viewKeyRange(after: string | null): IDBKeyRange {
 export class BrowserViewStorage implements OwnedViewStorage {
   private closing: Promise<void> | null = null;
   private readonly transactions = new Set<Promise<void>>();
+  private readonly draftOwners = new Map<string, object>();
   private constructor(readonly viewId: string, private readonly db: IDBDatabase, private readonly unlock: () => void, onFailure: (error: unknown) => void) {
     db.onversionchange = () => {
       void this.close();
@@ -137,7 +138,9 @@ export class BrowserViewStorage implements OwnedViewStorage {
   private transaction(mode: IDBTransactionMode, operation: (store: IDBObjectStore) => IDBRequest): Promise<unknown> {
     return new Promise((resolve, reject) => {
       const transaction = this.begin(mode);
-      const request = operation(transaction.objectStore('records'));
+      let request: IDBRequest;
+      // Requests issued before a synchronous throw would otherwise still commit.
+      try { request = operation(transaction.objectStore('records')); } catch (error) { transaction.abort(); throw error; }
       transaction.oncomplete = () => { const value: unknown = request.result; resolve(value); };
       transaction.onerror = () => reject(transaction.error ?? new Error('Local storage transaction failed.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('Local storage transaction was interrupted.'));
@@ -157,12 +160,25 @@ export class BrowserViewStorage implements OwnedViewStorage {
     const protect = async <T>(operation: () => Promise<T>): Promise<T> => {
       try { return await operation(); } catch (error) { onFailure(error); throw error; }
     };
+    const port = {}, conversation = (scope: { readonly hostId: string; readonly conversationId: string }) => JSON.stringify([scope.hostId, scope.conversationId]);
     return {
-      load: scope => protect(async () => (await this.transaction('readonly', store =>
-        store.get(['draft', this.viewId, scope.hostId, scope.conversationId]))) ?? null),
-      save: records => protect(async () => {
-        await this.transaction('readwrite', store => store.put(records,
-          ['draft', this.viewId, records.scope.hostId, records.scope.conversationId]));
+      load: scope => protect(async () => {
+        this.draftOwners.set(conversation(scope), port);
+        return (await this.transaction('readonly', store => store.get(['draft', this.viewId, scope.hostId, scope.conversationId]))) ?? null;
+      }),
+      // A replaced store for the same conversation can finish late uploads or settlements; only the latest loader may write.
+      save: async (records, image) => (this.draftOwners.get(conversation(records.scope)) ?? port) !== port ? undefined : protect(async () => {
+        const key = (selectionId: string) => ['draft-image', this.viewId, records.scope.hostId, records.scope.conversationId, selectionId];
+        await this.transaction('readwrite', store => {
+          for (const selectionId of image?.remove ?? []) store.delete(key(selectionId));
+          if (image?.put) store.put(image.put.bytes, key(image.put.selectionId));
+          return store.put(records, ['draft', this.viewId, records.scope.hostId, records.scope.conversationId]);
+        });
+      }),
+      loadImage: (scope, selectionId) => protect(async () => {
+        const bytes = await this.transaction('readonly', store =>
+          store.get(['draft-image', this.viewId, scope.hostId, scope.conversationId, selectionId]));
+        return bytes instanceof Uint8Array ? bytes : null;
       }),
     };
   }

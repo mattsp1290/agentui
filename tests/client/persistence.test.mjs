@@ -338,3 +338,161 @@ test('an unknown saved command prevents writes and retains the complete draft an
   assert.deepEqual(second.drafts.writes, []);
   assert.deepEqual(second.port.submitted, []);
 });
+
+const png = (...tail) => new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, ...tail]);
+function uploads({ auto = true, fail = null } = {}) {
+  let count = 0;
+  return {
+    calls: [],
+    upload(input) {
+      const reply = deferred();
+      const attachment = { imageId: `00000000-0000-4000-8000-aaaaaaaaaa${String(++count).padStart(2, '0')}`, name: input.name,
+        mediaType: 'image/png', byteLength: input.bytes.byteLength, width: 1, height: 1 };
+      this.calls.push({ uploadId: input.uploadId, name: input.name, bytes: [...input.bytes], reply, attachment });
+      if (fail) reply.reject(fail);
+      else if (auto) reply.resolve(attachment);
+      return reply.promise;
+    },
+  };
+}
+
+test('version 1 records restore without an image and version 2 image records round trip or are refused', async () => {
+  const legacy = fixture({ drafts: storage({ version: 1, scope, draft: 'old', draftRevision: 3, outbox: [] }) });
+  await legacy.store.ready;
+  assert.equal(legacy.store.getSnapshot().image, null);
+  const { store, drafts } = fixture({ images: uploads() });
+  await store.selectImage({ name: 'chart.png', bytes: png(1) });
+  assert.equal(drafts.value.version, 2);
+  const reloaded = fixture({ drafts: storage(structuredClone(drafts.value)) });
+  await reloaded.store.ready;
+  assert.deepEqual({ ...reloaded.store.getSnapshot().image }, { ...store.getSnapshot().image });
+  for (const image of [{ ...drafts.value.image, uploadId: 'upload' }, { ...drafts.value.image, byteLength: 4 * 1024 * 1024 + 1 },
+    { ...drafts.value.image, attachment: { ...drafts.value.image.attachment, byteLength: 2 } }, { ...drafts.value.image, extra: true }]) {
+    const invalid = fixture({ drafts: storage({ ...drafts.value, image }) });
+    await assert.rejects(invalid.store.ready);
+  }
+});
+
+test('image bytes are stored once beside the records and leave atomically on replace or remove', async () => {
+  const images = uploads();
+  const { store, drafts } = fixture({ images });
+  await store.selectImage({ name: 'first.png', bytes: png(1) });
+  const first = store.getSnapshot().image;
+  assert.deepEqual({ status: first.status, name: first.name, byteLength: first.byteLength }, { status: 'ready', name: 'first.png', byteLength: 9 });
+  assert.deepEqual(drafts.imageWrites, [{ put: first.selectionId, remove: [] }]);
+  assert.equal(JSON.stringify(drafts.value).includes('"bytes"'), false);
+  await store.setDraft('caption');
+  await store.setDraft('caption edited');
+  assert.equal(drafts.imageWrites.length, 1);
+  await store.selectImage({ name: 'second.png', bytes: png(2) });
+  const second = store.getSnapshot().image;
+  assert.deepEqual(drafts.imageWrites.at(-1), { put: second.selectionId, remove: [first.selectionId] });
+  assert.deepEqual([...drafts.images.keys()], [second.selectionId]);
+  await store.removeImage();
+  assert.deepEqual(drafts.imageWrites.at(-1), { put: null, remove: [second.selectionId] });
+  assert.equal(drafts.images.size, 0);
+  assert.equal(store.getSnapshot().image, null);
+  assert.equal(store.getSnapshot().draft, 'caption edited');
+});
+
+test('local validation refuses unsupported files and bounds names without splitting characters', async () => {
+  const images = uploads();
+  const { store, drafts } = fixture({ images });
+  await assert.rejects(store.selectImage({ name: 'a.gif', bytes: new Uint8Array([0x47, 0x49, 0x46, 0x38]) }), /PNG or JPEG/);
+  await assert.rejects(store.selectImage({ name: 'empty.png', bytes: new Uint8Array() }), /empty/);
+  await assert.rejects(store.selectImage({ name: 'big.png', bytes: new Uint8Array(4 * 1024 * 1024 + 1) }), /4 MB/);
+  await assert.rejects(store.selectImage({ name: ' \u0000 ', bytes: png() }), /file name/);
+  assert.equal(images.calls.length, 0);
+  assert.equal(drafts.writes.length, 0);
+  await store.selectImage({ name: `${'a'.repeat(158)}😀.jpg`, bytes: new Uint8Array([0xff, 0xd8, 0xff, 0xe0]) });
+  assert.equal(store.getSnapshot().image.name, 'a'.repeat(158));
+});
+
+test('late upload completion cannot confirm a replaced or removed selection but survives text edits', async () => {
+  const images = uploads({ auto: false });
+  const { store } = fixture({ images });
+  const first = store.selectImage({ name: 'first.png', bytes: png(1) });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(store.getSnapshot().image.status, 'uploading');
+  const second = store.selectImage({ name: 'second.png', bytes: png(2) });
+  await new Promise(resolve => setImmediate(resolve));
+  images.calls[0].reply.resolve(images.calls[0].attachment);
+  await first;
+  assert.equal(store.getSnapshot().image.name, 'second.png');
+  assert.equal(store.getSnapshot().image.status, 'uploading');
+  await store.setDraft('edited while uploading');
+  images.calls[1].reply.resolve(images.calls[1].attachment);
+  await second;
+  assert.equal(store.getSnapshot().image.status, 'ready');
+  assert.equal(store.getSnapshot().image.attachment.imageId, images.calls[1].attachment.imageId);
+  const third = store.selectImage({ name: 'third.png', bytes: png(3) });
+  await new Promise(resolve => setImmediate(resolve));
+  await store.removeImage();
+  images.calls[2].reply.resolve(images.calls[2].attachment);
+  await third;
+  assert.equal(store.getSnapshot().image, null);
+});
+
+test('composer send carries a ready image, waits for confirmation and allows image-only messages', async () => {
+  const images = uploads({ auto: false });
+  const { store, port } = fixture({ images });
+  const selecting = store.selectImage({ name: 'chart.png', bytes: png(1) });
+  await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(store.send(), /Wait for the image to finish uploading/);
+  images.calls[0].reply.resolve(images.calls[0].attachment);
+  await selecting;
+  await store.send('explicit text');
+  assert.deepEqual(port.submitted[0].body, { kind: 'send', text: 'explicit text' });
+  assert.equal(store.getSnapshot().image.status, 'ready');
+  await store.send();
+  assert.deepEqual(port.submitted[1].body, { kind: 'send', text: '', imageId: images.calls[0].attachment.imageId });
+});
+
+test('accepted image send clears draft, image and bytes only for the captured revision', async () => {
+  const images = uploads();
+  const { store, port, drafts } = fixture({ images });
+  await store.setDraft('look');
+  await store.selectImage({ name: 'chart.png', bytes: png(1) });
+  const selected = store.getSnapshot().image.selectionId;
+  port.submit = async command => { port.submitted.push(command); return { kind: 'receipt', receipt: receipt(command, 'accepted') }; };
+  await store.send();
+  assert.equal(store.getSnapshot().draft, '');
+  assert.equal(store.getSnapshot().image, null);
+  assert.deepEqual(drafts.imageWrites.at(-1), { put: null, remove: [selected] });
+  assert.equal(drafts.images.size, 0);
+  await store.setDraft('again');
+  await store.selectImage({ name: 'first.png', bytes: png(2) });
+  const entered = deferred();
+  const reply = deferred();
+  port.submit = async command => { entered.resolve(command); return reply.promise; };
+  const sending = store.send();
+  const command = await entered.promise;
+  await store.selectImage({ name: 'replacement.png', bytes: png(3) });
+  reply.resolve({ kind: 'receipt', receipt: receipt(command, 'accepted') });
+  await sending;
+  assert.equal(store.getSnapshot().draft, 'again');
+  assert.equal(store.getSnapshot().image.name, 'replacement.png');
+  assert.deepEqual([...drafts.images.keys()], [store.getSnapshot().image.selectionId]);
+});
+
+test('an unconfirmed selection reloads as interrupted and retry re-uploads its stored bytes with the same upload ID', async () => {
+  const failed = uploads({ fail: Object.assign(new Error('raw host detail'), { kind: 'image-capacity' }) });
+  const first = fixture({ images: failed });
+  await first.store.selectImage({ name: 'chart.png', bytes: png(7) });
+  assert.equal(first.store.getSnapshot().image.status, 'failed');
+  assert.match(first.store.getSnapshot().image.reason, /no room for more images/);
+  const generic = fixture({ images: uploads({ fail: new Error('socket closed at /private/path') }) });
+  await generic.store.selectImage({ name: 'chart.png', bytes: png(7) });
+  assert.equal(generic.store.getSnapshot().image.reason, 'Couldn’t upload this image. Try again.');
+  const drafts = storage(structuredClone(first.drafts.value));
+  drafts.images = new Map(first.drafts.images);
+  const images = uploads();
+  const { store } = fixture({ drafts, images });
+  await store.ready;
+  assert.equal(store.getSnapshot().image.status, 'interrupted');
+  await store.retryImage();
+  assert.equal(images.calls[0].uploadId, failed.calls[0].uploadId);
+  assert.deepEqual(images.calls[0].bytes, [...png(7)]);
+  assert.equal(store.getSnapshot().image.status, 'ready');
+  assert.deepEqual(drafts.imageWrites, []);
+});
