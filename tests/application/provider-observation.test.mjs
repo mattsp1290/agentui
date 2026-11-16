@@ -182,7 +182,7 @@ for (const [change, reason] of [[{ generation: 'replacement' }, 'original-provid
   });
 }
 
-test('browser preserves draft, Stop authority and raw running state while Retry observation restores same-chat updates', { timeout: 30_000 }, async t => {
+test('browser preserves draft, Stop authority and raw running state while Check for updates restores same-chat updates', { timeout: 30_000 }, async t => {
   const remote = await providerService(t, { native: true }), a = remote.extension({ controls: true }), feeds = disconnectable(a);
   const f = await fixture(t, [a]); await f.create(); await f.create('other');
   await until(() => a.calls.ready === 2);
@@ -198,7 +198,7 @@ test('browser preserves draft, Stop authority and raw running state while Retry 
   const draft = page.getByRole('textbox', { name: 'Message', exact: true }); await draft.fill('Keep this unsent draft');
   const before = saved(f), run = document(f).domain.currentRun;
   feeds.get('chat').close();
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).isEnabled(), true);
   assert.equal(await draft.inputValue(), 'Keep this unsent draft');
   assert.equal(await page.locator('.progress-label').textContent(), 'Updates paused');
@@ -207,23 +207,23 @@ test('browser preserves draft, Stop authority and raw running state while Retry 
   await page.getByRole('button', { name: /Open conversation other$/ }).click();
   remote.emit(remote.makeEvent(remote.conversations.get('other').snapshot.binding, 'Other chat remains usable', 1));
   await page.getByText('Other chat remains usable', { exact: true }).waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Retry observation', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Check for updates', exact: true }).count(), 0);
   await page.getByRole('button', { name: /Open conversation chat$/ }).click();
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
   assert.equal(await draft.inputValue(), 'Keep this unsent draft');
   const requestStart = remote.requests.length;
   remote.emit(remote.makeEvent(binding, 'Fresh visible snapshot', 2));
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).click();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   await page.getByText('Fresh visible snapshot', { exact: true }).waitFor();
   assert.equal(await draft.inputValue(), 'Keep this unsent draft'); assert.deepEqual(document(f).domain.currentRun, run);
   await until(() => a.calls.ready === 3);
   remote.emit(remote.makeEvent(binding, 'Visible updates resumed', 3)); await page.getByText('Visible updates resumed', { exact: true }).waitFor();
   assert.deepEqual(remote.requests.slice(requestStart).map(value => value.path), ['/snapshot', '/observe']);
-  assert.equal(await page.getByRole('button', { name: 'Retry observation', exact: true }).count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Check for updates', exact: true }).count(), 0);
   await page.screenshot({ path: '.audit/mvp/observation-status-browser.png', fullPage: true });
   remote.emit(remote.makeEvent(binding, 'Known complete', 4, true)); await page.getByText('Known complete', { exact: true }).waitFor();
   const completed = document(f).domain.currentRun; feeds.get('chat').close();
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
   assert.doesNotMatch(await page.locator('.observation-notice').textContent(), /may still be running|run state is unknown/);
   assert.deepEqual(document(f).domain.currentRun, completed);
   assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);

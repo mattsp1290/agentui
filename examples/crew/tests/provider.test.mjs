@@ -516,10 +516,10 @@ test('browser retries owner detail failures and renders a full escaped note befo
   const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
   assert.equal(await page.getByRole('button', { name: 'Approve once', exact: true }).count(), 0);
   remote.setDetailHandler(undefined);
-  await page.getByRole('button', { name: 'Retry observation', exact: true }).click();
+  await page.getByRole('button', { name: 'Check for updates', exact: true }).click();
   const approval = page.getByRole('region', { name: 'Approval required', exact: true });
   await approval.getByRole('button', { name: 'Approve once', exact: true }).waitFor();
   const prompt = `${card.summary}\nrecord_work_item\n${JSON.stringify(detail.arguments, null, 2)}`;
