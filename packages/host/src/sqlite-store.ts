@@ -1,6 +1,6 @@
 import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
-import { matchOfferInput } from './agui-input.js';
+import { offeredRunId } from './agui-input.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
 import { providerTarget, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
@@ -258,7 +258,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if ('kind' in target) {
       matchProviderCommand(target, command.body);
       return { kind: 'provider', command, target, receipt: parsedReceipt,
-        observation: row.observation === null ? null : providerObservation(json(row.observation), target, command.version === 2 && target.operation.kind === 'send' ? matchOfferInput(target.operation.request, command.body.frontend).runId : undefined) };
+        observation: row.observation === null ? null : providerObservation(json(row.observation), target, offeredRunId(command, target)) };
     }
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
@@ -434,7 +434,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
       if ('kind' in stored) {
-        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored.target, stored.command.version === 2 && stored.target.operation.kind === 'send' ? matchOfferInput(stored.target.operation.request, stored.command.body.frontend).runId : undefined), stored.observation), { quarantined: isQuarantined(stored) });
+        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored.target, offeredRunId(stored.command, stored.target)), stored.observation), { quarantined: isQuarantined(stored) });
         switch (transition.kind) {
           case 'keep': return stored.receipt;
           case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

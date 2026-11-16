@@ -75,7 +75,7 @@ export function providerRun(value: unknown, binding: ProviderConversation<string
   return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope,
     runId: reference.ref.opaqueId, authority: binding.authority }), reference };
 }
-export function providerObservation(value: unknown, target: ProviderTarget, expectedRunId?: string): ProviderObservation {
+export function providerObservation(value: unknown, target: ProviderTarget, expectedRunId: string | undefined): ProviderObservation {
   const input = record(value);
   if (input.kind === 'outcome-unknown') { record(input, ['kind']); return { kind: 'outcome-unknown' }; }
   if (input.kind === 'not-dispatched') { record(input, ['kind', 'reason']); return { kind: 'not-dispatched', reason: identifier(input.reason) }; }
@@ -104,7 +104,7 @@ export function providerObservation(value: unknown, target: ProviderTarget, expe
   if (result.kind === 'rejected') { record(result, ['kind', 'reason']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'rejected', reason: identifier(result.reason) } }; }
   throw new Error('Invalid provider result');
 }
-export function providerOutcome(value: unknown, target: ProviderTarget, fresh: boolean, expectedRunId?: string): ProviderObservation {
+export function providerOutcome(value: unknown, target: ProviderTarget, fresh: boolean, expectedRunId: string | undefined): ProviderObservation {
   const input = record(copyJson(value));
   const source: ProviderEvidence['source'] = fresh ? 'provider-reply' : 'provider-lookup';
   let run: ProviderRun | null = null;

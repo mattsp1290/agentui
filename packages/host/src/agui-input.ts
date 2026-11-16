@@ -1,6 +1,7 @@
 import { RunAgentInputSchema, ToolSchema } from '@ag-ui/core/schemas';
 import { canonicalJson, copyJson } from '@agentui/contracts';
-import type { FrontendOffer, Json } from '@agentui/contracts';
+import type { ClientCommand, FrontendOffer, Json } from '@agentui/contracts';
+import type { ProviderTarget } from './provider-commands.js';
 import { identifier, record } from '@agentui/contracts/decode';
 
 export function aguiInput(value: unknown): ReturnType<typeof RunAgentInputSchema.parse> {
@@ -27,4 +28,10 @@ export function matchOfferInput(value: unknown, offer: FrontendOffer): ReturnTyp
   const input = aguiInput(value), raw = record(value);
   if (!Array.isArray(raw.tools) || canonicalJson(raw.tools.slice(-offer.tools.length)) !== canonicalJson(offer.tools.map(tool => tool.definition))) throw new Error('Frontend offer changed');
   return input;
+}
+
+export function offeredRunId(command: ClientCommand, target: ProviderTarget): string | undefined {
+  if (command.version !== 2) return undefined;
+  if (target.operation.kind !== 'send') throw new Error('Invalid offered command target');
+  return matchOfferInput(target.operation.request, command.body.frontend).runId;
 }

@@ -252,7 +252,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
           entered = true;
           const result = await (fresh ? manager.revoke(operation) : manager.reconcileRevoke(operation));
           authorize();
-          return providerOutcome(result, original, fresh);
+          return providerOutcome(result, original, fresh, undefined);
         }
         let operation: ProviderCommand<M, I>;
         const operationId = captured.operationId;
@@ -274,7 +274,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         entered = true;
         const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
         authorize();
-        return providerOutcome(result, original, fresh, mode === 'ag-ui' && original.operation.kind === 'send' ? frontendInput(original).runId : undefined);
+        return providerOutcome(result, original, fresh, mode === 'ag-ui' && original.operation.kind === 'send' ? aguiInput(original.operation.request).runId : undefined);
       } catch {
         return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
       }

@@ -35,6 +35,16 @@ test('Mac binding recovery uses the shared native transport and response parser'
   assert.deepEqual(requests, [{ kind: 'execute', observation: 'epoch', request: { op: 'frontend-binding', scope, id: 'command', action: 'recover' } }]);
 });
 
+for (const reason of ['provider-rejected', 'not-dispatched', 'closures-unavailable']) test(`Mac binding recovery retains final ${reason} through the shared response parser`, async () => {
+  const scope = cases[0].request.command.scope, value = { kind: 'unavailable', id: 'command', reason };
+  const connection = createMacConnection({ kind: 'ready', observation: 'epoch', hostId: scope.hostId, principalId: 'owner' }, async () => ({
+    status: 200, body: JSON.stringify({ ok: true, value }),
+  }));
+  assert.deepEqual(await connection.frontendBinding({ scope, id: 'command', action: 'recover' }), value);
+  assert.throws(() => parseServiceResponse({ op: 'frontend-binding', scope, id: 'command', action: 'recover' },
+    { ok: true, value: { ...value, reason: 'rejected' } }));
+});
+
 
 test('public response parsing requires binding context while preserving generic service transport typing', () => assertCompileCases({
   config: new URL('../../packages/contracts/tsconfig.json', import.meta.url).pathname,
@@ -50,5 +60,20 @@ test('public response parsing requires binding context while preserving generic 
     ["parseServiceResponse({ op: 'frontend-binding' }, null);", /not assignable|missing/u],
     ["parseServiceResponse({ op: 'frontend-binding', scope, action: 'recover' }, null);", /not assignable|missing/u],
     ["parseServiceResponse({ op: 'frontend-binding', id: 'command', action: 'recover' }, null);", /not assignable|missing/u],
+  ],
+}));
+
+test('host binding requires the lazy scoped register and cancel capability', () => assertCompileCases({
+  config: new URL('../../packages/host/tsconfig.json', import.meta.url).pathname,
+  prefix: `import type { LocalHost, FrontendSendActor } from '@agentui/host';
+    export declare const host: LocalHost<unknown, unknown>;
+    export declare const actor: FrontendSendActor;
+    export declare const producerFor: Parameters<typeof host.frontendBinding>[2];
+    export const request = { scope: { hostId: 'host', conversationId: 'conversation' }, id: 'command', action: 'recover' as const };`,
+  cases: [
+    ['host.frontendBinding(request, actor, producerFor);', null],
+    ['host.frontendBinding(request, actor);', /Expected 3 arguments/u],
+    ['host.frontendBinding(request, actor, producerFor(request.scope));', /not assignable/u],
+    ['host.frontendBinding(request, actor, () => ({ register() {} }));', /cancel/u],
   ],
 }));

@@ -1,3 +1,4 @@
+import { frontendToolsFor } from '@agentui/host/frontend-tools';
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
@@ -63,7 +64,7 @@ export function createApi(options: {
     const actor = { id: principal.id, platform: 'desktop' as const,
       authorized: () => access.authorized(principal, options.credentialClass) && !options.isClosing() };
     switch (request.op) {
-      case 'frontend-binding': return host.frontendBinding(request, actor);
+      case 'frontend-binding': return host.frontendBinding(request, actor, scope => frontendToolsFor(host).producer(scope));
       case 'metadata': {
         const providerAgents = providerChoices();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
