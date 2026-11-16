@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
 import { PairForm } from './PairForm.js';
 import { HostStatusLabel } from './HostStatusLabel.js';
@@ -15,13 +15,25 @@ import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
-export function BrowserApplication({ children, artifact, controller: supplied, connectionControls, reconnect, suspended = false }: {
+type ConnectionPresentation =
+  | { readonly kind: 'browser' }
+  | { readonly kind: 'native'; readonly controls: ReactElement; readonly reconnect: () => void };
+
+export function BrowserApplication({ children, artifact, controller: supplied, connection = { kind: 'browser' }, suspended = false }: {
   readonly children?: ReactNode; readonly artifact?: ReactNode; readonly controller?: ApplicationController;
-  readonly connectionControls?: ReactNode; readonly reconnect?: () => void;
+  readonly connection?: ConnectionPresentation;
   readonly suspended?: boolean;
 }) {
   const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
+  const connectionHeading = useRef<HTMLHeadingElement>(null);
+  const [focusConnection, setFocusConnection] = useState(false);
+  useEffect(() => {
+    if (!focusConnection || selectedView !== 'settings' || suspended) return;
+    connectionHeading.current?.focus();
+    setFocusConnection(false);
+  }, [focusConnection, selectedView, suspended]);
+  const nativeRecovery = connection.kind === 'native' && app.host.kind === 'unpaired';
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const custom = useDesktopCustomizations({ customizations: customization, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
@@ -60,11 +72,14 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : 'Settings'}</h2>
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
     {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
-    {app.error && <p className="application-alert" role="alert">{app.error}</p>}
+    {nativeRecovery ? <div className="application-alert" role="alert">
+      <p>This Mac no longer has access to the host. Access may have expired or been revoked. Open connection settings to pair this Mac again. Your chats, drafts, and unresolved commands stay saved. No command is replayed on reconnect.</p>
+      <button type="button" disabled={suspended} onClick={() => { setSelectedView('settings'); setFocusConnection(true); }}>Open connection settings</button>
+    </div> : app.error && <p className="application-alert" role="alert">{app.error}</p>}
     {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
-    {app.host.kind === 'unpaired' && connectionControls === undefined && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
+    {app.host.kind === 'unpaired' && connection.kind === 'browser' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
         <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
@@ -101,11 +116,11 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>
     <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>
-      <section className="settings-section"><h2>Connection</h2>
+      <section className="settings-section"><h2 ref={connectionHeading} tabIndex={-1}>Connection</h2>
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>
         <p>{presentation.settings}</p>
-        {connectionControls}
-        <button disabled={suspended || app.busy || Boolean(app.storageFailure)} onClick={() => reconnect ? reconnect() : void controller.reconnect()}>Reconnect</button>
+        {connection.kind === 'native' && connection.controls}
+        <button disabled={suspended || app.busy || Boolean(app.storageFailure)} onClick={() => connection.kind === 'native' ? connection.reconnect() : void controller.reconnect()}>Reconnect</button>
       </section>
       <section className="settings-section" aria-label="Pi and OpenCode Go"><h2>Pi and OpenCode Go</h2>
         <p>AgentUI includes a compatible Pi runtime. Your installed Pi command is separate and is not required for this chat.</p>
