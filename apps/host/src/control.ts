@@ -75,6 +75,7 @@ function readLine(socket: Socket, limit: number): Promise<unknown> {
       if (bytes > limit) { socket.destroy(new Error('Host control message too large')); return; }
       if (!chunk.includes(10)) return;
       socket.off('data', data);
+      socket.setTimeout(0);
       try { resolve(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))); } catch (error) { reject(error); }
     };
     socket.on('data', data);
@@ -87,7 +88,10 @@ export async function requestControl(path: string, request: ControlRequest): Pro
   if (Buffer.byteLength(line) > 4096) throw new Error('Host control message too large');
   const socket = createConnection(path);
   const response = readLine(socket, 16_000);
-  socket.once('connect', () => socket.write(line));
+  socket.once('connect', () => {
+    if (request.op === 'extensions-live' || request.op === 'extensions-select') socket.setTimeout(0);
+    socket.write(line);
+  });
   try { return parseControlResponse(request, await response); }
   finally { socket.destroy(); }
 }

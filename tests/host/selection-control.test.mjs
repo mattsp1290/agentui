@@ -2,13 +2,13 @@ import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
 import { once } from 'node:events';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
+import { createConnection, createServer } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import test from 'node:test';
-import { formatControlResponse, parseControlRequest, requestControl } from '../../apps/host/build/tsc/control.js';
+import { formatControlResponse, parseControlRequest, requestControl, startControl } from '../../apps/host/build/tsc/control.js';
 import { parseReceiptChunk, RECEIPT_LIMIT } from '../../apps/host/build/tsc/selection-protocol.js';
 
 const main = fileURLToPath(new URL('../../apps/host/dist/main.js', import.meta.url));
@@ -95,4 +95,59 @@ for (const kind of ['apply', 'retry']) for (const reply of ['lost', 'refused']) 
   });
   assert.deepEqual(requests, [{ op: 'extensions-live', request: { kind, requestId: 'request', selectionId: 'selection', expectedRevision: 1,
     ...(kind === 'retry' ? { afterAttemptId: 'previous' } : {}) } }]);
+});
+
+test('select waits for its completed-frame reply beyond the framing deadline', { timeout: 15000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-select-wait-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'control.sock');
+  let selections = 0;
+  const control = await startControl(path, {}, {}, () => false, { async select() {
+    selections++;
+    await new Promise(resolve => setTimeout(resolve, 5400));
+    return operation;
+  } });
+  t.after(() => control.close());
+  const response = await requestControl(path, { op: 'extensions-select', command: { id: 'first', expectedRevision: 0, selection: { version: 1, artifacts: [] } } });
+  assert.deepEqual(response, { ok: true, value: operation });
+  assert.equal(selections, 1);
+});
+
+test('nonmutation replies retain the idle deadline', { timeout: 15000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-control-idle-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'control.sock');
+  const server = createServer(socket => socket.resume());
+  server.listen(path); await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  await assert.rejects(requestControl(path, { op: 'extensions-status', query: null }), /Host control request timed out/);
+});
+
+test('server rejects oversized and malformed frames and expires partial frames before dispatch', { timeout: 15000 }, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-control-framing-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const path = join(directory, 'control.sock');
+  let selections = 0;
+  const control = await startControl(path, {}, {}, () => false, { async select() { selections++; return operation; } });
+  t.after(() => control.close());
+  const send = async line => {
+    const socket = createConnection(path);
+    t.after(() => socket.destroy());
+    let text = '';
+    socket.on('data', bytes => { text += bytes; });
+    const closed = new Promise((resolve, reject) => {
+      socket.once('close', resolve);
+      socket.once('error', reject);
+      socket.setTimeout(10000, () => socket.destroy(new Error('Control frame was not refused')));
+    });
+    await once(socket, 'connect');
+    socket.write(line);
+    try { await closed; return text; }
+    finally { socket.destroy(); }
+  };
+  const [malformed, oversized, partial] = await Promise.all([send('{\n'), send('x'.repeat(4097) + '\n'), send('{"op":"extensions-select"')]);
+  assert.deepEqual(JSON.parse(malformed), { ok: false, error: 'Control operation refused' });
+  assert.equal(oversized, '');
+  assert.equal(partial, '');
+  assert.equal(selections, 0);
 });

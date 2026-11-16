@@ -102,6 +102,33 @@ test('packaged apply observes every saved page, recovers lost replies and explic
   } finally { finish.resolve(); await lost; }
 });
 
+for (const fault of [false, true]) test(`packaged apply waits beyond the frame deadline for ${fault ? 'final-write uncertainty' : 'completed observation'}`, { timeout: 30000 }, async t => {
+  const f = await liveFixture(t); await saved(f, 1); await f.select();
+  f.database(db => db.exec('DELETE FROM provider_checkpoints'));
+  let observations = 0;
+  f.state.hooks['artifact-b'] = { async snapshot() {
+    observations++;
+    await new Promise(resolve => setTimeout(resolve, 5400));
+    if (fault) f.database(db => db.exec(`CREATE TRIGGER fail_delayed_final BEFORE UPDATE ON service_extension_attempts WHEN json_extract(NEW.outcome,'$.kind')='applied' BEGIN SELECT RAISE(ABORT,'PRIVATE_DELAYED_FINAL_FAILURE'); END`));
+  } };
+  const applying = f.cli('extensions-apply', ['--operation', 'build-b', '--expected-revision', '1', '--request', 'apply-b']);
+  if (fault) {
+    await assert.rejects(applying, error => {
+      assert.equal(error.code, 1);
+      assert.equal(error.stderr.trim(), 'Selection uncertain');
+      return true;
+    });
+    const outcome = f.database(db => JSON.parse(db.prepare("SELECT outcome FROM service_extension_attempts WHERE id='apply-b'").get().outcome));
+    assert.equal(outcome.kind, 'applying');
+    await f.host.fatal;
+  } else {
+    const applied = await applying;
+    assert.equal(applied.outcome.kind, 'applied');
+    assert.deepEqual((await f.cli('extensions-status', ['--attempt', 'apply-b'])).operation, applied);
+  }
+  assert.equal(observations, 1);
+});
+
 test('real active work persists deferred without reads, restart withholds, explicit retry recovers its lost reply', { timeout: 120000 }, async t => {
   const f = await liveFixture(t); await f.select();
   const startup = await f.cli('extensions-status');
