@@ -83,8 +83,6 @@ export class FrontendSends {
     const { command, agui: run } = capture;
     if (run === null) return;
     const { scope } = command;
-    if (this.db.prepare('SELECT 1 FROM frontend_sends WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
-      .get(scope.hostId, scope.conversationId, run.threadId, run.runId)) throw new FrontendAccessError('frontend-run-reused');
     if (command.version !== 2) return;
     const owner = this.assertActor(actor);
     this.db.prepare("INSERT INTO frontend_sends(host,conversation,command_id,actor_id,platform,state,thread_id,run_id) VALUES (?,?,?,?,?,'available',?,?)")
