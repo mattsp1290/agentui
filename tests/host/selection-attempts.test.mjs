@@ -273,6 +273,71 @@ async function diskFixture(t, replace = async () => ({ kind: 'replaced', generat
   return { database, external, open, effects: () => effects, stops: () => stops };
 }
 
+test('new selection refuses a persisted attempt ID appended after owner load', async t => {
+  const f = await diskFixture(t), owner = await f.open();
+  await owner.select({ id: 'staged', expectedRevision: 0, selection: empty });
+  const request = { kind: 'apply', requestId: 'external-attempt', selectionId: 'staged', expectedRevision: 1 };
+  f.external.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)')
+    .run(request.requestId, request.selectionId,
+      '{"expectedRevision":1,"kind":"apply","requestId":"external-attempt","selectionId":"staged"}', '{"kind":"interrupted"}');
+  const before = snapshot(f.database), changes = f.database.prepare('SELECT total_changes() AS n').get().n;
+  const validator = await f.open();
+  assert.equal(validator.status().kind, 'ready');
+  assert.equal((await validator.live(request)).outcome.kind, 'interrupted');
+  await validator.close();
+  assert.deepEqual(snapshot(f.database), before);
+  await assert.rejects(owner.select({ id: request.requestId, expectedRevision: 1, selection: empty }), /id-conflict/);
+  assert.deepEqual(snapshot(f.database), before);
+  assert.equal(f.database.prepare('SELECT total_changes() AS n').get().n, changes);
+  assert.equal(owner.status().desired.id, 'staged');
+  assert.equal(f.effects(), 0); assert.equal(f.stops(), 0);
+  assert.equal((await owner.select({ id: 'available', expectedRevision: 1, selection: empty })).revision, 2);
+});
+
+for (const damage of ['revision', 'receipt', 'namespace']) test(`external ${damage} damage after applying COMMIT prevents replacement`, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'selection-commit-'));
+  const database = new DatabaseSync(join(directory, 'journal.sqlite'));
+  const external = new DatabaseSync(join(directory, 'journal.sqlite'));
+  let injected = false, effects = 0, stops = 0, owner;
+  t.after(async () => {
+    await owner?.close(); external.close(); database.close();
+    await rm(directory, { recursive: true, force: true });
+  });
+  const wrapped = new Proxy(database, {
+    get(target, property) {
+      if (property === 'exec') return sql => {
+        if (sql === 'COMMIT' && owner && !injected &&
+          target.prepare("SELECT outcome FROM service_extension_attempts WHERE id='request'").get()?.outcome === '{"kind":"applying"}') {
+          assert.throws(() => external.exec('BEGIN IMMEDIATE'), /locked/);
+          target.exec(sql);
+          external.exec('BEGIN IMMEDIATE');
+          if (damage === 'revision') external.exec('UPDATE service_extension_selections SET revision=revision+1');
+          if (damage === 'receipt') external.exec("UPDATE service_extension_selections SET receipt=receipt||' '");
+          if (damage === 'namespace') external.exec("UPDATE service_extension_selection_schema SET host='external-host'");
+          external.exec('COMMIT');
+          injected = true;
+          return;
+        }
+        return target.exec(sql);
+      };
+      const value = Reflect.get(target, property, target);
+      return typeof value === 'function' ? value.bind(target) : value;
+    },
+  });
+  owner = await createServerSelection({ database: { database: wrapped, hostId: 'commit-test' }, entries: [],
+    runtime: () => ({ kind: 'empty' }), isClosing: () => false,
+    replace: async () => { effects++; return { kind: 'replaced', generation: null }; }, stopRuntime() { stops++; } });
+  await assert.rejects(owner.live({ kind: 'apply', requestId: 'request', selectionId: 'startup', expectedRevision: 0 }),
+    error => error.message === 'Selection unavailable');
+  assert.equal(injected, true); assert.equal(effects, 0); assert.equal(stops, 1);
+  assert.deepEqual({ ...database.prepare("SELECT sequence,outcome FROM service_extension_attempts WHERE id='request'").get() },
+    { sequence: 1, outcome: '{"kind":"applying"}' });
+  assert.equal(owner.status().operation.outcome.kind, 'applying');
+  assert.equal(owner.status().lastApplied, null);
+  await assert.rejects(owner.select({ id: 'later', expectedRevision: 0, selection: empty }), /unavailable/);
+  assert.equal(stops, 1);
+});
+
 for (const changed of ['applied-empty', 'applying', 'unknown', 'new-predecessor']) test(`transaction admission decodes persisted predecessor after load: ${changed}`, async t => {
   const f = await diskFixture(t, async () => ({ kind: 'deferred', reason: 'active-work' }));
   const owner = await f.open();

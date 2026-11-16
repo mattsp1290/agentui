@@ -23,6 +23,8 @@ type Selection = { readonly id: string; readonly revision: number; readonly inte
 type Attempt = { readonly id: string; readonly selection: string; readonly intent: string; readonly origin: LiveRequest | { readonly kind: 'boot' }; outcome: AttemptOutcome };
 type StoredAttempt = Pick<Attempt, 'id' | 'selection' | 'intent'> & { readonly sequence: number; readonly outcome: string };
 type JournalResult<T> = { readonly namespace: 0 | 1 | 2; readonly value: T };
+type LoadedHistory = { readonly selections: Map<string, Selection>; readonly attempts: Attempt[]; readonly byId: Map<string, Attempt>;
+  readonly desired: Selection | undefined; readonly unresolved: Attempt[] };
 type Running = { readonly kind: 'withheld' | 'uncertain' }
   | { readonly kind: 'acknowledged'; readonly generation: number | null; readonly identity: Extract<SelectionRuntime, { id: string }> };
 export type ExtensionStartup = { readonly kind: 'transient'; readonly entries: readonly BrowserProviderExtension[] }
@@ -40,7 +42,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   const db = deps.database.database;
   const grants = normalizeGrantPool(deps.entries.flatMap(entry => entry.installations));
   const grantsDigest = digest('[' + grants.map(grant => canonicalJson(publicGrantBinding(grant))).sort().join(',') + ']');
-  const selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
+  let selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
   let desired: Selection | undefined, invalid = false, poisoned = false, busy: Promise<unknown> | undefined, closed = false, booted = false;
   let running: Running = { kind: 'withheld' };
   function transaction<T>(work: () => JournalResult<T>): T {
@@ -99,14 +101,28 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     const row = db.prepare('SELECT revision,intent,receipt,digest FROM service_extension_selections WHERE id=?').get(expected.id);
     if (row?.revision !== expected.revision || row.intent !== expected.intent || row.receipt !== expected.receipt.toString() || row.digest !== expected.receiptDigest) throw new Error('Selection journal write failed');
   }
+  function isLatestSelection(selection: Selection): boolean {
+    const row = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
+    return row?.id === selection.id && row.revision === selection.revision;
+  }
+  function verifyWriteTail(selection: Selection, attempt?: StoredAttempt): void {
+    assertStoredSelection(selection);
+    if (!isLatestSelection(selection)) throw new Error('Selection journal write failed');
+    if (attempt) {
+      assertStoredAttempt(attempt);
+      if (db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== attempt.sequence) throw new Error('Selection journal write failed');
+    }
+  }
   {
-    let recoveryFailure: 'Selection migration failed' | 'Selection recovery failed' | undefined;
+    let validatedRecoveryFailure: 'Selection migration failed' | 'Selection recovery failed' | undefined;
     const interrupted: AttemptOutcome = { kind: 'interrupted' };
     try {
-      const unresolved = transaction<Attempt[]>(() => {
-        const version = inspectNamespace();
-        if (!version) return { namespace: 0, value: [] };
+      const loaded = transaction<LoadedHistory>(() => {
+        const selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
         const storedAttempts: StoredAttempt[] = [], unresolved: Attempt[] = [];
+        let desired: Selection | undefined;
+        const version = inspectNamespace();
+        if (!version) return { namespace: 0, value: { selections, attempts, byId, desired, unresolved } };
         for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
           const selection = decodeSelection(row);
           if (selection.revision !== selections.size || selections.has(selection.id)) throw new Error();
@@ -131,8 +147,8 @@ export async function createServerSelection(deps: { readonly database: AccessDat
           if (unsettled) unresolved.push(attempt);
           storedAttempts.push({ id, selection, intent, sequence, outcome: unsettled ? canonicalJson(interrupted) : rawOutcome });
         }
-        if (!desired) return { namespace: 1, value: [] };
-        recoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
+        if (!desired) return { namespace: 1, value: { selections, attempts, byId, desired, unresolved } };
+        validatedRecoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
         if (version === 1) migrateV1();
         const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
         for (const attempt of unresolved) {
@@ -142,11 +158,12 @@ export async function createServerSelection(deps: { readonly database: AccessDat
           db.prepare('SELECT COUNT(*) AS n FROM service_extension_selections').get()?.n !== selections.size) throw new Error('Selection journal write failed');
         for (const attempt of storedAttempts) assertStoredAttempt(attempt);
         for (const selection of selections.values()) assertStoredSelection(selection);
-        return { namespace: 2, value: unresolved };
+        return { namespace: 2, value: { selections, attempts, byId, desired, unresolved } };
       });
-      for (const attempt of unresolved) attempt.outcome = interrupted;
+      for (const attempt of loaded.unresolved) attempt.outcome = interrupted;
+      ({ selections, attempts, byId, desired } = loaded);
     } catch {
-      if (recoveryFailure) throw new Error(recoveryFailure);
+      if (validatedRecoveryFailure) throw new Error(validatedRecoveryFailure);
       invalid = true;
     }
   }
@@ -172,8 +189,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   }
   function authority(selection: Selection): void {
     if (inspectNamespace() !== 2) throw new Error('Invalid selection journal');
-    const row = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
-    if (row?.id !== selection.id || row.revision !== selection.revision) throw new SelectionRefusal('revision-conflict');
+    if (!isLatestSelection(selection)) throw new SelectionRefusal('revision-conflict');
     assertStoredSelection(selection);
   }
   function persist(attempt: Attempt, selection: Selection, outcome: AttemptOutcome): void {
@@ -185,9 +201,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       const sequence = count(row.sequence);
       if (!sequence) throw new Error('Invalid selection attempt');
       if (db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(nextOutcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
-      authority(selection);
-      assertStoredAttempt({ ...attempt, sequence, outcome: nextOutcome });
-      if (db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
+      verifyWriteTail(selection, { ...attempt, sequence, outcome: nextOutcome });
       return { namespace: 2, value: undefined };
     });
     attempt.outcome = outcome;
@@ -213,6 +227,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       if (expectedStoredRevision !== -1 && version !== 2) throw new Error('Invalid selection journal');
       const storedRevision = version ? db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1 : -1;
       if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
+      if (version === 2 && db.prepare('SELECT 1 FROM service_extension_attempts WHERE id=?').get(selection.id)) throw new SelectionRefusal('id-conflict');
       if (expectedStoredRevision === -1) {
         if (version === 2) throw new Error('Invalid selection journal');
         if (!version) {
@@ -225,9 +240,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       }
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
       if (version !== 2 && db.prepare('SELECT COUNT(*) AS n FROM service_extension_attempts').get()?.n !== 0) throw new Error('Selection journal write failed');
-      assertStoredSelection(selection);
-      const latest = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
-      if (latest?.id !== selection.id || latest.revision !== selection.revision) throw new Error('Selection journal write failed');
+      verifyWriteTail(selection);
       return { namespace: 2, value: undefined };
     });
     selections.set(selection.id, selection); desired = selection;
@@ -278,10 +291,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         const inserted = db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, outcome);
         const sequence = count(inserted.lastInsertRowid);
         if (inserted.changes !== 1 || !sequence) throw new Error('Selection journal write failed');
-        assertStoredAttempt({ ...attempt, sequence, outcome });
-        try { authority(selection); }
-        catch { throw new Error('Selection journal write failed'); }
-        if (db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
+        verifyWriteTail(selection, { ...attempt, sequence, outcome });
         return { namespace: 2, value: 'admitted' };
       });
     } catch (error) {
