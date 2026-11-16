@@ -191,7 +191,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       } else {
         for (const event of change.output.events) {
           if ('runId' in event) requireRun(event.runId);
-          if (event.kind === 'command-updated') requireRun(event.activity.runId);
+          if (event.kind === 'command-updated' || event.kind === 'file-change-updated') requireRun(event.activity.runId);
         }
         this.appendEvents(scope, change.output.events.map(event => ({ kind: 'domain', event: this.projection.decodeEvent(event) })));
       }

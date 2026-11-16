@@ -53,18 +53,10 @@ export function parseCommandActivity(value: unknown): CommandActivity {
     command: boundedText(input.command, COMMAND_TEXT_BYTES), cwd: boundedText(input.cwd, COMMAND_CWD_BYTES),
     detailsTruncated: input.detailsTruncated, status, output: boundedText(input.output, COMMAND_OUTPUT_BYTES), outputTruncated: input.outputTruncated };
 }
-export function updateCommandActivity(activities: readonly CommandActivity[], next: CommandActivity): readonly CommandActivity[] {
-  const previous = activities.find(item => item.activityId === next.activityId);
-  if (!previous) return [...activities, next];
-  if (next.revision < previous.revision) return activities;
-  if (next.revision === previous.revision) {
-    if (JSON.stringify(previous) !== JSON.stringify(next)) throw new Error('Conflicting command revision');
-    return activities;
-  }
+export function validateCommandUpdate(previous: CommandActivity, next: CommandActivity): void {
   if (previous.runId !== next.runId || previous.command !== next.command || previous.cwd !== next.cwd ||
     previous.detailsTruncated !== next.detailsTruncated) throw new Error('Command identity changed');
   if (previous.status.kind !== 'running' && JSON.stringify(previous.status) !== JSON.stringify(next.status)) {
     throw new Error('Terminal command outcome changed');
   }
-  return activities.map(item => item === previous ? next : item);
 }

@@ -1,3 +1,4 @@
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -507,10 +508,10 @@ test('permission read and authenticated durable revoke survive absent run and de
   a.connected.observe = () => ({ close() {}, ended: Promise.resolve({ kind: 'disconnected', cursor: null, reason: 'Run ended' }) });
   f = await fixture(t, [a]);
   const scope = await create(f);
-  assert.equal(Object.keys((await snapshot(f.client.conversation(scope), 2)).document.decisions).length, 1);
+  assert.equal(Object.keys((await snapshot(f.client.conversation(scope), transcriptProjection.version)).document.decisions).length, 1);
   pending = false;
   await f.client.providerObservation({ scope, action: 'retry' });
-  assert.deepEqual((await snapshot(f.client.conversation(scope), 2)).document.decisions, {});
+  assert.deepEqual((await snapshot(f.client.conversation(scope), transcriptProjection.version)).document.decisions, {});
   f.inspect(db => db.exec('DELETE FROM pending_decisions; DELETE FROM runs'));
   const original = f.inspect(db => JSON.parse(db.prepare('SELECT observation FROM provider_creations').get().observation).binding);
   const listing = await f.client.conversationPermissions(scope);

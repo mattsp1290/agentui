@@ -76,7 +76,11 @@ export class Reader {
         if (item.kind !== 'snapshot') throw new ReadError('Expected snapshot');
         const { cursor, document } = item.snapshot;
         return { scope, cursor, agent, currentRun: document.domain.currentRun, receipts: document.receipts,
-          decisions: document.decisions, activities: (document.domain.activities ?? []).map(({ output: _output, ...activity }) => activity),
+          decisions: document.decisions, activities: (document.domain.activities ?? []).map(activity => {
+            if (activity.kind === 'file-change') return { ...activity, changes: activity.changes.map(({ patch: _patch, ...change }) => change) };
+            const { output: _output, ...command } = activity;
+            return command;
+          }),
           receiptCoverage: 'unresolved-and-retained-terminal' };
       }
     } finally {

@@ -48,7 +48,7 @@ test('paused provider keeps its healthy journal and later receipt while other ch
   t.after(() => release.resolve());
   remote.command(async operation => { entered.resolve(); await release.promise; return { kind: 'confirmed', value: {
     kind: 'send', state: 'accepted', run: remote.ref(operation.binding, 'run', 'same-run') }, evidence: null }; });
-  const items = [], watch = f.client.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => { items.push(item); });
+  const items = [], watch = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => { items.push(item); });
   t.after(() => watch.close());
   let journalEnded = false; void watch.ended.then(() => { journalEnded = true; });
   await until(() => items.length === 1);

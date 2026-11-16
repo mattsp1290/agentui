@@ -124,7 +124,7 @@ test('native loopback routes reject ambiguous credentials, class substitution an
   const expires = devices.find(value => value.id === device.principalId).expires;
   assert.ok(expires > Date.now() + 30 * 24 * 3_600_000 - 100_000 && expires <= Date.now() + 30 * 24 * 3_600_000);
   assert.equal((await f.call('/native/v1', { op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
-  const { feedId } = (await f.call('/native/v1', { op: 'watch', scope, after: null, projectionVersion: 2 }, auth)).body.value;
+  const { feedId } = (await f.call('/native/v1', { op: 'watch', scope, after: null, projectionVersion: 3 }, auth)).body.value;
   denied(await f.call('/api/v1', { op: 'pull', feedId, ack: null }, { Origin: f.origin, Cookie: cookie }));
   const page = (await f.call('/native/v1', { op: 'pull', feedId, ack: null }, auth)).body.value;
   let settled = false;

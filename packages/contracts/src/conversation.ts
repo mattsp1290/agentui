@@ -1,8 +1,14 @@
 import { record, count, identifier } from './decode.js';
 import type { Projection } from './durable.js';
-import { COMMAND_OUTPUT_BYTES, COMMAND_TEXT_BYTES, COMMAND_CWD_BYTES, escapedBytes, parseCommandActivity, updateCommandActivity } from './command-activity.js';
+import { COMMAND_OUTPUT_BYTES, COMMAND_TEXT_BYTES, COMMAND_CWD_BYTES, escapedBytes, parseCommandActivity } from './command-activity.js';
 import type { CommandActivity } from './command-activity.js';
+import { parseActivity, updateActivity } from './activity.js';
+import type { Activity } from './activity.js';
+import { FILE_CHANGE_DETAIL_BYTES, fileChangeDetailBytes, parseFileChangeActivity } from './file-change-activity.js';
+import type { FileChangeActivity } from './file-change-activity.js';
 export * from './command-activity.js';
+export * from './file-change-activity.js';
+export * from './activity.js';
 
 export interface TranscriptMessage {
   readonly messageId: string;
@@ -28,9 +34,10 @@ export type CurrentRun =
 export interface Transcript {
   readonly messages: readonly TranscriptMessage[];
   readonly currentRun: CurrentRun | null;
-  readonly activities?: readonly CommandActivity[];
+  readonly activities?: readonly Activity[];
 }
 export type TranscriptEvent =
+  | { readonly kind: 'file-change-updated'; readonly activity: FileChangeActivity }
   | { readonly kind: 'command-updated'; readonly activity: CommandActivity }
   | (TranscriptMessage & { readonly kind: 'message-updated' })
   | { readonly kind: 'run-started'; readonly runId: string; readonly previousRunId: string | null }
@@ -71,6 +78,9 @@ function currentRun(value: unknown): CurrentRun | null {
 export function parseTranscriptEvent(value: unknown): TranscriptEvent {
   const input = record(value);
   switch (input.kind) {
+    case 'file-change-updated':
+      record(value, ['kind', 'activity']);
+      return { kind: 'file-change-updated', activity: parseFileChangeActivity(input.activity) };
     case 'command-updated':
       record(value, ['kind', 'activity']);
       return { kind: 'command-updated', activity: parseCommandActivity(input.activity) };
@@ -96,32 +106,35 @@ export function parseTranscript(value: unknown): Transcript {
   if (!Array.isArray(input.messages)) throw new Error('Invalid transcript');
   const messages = input.messages.map(item => message(item, false));
   if (new Set(messages.map(item => item.messageId)).size !== messages.length) throw new Error('Duplicate transcript message');
-  let activities: readonly CommandActivity[] | undefined;
+  let activities: readonly Activity[] | undefined;
   if (Object.hasOwn(input, 'activities')) {
     if (!Array.isArray(input.activities) || !input.activities.length) throw new Error('Invalid activity collection');
-    activities = input.activities.map(parseCommandActivity);
-    if (new Set(activities.map(item => item.activityId)).size !== activities.length) throw new Error('Duplicate command activity');
+    activities = input.activities.map(parseActivity);
+    if (new Set(activities.map(item => item.activityId)).size !== activities.length) throw new Error('Duplicate activity');
   }
   return { messages, currentRun: Object.hasOwn(input, 'currentRun') ? currentRun(input.currentRun) : null,
     ...(activities ? { activities } : {}) };
 }
 export const transcriptProjection: Projection<TranscriptEvent, Transcript> = {
-  version: 2,
+  version: 3,
   initial: () => ({ messages: [], currentRun: null }),
   decodeState: parseTranscript,
   decodeEvent: parseTranscriptEvent,
   reserveBytes(state) {
     const run = state.currentRun;
     if (!run || run.kind === 'ended' || !state.activities?.some(item => item.runId === run.runId)) return 0;
-    return 256 + state.activities.filter(item => item.runId === run.runId && item.status.kind === 'running')
-      .reduce((bytes, item) => bytes + COMMAND_OUTPUT_BYTES - escapedBytes(item.output) +
-        COMMAND_TEXT_BYTES - escapedBytes(item.command) + COMMAND_CWD_BYTES - escapedBytes(item.cwd) + 256, 0);
+    return 256 + state.activities.filter(item => item.runId === run.runId && (item.status.kind === 'running' || item.status.kind === 'unknown'))
+      .reduce((bytes, item) => bytes + (item.kind === 'file-change'
+        ? FILE_CHANGE_DETAIL_BYTES - fileChangeDetailBytes(item) + 256
+        : COMMAND_OUTPUT_BYTES - escapedBytes(item.output) +
+        COMMAND_TEXT_BYTES - escapedBytes(item.command) + COMMAND_CWD_BYTES - escapedBytes(item.cwd) + 256), 0);
   },
   apply(state, event) {
     const run = state.currentRun;
     switch (event.kind) {
+      case 'file-change-updated':
       case 'command-updated': {
-        const activities = updateCommandActivity(state.activities ?? [], event.activity);
+        const activities = updateActivity(state.activities ?? [], event.activity);
         return activities === state.activities ? state : { ...state, activities };
       }
       case 'run-started':

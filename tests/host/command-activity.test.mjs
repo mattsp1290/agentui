@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { FeedMismatchError, parseFeedItem } from '@agentui/contracts';
 import { transcriptProjection, parseTranscript, parseCommandActivity, retainText } from '@agentui/contracts/conversation';
 import { createCommandActivity } from '../../packages/host/dist/codex-command-activity.js';
-import { fixture, installed, scope, other, command, empty, run } from './fixture.mjs';
+import { fixture, installed, scope, other, command, empty, run, snapshot as readSnapshot } from './fixture.mjs';
 
 const row = (overrides = {}) => ({ kind: 'command', activityId: 'activity', runId: 'run', revision: 1,
   command: 'printf hello', cwd: '/work', detailsTruncated: false, status: { kind: 'running' }, output: '', outputTruncated: false, ...overrides });
@@ -87,10 +87,11 @@ test('V1 migration updates only projection metadata and preserves canonical retr
   const before = tables(f.path);
   const reopened = f.open({ projection: transcriptProjection });
   const after = tables(f.path);
-  assert.deepEqual(after, { ...before, conversations: before.conversations.map(value => ({ ...value, version: 2 })) });
+  assert.deepEqual(after, { ...before, conversations: before.conversations.map(value => ({ ...value, version: 3 })) });
   assert.deepEqual(await reopened.conversation(scope).submit(sent), receipt);
   const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => assert.fail('Old feed delivered'));
   assert.match((await feed.ended).reason, /Update the app and host together/);
+  await assert.rejects(readSnapshot(reopened.conversation(scope), 2), /Snapshot feed ended before delivery: refused/);
   const snapshot = reopened.inspect(scope).snapshot;
   assert.equal(Object.hasOwn(snapshot.document.domain, 'activities'), false);
   assert.throws(() => parseFeedItem({ kind: 'snapshot', snapshot }, { ...transcriptProjection, version: 1 }, scope), FeedMismatchError);
@@ -111,7 +112,7 @@ for (const corruption of ['domain', 'event', 'unsupported', 'current-v2-domain']
     const db = new DatabaseSync(f.path);
     if (corruption === 'current-v2-domain') db.prepare("UPDATE conversations SET version=2, document='{}', bytes=2 WHERE conversation=?").run(other.conversationId);
     if (corruption === 'event') db.prepare("UPDATE events SET payload='{}', bytes=2").run();
-    if (corruption === 'unsupported') db.prepare('UPDATE conversations SET version=3 WHERE conversation=?').run(other.conversationId);
+    if (corruption === 'unsupported') db.prepare('UPDATE conversations SET version=4 WHERE conversation=?').run(other.conversationId);
     db.close();
     const before = tables(f.path);
     assert.throws(() => f.open({ projection: transcriptProjection }));
@@ -140,7 +141,7 @@ test('near-limit legacy history migrates and opens without activity fields or ne
   const reopened = f.open({ projection: transcriptProjection, budgets: limits });
   assert.equal(reopened.inspect(scope).snapshot.document.domain.messages[0].text.length, 17500);
   assert.equal(tables(f.path).conversations[0].document, before.conversations[0].document);
-  const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => assert.ok(item.snapshot));
+  const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => assert.ok(item.snapshot));
   feed.close(); await feed.ended;
 });
 
@@ -225,3 +226,61 @@ test('failed V2 opening with malformed installation JSON leaves every raw V1 tab
   assert.throws(() => f.open({ projection: transcriptProjection }), /Corrupt stored JSON/);
   assert.deepEqual(tables(f.path), before);
 });
+
+test('mixed V1 and V2 migration preserves raw command rows, journals and native records while V2 feeds refuse', async t => {
+  const f = fixture(t), host = f.open({ projection: transcriptProjection });
+  host.createConversation(scope, installed); host.createConversation(other, installed);
+  host.append(scope, { events: [started, update(row()), ended], runs: [run(scope, 'run')], decisions: [] });
+  host.close(); await host.drained;
+  const db = new DatabaseSync(f.path);
+  db.prepare('UPDATE conversations SET version=2 WHERE conversation=?').run(scope.conversationId);
+  db.prepare('UPDATE conversations SET version=1 WHERE conversation=?').run(other.conversationId);
+  db.close();
+  const before = tables(f.path), reopened = f.open({ projection: transcriptProjection });
+  assert.deepEqual(tables(f.path), { ...before, conversations: before.conversations.map(value => ({ ...value, version: 3 })) });
+  const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => assert.fail('Old feed delivered'));
+  assert.match((await feed.ended).reason, /Update the app and host together/);
+  assert.deepEqual(reopened.inspect(scope).snapshot.document.domain.activities, [row()]);
+  reopened.close(); await reopened.drained;
+});
+
+for (const version of [1, 2]) {
+  for (const stored of ['snapshot', 'event']) {
+    test(`historical V${version} rejects file activity in its ${stored} and rolls back metadata`, async t => {
+      const f = fixture(t), host = f.open({ projection: transcriptProjection });
+      host.createConversation(scope, installed); host.createConversation(other, installed);
+      append(host, [started, { kind: 'file-change-updated', activity: { kind: 'file-change', activityId: 'file', runId: 'run',
+        revision: 1, status: { kind: 'unknown' }, changes: [], omittedChanges: 0 } }]);
+      host.close(); await host.drained;
+      const db = new DatabaseSync(f.path);
+      db.prepare('UPDATE conversations SET version=?').run(version);
+      if (stored === 'event') {
+        const row = db.prepare('SELECT document FROM conversations WHERE conversation=?').get(scope.conversationId);
+        const document = JSON.parse(row.document); delete document.domain.activities;
+        const data = JSON.stringify(document);
+        db.prepare('UPDATE conversations SET document=?,bytes=? WHERE conversation=?').run(data, Buffer.byteLength(data), scope.conversationId);
+      }
+      db.close();
+      const before = tables(f.path);
+      assert.throws(() => f.open({ projection: transcriptProjection }), /legacy|historical/);
+      assert.deepEqual(tables(f.path), before);
+    });
+  }
+}
+
+for (const corruption of ['missing-event', 'native-floor', 'floor-ahead']) {
+  test(`V2 migration rejects ${corruption} without advancing metadata`, async t => {
+    const f = fixture(t), host = f.open({ projection: transcriptProjection });
+    host.createConversation(scope, installed); append(host, [started, ended]);
+    host.close(); await host.drained;
+    const db = new DatabaseSync(f.path);
+    db.prepare('UPDATE conversations SET version=2').run();
+    db.prepare('DELETE FROM events WHERE sequence=1').run();
+    if (corruption !== 'missing-event') db.prepare('INSERT INTO provider_checkpoints(host,conversation,original,data,floor) VALUES (?,?,?,?,?)')
+      .run(scope.hostId, scope.conversationId, '{}', '{}', corruption === 'native-floor' ? 1 : 3);
+    db.close();
+    const before = tables(f.path);
+    assert.throws(() => f.open({ projection: transcriptProjection }), /sequence|replay floor/);
+    assert.deepEqual(tables(f.path), before);
+  });
+}

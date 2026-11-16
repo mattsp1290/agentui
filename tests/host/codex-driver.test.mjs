@@ -71,7 +71,7 @@ function fixture(t, mode = 'stream') {
 
 async function observe(port, predicate) {
   let latest;
-  const feed = port.watch({ after: null, projectionVersion: 2 }, async item => {
+  const feed = port.watch({ after: null, projectionVersion: 3 }, async item => {
     if (item.kind === 'snapshot') latest = item.snapshot.document;
     else latest = (await snapshot(port)).document;
   });

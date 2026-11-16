@@ -35,7 +35,7 @@ try {
 
 The caller supplies `generations`, `confirmRun` and `consumePin`. Binding validates and copies the complete run identity. It does not authenticate the run or establish backend eligibility. The caller must obtain the actual run from trusted integration wiring. Rebinding an equal identity returns the same pin. A different or malformed identity throws and leaves the owner intact. Release through either the retention or its pin closes the same owner once. Pending calls retain their resources until they settle. Release unbound owners on cancellation or failure too. Fresh captures of retired generations fail.
 
-`pinFrontendTools` uses the same retained owner after reading its existing run and capability options. It continues to gate advertising on `tools.clientProvided` and `tools.supported`, checks agent tool name collisions when enabled, and validates all supplied generation handles even when disabled. The new export preserves SDK version `0.2.0` because it adds no activation requirement or wire format.
+`pinFrontendTools` uses the same retained owner after reading its existing run and capability options. It continues to gate advertising on `tools.clientProvided` and `tools.supported`, checks agent tool name collisions when enabled, and validates all supplied generation handles even when disabled. The export adds no activation requirement or wire format. Use the current exact SDK contract when building extensions.
 
 The producer registers the pin's run identity, AG-UI thread ID, platform, definitions and activation bindings. Re-registering the same identity and bindings is idempotent. Changing the bindings for an existing run fails. A generation label is diagnostic and cannot restore a lost activation.
 
