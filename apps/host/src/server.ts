@@ -104,20 +104,20 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const shutdown = (async () => {
       closing = true;
       feeds?.dispose();
-      if (selection) await selection.close();
-      const driverResults = await Promise.allSettled([
+      const drainResults = await Promise.allSettled([
+        selection?.close(),
         providers.close(),
         ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
       ]);
-      const driverFailed = driverResults.some(result => result.status === 'rejected');
+      const drainFailed = drainResults.some(result => result.status === 'rejected');
       const deadline = setTimeout(() => http.closeAllConnections(), 2000);
       try {
-        const results = [...driverResults, ...await Promise.allSettled([
+        const results = [...drainResults, ...await Promise.allSettled([
           new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
           Promise.resolve().then(() => control?.close()),
           Promise.resolve().then(() => {
-            // Failed native cleanup can leave writers that still need the host database.
-            if (driverFailed) return;
+            // Failed cleanup can leave writers that still need the host database.
+            if (drainFailed) return;
             host?.close();
             return host?.drained;
           }),
