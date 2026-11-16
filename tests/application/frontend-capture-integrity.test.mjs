@@ -11,8 +11,11 @@ const durable = f => f.inspect(db => Object.fromEntries(tables.map(table => [tab
 
 test('command insertion failure after new owner insertion rolls back the whole admission', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), before = durable(f);
-  f.inspect(db => db.exec(`CREATE TRIGGER fail_command BEFORE INSERT ON commands BEGIN
+  f.inspect(db => db.exec(`CREATE TRIGGER fail_command AFTER INSERT ON commands BEGIN
     SELECT CASE WHEN (SELECT COUNT(*) FROM frontend_sends WHERE command_id=NEW.id AND state='available')=1
+      AND (SELECT COUNT(*) FROM commands INDEXED BY commands_tagged_send_key WHERE host=NEW.host AND conversation=NEW.conversation
+        AND json_extract(target, '$.kind')='provider' AND json_extract(target, '$.operation.kind')='send'
+        AND json_extract(target, '$.operation.protocol')='ag-ui')=1
       THEN RAISE(ABORT,'late-command-insert') END; END`));
   const command = offered(scope);
   await unavailable(f.client.conversation(scope).submit(command));
@@ -94,6 +97,18 @@ test('legacy paired-key tombstones still permanently reserve their capture key',
 
 const admissionWorker = `
   const { parentPort, workerData } = await import('node:worker_threads');
+  if (workerData.mismatch) {
+    const { registerHooks } = await import('node:module');
+    const parser = new URL('./provider-commands.js', workerData.store).href;
+    registerHooks({ resolve(specifier, context, next) {
+      if (specifier === './provider-commands.js' && context.parentURL === workerData.store) {
+        const source = 'export * from ' + JSON.stringify(parser) + '; import { parseProviderCapture as parse } from ' + JSON.stringify(parser)
+          + '; export function parseProviderCapture(...args) { const capture = parse(...args); return { ...capture, agui: { ...capture.agui, runId: "parsed-other-run" } }; }';
+        return { url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true };
+      }
+      return next(specifier, context);
+    } });
+  }
   const { SqliteStore } = await import(workerData.store);
   const { budgets } = await import(workerData.model);
   const { transcriptProjection } = await import('@agentui/contracts/conversation');
@@ -103,7 +118,7 @@ const admissionWorker = `
     try {
       const result = store.admit(workerData.command, { kind: 'supported' }, undefined, (_original, operationId) => ({
         ...workerData.target, operation: { ...workerData.target.operation, operationId, protocol: 'ag-ui',
-          request: { ...workerData.request, tools: workerData.command.body.frontend.tools.map(tool => tool.definition) } }
+          request: { ...workerData.request, tools: workerData.command.version === 2 ? workerData.command.body.frontend.tools.map(tool => tool.definition) : [] } }
       }), { id: workerData.actor, platform: 'desktop', authorized: () => true });
       if (result.kind === 'owned') store.settle(workerData.command.scope, workerData.command.clientCommandId, { kind: 'not-dispatched', reason: 'race-complete' });
       parentPort.postMessage({ result: result.kind === 'owned' ? { kind: 'owned' } : result });
@@ -140,5 +155,17 @@ test('independent SQLite admissions racing for one offered key commit one owner'
   assert.deepEqual(durable(f), before);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_sends').get().n), 1);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands WHERE id<>?').get('seed').n), 1);
+  assert.equal(a.calls.submits.length, 1);
+});
+
+for (const version of [1, 2]) test(`SQL projection refuses mismatched parsed version ${version} key without durable writes`, async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
+  await f.client.conversation(scope).submit(send(scope, 'seed'));
+  const target = f.inspect(db => JSON.parse(db.prepare("SELECT target FROM commands WHERE id='seed'").get().target));
+  const before = durable(f), command = version === 2 ? offered(scope, 'candidate') : send(scope, 'candidate');
+  const start = await prepareAdmission(t, { path: join(f.directory, 'host.sqlite'), command, target,
+    request: { ...actualInput('Hello'), runId: 'candidate-run' }, actor: 'owner', mismatch: true });
+  assert.deepEqual(await start(), { kind: 'rejected', reason: 'provider-command-unavailable' });
+  assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 1);
 });

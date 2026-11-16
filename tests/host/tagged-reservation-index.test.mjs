@@ -1,0 +1,79 @@
+import assert from 'node:assert/strict';
+import test from 'node:test';
+import { DatabaseSync } from 'node:sqlite';
+import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { budgets } from '../../packages/host/dist/durable-model.js';
+import { fixture, projection, scope, installed, command, note, run, question } from './fixture.mjs';
+
+const predicate = `json_extract(target, '$.kind')='provider' AND json_extract(target, '$.operation.kind')='send' AND json_extract(target, '$.operation.protocol')='ag-ui'`;
+const history = `SELECT 1 FROM commands INDEXED BY commands_tagged_send_key WHERE host=? AND conversation=? AND ${predicate}
+  AND json_extract(target, '$.operation.request.threadId')=? AND json_extract(target, '$.operation.request.runId')=? LIMIT 1`;
+const tables = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits'];
+const saved = db => Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+
+for (const format of [2, 3]) test(`format ${format} upgrade builds tagged index without rewriting durable history`, async t => {
+  const f = fixture(t, { async afterAcceptance() { throw new Error('Reply lost'); } }), host = f.open();
+  host.createConversation(scope, installed);
+  host.append(scope, { ...note('saved'), runs: [run()], decisions: [question()] });
+  await host.conversation(scope).submit(command('uncertain'));
+  host.close(); await host.drained;
+  const db = new DatabaseSync(f.path);
+  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; PRAGMA user_version=${format}`);
+  const before = saved(db); db.close();
+  const store = new SqliteStore(f.path, projection, budgets());
+  try {
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.deepEqual(saved(store.db), before);
+    assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'missing', 'missing'), undefined);
+    assert.equal(store.db.prepare("SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE " + predicate).get().n, 0);
+  } finally { store.close(); }
+});
+
+for (const format of [2, 3]) test(`format ${format} index failure rolls back owner schema and version publication`, t => {
+  const f = fixture(t), store = new SqliteStore(f.path, projection, budgets());
+  store.create(scope, installed);
+  assert.equal(store.admit(command('saved'), { kind: 'supported' }).kind, 'owned');
+  store.close();
+  const db = new DatabaseSync(f.path);
+  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; PRAGMA user_version=${format}; UPDATE commands SET target='invalid json'`);
+  const before = saved(db); db.close();
+  assert.throws(() => new SqliteStore(f.path, projection, budgets()), /malformed JSON/);
+  const reader = new DatabaseSync(f.path);
+  try {
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, format);
+    assert.deepEqual(saved(reader), before);
+    for (const name of ['frontend_sends', 'frontend_send_owner', 'commands_tagged_send_key']) {
+      assert.equal(reader.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get(name), undefined);
+    }
+  } finally { reader.close(); }
+});
+
+test('existing format four refuses a missing or unusable required history index', t => {
+  const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); store.close();
+  const db = new DatabaseSync(f.path); db.exec('DROP INDEX commands_tagged_send_key'); db.close();
+  assert.throws(() => new SqliteStore(f.path, projection, budgets()), /no such index/);
+  const reader = new DatabaseSync(f.path);
+  assert.equal(reader.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get('commands_tagged_send_key'), undefined);
+  reader.exec('CREATE INDEX commands_tagged_send_key ON commands(host) WHERE conversation IS NULL'); reader.close();
+  assert.throws(() => new SqliteStore(f.path, projection, budgets()), /no query solution/);
+});
+
+test('tagged key miss searches all four expression-index columns despite large historical targets', t => {
+  const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); t.after(() => store.close());
+  store.create(scope, installed);
+  assert.equal(store.admit(command('seed'), { kind: 'supported' }).kind, 'owned');
+  const insert = store.db.prepare(`INSERT INTO commands(host,conversation,id,operation,intent,target,observation,receipt)
+    SELECT host,conversation,?,?,intent,?,observation,receipt FROM commands WHERE id='seed'`);
+  store.transaction(() => {
+    for (let index = 0; index < 400; index++) insert.run(`history-${index}`, `operation-${index}`, JSON.stringify({ kind: 'provider', operation: {
+      kind: 'send', protocol: 'ag-ui', request: { threadId: 'thread', runId: `run-${index}`, history: 'x'.repeat(16_000) },
+    } }));
+  });
+  const index = store.db.prepare("PRAGMA index_list('commands')").all().find(row => row.name === 'commands_tagged_send_key');
+  assert.equal(index.unique, 0); assert.equal(index.partial, 1);
+  const plan = store.db.prepare(`EXPLAIN QUERY PLAN ${history}`).all(scope.hostId, scope.conversationId, 'thread', 'missing').map(row => row.detail).join('\n');
+  assert.match(plan, /SEARCH commands USING (?:COVERING )?INDEX commands_tagged_send_key \(host=\? AND conversation=\? AND <expr>=\? AND <expr>=\?\)/);
+  assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'thread', 'missing'), undefined);
+  assert.ok(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'thread', 'run-399'));
+  assert.equal(store.db.prepare(`SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE ${predicate}`).get().n, 400);
+});
