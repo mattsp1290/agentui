@@ -131,13 +131,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (stored) assertMayReceiveEvidence(stored, actor);
     return stored;
   };
-  const validateFrontendInput = (stored: StoredCommand) => {
+  const assertFrontendTarget = (stored: StoredCommand) => {
     if (stored.command.version !== 2) return;
     if (!('kind' in stored) || !options.providers) throw new Error('Original AG-UI provider unavailable');
-    options.providers.frontendInput(stored.target);
+    options.providers.assertFrontendTarget(stored.target);
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => {
-    validateFrontendInput(stored);
+    assertFrontendTarget(stored);
     if (stored.command.version === 2 && store.frontendSends.check({ scope: stored.command.scope,
       id: stored.command.clientCommandId, actor, command: stored.command }) !== 'available') throw new Error('Frontend owner unavailable');
     if (actor) store.frontendSends.assertActor(actor);
@@ -145,7 +145,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     store.verifyIntent(stored);
   };
   const lookupFence = (stored: StoredCommand, assertCallerAuthority: () => void) => {
-    validateFrontendInput(stored);
+    assertFrontendTarget(stored);
     assertCallerAuthority();
     authorized(stored.command.scope);
     store.verifyIntent(stored);

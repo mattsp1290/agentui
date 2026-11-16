@@ -20,6 +20,7 @@ export interface FrontendBindingRequest {
   readonly action: 'recover' | 'unavailable';
 }
 export type FrontendBinding =
+  /** No confirmed binding yet, including a command not admitted by the host. Retain and retry the exact saved command ID and body. */
   | { readonly kind: 'pending'; readonly id: string }
   | { readonly kind: 'bound'; readonly command: OfferedCommand; readonly hostOperationId: string; readonly run: RunIdentity; readonly threadId: string }
   | { readonly kind: 'unavailable'; readonly id: string; readonly reason: 'closures-unavailable' | 'not-dispatched' | 'provider-rejected' };

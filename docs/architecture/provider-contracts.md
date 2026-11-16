@@ -137,11 +137,19 @@ Packed contracts and client consumers need no AG-UI package or checkout-specific
 Admission binds the authenticated principal, command, original provider installation and credentials in one durable transaction.
 The host validates the actual AG-UI input, appends noncolliding captured definitions, and saves the complete raw request.
 Schema defaults and state transforms do not rewrite that request. Retry and reconciliation use only its saved bytes.
-Both fresh and restored confirmation evidence must name the saved actual run ID.
+New AG-UI send targets carry a private `protocol: 'ag-ui'` tag, including version-1 sends.
+The target parser validates the raw request and derives the expected run ID without adding schema defaults.
+Both fresh and restored confirmation evidence for tagged targets must name that saved run ID.
+The tag never enters the public provider operation. A generic live provider cannot execute a tagged target.
+Historical untagged targets and their evidence correlations stay byte-identical.
+Untagged version-2 commands retain exact-offer and authored-run checks.
+Untagged version-1 history has no durable protocol provenance; live AG-UI lookup retains its provider-mode run check.
+Generic version-1 requests remain generic even if their fields resemble AG-UI input.
 Request builders should use a distinct run ID for each offered send.
 Reused run IDs currently share coordinator registration and release state; their execution ownership remains unqualified.
 
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
+Pending does not prove host admission. Retain the original closures and exact saved command ID and body for submission retry.
 A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
 Command receipts remain visible to devices that can read the conversation.
 The owner checks protect direct receipt lookup and the captured offer association.
@@ -157,7 +165,8 @@ A prior confirmed run retained through later rejection remains a binding. Comman
 After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
 Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
 
-Database format 4 adds frontend ownership without rewriting existing commands, targets, observations or receipts.
+Database format 4 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
+Both belong to the same initial format-4 release; released format-3 hosts refuse this format.
 Wire 8 and SDK 0.4.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 3.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.

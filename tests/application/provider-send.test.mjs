@@ -670,7 +670,7 @@ for (const fault of ['generic', 'collision', 'duplicate', 'invalid-input', 'deco
 test('offered reentrant provider decoding cannot revoke its actor after the final authority check', async t => {
   let f, admittedDecodes = 0;
   const a = aguiExtension({ decode(value) {
-    if (f && f.inspect(db => db.prepare('SELECT 1 FROM commands').get()) && ++admittedDecodes === 2) {
+    if (f && f.inspect(db => db.prepare('SELECT 1 FROM commands').get()) && ++admittedDecodes === 1) {
       f.inspect(db => db.exec('UPDATE service_devices SET revoked=1'));
     }
     return value;
