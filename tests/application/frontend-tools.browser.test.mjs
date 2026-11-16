@@ -111,7 +111,11 @@ for (const [label, registration, modules, message] of [
     assert.equal(await page.getByRole('alert').filter({ hasText: 'Custom tools could not load.' }).count(), 0);
     await page.getByLabel('Messages', { exact: true }).waitFor();
   } else {
-    await page.getByRole('alert').filter({ hasText: settlement === 'resolve' ? message : 'Tool activation failed and its disposal also failed' }).waitFor();
+    const alert = page.getByRole('alert').filter({ hasText: settlement === 'resolve' ? message : 'Tool activation failed and its disposal also failed' });
+    await alert.waitFor();
+    const finalMessage = await alert.innerText();
+    assert.ok(finalMessage.includes(message), `Final alert preserves primary failure: ${finalMessage}`);
+    if (settlement === 'reject') assert.ok(finalMessage.includes('Deferred cleanup rejected'), `Final alert includes cleanup failure: ${finalMessage}`);
     await page.getByText('Healthy sibling transcript', { exact: true }).waitFor();
     await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   }
