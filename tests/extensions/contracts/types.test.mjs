@@ -88,7 +88,7 @@ export function layoutComponent(value: ContentLayoutSelection) { if (value.kind 
 `,
   cases: [
     ['', null],
-    ["export const bad: TranscriptSelection = { kind: 'claimed', owner: { ...owner, presentation: { modules: [], transcript: undefined } } };", /not assignable/u],
+    ["export const bad: TranscriptSelection = { kind: 'claimed', owner: { ...owner, presentation: { modules: [], transcript: undefined, contentLayout: undefined } } };", /not assignable/u],
     ["export const bad: TranscriptSelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
     ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner };", /not assignable/u],
     ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],

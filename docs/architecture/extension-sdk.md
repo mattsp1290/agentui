@@ -330,19 +330,22 @@ return { contentLayout: ReviewLayout, modules, dispose() {} };
 ```
 
 The [Plan review template](../../templates/customization/desktop/index.tsx) includes responsive CSS for this arrangement.
-The host supplies one scroll viewport and an inline-size container. The template stacks its columns below 640px of available content width.
+The host supplies one scroll viewport and an inline-size container. The template stacks its columns at or below 640px of available content width.
 Permissions, approvals, the composer, Stop, command recovery, and navigation remain outside the layout.
 Activation, failure, suspension, and restore preserve those controls for the same selected conversation.
 Navigation retains the existing conversation identity and command checks. Layouts do not create independently active conversations.
 
 The host captures `contentLayout` once with the same function, memo, forwardRef, and lazy rules as transcript components.
 Layout selection waits for every selected namespace to settle. Multiple ready claims produce sorted diagnostics and the default transcript-then-modules arrangement.
-An omitted layout uses that same default arrangement. Without an active conversation, namespace diagnostics remain visible in catalog order and layouts do not render.
+An omitted layout uses that same default arrangement. Without an active conversation, namespace diagnostics remain visible in customization catalog order and layouts do not render.
+Layout activation, conflict changes, and render failure can remount module and transcript views. Pending action feedback and duplicate-click suppression do not survive a remount.
+Pending commands retain their original identities in the conversation outbox.
 
 While a layout suspends, the host shows native messages, command and file activity, and a loading notice.
 Custom transcript components, module views and actions, and namespace diagnostics wait until the layout is ready, so a retained hidden layout cannot duplicate extension trees.
 Suspension does not retire a namespace. A render failure retires the failing namespace once and restores the default arrangement.
 A nearer module or transcript boundary owns its failure. A layout in another namespace remains selected.
+The layout boundary also catches render failures in host content beneath it.
 Restore default view disables the contributions without replacing the composer or its persisted draft.
 
 ## Register a typed frontend tool
