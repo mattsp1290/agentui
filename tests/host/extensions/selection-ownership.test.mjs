@@ -224,8 +224,8 @@ test('packaged host refuses lost v2 histories before reading corrupt launch arti
     assert.deepEqual(await requestControl(socket, { op: 'extensions-status', query: null }), { ok: true, value: { kind: 'journal-invalid' } });
     const requests = [
       { op: 'extensions-select', command: { id: 'later', expectedRevision: 0, selection: { version: 1, artifacts: [] } } },
-      { op: 'extensions-apply', request: { kind: 'apply', requestId: 'apply-later', selectionId: 'startup', expectedRevision: 0 } },
-      { op: 'extensions-retry', request: { kind: 'retry', requestId: 'retry-later', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'lost' } },
+      { op: 'extensions-live', request: { kind: 'apply', requestId: 'apply-later', selectionId: 'startup', expectedRevision: 0 } },
+      { op: 'extensions-live', request: { kind: 'retry', requestId: 'retry-later', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'lost' } },
     ];
     for (const request of requests) assert.deepEqual(await requestControl(socket, request), { ok: false, error: 'Selection unavailable' });
     assert.deepEqual(reads, []);

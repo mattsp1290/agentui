@@ -25,7 +25,7 @@ async function fixture(t) {
   const f = await setup(t);
   const marker = join(f.root, 'imports'), pause = join(f.root, 'pause'), cleanup = join(f.root, 'cleanup-failure'), importPause = join(f.root, 'import-pause'), observationPause = join(f.root, 'observation-pause'), observed = join(f.root, 'observed');
   const source = label => `import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-    import { appendFileSync, existsSync } from 'node:fs';
+    import { appendFileSync, existsSync, readFileSync } from 'node:fs';
     import { createCrewFixture } from './crew.ts';
     const instance=${JSON.stringify(instance)}, fixture=createCrewFixture(instance);
     if(existsSync(${JSON.stringify(importPause)})) await new Promise(()=>{setInterval(()=>{},1000)});
@@ -44,7 +44,7 @@ async function fixture(t) {
           });
         }}};
       }},fixture.crewPresentation);
-      return {dispose(){if(existsSync(${JSON.stringify(cleanup)})) throw new Error('PRIVATE_CLEANUP');}};
+      return {dispose(){if(existsSync(${JSON.stringify(cleanup)}) && (readFileSync(${JSON.stringify(cleanup)},'utf8')!=='B' || ${JSON.stringify(label)}==='B')) throw new Error('PRIVATE_CLEANUP');}};
     }};`;
   await write(f.repo.directory, 'package.json', { type: 'module', agentui: extension('example-crew') });
   await write(f.repo.directory, 'crew.ts', await readFile(new URL('../../extensions/providers/contracts/crew.ts', import.meta.url), 'utf8'));
@@ -62,8 +62,9 @@ async function fixture(t) {
   const args = ['serve', '--data-dir', directory, '--extensions', config, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', '0', '--trusted'];
   const children = new Set();
   t.after(async () => { for (const child of children) { child.kill('SIGKILL'); await once(child, 'exit').catch(() => {}); } });
-  function launch(env = environment, executable = main) {
-    const child = spawn(process.execPath, [executable, ...args], { env, stdio: ['ignore', 'pipe', 'pipe'] });
+  function launch(env = environment, executable = main, assets = join(root, 'apps/desktop/web-dist-browser')) {
+    const launchArgs = [...args]; launchArgs[launchArgs.indexOf('--assets') + 1] = assets;
+    const child = spawn(process.execPath, [executable, ...launchArgs], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     children.add(child);
     let stdout = '', stderr = '';
     const exited = once(child, 'exit').then(([code, signal]) => { children.delete(child); return { code, signal, stdout, stderr }; });
@@ -252,7 +253,9 @@ test('durable ownership refuses raw replacement and control framing preserves sp
   try {
     for (const command of [{ op: 'extensions-status', query: null },
       { op: 'extensions-select', command: { id: 'refused', expectedRevision: 0, selection: { version: 1, artifacts: [] } } },
-      { op: 'extensions-receipt', digest: 'a'.repeat(64), offset: 0 }]) {
+      { op: 'extensions-receipt', digest: 'a'.repeat(64), offset: 0 },
+      { op: 'extensions-live', request: { kind: 'apply', requestId: 'refused', selectionId: 'startup', expectedRevision: 0 } },
+      { op: 'extensions-live', request: { kind: 'retry', requestId: 'refused', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'prior' } }]) {
       assert.deepEqual(await requestControl(join(transientDirectory, 'control.sock'), command),
         { ok: false, error: 'Selection requires durable artifact ownership' });
     }
@@ -332,7 +335,8 @@ test('an actual archived v1 bundled reader refuses the v2 journal before importi
   const f = await fixture(t);
   let host = f.launch(); await host.ready; await f.select('build-b', 0); await host.stop();
   const imported = await readFile(f.marker, 'utf8');
-  host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI); await host.ready;
+  assert.equal(f.database(db => db.prepare('SELECT count(*) AS n FROM conversations').get().n), 0);
+  host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI, process.env.AGENTUI_OLD_SELECTION_ASSETS); await host.ready;
   const status = JSON.parse((await execute(process.execPath, [process.env.AGENTUI_OLD_SELECTION_CLI, 'extensions-status', '--data-dir', f.directory])).stdout).value;
   assert.deepEqual(status, { kind: 'journal-invalid' }); assert.equal(await readFile(f.marker, 'utf8'), imported);
   await host.stop();
@@ -358,7 +362,7 @@ for (const cut of ['pending', 'applying', 'replacement', 'observation', 'final-c
   if (cut === 'applying') await writeFile(f.importPause, 'hold module evaluation');
   if (cut === 'replacement') await writeFile(f.pause, 'hold activation');
   const socket = createConnection(join(f.directory, 'control.sock')); await once(socket, 'connect');
-  socket.write(JSON.stringify({ op: 'extensions-apply', request: { kind: 'apply', requestId: 'crashed', selectionId: 'build-b', expectedRevision: 1 } }) + '\n'); socket.on('error', () => {});
+  socket.write(JSON.stringify({ op: 'extensions-live', request: { kind: 'apply', requestId: 'crashed', selectionId: 'build-b', expectedRevision: 1 } }) + '\n'); socket.on('error', () => {});
   try {
     for (let i = 0; ; i++) {
       const row = f.database(db => db.prepare("SELECT outcome FROM service_extension_attempts WHERE id='crashed'").get());
@@ -385,4 +389,37 @@ for (const cut of ['pending', 'applying', 'replacement', 'observation', 'final-c
     const retry = await f.cli('extensions-retry', ['--operation', 'build-b', '--expected-revision', '1', '--request', 'after-crash', '--after-attempt', 'crashed']);
     assert.equal(retry.outcome.kind, 'applied'); await host.stop();
   } finally { socket.destroy(); }
+});
+
+test('fresh apply during current cleanup failure refuses without consuming an attempt', { timeout: 120000 }, async t => {
+  const f = await fixture(t);
+  let host = f.launch(); await host.ready;
+  await f.select('build-b', 0); await writeFile(f.cleanup, 'fail cleanup');
+  const original = ['--operation', 'build-b', '--expected-revision', '1', '--request', 'apply-b'];
+  const failed = await f.cli('extensions-apply', original);
+  assert.deepEqual(failed.outcome, { kind: 'failed', failure: 'cleanup', recovery: 'restart' });
+  await f.select('fresh', 1);
+  const rows = f.database(db => db.prepare('SELECT * FROM service_extension_attempts').all());
+  const flags = ['--operation', 'fresh', '--expected-revision', '2', '--request', 'fresh-apply'];
+  await assert.rejects(f.cli('extensions-apply', flags), /attempt-conflict/);
+  assert.deepEqual(f.database(db => db.prepare('SELECT * FROM service_extension_attempts').all()), rows);
+  assert.equal(await readFile(f.marker, 'utf8'), 'A\n');
+  assert.deepEqual(await f.cli('extensions-apply', original), failed);
+  await host.stop('SIGKILL'); await rm(f.cleanup);
+  host = f.launch(); await host.ready;
+  assert.equal((await f.cli('extensions-status')).desired.outcome.kind, 'applied');
+  await f.select('after-restart', 2);
+  assert.equal((await f.cli('extensions-apply', ['--operation', 'after-restart', '--expected-revision', '3', '--request', 'clean-apply'])).outcome.kind, 'applied');
+  await host.stop();
+});
+
+for (const cleanupFails of [false, true]) test(`packaged live fatal uncertainty exits nonzero with cleanup failure ${cleanupFails}`, { timeout: 120000 }, async t => {
+  const f = await fixture(t), host = f.launch(); await host.ready; await f.select('build-b', 0);
+  f.database(db => db.exec(`CREATE TRIGGER fail_live_final BEFORE UPDATE ON service_extension_attempts
+    WHEN NEW.id='fatal-live' AND json_extract(NEW.outcome,'$.kind')='applied' BEGIN SELECT RAISE(ABORT,'PRIVATE_LIVE_FINAL'); END`));
+  if (cleanupFails) await writeFile(f.cleanup, 'B');
+  await assert.rejects(f.cli('extensions-apply', ['--operation', 'build-b', '--expected-revision', '1', '--request', 'fatal-live']), /Selection uncertain/);
+  const result = await host.exited;
+  assert.equal(result.code, 1); assert.ok(!result.stderr.includes('PRIVATE_LIVE_FINAL'));
+  assert.equal(f.database(db => JSON.parse(db.prepare("SELECT outcome FROM service_extension_attempts WHERE id='fatal-live'").get().outcome)).kind, 'applying');
 });

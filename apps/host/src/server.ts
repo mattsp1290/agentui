@@ -96,6 +96,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const providers = createServerExtensions();
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let selection: ServerSelection | undefined;
+  let resolveFatal!: () => void;
+  const fatal = new Promise<void>(resolve => { resolveFatal = resolve; });
   let closePromise: Promise<void> | undefined;
   let closing = false;
   const http = createServer();
@@ -169,7 +171,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
             if (!host) throw new Error('Selection host unavailable');
             return replaceExtensions(host, selected);
           },
-          stopRuntime: () => { void close().catch(() => { process.exitCode = 1; }); } });
+          stopRuntime: () => { void close().catch(() => {}); resolveFatal(); } });
         selection = durable;
         boot = () => durable.activate();
         directReplace = async () => { throw new Error('Durable extensions require selection commands'); };
@@ -327,7 +329,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl);
-    return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
+    return { origin, hostId: access.hostId, close, fatal, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);

@@ -9,6 +9,7 @@ import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { readAgentConfiguration } from './agent-config.js';
 import { takeServerExtensionConfiguration } from './server-extension-config.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
+import type { ControlRequest } from './control.js';
 import { readObservabilityConfiguration } from './observability.js';
 
 const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred', 'trusted'], serve: ['port', 'assets', 'config', 'extensions', 'trusted'], 'browser-dev': ['port', 'assets', 'trusted'], codex: ['port', 'workspace', 'assets', 'executable', 'trusted'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable', 'trusted'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable', 'trusted'], pi: ['port', 'workspace', 'assets', 'trusted'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
@@ -63,22 +64,35 @@ async function main(): Promise<void> {
       ...(command === 'desktop' ? { setupCapability } : {}),
       agentStartup: command === 'desktop' ? { kind: 'desktop', configuration: { default: values.preferred ?? 'codex', agents: desktopAgents } } : values.config !== undefined ? { kind: 'configured', configuration: readAgentConfiguration(resolve(values.config)) }
         : provider ? { kind: 'provider', provider } : { kind: command === 'browser-dev' ? 'recorded' : 'extensions' } });
+    void host.fatal.then(() => { process.exitCode = 1; });
     const close = () => { void host.close().catch(() => { process.exitCode = 1; }); };
     process.on('SIGINT', close);
     process.on('SIGTERM', close);
     process.stdout.write(`${JSON.stringify({ mode: command === 'browser-dev' ? 'browser-development' : command, origin: host.origin, hostId: host.hostId })}\n`);
     return;
   }
-  if (values.operation !== undefined && values.attempt !== undefined) throw new Error('Use --operation or --attempt');
-  const request = parseControlRequest(command === 'extensions-select' ? { op: command, command: { id: values.operation,
-    expectedRevision: values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']),
-    selection: selectionFile(values.selection) } }
-    : command === 'extensions-apply' || command === 'extensions-retry' ? { op: command, request: { kind: command === 'extensions-apply' ? 'apply' : 'retry', requestId: values.request, selectionId: values.operation,
-      expectedRevision: values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']),
-      ...(command === 'extensions-retry' ? { afterAttemptId: values['after-attempt'] } : {}) } }
-    : command === 'extensions-status' ? { op: command, query: values.attempt !== undefined ? { kind: 'attempt', id: values.attempt } : values.operation !== undefined ? { kind: 'selection', id: values.operation } : null } : { op: command, ...(values.id ? { id: values.id } : {}), ...(values.after ? { after: values.after } : {}) });
+  const expectedRevision = values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']);
+  let request: ControlRequest;
+  switch (command) {
+    case 'extensions-select':
+      request = parseControlRequest({ op: command, command: { id: values.operation, expectedRevision, selection: selectionFile(values.selection) } });
+      break;
+    case 'extensions-apply':
+      request = parseControlRequest({ op: 'extensions-live', request: { kind: 'apply', requestId: values.request, selectionId: values.operation, expectedRevision } });
+      break;
+    case 'extensions-retry':
+      request = parseControlRequest({ op: 'extensions-live', request: { kind: 'retry', requestId: values.request, selectionId: values.operation, expectedRevision, afterAttemptId: values['after-attempt'] } });
+      break;
+    case 'extensions-status':
+      if (values.operation !== undefined && values.attempt !== undefined) throw new Error('Use --operation or --attempt');
+      request = parseControlRequest({ op: command, query: values.attempt !== undefined ? { kind: 'attempt', id: values.attempt }
+        : values.operation !== undefined ? { kind: 'selection', id: values.operation } : null });
+      break;
+    default:
+      request = parseControlRequest({ op: command, ...(values.id ? { id: values.id } : {}), ...(values.after ? { after: values.after } : {}) });
+  }
   const response = await requestControl(join(directory, 'control.sock'), request).catch(error => {
-    if (command === 'extensions-apply' || command === 'extensions-retry') throw new Error('Selection reply unavailable; inspect --attempt or resend the identical --request');
+    if (request.op === 'extensions-live') throw new Error('Selection reply unavailable; inspect --attempt or resend the identical --request');
     throw error;
   });
   if (!response.ok) throw new Error(response.error);

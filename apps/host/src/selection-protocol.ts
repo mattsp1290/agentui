@@ -106,8 +106,7 @@ export function parseReceiptChunk(value: unknown): ReceiptChunk {
 
 export interface SelectionControl {
   select(command: SelectionCommand): Promise<OperationSummary>;
-  apply(request: ApplyRequest): Promise<OperationSummary>;
-  retry(request: RetryRequest): Promise<OperationSummary>;
+  live(request: LiveRequest): Promise<OperationSummary>;
   status(query?: SelectionQuery): SelectionStatus;
   receipt(digest: string, offset: number): ReceiptChunk;
 }

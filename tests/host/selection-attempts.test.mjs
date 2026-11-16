@@ -16,11 +16,11 @@ test('live apply uses one durable request and exact historical lookup after supe
   const { owner, database } = await fixture(t, async () => { effects++; return { kind: 'replaced', generation: null }; });
   await owner.select({ id: 'disable', expectedRevision: 0, selection: empty });
   const request = { kind: 'apply', requestId: 'apply-disable', selectionId: 'disable', expectedRevision: 1 };
-  const applied = await owner.apply(request);
+  const applied = await owner.live(request);
   assert.equal(applied.outcome.kind, 'applied-empty');
   assert.equal(applied.attemptId, request.requestId);
   await owner.select({ id: 'later', expectedRevision: 1, selection: empty });
-  assert.deepEqual(await owner.apply(request), applied);
+  assert.deepEqual(await owner.live(request), applied);
   assert.deepEqual(owner.status({ kind: 'attempt', id: request.requestId }).operation, applied);
   assert.equal(effects, 1);
   assert.equal(database.prepare('SELECT version FROM service_extension_selection_schema').get().version, 2);
@@ -30,13 +30,13 @@ test('deferred attempt requires an exact predecessor and request dedup never rep
   const { owner } = await fixture(t, async () => ++effects === 1 ? { kind: 'deferred', reason: 'active-work' } : { kind: 'replaced', generation: null });
   await owner.select({ id: 'disable', expectedRevision: 0, selection: empty });
   const apply = { kind: 'apply', requestId: 'first', selectionId: 'disable', expectedRevision: 1 };
-  assert.equal((await owner.apply(apply)).outcome.kind, 'deferred');
+  assert.equal((await owner.live(apply)).outcome.kind, 'deferred');
   const retry = { kind: 'retry', requestId: 'second', selectionId: 'disable', expectedRevision: 1, afterAttemptId: 'first' };
-  assert.equal((await owner.retry(retry)).outcome.kind, 'applied-empty');
-  assert.equal((await owner.apply(apply)).outcome.kind, 'deferred');
-  assert.equal((await owner.retry(retry)).outcome.kind, 'applied-empty');
-  await assert.rejects(owner.retry({ ...retry, requestId: 'third' }));
-  await assert.rejects(owner.apply({ ...apply, expectedRevision: 0 }), /id-conflict/);
+  assert.equal((await owner.live(retry)).outcome.kind, 'applied-empty');
+  assert.equal((await owner.live(apply)).outcome.kind, 'deferred');
+  assert.equal((await owner.live(retry)).outcome.kind, 'applied-empty');
+  await assert.rejects(owner.live({ ...retry, requestId: 'third' }));
+  await assert.rejects(owner.live({ ...apply, expectedRevision: 0 }), /id-conflict/);
   assert.equal(effects, 2);
 });
 
@@ -72,7 +72,7 @@ test('v1 migration preserves exact selections, receipts, history and legacy coll
   assert.equal(owner.status({ kind: 'selection', id: 'disable' }).operation.id, 'disable');
   assert.equal(owner.status({ kind: 'attempt', id: 'disable' }).operation.id, 'startup');
   await owner.activate();
-  await assert.rejects(owner.apply({ kind: 'apply', requestId: 'disable', selectionId: 'disable', expectedRevision: 1 }), /id-conflict/);
+  await assert.rejects(owner.live({ kind: 'apply', requestId: 'disable', selectionId: 'disable', expectedRevision: 1 }), /id-conflict/);
   await owner.close();
 });
 
@@ -92,6 +92,10 @@ for (const damage of [
   "UPDATE service_extension_selections SET receipt=receipt||' ' WHERE id='disable'",
   "UPDATE service_extension_selections SET intent='{}' WHERE id='disable'",
   'ALTER TABLE service_extension_boots ADD COLUMN surprise TEXT',
+  `ALTER TABLE service_extension_selection_schema RENAME TO saved_marker;
+    CREATE TABLE service_extension_selection_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL, host TEXT NOT NULL);
+    INSERT INTO service_extension_selection_schema SELECT * FROM saved_marker; DROP TABLE saved_marker`,
+  'CREATE UNIQUE INDEX outsider ON service_extension_selections(digest)',
 ]) test(`invalid v1 history refuses without even transient reconciliation writes: ${damage}`, async t => {
   const { database, open } = oldJournal(t);
   database.exec("UPDATE service_extension_boots SET outcome='{\"kind\":\"pending\"}' WHERE sequence=1");
@@ -133,10 +137,52 @@ test('pre-effect journal loss stops admission and post-effect uncertainty outran
       isClosing: () => closed, replace: async () => { calls++; return { kind: 'replaced', generation: null }; }, stopRuntime() { closed = true; } });
     database.exec(effect ? `CREATE TRIGGER fail_write BEFORE UPDATE ON service_extension_attempts WHEN json_extract(NEW.outcome,'$.kind')='applied-empty' BEGIN SELECT RAISE(ABORT,'PRIVATE_WRITE'); END`
       : `CREATE TRIGGER fail_write BEFORE INSERT ON service_extension_attempts BEGIN SELECT RAISE(ABORT,'PRIVATE_WRITE'); END`);
-    await assert.rejects(owner.apply({ kind: 'apply', requestId: 'failure', selectionId: 'startup', expectedRevision: 0 }), error => error.message === `Selection ${effect ? 'uncertain' : 'unavailable'}`);
+    await assert.rejects(owner.live({ kind: 'apply', requestId: 'failure', selectionId: 'startup', expectedRevision: 0 }), error => error.message === `Selection ${effect ? 'uncertain' : 'unavailable'}`);
     assert.equal(closed, true); assert.equal(calls, Number(effect));
     assert.equal(owner.status().runtime.kind, effect ? 'uncertain' : 'closed');
     await assert.rejects(owner.select({ id: 'later', expectedRevision: 0, selection: empty }), /unavailable/);
     await owner.close(); database.close();
   }
+});
+
+for (const damage of ['missing-check', 'outside-unique']) test(`schema damage during replacement is uncertain: ${damage}`, async t => {
+  const { owner, database } = await fixture(t, async () => {
+    database.exec(damage === 'outside-unique' ? 'CREATE UNIQUE INDEX outsider ON service_extension_selections(digest)' :
+      `ALTER TABLE service_extension_selection_schema RENAME TO saved_marker;
+       CREATE TABLE service_extension_selection_schema (singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL, host TEXT NOT NULL);
+       INSERT INTO service_extension_selection_schema SELECT * FROM saved_marker; DROP TABLE saved_marker`);
+    return { kind: 'replaced', generation: null };
+  });
+  await assert.rejects(owner.live({ kind: 'apply', requestId: 'damaged', selectionId: 'startup', expectedRevision: 0 }), /uncertain/);
+  assert.equal(owner.status().runtime.kind, 'uncertain');
+  assert.equal(JSON.parse(database.prepare("SELECT outcome FROM service_extension_attempts WHERE id='damaged'").get().outcome).kind, 'applying');
+});
+
+test('out-of-prefix nonunique indexes and fault triggers remain permitted', async t => {
+  const { owner, database } = await fixture(t);
+  database.exec(`CREATE INDEX outsider ON service_extension_selections(digest);
+    CREATE TRIGGER observer AFTER UPDATE ON service_extension_attempts BEGIN SELECT 1; END`);
+  assert.equal((await owner.live({ kind: 'apply', requestId: 'allowed', selectionId: 'startup', expectedRevision: 0 })).outcome.kind, 'applied-empty');
+});
+
+for (const changed of ['applied-empty', 'applying', 'unknown', 'new-predecessor']) test(`transaction admission decodes persisted predecessor after cached precheck: ${changed}`, async t => {
+  const database = new DatabaseSync(':memory:'); t.after(() => database.close());
+  let alter = false, effects = 0, stops = 0;
+  const owner = await createServerSelection({ database: { database, hostId: 'admission-test' }, entries: [], isClosing: () => false,
+    runtime() {
+      if (alter) {
+        alter = false;
+        if (changed === 'new-predecessor') database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome)
+          VALUES('external','startup','{"kind":"boot"}','{"kind":"interrupted"}')`);
+        else database.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(JSON.stringify({ kind: changed }), 'first');
+      }
+      return { kind: 'empty' };
+    }, replace: async () => { effects++; return { kind: 'deferred', reason: 'active-work' }; }, stopRuntime() { stops++; } });
+  t.after(() => owner.close());
+  await owner.live({ kind: 'apply', requestId: 'first', selectionId: 'startup', expectedRevision: 0 });
+  alter = true;
+  await assert.rejects(owner.live({ kind: 'retry', requestId: 'second', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'first' }),
+    changed === 'unknown' ? /unavailable/ : /attempt-conflict/);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM service_extension_attempts WHERE id='second'").get().n, 0);
+  assert.equal(effects, 1); assert.equal(stops, Number(changed === 'unknown'));
 });

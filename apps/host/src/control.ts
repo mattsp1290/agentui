@@ -9,7 +9,7 @@ import type { FeedRegistry } from './feed-registry.js';
 import { parseInvitationCode } from './native-wire.js';
 
 export type ControlRequest = { readonly op: 'extensions-select'; readonly command: SelectionCommand }
-  | { readonly op: 'extensions-apply' | 'extensions-retry'; readonly request: LiveRequest }
+  | { readonly op: 'extensions-live'; readonly request: LiveRequest }
   | { readonly op: 'extensions-status'; readonly query: SelectionQuery | null }
   | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
   | { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
@@ -24,11 +24,9 @@ export function parseControlRequest(value: unknown): ControlRequest {
       return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
     }
     case 'extensions-select': record(input, ['op', 'command']); return { op: input.op, command: parseSelectionCommand(input.command) };
-    case 'extensions-apply': case 'extensions-retry': {
+    case 'extensions-live': {
       record(input, ['op', 'request']);
-      const request = parseLiveRequest(input.request);
-      if (input.op !== `extensions-${request.kind}`) throw new Error('Invalid selection request');
-      return { op: input.op, request };
+      return { op: input.op, request: parseLiveRequest(input.request) };
     }
     case 'extensions-status': record(input, ['op', 'query']); return { op: input.op, query: input.query === null ? null : parseSelectionQuery(input.query) };
     case 'extensions-receipt': record(input, ['op', 'digest', 'offset']); return { op: input.op, digest: hex(input.digest, 64), offset: count(input.offset) };
@@ -42,7 +40,7 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
   record(input, ['ok', 'value']);
   if (input.ok !== true) throw new Error('Invalid control response');
   switch (request.op) {
-    case 'extensions-apply': case 'extensions-retry': case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
+    case 'extensions-live': case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
     case 'extensions-status': return { ok: true, value: parseSelectionStatus(input.value) };
     case 'extensions-receipt': return { ok: true, value: parseReceiptChunk(input.value) };
     case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
@@ -94,7 +92,7 @@ export async function requestControl(path: string, request: ControlRequest): Pro
   finally { socket.destroy(); }
 }
 const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); };
-export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, apply: refuseSelection, retry: refuseSelection, status: refuseSelection, receipt: refuseSelection };
+export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, live: refuseSelection, status: refuseSelection, receipt: refuseSelection };
 
 export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl) {
   if (existsSync(path)) unlinkSync(path);
@@ -106,7 +104,7 @@ export async function startControl(path: string, access: Access, feeds: FeedRegi
         let value: ControlValue;
         switch (request.op) {
           case 'extensions-select': value = await selection.select(request.command); break;
-          case 'extensions-apply': case 'extensions-retry': value = await (request.request.kind === 'apply' ? selection.apply(request.request) : selection.retry(request.request)); break;
+          case 'extensions-live': value = await selection.live(request.request); break;
           case 'extensions-status': value = selection.status(request.query ?? undefined); break;
           case 'extensions-receipt': value = selection.receipt(request.digest, request.offset); break;
           case 'invite': value = { code: access.invite('browser-development') }; break;

@@ -9,7 +9,7 @@ import { normalizeGrantPool, publicGrantBinding } from './provider-credentials.j
 import { verifyArtifactPins } from './provider-extensions.js';
 import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
 import { SelectionRefusal, RECEIPT_LIMIT, parseAttemptOutcome, parseLiveRequest, parseSelection, parseSelectionCommand } from './selection-protocol.js';
-import type { ApplyRequest, RetryRequest, LiveRequest, AttemptOutcome, OperationSummary, SelectionCommand, SelectionQuery, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import type { LiveRequest, AttemptOutcome, OperationSummary, SelectionCommand, SelectionQuery, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const journalTables = new Map([
@@ -59,26 +59,23 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     return { id, revision, intent, receipt: Buffer.from(receipt), receiptDigest, target, grantsDigest: hex(value.grantsDigest, 64) };
   }
   function inspectNamespace(): 0 | 1 | 2 {
-    const objects = db.prepare("SELECT name, type FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
+    const objects = db.prepare("SELECT name, type, sql FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
     if (!objects.length) return 0;
-    if (!objects.some(object => object.name === 'service_extension_selection_schema' && object.type === 'table')) throw new Error('Invalid selection journal');
+    if (!objects.some(object => object.name === 'service_extension_selection_schema' && object.type === 'table' &&
+      object.sql === `CREATE TABLE service_extension_selection_schema (${journalTables.get('service_extension_selection_schema')})`)) throw new Error('Invalid selection journal');
     const schema = db.prepare('SELECT * FROM service_extension_selection_schema').all();
     const version = schema[0]?.version;
     if (schema.length !== 1 || schema[0]?.singleton !== 1 || (version !== 1 && version !== 2) || schema[0]?.host !== deps.database.hostId) throw new Error('Invalid selection journal');
     const tables = new Map(journalTables);
     if (version === 1) { tables.delete('service_extension_attempts'); tables.set('service_extension_boots', legacyColumns); }
-    if (objects.length !== tables.size || objects.some(object => object.type !== 'table' || typeof object.name !== 'string' || !tables.has(object.name))) throw new Error('Invalid selection journal');
-    for (const [name, definition] of tables) {
-      const columns = db.prepare(`PRAGMA table_info(${name})`).all();
-      const expected = definition.split(', ').map(column => ({ name: column.split(' ')[0], type: column.split(' ')[1], notnull: Number(column.includes('NOT NULL')), pk: Number(column.includes('PRIMARY KEY')) }));
-      if (canonicalJson(columns.map(({ name, type, notnull, pk }) => ({ name, type, notnull, pk }))) !== canonicalJson(expected)) throw new Error('Invalid selection journal');
-      const unique = db.prepare(`PRAGMA index_list(${name})`).all().filter(index => index.unique === 1).map(index =>
-        db.prepare(`PRAGMA index_info("${identifier(index.name).replaceAll('"', '""')}")`).all().map(column => column.name).join(',')).sort();
-      const expectedUnique = definition.split(', ').filter(column => column.includes('UNIQUE') || column.startsWith('id TEXT PRIMARY KEY')).map(column => column.split(' ')[0]).sort();
-      if (canonicalJson(unique) !== canonicalJson(expectedUnique)) throw new Error('Invalid selection journal');
-      const foreignKeys = db.prepare(`PRAGMA foreign_key_list(${name})`).all();
-      if (definition.includes('REFERENCES') ? foreignKeys.length !== 1 || foreignKeys[0]?.table !== 'service_extension_selections' || foreignKeys[0]?.from !== 'selection' || foreignKeys[0]?.to !== 'id' : foreignKeys.length !== 0) throw new Error('Invalid selection journal');
-    }
+    if (objects.length !== tables.size || objects.some(object => {
+      if (object.type !== 'table' || typeof object.name !== 'string') return true;
+      const definition = tables.get(object.name);
+      return definition === undefined || object.sql !== `CREATE TABLE ${object.name} (${definition})`;
+    })) throw new Error('Invalid selection journal');
+    const extraUnique = db.prepare(`SELECT 1 FROM sqlite_schema AS t, pragma_index_list(t.name) AS i
+      WHERE t.type='table' AND lower(t.name) GLOB 'service_extension_*' AND i."unique"=1 AND i.origin='c' LIMIT 1`).get();
+    if (extraUnique) throw new Error('Invalid selection journal');
     return version;
   }
   function upgrade(version: 1 | 2): void {
@@ -111,7 +108,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         sequence = count(row.sequence);
         const previous = attempts.findLast(attempt => attempt.selection === selection);
         if (origin.kind !== 'boot' && (origin.requestId !== id || origin.selectionId !== selection || origin.expectedRevision !== selections.get(selection)?.revision || selections.has(id) ||
-          (origin.kind === 'apply' ? previous !== undefined : previous?.id !== origin.afterAttemptId || !retryable(previous.outcome)))) throw new Error();
+          !allowsPredecessor(origin, previous))) throw new Error();
         const attempt: Attempt = { id, selection, intent, origin, outcome };
         attempts.push(attempt); byId.set(id, attempt);
       }
@@ -124,6 +121,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   }
   function retryable(outcome: AttemptOutcome): boolean {
     return outcome.kind === 'deferred' || outcome.kind === 'interrupted' || outcome.kind === 'grant-mismatch' || outcome.kind === 'failed';
+  }
+  function allowsPredecessor(request: LiveRequest, previous: Pick<Attempt, 'id' | 'outcome'> | undefined): boolean {
+    return request.kind === 'apply' ? previous === undefined : previous?.id === request.afterAttemptId && retryable(previous.outcome);
   }
   function available(): void {
     if (invalid || poisoned || closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
@@ -213,8 +213,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     try {
       transaction(() => {
         available(); authority(selection);
-        const latest = db.prepare('SELECT id FROM service_extension_attempts WHERE selection=? ORDER BY sequence DESC LIMIT 1').get(selection.id);
-        if (attempt.origin.kind === 'apply' && latest || attempt.origin.kind === 'retry' && latest?.id !== attempt.origin.afterAttemptId) throw new SelectionRefusal('attempt-conflict');
+        const latest = db.prepare('SELECT id,outcome FROM service_extension_attempts WHERE selection=? ORDER BY sequence DESC LIMIT 1').get(selection.id);
+        const previous = latest && { id: identifier(latest.id), outcome: parseAttemptOutcome(JSON.parse(identifier(latest.outcome))) };
+        if (attempt.origin.kind !== 'boot' && !allowsPredecessor(attempt.origin, previous)) throw new SelectionRefusal('attempt-conflict');
         if (db.prepare('SELECT 1 FROM service_extension_selections WHERE id=?').get(attempt.id)) throw new SelectionRefusal('id-conflict');
         db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, canonicalJson(attempt.outcome));
       });
@@ -256,8 +257,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       const selection = desired;
       if (!selection || selection.id !== request.selectionId || selection.revision !== request.expectedRevision) throw new SelectionRefusal('revision-conflict');
       const previous = attempts.findLast(value => value.selection === selection.id), state = deps.runtime();
-      if (request.kind === 'apply' ? previous !== undefined : previous?.id !== request.afterAttemptId || !retryable(previous.outcome) ||
-        previous.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest || state.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
+      if (!allowsPredecessor(request, previous)) throw new SelectionRefusal('attempt-conflict');
+      if (state.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
+      if (request.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
       return execute(selection, { id: request.requestId, selection: selection.id, intent, origin: request, outcome: { kind: 'pending' } });
     });
   }
@@ -271,7 +273,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     await reserve(() => execute(selection, { id, selection: selection.id, intent: '{"kind":"boot"}', origin: { kind: 'boot' }, outcome: { kind: 'pending' } }));
   }
   return {
-    activate, select: accept, apply: (request: ApplyRequest) => live(request), retry: (request: RetryRequest) => live(request),
+    activate, select: accept, live,
     status(query?: SelectionQuery): SelectionStatus {
       if (invalid || !desired) return { kind: 'journal-invalid' };
       const exact = query?.kind === 'attempt' ? byId.get(query.id) : undefined;

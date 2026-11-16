@@ -60,11 +60,39 @@ for (const [name, change] of [
 for (const command of ['extensions-apply', 'extensions-retry']) test(`${command} uses strict request fields and rejects unrelated packaged flags`, async () => {
   const kind = command === 'extensions-apply' ? 'apply' : 'retry';
   const request = { kind, requestId: 'request', selectionId: 'selection', expectedRevision: 1, ...(kind === 'retry' ? { afterAttemptId: 'previous' } : {}) };
-  assert.deepEqual(parseControlRequest({ op: command, request }), { op: command, request });
-  for (const changed of [{ ...request, selection: { version: 1, artifacts: [] } }, { ...request, requestId: '雪' }, { ...request, expectedRevision: -1 }, { ...request, grants: [] }]) {
-    assert.throws(() => parseControlRequest({ op: command, request: changed }));
+  assert.deepEqual(parseControlRequest({ op: 'extensions-live', request }), { op: 'extensions-live', request });
+  for (const changed of [{ ...request, selection: { version: 1, artifacts: [] } }, { ...request, requestId: '雪' }, { ...request, expectedRevision: -1 }, { ...request, grants: [] }, { ...request, kind: 'boot' },
+    { ...request, afterAttemptId: kind === 'apply' ? 'unexpected' : undefined }]) {
+    assert.throws(() => parseControlRequest({ op: 'extensions-live', request: changed }));
   }
-  assert.throws(() => parseControlRequest({ op: command === 'extensions-apply' ? 'extensions-retry' : 'extensions-apply', request }));
+  for (const op of ['extensions-apply', 'extensions-retry']) assert.throws(() => parseControlRequest({ op, request }));
+  assert.throws(() => parseControlRequest({ op: 'extensions-live', request, extra: true }));
   for (const flag of ['--selection', '--receipt', '--attempt']) await assert.rejects(promisify(execFile)(process.execPath, [main, command, '--data-dir', '/missing', flag, 'value']), /not valid/);
   await assert.rejects(promisify(execFile)(process.execPath, [main, 'extensions-status', '--data-dir', '/missing', '--operation', 'selection', '--attempt', 'request']), /Use --operation or --attempt/);
+});
+
+for (const kind of ['apply', 'retry']) for (const reply of ['lost', 'refused']) test(`packaged ${kind} emits one live envelope and preserves ${reply} reply guidance`, async t => {
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-live-control-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const requests = [];
+  const server = createServer(socket => {
+    let text = '';
+    socket.on('data', bytes => {
+      text += bytes;
+      if (!text.includes('\n')) return;
+      requests.push(JSON.parse(text));
+      if (reply === 'lost') socket.destroy();
+      else socket.end(JSON.stringify({ ok: false, error: 'Selection attempt-conflict' }) + '\n');
+    });
+  });
+  server.listen(join(directory, 'control.sock')); await once(server, 'listening');
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const flags = ['--operation', 'selection', '--expected-revision', '1', '--request', 'request',
+    ...(kind === 'retry' ? ['--after-attempt', 'previous'] : [])];
+  await assert.rejects(promisify(execFile)(process.execPath, [main, 'extensions-' + kind, '--data-dir', directory, ...flags]), error => {
+    assert.equal(error.stderr.trim(), reply === 'lost' ? 'Selection reply unavailable; inspect --attempt or resend the identical --request' : 'Selection attempt-conflict');
+    return true;
+  });
+  assert.deepEqual(requests, [{ op: 'extensions-live', request: { kind, requestId: 'request', selectionId: 'selection', expectedRevision: 1,
+    ...(kind === 'retry' ? { afterAttemptId: 'previous' } : {}) } }]);
 });

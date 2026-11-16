@@ -178,8 +178,8 @@ for (const badPin of [false, true]) test(`lost v2 histories refuse all mutations
     assert.deepEqual(owner.status(), { kind: 'journal-invalid' });
     await assert.rejects(owner.select({ id: 'later', expectedRevision: 0, selection: { version: 1, artifacts: [] } }), /unavailable/);
     const request = { kind: 'apply', requestId: 'apply-later', selectionId: 'startup', expectedRevision: 0 };
-    await assert.rejects(owner.apply(request), /unavailable/);
-    await assert.rejects(owner.retry({ ...request, kind: 'retry', requestId: 'retry-later', afterAttemptId: 'lost' }), /unavailable/);
+    await assert.rejects(owner.live(request), /unavailable/);
+    await assert.rejects(owner.live({ ...request, kind: 'retry', requestId: 'retry-later', afterAttemptId: 'lost' }), /unavailable/);
     assert.equal(activations(), 1);
     assert.deepEqual(reads, []);
     assert.deepEqual(snapshot(database), before);
