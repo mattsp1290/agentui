@@ -1,0 +1,24 @@
+{
+  "package": "@birbcrew/client",
+  "version": "0.1.0",
+  "sourceRevision": "47c00347f4eaf0202e19c46af1833898e655d4a3",
+  "sourcePackageTree": "8c1a7075617df2b36d8585d736fac0c962afffdc",
+  "sourceRepository": "git@github.com:mattsp1290/crew.git",
+  "sourceWasClean": true,
+  "sourceArchive": "source.tar.gz",
+  "sourceArchiveSha256": "c263367c6d256b55fac5f6a1aa318d3d1318bd61a57064386e9518dcc3abde9f",
+  "packageArchive": "birbcrew-client-0.1.0.tgz",
+  "packageArchiveSha256": "685a9875f0a7ca8fc10f9098641c7d1442c0e76f4797e010a8648b59b0fd4bc7",
+  "npmIntegrity": "sha512-3Q8sGvMIV5xlu6WHfqMk/4YwBFyI53UynpieVX8cq0PyMz+kK+SNVMgKfAY2tOTxCX1RigtAMw6cY6aP85obtA==",
+  "build": {
+    "node": "24.22.3",
+    "npm": "11.19.1",
+    "typescript": "5.9.3",
+    "command": "npm pack ./packages/client --json --pack-destination <output>; the existing prepack script runs the client build",
+    "sourceRevision": "47c00347f4eaf0202e19c46af1833898e655d4a3",
+    "sourceExtraction": "git archive 47c00347f4eaf0202e19c46af1833898e655d4a3 packages/client",
+    "dependencySource": "Existing clean Crew checkout dependencies; the existing portable client checks passed on Node 22 and Node 24."
+  },
+  "license": "MIT",
+  "sourceTree": "6f09d3af688f36fa3b82ee2f402c19be4423d836"
+}
