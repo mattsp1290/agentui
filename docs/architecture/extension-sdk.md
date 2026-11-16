@@ -141,7 +141,7 @@ Add `--trusted` for trusted browser access. `--extensions` is valid only for `se
 With both files, the configured native default remains selected. Without native configuration, the default is the ready provider with the smallest stable ID in the current catalog, independent of discovery order.
 Empty, changing, or failed catalogs remain readable with no default. Creation is disabled while saved conversations and their original agent identities remain available.
 Omitting `--extensions` preserves the existing native-agent behavior.
-Selection and credential rotation take effect after a restart.
+Changes to launch configuration and credential rotation take effect after a restart. Saved durable artifact selections can also be applied explicitly [without restarting](#durable-selection-and-explicit-live-application).
 
 The version 2 extension configuration has this shape:
 
