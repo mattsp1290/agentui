@@ -105,4 +105,3 @@ export async function customRuntime(page, host, selection, breakDefault = false,
   await page.goto(`${host.origin}/custom.html`);
   if (!breakDefault) await connected(page);
 }
-
