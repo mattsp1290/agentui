@@ -5,18 +5,24 @@ import { createConversationStore } from '@agentui/client';
 import { createFrontendSends, createGenerationSource } from '../../apps/desktop/dist/application/frontend-sends.js';
 import { scope, projection, storage, fakePort, deferred, receipt } from '../client/support.mjs';
 
-const recoveryPass = () => ({ current: () => true, signal: new AbortController().signal });
+const recoveryPass = () => ({ failed(error) { throw error; }, current: () => true, signal: new AbortController().signal });
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function fixture(t, { drafts = storage(), reply } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const disposed = [], calls = [], failures = [], requests = [];
   let changes = 0;
-  const source = createGenerationSource(), owners = [];
+  const source = createGenerationSource(), owners = [], borrows = new Map();
+  const held = owner => (borrows.get(owner) ?? 0) > 0;
+  const captureFor = owner => ({ borrow() {
+    borrows.set(owner, (borrows.get(owner) ?? 0) + 1);
+    let released = false;
+    return { failed(error) { failures.push(['view', error.message]); owner.storageFailed('view'); },
+      release() { if (!released) { released = true; borrows.set(owner, borrows.get(owner) - 1); } } };
+  } });
   function createOwner() {
     const owner = createFrontendSends({
       generations: source,
-      changed() { changes++; },
-      failed(view, error) { failures.push([view, error.message]); owner.storageFailed(view); },
+      rowsChanged() { changes++; },
       unauthorized() { void owner.session(null, connection); },
     });
     owners.push(owner);
@@ -30,12 +36,12 @@ async function fixture(t, { drafts = storage(), reply } = {}) {
   const a = await generation('A'), token = {};
   source.begin(token); source.publish(token, { kind: 'ready', generations: [a] });
   const port = fakePort(); let id = 0;
-  const frontend = owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' });
+  const frontend = owner.forStore({ viewId: 'view', scope, capture: captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' });
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), frontend });
   t.after(async () => { await Promise.all(owners.map(item => item.dispose())); await a.retire(); });
   const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
   const tick = async () => { t.mock.timers.tick(2000); await flush(); await recover(); };
-  return { owner, source, createOwner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover, changes: () => changes };
+  return { captureFor, held, owner, source, createOwner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover, changes: () => changes };
 }
 const bound = command => ({ kind: 'bound', command, hostOperationId: 'operation', threadId: 'actual-thread', run: { conversation: scope, runId: 'actual-run', authority: { kind: 'remote-provider', binding: { namespace: 'provider', installationId: 'installation', opaqueSessionId: 'session' } } } });
 
@@ -61,7 +67,7 @@ test('a disposed registry cannot revive old admission or authority when a new re
   await f.owner.session({ hostId: scope.hostId, principalId: 'C' }, f.connection);
   assert.throws(() => f.frontend.capture(), /Reconnect/);
   assert.deepEqual(f.owner.snapshot(), []);
-  const admission = second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' });
+  const admission = second.forStore({ viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' });
   const captured = admission.capture();
   assert.equal(captured.ownerId, 'C');
   assert.equal(captured.offer.tools[0].definition.description, 'B');
@@ -90,7 +96,7 @@ test('completed outbox settlement retains A, exact delayed binding rejects drift
   const key = f.owner.snapshot()[0].key; await f.owner.release(key); await retiring; await flush(); await f.recover();
   assert.deepEqual(f.disposed, ['A']); assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-pending');
   await f.tick(); assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-confirmed');
-  await f.owner.release(key); assert.equal(f.owner.holds('view'), false); assert.deepEqual(f.calls, []);
+  await f.owner.release(key); assert.equal(f.held(f.owner), false); assert.deepEqual(f.calls, []);
 });
 
 test('release during an outstanding recovery cannot bind or revive its delayed reply', async t => {
@@ -172,7 +178,7 @@ test('reload has no original closure and preserves original bytes while notifyin
   const second = f.createOwner(); t.after(() => second.dispose());
   await second.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   const drafts = storage(saved), port = fakePort();
-  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
+  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready;
   await assert.rejects(store.retry('1'), /Original captured tools/);
   for (const reference of store.frontendJournal.read()) await second.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
@@ -186,7 +192,7 @@ test('a provisional save finishing after disposal cannot reinsert an owner into 
   const send = f.store.send('Disposing during save'); await entered.promise;
   await f.owner.dispose(); gate.resolve(); await assert.rejects(send, /capture session changed/);
   assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-pending');
-  assert.equal(f.owner.holds('view'), false);
+  assert.equal(f.held(f.owner), false);
   assert.deepEqual(f.port.submitted, []);
 });
 
@@ -234,14 +240,14 @@ test('more than 32 restored references occupy only bounded presentation rows and
   const original = f.drafts.value.frontendSends[0]; await f.owner.dispose();
   const saved = { ...f.drafts.value, outbox: [], frontendSends: Array.from({ length: 70 }, (_, index) => ({ ...original, command: { ...original.command, clientCommandId: `old-${index}` } })) };
   const owner = f.createOwner(); await owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
-  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
+  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: owner.forStore({ viewId: 'view', scope, capture: f.captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready;
   for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
-  assert.equal(owner.holds('view'), false); assert.deepEqual(owner.snapshot(), []); assert.deepEqual(f.requests, []);
+  assert.equal(f.held(owner), false); assert.deepEqual(owner.snapshot(), []); assert.deepEqual(f.requests, []);
   await store.send('B still has capacity');
   await owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
-  assert.equal(owner.snapshot().length, 32); assert.equal(owner.holds('view'), false);
+  assert.equal(owner.snapshot().length, 32); assert.equal(f.held(owner), false);
   assert.ok(drafts.value.frontendSends.slice(0, 70).every(row => row.state === 'unavailable-confirmed'));
   assert.deepEqual(drafts.value.frontendSends.slice(0, 70).map(row => row.command), saved.frontendSends.map(row => row.command));
   const rows = owner.snapshot(), changes = f.changes(), requests = f.requests.length, writes = drafts.writes.length;
@@ -290,7 +296,7 @@ for (const outcome of ['reply', 'rejection', 'stale reply', 'pass abort', 'autho
   });
   if (outcome === 'already aborted') pass.abort();
   const reference = f.store.frontendJournal.read()[0];
-  const recovering = f.owner.recover({ viewId: 'view', journal: f.store.frontendJournal, reference, current: () => current, signal: pass.signal });
+  const recovering = f.owner.recover({ failed(error) { throw error; }, viewId: 'view', journal: f.store.frontendJournal, reference, current: () => current, signal: pass.signal });
   if (outcome !== 'already aborted') await entered.promise;
   if (outcome === 'pass abort') pass.abort();
   if (outcome === 'authority abort') await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);

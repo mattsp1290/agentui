@@ -18,6 +18,11 @@ type Identity = { readonly scope: ConversationScope; readonly id: string };
 type Owned = Identity & { readonly actor: FrontendSendActor };
 type AdmittedOwner = { readonly actorId: string; readonly state: 'available' | 'unavailable'; readonly run: AguiRunKey };
 type OwnerRows = { readonly admitted: AdmittedOwner | null; readonly tombstoneActors: ReadonlySet<string> };
+type AuthorityRequest = {
+  readonly stored: StoredCommand;
+  readonly actor: FrontendSendActor | undefined;
+  readonly intent: 'dispatch' | 'owner-evidence' | 'private-settler';
+};
 export class FrontendSends {
   constructor(private readonly db: DatabaseSync) {}
   assertActor(actor: FrontendSendActor | undefined): FrontendSendActor {
@@ -46,8 +51,20 @@ export class FrontendSends {
     if (owner.run.threadId !== stored.agui.threadId || owner.run.runId !== stored.agui.runId) throw new FrontendAccessError('frontend-owner-corrupt');
     return owner;
   }
-  assertAdmitted(stored: OfferedStoredCommand): void {
-    this.admittedOwner(this.ownerRows({ scope: stored.command.scope, id: stored.command.clientCommandId }), stored);
+  assertAuthority({ stored, actor, intent }: AuthorityRequest): void {
+    if (!isOffered(stored)) {
+      if (intent === 'dispatch' && actor) this.assertActor(actor);
+      else if (intent === 'private-settler' && actor && !actor.authorized()) throw new Error('Unauthorized actor');
+      return;
+    }
+    const identity = { scope: stored.command.scope, id: stored.command.clientCommandId };
+    if (intent === 'private-settler') {
+      this.assertActor(actor);
+      this.admittedOwner(this.ownerRows(identity), stored);
+      return;
+    }
+    const state = this.check({ ...identity, actor, stored });
+    if (intent === 'dispatch' && state !== 'available') throw new Error('Frontend owner unavailable');
   }
   check(input: Identity & { readonly actor: FrontendSendActor | undefined; readonly stored?: OfferedStoredCommand }): 'absent' | 'available' | 'unavailable' {
     const actor = this.assertActor(input.actor), rows = this.ownerRows(input);

@@ -2,6 +2,7 @@ import { canonicalJson, parseFrontendBinding, sameScope } from '@agentui/contrac
 import type { ConversationScope, FrontendBinding, FrontendEligibility, OfferedCommand } from '@agentui/contracts';
 import type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { FrontendAdmission, FrontendJournal, FrontendRecoveryReference } from '@agentui/client';
+import type { CaptureBorrow, CaptureStore } from './view-leases.js';
 import { retainFrontendTools } from '@agentui/sdk/tools';
 import type { FrontendToolGeneration, RetainedFrontendTools } from '@agentui/sdk/tools';
 
@@ -20,7 +21,7 @@ export type CapturedSend = CapturedState & {
   readonly viewId: string;
 };
 type Entry = { readonly key: string; readonly viewId: string; readonly reference: FrontendRecoveryReference; readonly journal: FrontendJournal;
-  readonly retained: RetainedFrontendTools; state: { readonly status: 'waiting'; readonly binding: null } | Extract<CapturedState, { status: 'bound' }>; pending: boolean };
+  readonly retained: RetainedFrontendTools; readonly borrow: CaptureBorrow; row: CapturedSend & { readonly status: 'waiting' | 'bound' }; pending: boolean };
 type ScopeHold = { readonly viewId: string; readonly scope: ConversationScope };
 type Session = { readonly hostId: string; readonly principalId: string; readonly connection: ServiceConnection };
 type Authority = { readonly session: Session | null; readonly lifetime: AbortController };
@@ -49,8 +50,7 @@ export function createGenerationSource(): GenerationSource {
 export type FrontendSends = ReturnType<typeof createFrontendSends>;
 export function createFrontendSends(deps: {
   readonly generations: Pick<GenerationSource, 'snapshot'>;
-  changed(): void;
-  failed(viewId: string, error: unknown): void;
+  rowsChanged(): void;
   unauthorized(): void;
 }) {
   let closed = false;
@@ -62,40 +62,44 @@ export function createFrontendSends(deps: {
   }
   const failedViews = new Set<string>();
   const entries = new Map<string, Entry>(), provisional = new Map<object, ScopeHold & { retained: RetainedFrontendTools }>();
-  const transitions = new Map<object, ScopeHold>();
   const recent = new Map<string, CapturedSend & { ownerId: string }>();
   const keyFor = (viewId: string, command: OfferedCommand) => canonicalJson([viewId, command.scope, command.clientCommandId]);
   const matches = (reference: FrontendRecoveryReference) => authority.session !== null && reference.ownerId === authority.session.principalId && reference.command.scope.hostId === authority.session.hostId;
   const held = (viewId: string, scope: ConversationScope | undefined, item: ScopeHold) => item.viewId === viewId && (!scope || sameScope(scope, item.scope));
   const acquiring = (viewId: string, scope: ConversationScope) => [...provisional.values()].some(item => held(viewId, scope, item));
+  let rows: readonly CapturedSend[] = Object.freeze([]);
+  function syncRows(): void {
+    const next = [...entries.values()].filter(entry => matches(entry.reference)).map<CapturedSend>(entry => entry.row)
+      .concat([...recent.values()].filter(row => authority.session?.principalId === row.ownerId && authority.session.hostId === row.command.scope.hostId));
+    if (next.length === rows.length && next.every((row, index) => row === rows[index])) return;
+    rows = Object.freeze(next); deps.rowsChanged();
+  }
   function remember(viewId: string, reference: FrontendRecoveryReference): void {
     if (!matches(reference)) return;
     const key = keyFor(viewId, reference.command);
-    recent.delete(key);
-    recent.set(key, { key, viewId, command: reference.command, ownerId: reference.ownerId, status: 'unavailable', binding: null });
+    if (recent.has(key)) return;
+    recent.set(key, Object.freeze({ key, viewId, command: reference.command, ownerId: reference.ownerId, status: 'unavailable', binding: null }));
     const oldest = recent.keys().next();
     if (recent.size > 32 && !oldest.done) recent.delete(oldest.value);
   }
   function schedule(): void {
     clearTimeout(timer);
-    if (!closed && authority.session && [...entries.values()].some(entry => entry.state.status === 'waiting' && matches(entry.reference))) {
+    if (!closed && authority.session && [...entries.values()].some(entry => entry.row.status === 'waiting' && matches(entry.reference))) {
       timer = setTimeout(() => { void poll(); }, 2_000);
     }
   }
   function unavailable(entry: Entry): Promise<void> {
-    const transition = {};
-    transitions.set(transition, { viewId: entry.viewId, scope: entry.reference.command.scope });
     const task = entry.journal.unavailable(entry.reference.command.clientCommandId);
     entries.delete(entry.key);
     entry.retained.release();
     remember(entry.viewId, entry.reference);
-    deps.changed();
-    return task.catch(error => { deps.failed(entry.viewId, error); throw error; }).finally(() => {
-      transitions.delete(transition); deps.changed(); schedule();
+    syncRows();
+    return task.catch(error => { entry.borrow.failed(error); throw error; }).finally(() => {
+      entry.borrow.release(); schedule();
     });
   }
-  async function recover({ viewId, journal, reference, current, signal }: {
-    viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current: () => boolean; signal: AbortSignal;
+  async function recover({ viewId, journal, reference, current, signal, failed }: {
+    viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current: () => boolean; signal: AbortSignal; failed(error: unknown): void;
   }): Promise<void> {
     const key = keyFor(viewId, reference.command), currentAuthority = authority;
     const session = currentAuthority.session;
@@ -103,9 +107,9 @@ export function createFrontendSends(deps: {
     if (reference.state === 'unavailable-confirmed' || !valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     if (reference.state === 'retained') {
       try { await journal.unavailable(reference.command.clientCommandId); }
-      catch (error) { if (valid()) deps.failed(viewId, error); return; }
+      catch (error) { if (valid()) failed(error); return; }
       if (!valid()) return;
-      if (matches(reference)) { remember(viewId, reference); deps.changed(); }
+      if (matches(reference)) { remember(viewId, reference); syncRows(); }
     }
     if (!valid() || !session || !matches(reference) || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     try {
@@ -116,7 +120,7 @@ export function createFrontendSends(deps: {
       if (response.kind !== 'unavailable' || response.id !== reference.command.clientCommandId) return;
       await journal.acknowledged(response.id);
       if (valid() && matches(reference) && reference.state === 'unavailable-pending') {
-        remember(viewId, reference); deps.changed();
+        remember(viewId, reference); syncRows();
       }
     } catch (error) {
       if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
@@ -124,7 +128,7 @@ export function createFrontendSends(deps: {
   }
   async function read(entry: Entry): Promise<void> {
     const current = authority, session = current.session;
-    if (entry.pending || !session || !matches(entry.reference) || entry.state.status !== 'waiting' || failedViews.has(entry.viewId)) return;
+    if (entry.pending || !session || !matches(entry.reference) || entry.row.status !== 'waiting' || failedViews.has(entry.viewId)) return;
     entry.pending = true;
     const valid = () => !current.lifetime.signal.aborted && entries.get(entry.key) === entry && !failedViews.has(entry.viewId);
     try {
@@ -136,12 +140,12 @@ export function createFrontendSends(deps: {
       if (response.kind === 'bound') {
         if (!sameScope(response.run.conversation, command.scope) || canonicalJson(response.command) !== canonicalJson(command)) throw new Error('Captured command binding does not match its original owner.');
         entry.retained.bind(response.run);
-        entry.state = { status: 'bound', binding: response };
+        entry.row = Object.freeze({ ...entry.row, status: 'bound', binding: response });
       } else {
         if (response.id !== command.clientCommandId) throw new Error('Captured command response has the wrong identity.');
         if (response.kind === 'unavailable') { await unavailable(entry); return; }
       }
-      deps.changed();
+      syncRows();
     } catch (error) {
       if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && valid()) deps.unauthorized();
     } finally { entry.pending = false; }
@@ -149,28 +153,20 @@ export function createFrontendSends(deps: {
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
   return {
     recover,
-    snapshot(): readonly CapturedSend[] {
-      return [...entries.values()].filter(entry => matches(entry.reference)).map<CapturedSend>(entry => ({ key: entry.key, command: entry.reference.command,
-        viewId: entry.viewId, ...entry.state })).concat([...recent.values()].filter(row => authority.session?.principalId === row.ownerId && authority.session.hostId === row.command.scope.hostId));
-    },
-    forgetView(viewId: string): void { failedViews.delete(viewId); },
-    holds(viewId: string, scope?: ConversationScope): boolean {
-      return [...entries.values()].some(entry => held(viewId, scope, { viewId: entry.viewId, scope: entry.reference.command.scope })) ||
-        [...provisional.values(), ...transitions.values()].some(entry => held(viewId, scope, entry));
-    },
+    snapshot: () => rows,
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
       const session = authority.session;
       const same = metadata && session && metadata.hostId === session.hostId && metadata.principalId === session.principalId && session.connection === connection;
       if (same) { schedule(); return; }
-      const transition = become(null); recent.clear(); clearTimeout(timer);
+      const transition = become(null); recent.clear(); clearTimeout(timer); syncRows();
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
       await Promise.allSettled([...entries.values()].map(unavailable));
       if (closed || transition.lifetime.signal.aborted) return;
       become(metadata ? { ...metadata, connection } : null);
-      deps.changed(); schedule();
+      syncRows(); schedule();
     },
-    forStore({ viewId, scope, eligibility }: { readonly viewId: string; readonly scope: ConversationScope; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
+    forStore({ viewId, scope, eligibility, capture }: { readonly viewId: string; readonly scope: ConversationScope; readonly capture: CaptureStore; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
       return {
         capture() {
           const current = authority, session = current.session;
@@ -185,6 +181,9 @@ export function createFrontendSends(deps: {
             retained.release();
             throw new Error('32 captured sends are still retained. Release captured tools or reconnect before sending.');
           }
+          let borrow: CaptureBorrow;
+          try { borrow = capture.borrow(); } catch (error) { retained.release(); throw error; }
+          let ownership: 'provisional' | 'transferred' | 'released' = 'provisional';
           const captureToken = {}, ownerId = session.principalId;
           provisional.set(captureToken, { viewId, scope, retained });
           try {
@@ -200,15 +199,16 @@ export function createFrontendSends(deps: {
               commit(command, journal) {
                 const acquired = provisional.delete(captureToken);
                 const valid = !closed && acquired && !current.lifetime.signal.aborted && !failedViews.has(viewId);
-                if (!valid) { retained.release(); deps.changed(); return false; }
+                if (!valid) { retained.release(); return false; }
                 const reference: FrontendRecoveryReference = { command, ownerId, state: 'retained' };
                 const key = keyFor(viewId, command);
-                entries.set(key, { key, viewId, reference, journal, retained, state: { status: 'waiting', binding: null }, pending: false });
-                deps.changed(); schedule(); return true;
+                ownership = 'transferred';
+                entries.set(key, { key, viewId, reference, journal, retained, borrow, row: Object.freeze({ key, viewId, command, status: 'waiting', binding: null }), pending: false });
+                syncRows(); schedule(); return true;
               },
-              release() { provisional.delete(captureToken); retained.release(); deps.changed(); },
+              release() { if (ownership !== 'provisional') return; ownership = 'released'; provisional.delete(captureToken); retained.release(); borrow.release(); },
             };
-          } catch (error) { provisional.delete(captureToken); retained.release(); throw error; }
+          } catch (error) { provisional.delete(captureToken); retained.release(); borrow.release(); throw error; }
         },
         canRetry(command) {
           const entry = entries.get(keyFor(viewId, command));
@@ -223,12 +223,12 @@ export function createFrontendSends(deps: {
     async release(key: string): Promise<void> { const entry = entries.get(key); if (entry) await unavailable(entry); },
     storageFailed(viewId: string): void {
       failedViews.add(viewId);
-      for (const [key, entry] of entries) if (entry.viewId === viewId) { entries.delete(key); entry.retained.release(); remember(viewId, entry.reference); }
+      for (const [key, entry] of entries) if (entry.viewId === viewId) { entries.delete(key); entry.retained.release(); entry.borrow.release(); remember(viewId, entry.reference); }
       for (const [key, item] of provisional) if (item.viewId === viewId) { item.retained.release(); provisional.delete(key); }
-      deps.changed(); schedule();
+      syncRows(); schedule();
     },
     async dispose(): Promise<void> {
-      closed = true; become(null); recent.clear(); clearTimeout(timer);
+      closed = true; become(null); recent.clear(); clearTimeout(timer); syncRows();
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
       await Promise.allSettled([...entries.values()].map(unavailable));
