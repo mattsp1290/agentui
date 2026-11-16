@@ -14,12 +14,12 @@ const scopedFirstApproval = { requestId: 'other-command-request', file: false, i
 const approvalScenarios = {
   'item-command-approval': { requestId: 'command-request', file: false, items: [commandItem], params: {} },
   'scoped-command-approval': { requestId: 'command-request', file: false, items: [], params: {} },
-  'file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange', changes: [
+  'file-approval': { requestId: 0, file: true, items: [{ id: 'tool', type: 'fileChange', status: 'inProgress', changes: [
     { path: '/workspace/src/main.ts', kind: { type: 'update', move_path: null }, diff: '-old\n+new' },
     { path: '/workspace/new.txt', kind: { type: 'add' }, diff: '+created' },
   ] }], params: { grantRoot: '/workspace' } },
   'malformed-file-approval': { requestId: '0', file: true,
-    items: [{ id: 'tool', type: 'fileChange', changes: [{ path: null, kind: null }] }], params: { grantRoot: '/workspace' } },
+    items: [], params: { grantRoot: '/workspace' } },
   'pending-complete': standardApproval,
   'pending-disconnect': standardApproval,
   'expire-complete': standardApproval,
@@ -70,7 +70,28 @@ createInterface({ input: process.stdin }).on('line', line => {
       notify('turn/started', { threadId: turn.threadId, turn: { id: turn.id } });
       const approval = mode === 'scoped-command-approval' && turn.threadId === 'thread-1' ? scopedFirstApproval : approvalScenarios[mode];
       setTimeout(() => {
-        if (mode === 'activity-late-context') {
+        if (mode === 'file-activity') {
+          const params = { threadId: turn.threadId, turnId: turn.id };
+          const changes = [{ path: '/workspace/source.ts', kind: { type: 'update', move_path: '/workspace/moved.ts' }, diff: '-old\n+<script>literal</script>🙂' }];
+          notify('item/fileChange/patchUpdated', { ...params, itemId: 'file', changes });
+          notify('item/fileChange/patchUpdated', { ...params, turnId: 'foreign', itemId: 'foreign', changes });
+          notify('item/fileChange/outputDelta', { ...params, itemId: 'file', delta: 'LEGACY OUTPUT' });
+          if (turn.id !== 'turn-1') { completedItem(turn, 'Current turn remains live'); return; }
+          notify('item/completed', { ...params, item: { ...commandItem, status: 'completed', aggregatedOutput: 'command retained', exitCode: 0 } });
+          turn.timer = setInterval(() => {
+            if (!existsSync(`${logPath}.finish`)) return;
+            finish(turn);
+            const late = setInterval(() => {
+              if (!existsSync(`${logPath}.late`)) return;
+              clearInterval(late);
+              notify('item/fileChange/patchUpdated', { ...params, itemId: 'file', changes: [] });
+              notify('item/completed', { ...params, item: { id: 'file', type: 'fileChange', status: 'completed', changes } });
+              notify('item/fileChange/patchUpdated', { ...params, itemId: 'file', changes: [] });
+              notify('item/started', { ...params, item: { id: 'file', type: 'fileChange', status: 'inProgress', changes: [] } });
+            }, 5);
+          }, 5);
+          return;
+        } else if (mode === 'activity-late-context') {
           const params = { threadId: turn.threadId, turnId: turn.id };
           if (turn.id !== 'turn-1') {
             completedItem(turn, 'Current turn remains live');

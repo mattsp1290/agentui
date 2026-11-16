@@ -1,6 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFile } from 'node:fs/promises';
+import { readFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createCodexDriver, openLocalHost } from '@agentui/host';
+import { createConversationStore } from '@agentui/client';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import { budgets } from '../../packages/host/dist/durable-model.js';
+import { until } from '../host/fixture.mjs';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 import { chromium } from 'playwright';
@@ -18,6 +25,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
     async setDraft(draft) { flushSync(() => { view = { ...view, draft }; for (const listener of listeners) listener(); }); } };
   const active = { store, scope: { hostId: 'host', conversationId: 'reply' }, agent: { label: 'Recorded', commands: ['send'], availability: { kind: 'ready' } } };
   const root = createRoot(document.getElementById('conversation'));
+  globalThis.setStoredView = next => flushSync(() => { view = next; for (const listener of listeners) listener(); });
   globalThis.replySource = () => view.document.domain.messages[1];
   globalThis.setReply = (text, complete = false) => flushSync(() => {
     const messages = [view.document.domain.messages[0], { messageId: 'reply', revision: (view.document.domain.messages[1]?.revision ?? 0) + 1, role: 'assistant', text, complete }];
@@ -201,5 +209,51 @@ test('command disclosure keeps its identity and escaped retained output through 
   assert.ok(layout.scrolls);
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep my draft');
   assert.equal(await page.evaluate(() => globalThis.executed), undefined);
+  assert.deepEqual(requests, []);
+});
+
+test('Codex file observations reach saved default disclosures through host and client with a retained draft', async t => {
+  const { page, requests } = await fixture(t, 360);
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-file-view-'));
+  const log = join(directory, 'rpc.jsonl'), scope = { hostId: 'host', conversationId: 'reply' };
+  let host, client, saved = null;
+  const driver = createCodexDriver({ cwd: directory, version: '0.167.2', executable: process.execPath,
+    args: [fileURLToPath(new URL('../host/fixtures/codex-streaming-agent.mjs', import.meta.url)), log, 'file-activity'],
+    append: (scope, output) => host.append(scope, output) });
+  const openHost = () => openLocalHost({ path: join(directory, 'host.sqlite'), driver, projection: transcriptProjection, budgets: budgets(), authorize: () => true });
+  const openClient = () => createConversationStore({ scope, port: host.conversation(scope), projection: transcriptProjection,
+    drafts: { async load() { return saved; }, async save(value) { saved = structuredClone(value); } }, createCommandId: () => 'file-view-send' });
+  t.after(async () => { client?.disconnect(); driver.close(); host?.close(); await host?.drained; await rm(directory, { recursive: true, force: true }); });
+  host = openHost(); host.createConversation(scope, driver.installation);
+  client = openClient(); await client.connect();
+  await host.conversation(scope).submit({ version: 1, scope, clientCommandId: 'native-send', body: { kind: 'send', text: 'Observe fixture changes' } });
+  await until(() => client.getSnapshot().document.domain.activities?.some(item => item.kind === 'file-change'));
+  await client.setDraft('Keep the file review draft');
+  const show = () => page.evaluate(view => globalThis.setStoredView(view), client.getSnapshot());
+  await show();
+  const files = page.getByRole('region', { name: 'File changes', exact: true });
+  const disclosure = files.locator('details').first();
+  await disclosure.locator('summary').click();
+  await disclosure.evaluate(node => { globalThis.fileNode = node; });
+  assert.match(await disclosure.locator('summary').textContent(), /Outcome not observed/);
+  assert.equal(await disclosure.getByLabel('Reported patch').textContent(), '-old\n+<script>literal</script>🙂');
+  assert.match(await disclosure.textContent(), /Update.*source\.ts.*→.*moved\.ts/s);
+  assert.equal(await files.locator('script').count(), 0);
+  assert.equal(await page.getByRole('region', { name: 'Commands', exact: true }).count(), 1);
+  await writeFile(`${log}.finish`, ''); await writeFile(`${log}.late`, '');
+  await until(() => client.getSnapshot().document.domain.activities?.some(item => item.kind === 'file-change' && item.status.kind === 'completed'));
+  await show();
+  assert.equal(await disclosure.evaluate(node => node === globalThis.fileNode && node.open), true);
+  assert.match(await disclosure.locator('summary').textContent(), /Completed/);
+  const document = client.getSnapshot().document;
+  client.disconnect(); await show();
+  host.close(); await host.drained;
+  host = openHost(); client = openClient(); await client.connect();
+  await until(() => client.getSnapshot().connection.kind === 'connected');
+  assert.deepEqual(client.getSnapshot().document, document);
+  await show();
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep the file review draft');
+  assert.equal(await disclosure.getByLabel('Reported patch').textContent(), '-old\n+<script>literal</script>🙂');
+  assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(requests, []);
 });

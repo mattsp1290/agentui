@@ -46,7 +46,7 @@ for (const [name, corrupt, classification = 'resync'] of malformed) {
       const request = JSON.parse(init.body);
       return Response.json({ ok: true, value: request.op === 'watch' ? { feedId: 'feed' } : request.op === 'close' ? null : framed });
     } });
-    const browserFeed = browser.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => assert.fail('Malformed document delivered'));
+    const browserFeed = browser.conversation(scope).watch({ after: null, projectionVersion: 3 }, async () => assert.fail('Malformed document delivered'));
     const end = await browserFeed.ended;
     assert.equal(end.kind, classification === 'mismatch' ? 'refused' : 'resync');
     assert.equal(end.cursor, null);

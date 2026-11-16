@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { root, fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.2.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.3.0', activate() { ${body} } } })`;
 const override = `function Transcript(context) {
   const [broken, setBroken] = React.useState(false);
   window.contexts ??= []; if (!window.contexts.some(previous => previous.conversation.conversationId === context.conversation.conversationId)) window.contexts.push(context);
@@ -216,8 +216,8 @@ test('overridden live conversation retains approval, Stop and uncertain recovery
     const active = { viewId: 'one', scope, store, agent: { commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
     function Broken() { throw new Error('Live failure'); }
     function Transcript() { const [broken, setBroken] = React.useState(false); return broken ? <Broken /> : <button onClick={() => setBroken(true)}>Fail live transcript</button>; }
-    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.2.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
-      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.2.0', activate() { window.activations++; return { modules: [], overrides: { transcript: Transcript }, dispose() { window.disposals++; } }; } } }) }];
+    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.3.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
+      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.3.0', activate() { window.activations++; return { modules: [], overrides: { transcript: Transcript }, dispose() { window.disposals++; } }; } } }) }];
     function App() { const [enabled, setEnabled] = React.useState(true); window.disable = () => flushSync(() => setEnabled(false)); window.enable = () => flushSync(() => setEnabled(true));
       const custom = useDesktopCustomizations({ customizations, enabled });
       return <ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} />; }
@@ -292,8 +292,8 @@ test('StrictMode delayed same-array reactivation never remounts an obsolete tran
   const bundle = await build({ stdin: { contents: `import React from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom';
     import { CustomizationTranscript, useDesktopCustomizations } from './apps/desktop/src/application/DesktopCustomizations.tsx';
     window.activations = 0; window.loads = 0; window.disposals = []; window.mounts = []; window.finish = {};
-    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.2.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
-      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.2.0', activate() {
+    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.3.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
+      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.3.0', activate() {
         const id = ++window.activations; let disposed = false;
         function Transcript() { React.useLayoutEffect(() => { window.mounts.push({ id, disposed }); }, []); return <p>Owner {id}</p>; }
         return new Promise(resolve => { window.finish[id] = malformed => resolve({ modules: [],

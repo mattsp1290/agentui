@@ -9,6 +9,7 @@ import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
 import { approvalItem, approvalPrompt, bounded, rememberApprovalItem } from './codex-approval-display.js';
 import type { ApprovalDetails } from './codex-approval-display.js';
+import { createFileActivity } from './codex-file-activity.js';
 import { createCommandActivity } from './codex-command-activity.js';
 import { discoverCodexModels } from './codex-models.js';
 import type { CodexModel } from './codex-models.js';
@@ -32,6 +33,7 @@ interface ActiveTurn {
   readonly approvalDetails: Map<string, ApprovalDetails>;
   readonly rendered: Extract<TranscriptEvent, { kind: 'message-updated' }>[];
   commands: ReturnType<typeof createCommandActivity> | null;
+  files: ReturnType<typeof createFileActivity> | null;
   stopCommandId: string | null;
   timer: ReturnType<typeof setTimeout> | undefined;
   revision: number;
@@ -63,7 +65,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
   const installation = codexInstallation(options.cwd, options.version);
   const cwd = installation.binding.authorizedScope;
   const active = new Map<string, ActiveTurn>();
-  const closedTurns = new Map<string, { readonly runId: string; readonly commands: ReturnType<typeof createCommandActivity> }>();
+  const closedTurns = new Map<string, { readonly runId: string; readonly commands: ReturnType<typeof createCommandActivity>; readonly files: ReturnType<typeof createFileActivity> }>();
   const busy = new Set<string>();
   const loaded = new Set<string>();
   const approvals = new Map<string, Approval>();
@@ -101,6 +103,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
     clearTimeout(turn.timer); turn.timer = undefined;
     if (!turn.run) return;
     turn.commands?.flush();
+    turn.files?.flush();
     const parts = messageParts([...turn.messages.values()].join('\n\n'));
     const count = Math.max(parts.length, turn.rendered.length);
     for (let index = 0; index < count; index++) {
@@ -191,12 +194,15 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       turn.commands = createCommandActivity(turnId, event => {
         if (!closing) options.append(scope, { events: [event], runs: [], decisions: [] });
       });
+      turn.files = createFileActivity(turnId, event => {
+        if (!closing) options.append(scope, { events: [event], runs: [], decisions: [] });
+      });
       publish(turn, [{ kind: 'run-started', runId: turnId, previousRunId: turn.previousRunId }], [], [value]);
     }
     return value;
   }
   function notification(method: string, value: unknown): void {
-    if (closing || !['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/commandExecution/outputDelta', 'item/started', 'item/completed', 'serverRequest/resolved', 'error'].includes(method)) return;
+    if (closing || !['turn/started', 'turn/completed', 'item/agentMessage/delta', 'item/commandExecution/outputDelta', 'item/fileChange/patchUpdated', 'item/started', 'item/completed', 'serverRequest/resolved', 'error'].includes(method)) return;
     const params = object(value);
     if (method === 'serverRequest/resolved') {
       const approval = approvals.get(canonicalJson(params.requestId));
@@ -210,11 +216,15 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
     const threadId = nonempty(params.threadId);
     const turn = active.get(threadId);
     if ((!turn || turn.run?.identity.runId !== params.turnId) &&
-      (method === 'item/completed' || method === 'item/commandExecution/outputDelta')) {
+      (method === 'item/completed' || method === 'item/commandExecution/outputDelta' || method === 'item/fileChange/patchUpdated')) {
       const closed = closedTurns.get(threadId);
       if (closed && closed.runId === params.turnId) {
-        try { closed.commands.observe(method, params); closed.commands.flush(); }
-        catch { process.emitWarning('Could not retain late Codex command output', { code: 'AGENTUI_CODEX_LATE_OUTPUT' }); }
+        try {
+          if (method === 'item/fileChange/patchUpdated' || (method === 'item/completed' && object(params.item).type === 'fileChange')) {
+            closed.files.observe(method, params); closed.files.flush();
+          } else { closed.commands.observe(method, params); closed.commands.flush(); }
+        }
+        catch { process.emitWarning('Could not retain late Codex activity', { code: 'AGENTUI_CODEX_LATE_OUTPUT' }); }
       }
       return;
     }
@@ -223,6 +233,10 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       const turnId = nonempty(object(params.turn).id);
       if (turn.complete || turn.previousRunId === turnId || (turn.run && turn.run.identity.runId !== turnId)) return;
       run(turn, turnId);
+    } else if (method === 'item/fileChange/patchUpdated') {
+      if (turn.run?.identity.runId !== params.turnId) return;
+      turn.files?.observe(method, params);
+      schedule(turn);
     } else if (method === 'item/commandExecution/outputDelta') {
       if (turn.run?.identity.runId !== params.turnId) return;
       turn.commands?.observe(method, params);
@@ -240,6 +254,11 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
         if (item.status === 'inProgress') schedule(turn);
         else turn.commands?.flush();
       }
+      if (item.type === 'fileChange') {
+        turn.files?.observe(method, params);
+        if (item.status === 'inProgress') schedule(turn);
+        else turn.files?.flush();
+      }
       const remembered = approvalItem(item);
       if (remembered) rememberApprovalItem(turn.approvalDetails, remembered);
       if (method === 'item/completed' && item.type === 'agentMessage') {
@@ -256,7 +275,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       turn.complete = true;
       renderMessage(turn);
       endRun(turn, completed.status === 'interrupted' ? 'interrupted' : completed.status === 'failed' ? 'failed' : 'completed');
-      if (turn.commands && turn.run) closedTurns.set(turn.threadId, { runId: turn.run.identity.runId, commands: turn.commands });
+      if (turn.commands && turn.files && turn.run) closedTurns.set(turn.threadId, { runId: turn.run.identity.runId, commands: turn.commands, files: turn.files });
       active.delete(turn.threadId); busy.delete(scopeKey(turn.scope));
     } else if (method === 'error' && params.willRetry !== true) {
       status(turn, 'Codex reported an error while responding.');
@@ -315,7 +334,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
         threadId = nonempty(object(response.thread).id);
         loaded.add(threadId);
       }
-      turn = { installation: target.installation, scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, revision: 0, complete: false, stopCommandId: null };
+      turn = { installation: target.installation, scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, files: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
         revision: 1, role: 'user', text: command.body.text, complete: true }]);

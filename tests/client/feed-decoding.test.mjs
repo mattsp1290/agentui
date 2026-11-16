@@ -6,7 +6,7 @@ import { parseServicePull } from '@agentui/contracts/service';
 import { createBrowserConnection } from '@agentui/client/service';
 import { connected, events, projection, scope, snapshot } from './support.mjs';
 
-const transcriptSnapshot = { kind: 'snapshot', snapshot: { scope, cursor: 0, projectionVersion: 2,
+const transcriptSnapshot = { kind: 'snapshot', snapshot: { scope, cursor: 0, projectionVersion: 3,
   document: { domain: transcriptProjection.initial(), receipts: {}, decisions: {} } } };
 
 for (const [name, corrupt] of [
@@ -59,7 +59,7 @@ for (const [name, item, expected] of [
       return Response.json({ ok: true, value: request.op === 'watch' ? { feedId: 'feed' }
         : request.op === 'close' ? null : { kind: 'page', page: 1, item } });
     } });
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 3 }, async () => assert.fail('Invalid item delivered'));
     const end = await feed.ended;
     assert.equal(end.kind, expected);
     assert.equal(end.cursor, 8);

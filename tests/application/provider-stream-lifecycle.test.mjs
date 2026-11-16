@@ -12,7 +12,7 @@ const replace = (f, extensions) => f.running.replaceProviderExtensions(extension
 test('live replacement resumes one saved observation and an existing HTTP watch without repeating effects', async t => {
   const remote = await providerService(t), a = remote.extension(), f = await fixture(t, [a]), scope = await f.create();
   await until(() => a.calls.ready === 1);
-  const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => { items.push(item); });
+  const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => { items.push(item); });
   t.after(() => feed.close()); await until(() => items.length === 1);
   await f.client.conversation(scope).submit(send(scope));
   const binding = remote.conversations.get('chat').snapshot.binding;
@@ -49,7 +49,7 @@ test('replacement preserves history across unavailable generations and retries c
     const b = remote.extension(options);
     assert.equal((await replace(f, [b])).kind, 'replaced');
     assert.equal(b.calls.observe.length, 0); assert.deepEqual(saved(f), before);
-    const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => { items.push(item); });
+    const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => { items.push(item); });
     await until(() => items.length === 1); feed.close();
     assert.equal(items[0].snapshot.document.domain.messages.at(-1).text, 'Saved output');
     const resumed = remote.extension(); await replace(f, [resumed]);

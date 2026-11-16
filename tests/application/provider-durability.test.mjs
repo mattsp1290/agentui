@@ -209,7 +209,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     }
     assert.equal((await port.submit(approve(scope, record.reserved, 'competing'))).reason, 'decision-unavailable');
     record.before = fullState(f, id); record.items = [];
-    record.feed = port.watch({ after: record.before.conversation.head, projectionVersion: 2 }, async item => { record.items.push(item); });
+    record.feed = port.watch({ after: record.before.conversation.head, projectionVersion: 3 }, async item => { record.items.push(item); });
     t.after(() => record.feed.close());
     await until(() => record.items.length === 1);
     assert.deepEqual(record.items[0], { kind: 'events', events: [] });
@@ -243,7 +243,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     assert.deepEqual(fullState(f, record.id), record.replaced);
     assert.deepEqual(b.calls.observe.find(value => value.binding.creation.scope.conversationId === record.id),
       { binding: record.binding, after: JSON.parse(record.replaced.checkpoint.data).cursor });
-    const items = [], feed = record.port.watch({ after: record.before.conversation.head, projectionVersion: 2 }, async item => { items.push(item); });
+    const items = [], feed = record.port.watch({ after: record.before.conversation.head, projectionVersion: 3 }, async item => { items.push(item); });
     t.after(() => feed.close()); await until(() => items.length > 0); feed.close();
     assert.equal(items[0].kind, 'snapshot'); assert.deepEqual(items[0].snapshot.document, document(record.replaced));
     const snapshot = structuredClone(remote.conversations.get(record.id).snapshot);

@@ -13,6 +13,7 @@ const module = { id: 'notes', label: 'Notes', component: () => null };
 
 test('provider-free nested module activates, renders changing activity and preserves scoped command results', async () => {
   let disposals = 0;
+  assert.equal(EXTENSION_SDK_VERSION, '0.3.0');
   const fixture = createNotesFixture(() => { disposals++; });
   const metadata = parseExtensionManifest(manifest);
   assert.deepEqual(checkExtensionEntrypoint(metadata, 'desktop', fixture), { kind: 'compatible' });
@@ -71,6 +72,8 @@ test('compatibility rejects undeclared targets and invalid exports before activa
   const valid = { ...entry, activate() { activations++; } };
   for (const [metadata, target, loaded, code] of [
     [{ ...manifest, sdkVersion: 'future' }, 'desktop', valid, 'sdk-version'],
+    [{ ...manifest, sdkVersion: '0.2.0' }, 'desktop', valid, 'sdk-version'],
+    [manifest, 'desktop', { ...valid, sdkVersion: '0.2.0' }, 'sdk-version'],
     [manifest, 'ios', valid, 'entry-kind'], [manifest, 'desktop', { ...valid, kind: 'server' }, 'entry-kind'],
     [manifest, 'desktop', { ...valid, sdkVersion: 'future' }, 'sdk-version'],
     [manifest, 'desktop', { ...valid, sdkVersion: undefined }, 'sdk-version'],

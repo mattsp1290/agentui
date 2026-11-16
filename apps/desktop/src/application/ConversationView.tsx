@@ -7,6 +7,7 @@ import { ConversationPermissions } from './ConversationPermissions.js';
 import { CommandRecovery } from './CommandRecovery.js';
 import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
+import { FileActivity } from './FileActivity.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
 import { CustomizationTranscript, type TranscriptSelection } from './DesktopCustomizations.js';
@@ -123,6 +124,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
       <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
+      <FileActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
     </div>} />
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">

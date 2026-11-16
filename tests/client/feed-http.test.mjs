@@ -6,7 +6,7 @@ import { createBrowserConnection } from '@agentui/client/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { fixture, scope } from './support.mjs';
 
-const baseline = { kind: 'snapshot', snapshot: { scope, projectionVersion: 2, cursor: 0,
+const baseline = { kind: 'snapshot', snapshot: { scope, projectionVersion: 3, cursor: 0,
   document: { domain: transcriptProjection.initial(), receipts: {}, decisions: {} } } };
 const foreignReceiptPage = { kind: 'events', events: [
   { scope, sequence: 1, event: { kind: 'domain', event: { kind: 'message-updated', messageId: 'unpublished',
