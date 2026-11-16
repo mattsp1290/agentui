@@ -55,7 +55,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
     await assertCompileCases({
       config: join(dir, 'tsconfig.json'),
       prefix:
-        "import { createFrontendToolGeneration, pinFrontendTools, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\n",
+        "import { createFrontendToolGeneration, pinFrontendTools, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\nexport { createFrontendToolGeneration, pinFrontendTools }; export type { FrontendToolContribution, FrontendToolOutcome };\n",
       cases: [
         [
           "const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t; declare const g: import('@agentui/sdk/tools').FrontendToolGeneration; declare const run: import('@agentui/contracts').RunIdentity; const p = pinFrontendTools({ generations: [g], platform: 'ios', run, capabilities: { tools: { clientProvided: true } } }); const o: Promise<FrontendToolOutcome> = p.invoke('a__b', {}, 'activation'); void o;",
@@ -66,32 +66,45 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           /not assignable/u,
         ],
         [
-          "function validateUiExtensionContributions(value: unknown): asserts value is { modules: string[]; dispose(): void } { void value; } void pinFrontendTools; void (null as unknown as FrontendToolContribution<string>); void (null as unknown as FrontendToolOutcome); const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept: value => { validateUiExtensionContributions(value); return value; }, activate() { return {}; } }); void result.contributions.modules;",
+          "function decode(value: unknown): { modules: string[] } { void value; return { modules: ['sync'] }; } void pinFrontendTools; void (null as unknown as FrontendToolContribution<string>); void (null as unknown as FrontendToolOutcome); const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture: decode, activate() { return {}; } }); void result.contributions.modules;",
           null,
         ],
         [
           "function accept(value: unknown) { void value; return { modules: ['x'] }; } void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept, activate() { return {}; } });",
-          /not assignable/u,
+          /does not exist/u,
         ],
         [
           "const t: FrontendToolContribution<string> = { definition: { name: 1, description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void t;",
           /not assignable/u,
         ],
         [
-          "function accept(value: unknown) { void value; return { modules: ['x'], dispose() {} }; } const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', accept, activate() { return {}; } }); result.contributions.dispose();",
+          "function capture(value: unknown) { void value; return { modules: ['x'] }; } const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture, activate() { return {}; } }); result.contributions.dispose();",
           /Property 'dispose' does not exist/u,
         ],
         [
-          "const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', async accept() { return { modules: ['async'], dispose() {} }; }, activate(context) { const namespace: string = context.namespace; const tools: import('@agentui/sdk/tools').FrontendToolContributions = context.frontendTools; void namespace; void tools; return {}; } }); const modules: string[] = result.contributions.modules; void modules; void pinFrontendTools; declare const tool: FrontendToolContribution<string>; declare const outcome: FrontendToolOutcome; void tool; void outcome;",
+          "const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', async capture() { return { modules: ['async'] }; }, activate(context) { const namespace: string = context.namespace; const tools: import('@agentui/sdk/tools').FrontendToolContributions = context.frontendTools; void namespace; void tools; return {}; } }); const modules: string[] = result.contributions.modules; void modules; void pinFrontendTools; declare const tool: FrontendToolContribution<string>; declare const outcome: FrontendToolOutcome; void tool; void outcome;",
           null,
         ],
         [
-          "void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', async accept() { return { modules: ['missing dispose'] }; }, activate() { return {}; } });",
+          "const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture: () => undefined, activate() { return { dispose() {} }; } }); const empty: undefined = result.contributions; void empty;",
+          null,
+        ],
+        [
+          "const data = { dispose: 'ordinary data', count: 1 }; const result = await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture: () => data, activate() { return { dispose() {} }; } }); const same: typeof data = result.contributions; const field: string = same.dispose; void field;",
+          null,
+        ],
+        [
+          "void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', activate() { return {}; } });",
+          /'capture' is missing/u,
+        ],
+        [
+          "void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture: false, activate() { return {}; } });",
           /not assignable/u,
         ],
         ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.definitions[0].name = 'changed';", /read-only property/u],
         ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.invoke('demo__x', {});", /Expected 3 arguments/u],
         ['void document;', /Cannot find name 'document'/u],
+        ['void process;', /Cannot find name 'process'/u],
       ],
     });
     run(
@@ -103,7 +116,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           import assert from 'node:assert/strict';
           import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
           const { generation } = await createFrontendToolGeneration({
-            namespace: 'demo', generation: '1', platform: 'ios', accept(value) { return value; },
+            namespace: 'demo', generation: '1', platform: 'ios', capture() { return undefined; },
             activate({ frontendTools: tools }) {
               tools.add({
                 definition: { name: 'x', description: 'x', parameters: { type: 'object',
@@ -162,7 +175,7 @@ test('tools import survives a URL with a getter-only hash', () => {
     globalThis.URL = class extends NativeURL { get hash() { return super.hash; } };
     const { createFrontendToolGeneration } = await import('@agentui/sdk/tools');
     let failed = false;
-    try { await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'ios', accept(value) { return value; }, activate({ frontendTools: t }) { t.add({ definition: { name: 'x', description: 'x' }, decodeInput(x) { return x; }, async execute() { return ''; } }); return { dispose() {} }; } }); } catch (error) { failed = /standards-compliant URL/.test(error.message) && error.cause instanceof Error; }
+    try { await createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'ios', capture() { return undefined; }, activate({ frontendTools: t }) { t.add({ definition: { name: 'x', description: 'x' }, decodeInput(x) { return x; }, async execute() { return ''; } }); return { dispose() {} }; } }); } catch (error) { failed = /standards-compliant URL/.test(error.message) && error.cause instanceof Error; }
     if (!failed) throw Error('registration should fail with a constrained URL');
   `,
     ],

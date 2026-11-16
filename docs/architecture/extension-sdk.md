@@ -1,7 +1,7 @@
 # Author an extension
 
 The existing `@agentui/sdk` package exposes server contracts at its root and UI contracts at `@agentui/sdk/react`.
-The `@agentui/sdk/react-tools` entry adapts captured UI contributions to frontend tool generations.
+The `@agentui/sdk/react-tools` entry combines UI presentation capture with frontend tool generations.
 Installed server code runs with host process privileges.
 Installed UI code runs with client process privileges.
 Extensions are full trust. There is no sandbox or isolation promise.
@@ -35,13 +35,13 @@ Workspace package versions are `0.0.0`, service wire version is 7, and transcrip
 
 A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`.
 Its activation returns modules and a required `dispose` function, either directly or through a promise.
-Hosts call `parseUiExtensionContributions` once on the returned contribution.
+Standalone owners call `parseUiExtensionContributions` once on the returned contribution.
 The result distinguishes an invalid lifetime, invalid presentation with an acquired disposer, and ready presentation with a disposer.
 The owner retains the disposer before handling presentation failure or removal, including late activation results.
 It withdraws contributions and calls that disposer on deactivation. Repeated calls share the same completion or rejection.
 Render only the ready result's `presentation`, whose module/action records and arrays are copied recursively.
 Captured actions and disposal retain their original receivers. Component references stay opaque, including React wrappers.
-The standalone assertion helpers never invoke disposal; hosts use the parser to retain captured values.
+The standalone assertion helpers never invoke disposal; standalone owners use the parser to retain captured values.
 Behaviour checks accept class instances, accessors, and callable objects with the required fields.
 They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
@@ -332,24 +332,27 @@ await generation.retire();
 ```
 
 Render `presentation.modules` and `presentation.transcript`, which contain captured presentation values.
-The UI adapter reads producer fields once and transfers its captured disposer to the generation.
+The core generation factory captures raw disposal once. The UI adapter uses `parseUiExtensionPresentation` to capture presentation without inspecting disposal.
+The standalone `parseUiExtensionContributions` parser shares that presentation parser and retains its own once-only disposal contract.
 The returned presentation contains no disposal method.
-Activation owners can supply `onFailure` to publish a rejected activation before cleanup finishes.
-The creation promise still awaits the observer and cleanup, preserving the original error and any later failures.
+Activation owners can supply `onFailure` to publish the primary failure before cleanup starts.
+A pending observer does not delay starting cleanup.
+The creation promise awaits both completions, preserving the original error and any later failures.
 This activation support does not advertise tools to backends or deliver tool calls from the host.
 
 - **Creation.** If activation throws or returns a value without a callable disposer, the callback owns cleanup of any partial activation.
-Otherwise, creation captures its disposer once, then awaits the acceptance decoder.
-The decoder may return the original contribution or a transformed contribution.
-The raw activation result still owns disposal in either case.
-Creation disposes a rejected contribution and preserves both validation and disposal errors.
+Otherwise, the core captures its raw disposer once, then awaits `capture(value)`.
+This decoder returns the actual presentation exposed as `contributions`, including `undefined` when there is no presentation.
+Its return type needs no disposal method. The core retains raw cleanup even if capture throws synchronously or rejects asynchronously.
+Creation disposes the acquired raw lifetime after capture failure and preserves both capture and disposal errors.
 Any failed `frontendTools.add` fails the whole activation even when the extension catches it.
-Creation rethrows the first registration error before checking acceptance.
+Invalid lifetime takes precedence over registration failure. Otherwise, creation rethrows the first registration error and skips presentation capture entirely.
+Presentation getters run after registration closes and cannot add tools.
 Creation waits for failed-activation disposal, so a disposer that never settles leaves creation pending.
 Creation has no cancellation and registration stays open until activation settles.
 An owner that abandons the wait must observe the promise and retire any generation it eventually returns.
 An activation that never settles retains its partial resources.
-An acceptance decoder that never settles retains the captured activation resources.
+A presentation capture that never settles retains the captured activation resources with registration closed.
 - **Retirement.** The activation owner retains the generation and retires it when replaced.
 Contributions are cooperative full-trust objects.
 Call `generation.retire()` for cleanup instead of calling the contribution disposer directly.

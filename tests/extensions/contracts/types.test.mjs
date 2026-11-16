@@ -10,8 +10,9 @@ test('UI authors retain typed actions, tool decoders, platform and process bound
   config: 'apps/desktop/tsconfig.json',
   prefix: fixture + `
 import { memo } from 'react';
-import { parseUiExtensionContributions, type UiExtensionCapture, type UiExtensionContext } from '@agentui/sdk/react';
+import { parseUiExtensionContributions, parseUiExtensionPresentation, type UiExtensionPresentation, type UiExtensionCapture, type UiExtensionContext } from '@agentui/sdk/react';
 export function captured(value: unknown) { const result: UiExtensionCapture = parseUiExtensionContributions(value); if (result.kind === 'ready') { void result.presentation.modules; void result.dispose(); } }
+export function presentation(value: unknown) { const result: UiExtensionPresentation = parseUiExtensionPresentation(value); return result; }
 export const ui: UiExtensionContext = { namespace: 'notes', frontendTools: { add() {} } };
 ui.frontendTools.add(textTool);
 export const wrapped: ConversationModule = { id: 'memo', label: 'Memo', component: memo(() => null) };

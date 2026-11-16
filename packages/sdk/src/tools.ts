@@ -1,6 +1,6 @@
 import { copyJson, parseRunIdentity, type ConversationScope } from '@agentui/contracts';
 import { record } from '@agentui/contracts/decode';
-import { behaviour, extensionNamespace, frontendPlatform, type ExtensionLifetime } from './extensions.js';
+import { behaviour, extensionNamespace, frontendPlatform } from './extensions.js';
 import { compileParameters } from './schema.js';
 import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
 export type * from './tool-contracts.js';
@@ -78,17 +78,17 @@ function generationHandle(identity: Lifetime['identity'], dispose: () => Promise
   return handle;
 }
 /**
- * Creation awaits activation and acceptance without cancellation. An owner that stops waiting
- * must observe the result and retire its generation. A pending acceptance retains captured resources.
+ * Creation awaits activation and presentation capture without cancellation. An owner that stops waiting
+ * must observe the result and retire its generation. A pending presentation capture retains captured resources.
  */
-export async function createFrontendToolGeneration<L extends ExtensionLifetime>(options: FrontendToolGenerationOptions<L>): Promise<FrontendToolActivation<L>> {
+export async function createFrontendToolGeneration<C>(options: FrontendToolGenerationOptions<C>): Promise<FrontendToolActivation<C>> {
   let dispose: (() => Promise<void>) | undefined;
   try {
-    const { generation, activate, accept } = options;
+    const { generation, activate, capture } = options;
     const platform = frontendPlatform(options.platform);
     const namespace = extensionNamespace(options.namespace);
     if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
-    if (typeof activate !== 'function' || typeof accept !== 'function') throw new Error('Tool activation requires activate and accept functions');
+    if (typeof activate !== 'function' || typeof capture !== 'function') throw new Error('Tool activation requires activate and capture functions');
     const tools = new Map<string, Registered>();
     let open = true; let failure: { error: unknown } | undefined;
     const registrationSink = Object.freeze({ add<Input>(tool: FrontendToolContribution<Input>): void {
@@ -107,7 +107,7 @@ export async function createFrontendToolGeneration<L extends ExtensionLifetime>(
     if (typeof method !== 'function') throw new Error('Expected extension disposal');
     dispose = async () => { await method.call(lifetime); };
     if (failure) throw failure.error;
-    const contributions = await accept(lifetime);
+    const contributions = await capture(lifetime);
     return { generation: generationHandle({ namespace, generation, platform, activationId: globalThis.crypto.randomUUID() }, dispose, registered), contributions };
   } catch (error) {
     let notification: Promise<void>;

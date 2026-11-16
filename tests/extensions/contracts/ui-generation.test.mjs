@@ -89,14 +89,14 @@ for (const kind of ['presentation', 'malformed', 'duplicate']) for (const reject
     await new Promise(resolve => setImmediate(resolve));
     if (kind === 'presentation') assert.match(primary.message, /Expected module array/); else assert.equal(primary, registration);
     assert.equal(settled, false); assert.equal(disposals, 1);
-    assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1 });
+    assert.deepEqual(reads, kind === 'presentation' ? { dispose: 1, modules: 1, overrides: 1 } : { dispose: 1 });
     if (rejects) cleanup.reject(secondary); else cleanup.resolve();
     const result = await completion;
     assert.equal('value' in result, false);
     if (rejects) { assert.ok(result.error instanceof AggregateError); assert.deepEqual(result.error.errors, [primary, secondary]); }
     else assert.equal(result.error, primary);
     assert.deepEqual(failures, [primary]); assert.equal(disposals, 1);
-    assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1 });
+    assert.deepEqual(reads, kind === 'presentation' ? { dispose: 1, modules: 1, overrides: 1 } : { dispose: 1 });
   });
 }
 
@@ -105,4 +105,75 @@ for (const field of ['namespace', 'generation', 'platform', 'onFailure']) test(`
   const config = Object.defineProperty({ ...options, activate() { activated++; }, onFailure() { notified++; } }, field, { get() { reads++; throw primary; } });
   await assert.rejects(createUiExtensionGeneration(config), error => error === primary);
   assert.equal(reads, 1); assert.equal(activated, 0); assert.equal(notified, 0);
+});
+
+for (const lifetime of ['missing', 'noncallable', 'throw']) test(`invalid ${lifetime} lifetime wins over sticky registration without reading presentation`, async () => {
+  let registration, disposalReads = 0, presentationReads = 0;
+  const failure = new Error('Lifetime getter failed'), failures = [];
+  const source = { get dispose() { disposalReads++; if (lifetime === 'throw') throw failure; return lifetime === 'missing' ? undefined : false; },
+    get modules() { presentationReads++; throw new Error('Unexpected presentation read'); },
+    get overrides() { presentationReads++; throw new Error('Unexpected presentation read'); } };
+  const result = await createUiExtensionGeneration({ ...options, activate({ frontendTools }) {
+    try { frontendTools.add({ ...tool, definition: { name: 'bad.name', description: '' } }); } catch (error) { registration = error; }
+    return source;
+  }, onFailure(error) { failures.push(error); } }).then(() => undefined, error => error);
+  assert.notEqual(result, registration);
+  if (lifetime === 'throw') assert.equal(result, failure); else assert.match(result.message, /Expected extension disposal/);
+  assert.deepEqual(failures, [result]); assert.equal(disposalReads, 1); assert.equal(presentationReads, 0);
+});
+
+for (const field of ['modules', 'overrides']) test(`sticky registration skips poisonous ${field} presentation and releases the acquired lifetime`, async () => {
+  let registration, reads = 0, disposals = 0;
+  const source = Object.defineProperty({ modules: [], dispose() { assert.equal(this, source); disposals++; } }, field, {
+    get() { reads++; throw new Error('Presentation must be skipped'); },
+  });
+  const failures = [];
+  await assert.rejects(createUiExtensionGeneration({ ...options, activate({ frontendTools }) {
+    try { frontendTools.add({ ...tool, definition: { name: 'bad.name', description: '' } }); } catch (error) { registration = error; }
+    return source;
+  }, onFailure(error) { failures.push(error); assert.equal(disposals, 0); } }), error => error === registration);
+  assert.deepEqual(failures, [registration]); assert.equal(reads, 0); assert.equal(disposals, 1);
+});
+
+for (const field of ['modules', 'overrides']) for (const caught of [false, true]) {
+  test(`${field} getter sees closed registration and ${caught ? 'cannot register even when it catches the error' : 'fails creation with acquired cleanup'}`, async () => {
+    let sink, registration, disposals = 0, reads = 0;
+    const failures = [];
+    const source = Object.defineProperty({ modules: [], dispose() { assert.equal(this, source); disposals++; } }, field, { get() {
+      reads++;
+      try { sink.add(tool); } catch (error) { registration = error; if (!caught) throw error; }
+      return field === 'modules' ? [] : undefined;
+    } });
+    const creating = createUiExtensionGeneration({ ...options, activate({ frontendTools }) { sink = frontendTools; return source; },
+      onFailure(error) { failures.push(error); assert.equal(disposals, 0); } });
+    if (caught) {
+      const active = await creating;
+      const pin = pinFrontendTools({ generations: [active.generation], platform: 'desktop', run, capabilities: { tools: { clientProvided: true } } });
+      try { assert.deepEqual(pin.definitions, []); assert.deepEqual(failures, []); }
+      finally { pin.release(); await active.generation.retire(); }
+    } else {
+      await assert.rejects(creating, error => error === registration);
+      assert.deepEqual(failures, [registration]);
+    }
+    assert.match(registration.message, /registration is closed/); assert.equal(reads, 1); assert.equal(disposals, 1);
+  });
+}
+
+test('UI forwarding preserves the original options activation getter and receiver', async () => {
+  let reads = 0, calls = 0, disposals = 0;
+  const config = { ...options, get activate() {
+    assert.equal(this, config); reads++;
+    return function (context) { assert.equal(this, config); assert.equal(context.namespace, options.namespace); calls++;
+      return { modules: [], dispose() { disposals++; } };
+    };
+  } };
+  const active = await createUiExtensionGeneration(config);
+  assert.equal(reads, 1); assert.equal(calls, 1); await active.generation.retire(); assert.equal(disposals, 1);
+});
+
+test('UI activation getter failure reaches core notification once without a lifetime', async () => {
+  const primary = new Error('Activation getter failed'), failures = []; let reads = 0;
+  const config = { ...options, get activate() { assert.equal(this, config); reads++; throw primary; }, onFailure(error) { failures.push(error); } };
+  await assert.rejects(createUiExtensionGeneration(config), error => error === primary);
+  assert.equal(reads, 1); assert.deepEqual(failures, [primary]);
 });

@@ -1,6 +1,6 @@
 import type { ConversationScope, RunIdentity } from '@agentui/contracts';
 import type { AgentCapabilities, RunAgentInput } from '@agentui/protocol';
-import type { FrontendPlatform, ExtensionLifetime } from './extensions.js';
+import type { FrontendPlatform } from './extensions.js';
 
 export type { FrontendPlatform } from './extensions.js';
 export type FrontendTool = NonNullable<RunAgentInput['tools']>[number];
@@ -39,18 +39,17 @@ export interface FrontendToolPin {
 export type FrontendToolOutcome =
   | { readonly kind: 'completed'; readonly output: string }
   | { readonly kind: 'refused'; readonly code: 'released' | 'unknown-tool' | 'activation-mismatch' | 'invalid-arguments' | 'decode-failed' };
-export interface FrontendToolActivation<L> {
+export interface FrontendToolActivation<C> {
   readonly generation: FrontendToolGeneration;
-  /** Dispose through generation.retire(), which waits for pins and calls to drain. */
-  readonly contributions: Omit<L, 'dispose'>;
+  readonly contributions: C;
 }
-export interface FrontendToolGenerationOptions<L extends ExtensionLifetime> {
+export interface FrontendToolGenerationOptions<C> {
   readonly namespace: string;
   readonly generation: string;
   readonly platform: FrontendPlatform;
   activate(context: UiExtensionContext): unknown;
-  /** Decodes the activation result. The raw activation result owns disposal, captured before this runs. */
-  accept(value: unknown): L | Promise<L>;
+  /** Captures presentation. The core acquires raw activation disposal before this runs. */
+  capture(value: unknown): C | Promise<C>;
   /** Called once on creation failure before disposal starts. Creation awaits both observer and disposal completion. */
   onFailure?(error: unknown): void | Promise<void>;
 }

@@ -1,6 +1,5 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { validateExtensionLifetime } from '@agentui/sdk';
 import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
 
 const run = {
@@ -18,7 +17,7 @@ const pin = (generations, overrides = {}) =>
 const make = async (opts = {}) =>
   (
     await createFrontendToolGeneration({
-      accept: value => { validateExtensionLifetime(value); return value; },
+      capture: () => undefined,
       namespace: 'demo',
       generation: '1',
       platform: 'desktop',
@@ -294,7 +293,7 @@ test('rejects malformed public definitions and generation identity', async () =>
 test('generation identity is captured before activation settles', async () => {
   let finish;
   const options = {
-    accept: value => { validateExtensionLifetime(value); return value; },
+    capture: () => undefined,
     namespace: 'original',
     generation: 'one',
     platform: 'desktop',
@@ -621,7 +620,7 @@ test('optional definitions and empty schemas preserve object arguments', async (
   }
 });
 
-test('acceptance failure preserves disposal failure and captures disposal once', async () => {
+test('capture failure preserves disposal failure and captures disposal once', async () => {
   let reads = 0;
   const lifetime = {
     get dispose() {
@@ -640,13 +639,13 @@ test('acceptance failure preserves disposal failure and captures disposal once',
       activate() {
         return lifetime;
       },
-      accept() {
-        throw Error('accept');
+      capture() {
+        throw Error('capture');
       },
     }),
     (error) =>
       error instanceof AggregateError &&
-      error.errors.map((e) => e.message).join(',') === 'accept,dispose',
+      error.errors.map((e) => e.message).join(',') === 'capture,dispose',
   );
   assert.equal(reads, 1);
 });
@@ -752,18 +751,19 @@ test('vendored meta-schema matches official bytes', async () => {
   assert.deepEqual(JSON.parse(bytes), draft7);
 });
 
-test('accepted contributions preserve identity and opaque provider bindings', async () => {
+test('captured contributions preserve identity and opaque provider bindings', async () => {
   const lifetime = { dispose() {} };
+  const decoded = { modules: ['captured'] };
   const result = await createFrontendToolGeneration({
     namespace: 'demo',
     generation: 'label',
     platform: 'desktop',
-    accept: value => { validateExtensionLifetime(value); return value; },
+    capture: () => decoded,
     activate() {
       return lifetime;
     },
   });
-  assert.equal(result.contributions, lifetime);
+  assert.equal(result.contributions, decoded);
   const remote = {
     ...run,
     authority: {
@@ -833,9 +833,9 @@ test('copied generation handles are refused without affecting the original', asy
   }
 });
 
-test('registration error precedes acceptance failure and still disposes', async () => {
+test('registration error precedes capture failure and still disposes', async () => {
   let disposed = 0;
-  let accepted = 0;
+  let captures = 0;
   await assert.rejects(make({
     activate({ frontendTools: tools }) {
       try {
@@ -844,10 +844,10 @@ test('registration error precedes acceptance failure and still disposes', async 
       } catch {}
       return { dispose() { disposed++; } };
     },
-    accept() { accepted++; throw new Error('accept failed'); },
+    capture() { captures++; throw new Error('capture failed'); },
   }), /Unsupported schema keyword/u);
   assert.equal(disposed, 1);
-  assert.equal(accepted, 0);
+  assert.equal(captures, 0);
 });
 
 test('property dependency named id works without references', async () => {
@@ -901,8 +901,8 @@ test('local schema references are unsupported', async () => {
 
 test('activation options are callable before activation starts', async () => {
   let activated = false;
-  await assert.rejects(make({ accept: 'no', activate() { activated = true; } }), /requires activate and accept/u);
-  await assert.rejects(make({ activate: 'no' }), /requires activate and accept/u);
+  await assert.rejects(make({ capture: 'no', activate() { activated = true; } }), /requires activate and capture/u);
+  await assert.rejects(make({ activate: 'no' }), /requires activate and capture/u);
   assert.equal(activated, false);
 });
 

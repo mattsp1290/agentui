@@ -18,7 +18,7 @@ if (mode === 'open') {
 } else {
   const { generation } = await createFrontendToolGeneration({ namespace: 'demo', generation: 'same', platform: 'desktop',
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'work', description: 'work' }, decodeInput: x => x,
-      async execute() { appendFileSync(extra, 'effect\n'); return 'done'; } }); return { dispose() {} }; }, accept: x => x });
+      async execute() { appendFileSync(extra, 'effect\n'); return 'done'; } }); return { dispose() {} }; }, capture: () => undefined });
   const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run: run().identity, capabilities: { tools: { clientProvided: true } } });
   const binding = pin.bindings[0], producer = frontendToolsFor(host).producer(scope);
   producer.register({ identity: pin.run, threadId: key.threadId, platform: 'desktop', bindings: [{ ...binding, definition: pin.definitions[0] }] });

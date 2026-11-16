@@ -625,7 +625,7 @@ test('a prepared graph renders both hook modules and shares SDK generation state
   first.write('package.json', JSON.stringify(parent));
   first.write('desktop/index.tsx', `import React from 'react'; import {createFrontendToolGeneration} from '@agentui/sdk/tools';
     function View(){const [value] = React.useState('First graph hook'); return <p>{value}</p>}
-    window.graphGeneration = createFrontendToolGeneration({namespace:'fixture',generation:'one',platform:'desktop',activate(){return {dispose(){}}},accept(value){return value}}).then(value=>value.generation);
+    window.graphGeneration = createFrontendToolGeneration({namespace:'fixture',generation:'one',platform:'desktop',activate(){return {dispose(){}}},capture(){return undefined}}).then(value=>value.generation);
     export default {kind:'desktop',sdkVersion:'0.2.0',activate(){return {modules:[{id:'module',label:'First',component:View}],dispose(){window.firstDisposed = true}}}};`);
   buildCustom(first);
   const host = await fixture(t, join(first.directory, 'browser')), page = await host.page();

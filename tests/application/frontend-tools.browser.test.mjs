@@ -64,7 +64,7 @@ for (const [label, registration] of [
   await page.evaluate(() => window.finish());
   await page.getByRole('alert').filter({ hasText: 'Custom tools could not load.' }).waitFor();
   await wait(() => page.evaluate(() => window.disposals === 1), 'failed activation cleanup');
-  assert.deepEqual(await page.evaluate(() => [window.disposeReads, window.moduleReads]), [1, 1]);
+  assert.deepEqual(await page.evaluate(() => [window.disposeReads, window.moduleReads ?? 0]), [1, label === 'presentation getter' ? 1 : 0]);
   await unchanged(page, previous);
   await page.getByRole('button', { name: 'Send sibling', exact: true }).click();
   await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
@@ -97,7 +97,7 @@ for (const [label, registration, modules, message] of [
   await page.getByRole('alert').filter({ hasText: message }).waitFor();
   await page.getByText('Healthy sibling transcript', { exact: true }).waitFor();
   assert.equal(await page.getByText('Rejected tool module', { exact: true }).count(), 0);
-  assert.deepEqual(await page.evaluate(() => [window.disposeReads, window.moduleReads]), [1, 1]);
+  assert.deepEqual(await page.evaluate(() => [window.disposeReads, window.moduleReads ?? 0]), [1, label === 'invalid presentation' ? 1 : 0]);
   await unchanged(page, previous);
   await page.getByRole('button', { name: 'Send sibling', exact: true }).click();
   await wait(async () => (await host.entries()).length === 1, 'sibling command during failed cleanup');
