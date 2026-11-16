@@ -51,7 +51,7 @@ test('provider resync drains admitted callbacks, fetches a fresh snapshot and re
   assert.equal(JSON.parse(recovered.commands[0].receipt).state.kind, 'accepted');
   await assert.rejects(feeds[0].receive(remote.makeEvent(binding, 'Late retired event', 2)), /stream closed/);
   assert.deepEqual(saved(f), recovered);
-  const observed = await readSnapshot(f.client.conversation(scope), 2);
+  const observed = await readSnapshot(f.client.conversation(scope), transcriptProjection.version);
   assert.equal(observed.document.domain.messages[0].text, 'Recovered snapshot');
   remote.emit(remote.makeEvent(binding, 'Continues after resync', 2, true));
   await until(() => a.calls.ack.some(item => item.kind === 'event' && item.eventId === 'event-2'));
@@ -123,7 +123,7 @@ test('immediate repeated resync stops until an explicit retry instead of spinnin
   assert.equal(observations, 2); assert.equal(snapshots, 2);
   for (let i = 0; i < 3; i++) assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'stopped', reason: 'retry-exhausted' });
   assert.equal(observations, 2); assert.equal(snapshots, 2);
-  assert.equal((await readSnapshot(f.client.conversation(scope), 2)).cursor, saved(f).conversation.head);
+  assert.equal((await readSnapshot(f.client.conversation(scope), transcriptProjection.version)).cursor, saved(f).conversation.head);
   const port = f.client.conversation(scope), command = send(scope, 'while-paused');
   const accepted = await port.submit(command);
   assert.equal(accepted.receipt.state.kind, 'accepted');

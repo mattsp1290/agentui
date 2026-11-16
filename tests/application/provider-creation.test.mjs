@@ -1,3 +1,4 @@
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -122,7 +123,7 @@ const unavailable = promise => assert.rejects(promise, error => error.kind === '
   assert.equal((await f.client.conversationAgent(scope)).availability.kind, 'unavailable');
   assert.equal((await f.client.catalog()).length, 3);
   assert.deepEqual(f.inspect(db => db.prepare('SELECT installation,document FROM conversations WHERE conversation=?').get('native')), nativeBytes);
-  assert.equal(f.inspect(db => db.prepare('SELECT version FROM conversations WHERE conversation=?').get('remote').version), 2);
+  assert.equal(f.inspect(db => db.prepare('SELECT version FROM conversations WHERE conversation=?').get('remote').version), transcriptProjection.version);
 });
 
 test('removed agent is a known negative only with no original provider operation or local conversation', async t => {

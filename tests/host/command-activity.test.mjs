@@ -4,7 +4,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { FeedMismatchError, parseFeedItem } from '@agentui/contracts';
 import { transcriptProjection, parseTranscript, parseCommandActivity, retainText } from '@agentui/contracts/conversation';
 import { createCommandActivity } from '../../packages/host/dist/codex-command-activity.js';
-import { fixture, installed, scope, other, command, empty, run } from './fixture.mjs';
+import { fixture, installed, scope, other, command, empty, run, snapshot as readSnapshot } from './fixture.mjs';
 
 const row = (overrides = {}) => ({ kind: 'command', activityId: 'activity', runId: 'run', revision: 1,
   command: 'printf hello', cwd: '/work', detailsTruncated: false, status: { kind: 'running' }, output: '', outputTruncated: false, ...overrides });
@@ -91,6 +91,7 @@ test('V1 migration updates only projection metadata and preserves canonical retr
   assert.deepEqual(await reopened.conversation(scope).submit(sent), receipt);
   const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => assert.fail('Old feed delivered'));
   assert.match((await feed.ended).reason, /Update the app and host together/);
+  await assert.rejects(readSnapshot(reopened.conversation(scope), 2), /Snapshot feed ended before delivery: refused/);
   const snapshot = reopened.inspect(scope).snapshot;
   assert.equal(Object.hasOwn(snapshot.document.domain, 'activities'), false);
   assert.throws(() => parseFeedItem({ kind: 'snapshot', snapshot }, { ...transcriptProjection, version: 1 }, scope), FeedMismatchError);

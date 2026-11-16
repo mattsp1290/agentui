@@ -55,10 +55,12 @@ export async function snapshot(port, projectionVersion = 1) {
   let resolve;
   const got = new Promise(done => { resolve = done; });
   const feed = port.watch({ after: null, projectionVersion }, async item => { resolve(item.snapshot); });
-  const result = await got;
-  feed.close();
-  await feed.ended;
-  return result;
+  try {
+    return await Promise.race([got, feed.ended.then(end => { throw new Error(`Snapshot feed ended before delivery: ${end.kind}`); })]);
+  } finally {
+    feed.close();
+    await feed.ended;
+  }
 }
 export function deferred() {
   let resolve;
