@@ -73,19 +73,25 @@ test('shipped Plan review template typechecks against the actual receipt and com
     prefix: template.replace("import { reviewPrompt } from '../shared/prompts.js';", "const reviewPrompt = 'Review the plan';"), cases: [['', null]] });
 });
 
-test('transcript selection requires a ready owner with a captured component', () => assertCompileCases({
+test('slot selection requires a ready owner with its captured component', () => assertCompileCases({
   config: 'apps/desktop/tsconfig.json',
   prefix: `
-import type { TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
+import type { ContentLayoutSelection, TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
 declare const generation: import('@agentui/sdk/tools').FrontendToolGeneration;
 export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, generation, fail(_error: unknown) {},
   presentation: { modules: [], transcript: () => null, contentLayout: undefined } } as const;
-export const selection: TranscriptSelection = { kind: 'override', owner };
-export function component(value: TranscriptSelection) { if (value.kind === 'override') return value.owner.presentation.transcript; return null; }
+export const selection: TranscriptSelection = { kind: 'claimed', owner };
+export const layoutOwner = { ...owner, presentation: { modules: [], transcript: undefined, contentLayout: () => null } } as const;
+export const layout: ContentLayoutSelection = { kind: 'claimed', owner: layoutOwner };
+export function component(value: TranscriptSelection) { if (value.kind === 'claimed') return value.owner.presentation.transcript; return null; }
+export function layoutComponent(value: ContentLayoutSelection) { if (value.kind === 'claimed') return value.owner.presentation.contentLayout; return null; }
 `,
   cases: [
     ['', null],
-    ["export const bad: TranscriptSelection = { kind: 'override', owner: { ...owner, presentation: { modules: [], transcript: undefined } } };", /not assignable/u],
-    ["export const bad: TranscriptSelection = { kind: 'override', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
+    ["export const bad: TranscriptSelection = { kind: 'claimed', owner: { ...owner, presentation: { modules: [], transcript: undefined } } };", /not assignable/u],
+    ["export const bad: TranscriptSelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
+    ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner };", /not assignable/u],
+    ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
+    ["export const bad: TranscriptSelection = { kind: 'claimed', owner: layoutOwner };", /not assignable/u],
   ],
 }));

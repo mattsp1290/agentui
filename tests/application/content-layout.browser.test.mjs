@@ -136,6 +136,7 @@ test('layout activation, initial and retained suspension preserve protected DOM 
   assert.deepEqual(await page.evaluate(() => [window.transcriptInstances, window.moduleInstances]), instances); await stable();
   await page.getByRole('button', { name: 'Fail live layout', exact: true }).click(); await page.getByLabel('Messages', { exact: true }).waitFor();
   await wait(() => page.evaluate(() => window.disposals === 1), 'layout failure cleanup'); await stable();
+  assert.deepEqual(await page.evaluate(() => [window.transcriptInstances.length, window.moduleInstances.length]), [1, 1], 'layout failure must not transiently remount retired extension trees');
   await page.evaluate(() => window.disable()); await stable();
   assert.equal(await page.evaluate(() => window.disposals), 1); assert.deepEqual(await page.evaluate(() => window.calls), []);
   await page.evaluate(() => window.longContent());
