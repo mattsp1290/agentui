@@ -50,6 +50,11 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         CREATE TABLE IF NOT EXISTS provider_event_ids (
           host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
+      this.transaction(() => {
+        const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
+        if (format !== 2 && format !== 3) throw new Error('Unsupported database version');
+        this.db.exec('PRAGMA user_version=3');
+      });
     } catch (error) { this.db.close(); throw error; }
   }
   close(): void { this.db.close(); }
@@ -294,6 +299,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (expectedInstallation && canonicalJson(installed) !== canonicalJson(expectedInstallation)) {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
+      if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
       let run = null, pending = null;
@@ -327,7 +333,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         if (!original || original.observation?.kind !== 'confirmed' || !captureProvider ||
           canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
         let action: ProviderAction;
-        if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text };
+        if (command.body.kind === 'revoke-permission') action = command.body;
+        else if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text };
         else {
           if (command.body.kind === 'approve') {
             const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);

@@ -24,12 +24,12 @@ test('metadata represents empty and unavailable provider catalogs without synthe
   }
 });
 
-test('extension-only compatibility skips native runtime while retaining every other dimension and wire six', () => {
-  assert.equal(SERVICE_WIRE_VERSION, 6);
+test('extension-only compatibility skips native runtime while retaining every other dimension and wire seven', () => {
+  assert.equal(SERVICE_WIRE_VERSION, 7);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, compatibility), { kind: 'compatible' });
-  assert.deepEqual(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [5] }, compatibility).issues.map(issue => issue.dimension), ['wire']);
+  assert.deepEqual(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [6] }, compatibility).issues.map(issue => issue.dimension), ['wire']);
   const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, expectedArtifactId: 'expected' }, {
-    ...compatibility, wireVersion: 5, extensionSdkVersion: 'unsupported', desiredGitRevision: 'pending',
+    ...compatibility, wireVersion: 5, extensionSdkVersion: '0.1.0', desiredGitRevision: 'pending',
   });
   assert.deepEqual(result.issues.map(issue => issue.dimension), ['wire', 'extension-sdk', 'deployment', 'artifact']);
 });

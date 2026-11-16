@@ -1,7 +1,7 @@
-import { canonicalJson, copyJson, parseRunIdentity } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, RunIdentity } from '@agentui/contracts';
+import { canonicalJson, copyJson, parseRunIdentity, parsePermissionScope } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
-import type { ConversationRef, ProviderConversation, ProviderInstance } from '@agentui/sdk';
+import type { ConversationRef, ConversationRefKind, ProviderConversation, ProviderInstance } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation } from './provider-creation.js';
 import type { SettlementObservation } from './settlement.js';
@@ -10,11 +10,13 @@ export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 
   readonly kind: 'provider';
   readonly operation: { readonly operationId: string; readonly binding: ProviderConversation<string> } & (
     { readonly kind: 'send'; readonly request: Json }
+    | { readonly kind: 'revoke-permission'; readonly permission: ConversationRef<string, 'permission'>; readonly scope: PermissionScope }
     | { readonly kind: 'cancel'; readonly run: ConversationRef<string, 'run'> }
     | { readonly kind: 'decide'; readonly run: ConversationRef<string, 'run'>;
       readonly decision: ConversationRef<string, 'decision'>; readonly choice: ConversationRef<string, 'choice'> });
 }
 export type ProviderAction = { readonly kind: 'send'; readonly text: string }
+  | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope }
   | { readonly kind: 'cancel'; readonly run: unknown }
   | { readonly kind: 'decide'; readonly run: unknown; readonly decision: unknown; readonly choice: unknown };
 export interface ProviderRun {
@@ -31,16 +33,17 @@ export type ProviderObservation = SettlementObservation<ProviderEvidence>;
 export function providerTarget(value: unknown, scope: ConversationScope): ProviderTarget {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
   const operation = record(input.operation);
-  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'send' ? ['request'] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
+  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'revoke-permission' ? ['permission', 'scope'] : operation.kind === 'send' ? ['request'] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
   const binding = record(operation.binding, ['kind', 'creation', 'authority']);
   const original = providerCreation({ installation: input.installation, credential: input.credential, intent: binding.creation }, scope);
   const operationId = identifier(operation.operationId);
   if (input.kind !== 'provider' ||
     !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(operationId)) throw new Error('Invalid provider command');
   const base = { operationId, binding: creationBinding(binding, original.intent, original.installation) };
-  const reference = <K extends 'run' | 'decision' | 'choice'>(value: unknown, kind: K) => providerReference(value, base.binding, original.installation, kind);
+  const reference = <K extends ConversationRefKind>(value: unknown, kind: K) => providerReference(value, base.binding, original.installation, kind);
   let captured: ProviderTarget['operation'];
   if (operation.kind === 'send') captured = { ...base, kind: 'send', request: copyJson(operation.request) };
+  else if (operation.kind === 'revoke-permission') captured = { ...base, kind: 'revoke-permission', permission: reference(operation.permission, 'permission'), scope: parsePermissionScope(operation.scope) };
   else if (operation.kind === 'cancel') captured = { ...base, kind: 'cancel', run: reference(operation.run, 'run') };
   else if (operation.kind === 'decide') captured = { ...base, kind: 'decide', run: reference(operation.run, 'run'),
     decision: reference(operation.decision, 'decision'), choice: reference(operation.choice, 'choice') };
@@ -49,12 +52,13 @@ export function providerTarget(value: unknown, scope: ConversationScope): Provid
 }
 export function matchProviderCommand(target: ProviderTarget, body: ClientCommand['body']): void {
   const operation = target.operation;
+  if (body.kind === 'revoke-permission' && operation.kind === 'revoke-permission' && body.permissionId === operation.permission.ref.opaqueId && body.scope === operation.scope) return;
   if (body.kind === 'send' && operation.kind === 'send') return;
   if (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) return;
   if (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId) return;
   throw new Error('Invalid provider command association');
 }
-export function providerReference<I extends string, K extends 'run' | 'decision' | 'choice'>(value: unknown,
+export function providerReference<I extends string, K extends ConversationRefKind>(value: unknown,
   original: ProviderConversation<I>, selected: ProviderInstallation, kind: K, instance: ProviderInstance<I> = original.creation.agent.instance): ConversationRef<I, K> {
   const input = record(value, ['binding', 'ref']), ref = record(input.ref, ['kind', 'instance', 'opaqueId']);
   const binding = creationBinding(input.binding, original.creation, selected);
@@ -106,6 +110,7 @@ export function providerOutcome(value: unknown, target: ProviderTarget, fresh: b
     record(input, ['kind', 'value', 'evidence']);
     const effect = record(input.value, target.operation.kind === 'send' ? ['kind', 'run', 'state'] : ['kind', 'state']);
     if (effect.kind !== target.operation.kind || (effect.state !== 'accepted' && effect.state !== 'completed')) throw new Error('Invalid provider effect');
+    if (target.operation.kind === 'revoke-permission' && effect.state !== 'completed') throw new Error('Invalid permission effect');
     if (target.operation.kind === 'send') run = providerRun(effect.run, target.operation.binding, target.installation);
     kind = effect.state === 'accepted' ? 'accepted' : 'conclusive';
     if (kind === 'conclusive') result = { kind: 'receipt-completed' };

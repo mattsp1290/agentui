@@ -284,7 +284,7 @@ for (const trusted of [false, true]) test(`bundled extension-only serve creates 
   if (!trusted) assert.equal((await call({ op: 'pair', code: (await control(['invite'])).code })).ok, true);
   const metadata = (await call({ op: 'metadata' })).value;
   assert.equal(metadata.compatibility.nativeRuntime, null);
-  assert.equal(metadata.compatibility.wireVersion, 6);
+  assert.equal(metadata.compatibility.wireVersion, 7);
   assert.ok(metadata.agents.length); assert.ok(metadata.agents.every(agent => agent.kind === 'provider'));
   assert.equal(metadata.defaultAgentId, metadata.agents.filter(agent => agent.availability.kind === 'ready').map(agent => agent.id).sort()[0]);
   const scope = { hostId: info.hostId, conversationId: 'extension-browser' };

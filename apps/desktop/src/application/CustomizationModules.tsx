@@ -63,7 +63,7 @@ function ConversationModules({ modules, active, actions, enabled, agent }: {
   readonly enabled: boolean; readonly agent: string;
 }) {
   const view = useConversation(active.store);
-  const context: ConversationModuleProps = { conversation: active.scope, activity: view.document, commands: actions.commands };
+  const context: ConversationModuleProps = { conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions };
   const available = enabled && active.agent.availability.kind === 'ready' && active.agent.commands.includes('send') && view.connection.kind === 'connected' && !conversationResponding(agent, view.document.domain);
   return <fieldset disabled={!available} className="customization-modules">
     <legend>Custom tools</legend>

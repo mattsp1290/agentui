@@ -57,6 +57,11 @@ struct Command {
     deny_unknown_fields
 )]
 enum Body {
+    #[serde(rename = "revoke-permission")]
+    RevokePermission {
+        permission_id: Id,
+        scope: PermissionScope,
+    },
     Send {
         text: String,
     },
@@ -67,6 +72,12 @@ enum Body {
     Cancel {
         run_id: String,
     },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum PermissionScope {
+    Conversation,
+    Agent,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -100,6 +111,9 @@ enum Request {
     ProviderObservation {
         scope: Scope,
         action: ObservationAction,
+    },
+    ConversationPermissions {
+        scope: Scope,
     },
     ConversationAgent {
         scope: Scope,
@@ -146,6 +160,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
     let mut request: Request = serde_json::from_value(value).map_err(|_| INVALID)?;
     let scope = match &mut request {
         Request::Create { scope, .. }
+        | Request::ConversationPermissions { scope }
         | Request::ConversationAgent { scope }
         | Request::ProviderObservation { scope, .. }
         | Request::Receipt { scope, .. }
@@ -162,6 +177,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         }
         Request::Submit { command } => {
             let valid = match &command.body {
+                Body::RevokePermission { .. } => true,
                 Body::Send { text } => !text.is_empty(),
                 Body::Approve {
                     pending_id,
@@ -256,6 +272,9 @@ mod tests {
             json!({"op":"search", "query":"find text", "after":null}),
             json!({"op":"search", "query":"find text", "after":"cursor"}),
             json!({"op":"create", "scope":scope(), "agentId":"agent"}),
+            json!({"op":"conversation-permissions", "scope":scope()}),
+            command(json!({"kind":"revoke-permission", "permissionId":"p", "scope":"conversation"})),
+            command(json!({"kind":"revoke-permission", "permissionId":"p", "scope":"agent"})),
             json!({"op":"conversation-agent", "scope":scope()}),
             json!({"op":"provider-observation", "scope":scope(), "action":"read"}),
             json!({"op":"provider-observation", "scope":scope(), "action":"retry"}),
@@ -299,6 +318,8 @@ mod tests {
             invalid(value);
         }
         for body in [
+            json!({"kind":"revoke-permission", "permissionId":"p", "scope":"member"}),
+            json!({"kind":"revoke-permission", "permissionId":"p", "scope":"conversation", "runId":"r"}),
             json!({"kind":"approve", "pendingId":"p", "choiceId":"c", "runId":"r"}),
             json!({"kind":"cancel", "runId":"r", "text":"x"}),
             json!({"kind":"send", "text":"x", "pendingId":"p"}),
@@ -341,6 +362,7 @@ mod tests {
         let foreign = json!({"hostId":"other-host", "conversationId":"conversation"});
         for op in [
             "create",
+            "conversation-permissions",
             "conversation-agent",
             "receipt",
             "reconcile",
@@ -459,6 +481,8 @@ mod tests {
         ));
         valid(command(json!({"kind":"cancel", "runId":"r".repeat(1025)})));
         for body in [
+            json!({"kind":"revoke-permission", "permissionId":"", "scope":"agent"}),
+            json!({"kind":"revoke-permission", "permissionId":"p".repeat(1025), "scope":"conversation"}),
             json!({"kind":"send", "text":""}),
             json!({"kind":"send", "text":1}),
             json!({"kind":"cancel", "runId":""}),
