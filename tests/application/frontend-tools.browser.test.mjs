@@ -3,12 +3,13 @@ import test from 'node:test';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build } from 'esbuild';
+import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { chromium } from 'playwright';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { root, fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
 const tool = `{ definition: { name: 'echo', description: 'Echo' }, decodeInput: x => x, async execute() { return 'ok'; } }`;
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.1.0', activate({frontendTools}) { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '${EXTENSION_SDK_VERSION}', activate({frontendTools}) { ${body} } } })`;
 const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, ${entry(`return { modules: [{ id: 'healthy', label: 'Healthy', component() { return <p>Healthy namespace</p>; },
   actions: [{ id: 'send', label: 'Send sibling', run: ({commands}) => commands.send('Sibling command') }] }], dispose() {} };`)} }`;
 const editor = page => page.getByRole('textbox', { name: 'Message', exact: true });
@@ -91,8 +92,8 @@ test('in-process only: actual hook retirement retains original A pin and slow ca
     import {useDesktopCustomizations} from './apps/desktop/src/application/DesktopCustomizations.tsx';
     import {pinFrontendTools} from '@agentui/sdk/tools';
     window.activations=0; window.disposals=[];
-    const customizations=[{manifest:{namespace:'fixture',sdkVersion:'0.1.0',entries:[{kind:'desktop',module:'./desktop.js'}]},
-      async load(){return {default:{kind:'desktop',sdkVersion:'0.1.0',activate({frontendTools}){
+    const customizations=[{manifest:{namespace:'fixture',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]},
+      async load(){return {default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){
         const id=++window.activations;
         frontendTools.add({definition:{name:'echo',description:'Echo'},decodeInput:x=>x,async execute(input){
           if(input.slow) await new Promise(resolve=>{window.finishSlow=resolve}); return 'activation '+id;
