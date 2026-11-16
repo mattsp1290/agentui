@@ -177,3 +177,59 @@ test('UI activation getter failure reaches core notification once without a life
   await assert.rejects(createUiExtensionGeneration(config), error => error === primary);
   assert.equal(reads, 1); assert.deepEqual(failures, [primary]);
 });
+
+for (const observer of ['sync', 'async']) for (const observerRejects of [false, true]) for (const cleanupRejects of [false, true]) {
+  test(`UI class ${observer} observer keeps its receiver when observer ${observerRejects ? 'rejects' : 'completes'} and cleanup ${cleanupRejects ? 'rejects' : 'completes'}`, async () => {
+    const primary = new Error('Presentation failed'), observerError = new Error('Observer failed'), cleanupError = new Error('Cleanup failed');
+    const cleanup = Promise.withResolvers(), observation = Promise.withResolvers();
+    let disposals = 0, settled = false;
+    class Owner {
+      namespace = options.namespace;
+      generation = options.generation;
+      platform = options.platform;
+      #failures = [];
+      #reads = 0;
+      #completions = 0;
+      get failures() { return this.#failures; }
+      get reads() { return this.#reads; }
+      get completions() { return this.#completions; }
+      get onFailure() {
+        this.#reads++;
+        assert.equal(this.#reads, 1);
+        return observer === 'sync' ? this.#observe : this.#observeAsync;
+      }
+      #record(error) { this.#failures.push(error); assert.equal(disposals, 0); }
+      #complete() { this.#completions++; if (observerRejects) throw observerError; }
+      #observe(error) { this.#record(error); this.#complete(); }
+      async #observeAsync(error) { this.#record(error); await observation.promise; this.#complete(); }
+      activate() {
+        return { get modules() { throw primary; }, dispose() { disposals++; return cleanup.promise; } };
+      }
+    }
+    const owner = new Owner();
+    const completion = createUiExtensionGeneration(owner).then(
+      value => { settled = true; return { value }; }, error => { settled = true; return { error }; });
+    try {
+      assert.equal(owner.reads, 1);
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(owner.failures, [primary]);
+      assert.equal(owner.failures[0], primary);
+      assert.equal(disposals, 1); assert.equal(settled, false);
+      assert.equal(owner.completions, observer === 'sync' ? 1 : 0);
+      observation.resolve();
+      if (cleanupRejects) cleanup.reject(cleanupError); else cleanup.resolve();
+      const result = await completion;
+      assert.equal('value' in result, false);
+      if (observerRejects || cleanupRejects) {
+        assert.ok(result.error instanceof AggregateError);
+        const causes = [primary, ...(observerRejects ? [observerError] : []), ...(cleanupRejects ? [cleanupError] : [])];
+        assert.deepEqual(result.error.errors, causes);
+        causes.forEach((cause, index) => assert.equal(result.error.errors[index], cause));
+      } else assert.equal(result.error, primary);
+      assert.deepEqual(owner.failures, [primary]);
+      assert.equal(owner.reads, 1); assert.equal(owner.completions, 1); assert.equal(disposals, 1);
+    } finally {
+      observation.resolve(); cleanup.resolve(); await completion;
+    }
+  });
+}

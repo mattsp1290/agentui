@@ -12,7 +12,7 @@ export async function createUiExtensionGeneration(options: Pick<FrontendToolGene
   const { namespace, generation: generationId, platform, onFailure } = options;
   const { generation, contributions: presentation } = await createFrontendToolGeneration({
     namespace, generation: generationId, platform,
-    ...(onFailure === undefined ? {} : { onFailure }),
+    ...(onFailure === undefined ? {} : { onFailure: error => onFailure.call(options, error) }),
     activate: context => options.activate(context),
     capture: parseUiExtensionPresentation,
   });
