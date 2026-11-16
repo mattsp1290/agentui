@@ -314,6 +314,16 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
+  private reserveTaggedRun(capture: MatchedProviderCommand, encodedTarget: string): void {
+    const { agui: run, command } = capture;
+    if (run === null) return;
+    if (!this.db.prepare(`SELECT 1 FROM (SELECT ? AS target) WHERE ${taggedKeySql}`)
+      .get(encodedTarget, run.threadId, run.runId)) throw new AdmissionError('provider-command-unavailable');
+    const parts = [...key(command.scope), run.threadId, run.runId] as const;
+    if ((command.version === 2 && this.db.prepare(taggedHistorySql).get(...parts))
+      || this.db.prepare('SELECT 1 FROM frontend_sends WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
+        .get(...parts)) throw new AdmissionError('frontend-run-reused');
+  }
   admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget, actor?: FrontendSendActor): Admission {
     try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
@@ -389,12 +399,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
         const encodedTarget = canonicalJson(target);
         if (Buffer.byteLength(encodedTarget) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
-        if (capture.agui !== null) {
-          if (!this.db.prepare(`SELECT 1 FROM (SELECT ? AS target) WHERE ${taggedKeySql}`)
-            .get(encodedTarget, capture.agui.threadId, capture.agui.runId)) throw new AdmissionError('provider-command-unavailable');
-          if (command.version === 2 && this.db.prepare(taggedHistorySql)
-            .get(...key(scope), capture.agui.threadId, capture.agui.runId)) throw new AdmissionError('frontend-run-reused');
-        }
+        this.reserveTaggedRun(capture, encodedTarget);
         this.frontendSends.admitCapture(capture, actor);
         stored = { kind: 'provider', ...capture, receipt: admitted, observation: null };
       } else {
