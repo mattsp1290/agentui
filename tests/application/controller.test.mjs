@@ -1228,3 +1228,138 @@ test('navigating inactive scopes closes their handles while retaining the select
   assert.equal(f.drafts.get('original-view/host/visited-39').draft, 'Current draft');
   assert.equal(f.app.getSnapshot().storageFailure, '');
 });
+
+for (const replacement of ['view', 'same-principal reconnect']) test(`recovery cancellation starts ${replacement} work before the old notification replies`, async t => {
+  const f = fixture(), oldReply = deferred(), nextReply = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); nextReply.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    await (requests.length === 1 ? oldReply.promise : nextReply.promise);
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  if (replacement === 'view') await f.app.reopenView('other-view'); else await f.app.reconnect();
+  await eventually(() => requests.length === 2);
+  if (replacement === 'view') {
+    await eventually(() => f.leases[0].closed);
+    assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  }
+  const before = structuredClone([...f.drafts]);
+  oldReply.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+  nextReply.resolve();
+  const key = `${replacement === 'view' ? 'other-view' : 'original-view'}/host/conversation`;
+  await eventually(() => f.drafts.get(key).frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(requests.length, 2);
+});
+
+
+test('canceling a notification keeps live captures and drains their admitted release before closing the old view', async t => {
+  const f = fixture(), oldReply = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); await f.app.dispose(); });
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const lost = { ...scope, conversationId: 'a-lost' };
+  f.drafts.set('original-view/host/a-lost', journalRecord(lost));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (request.scope.conversationId === 'a-lost') await oldReply.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'live', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Live' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  t.after(() => source.generation.retire());
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); await eventually(() => requests.length === 1);
+  await assert.rejects(f.app.getSnapshot().active.store.send('Live original'), /Reply lost/);
+  const live = f.app.getSnapshot().capturedSends.find(row => row.status === 'waiting');
+  await f.app.reopenView('other-view');
+  await eventually(() => requests.length === 2);
+  assert.equal(f.leases[0].closed, false);
+  assert.equal(f.app.getSnapshot().capturedSends.find(row => row.key === live.key).status, 'waiting');
+  const entered = deferred(), write = deferred();
+  f.behavior.write = async () => { entered.resolve(); await write.promise; };
+  const release = f.app.releaseCapturedSend(live.key); await entered.promise;
+  assert.equal(f.leases[0].closed, false);
+  write.resolve(); await release;
+  await eventually(() => f.leases[0].closed);
+  const before = structuredClone([...f.drafts]);
+  oldReply.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+});
+
+test('canceling during the admitted unavailable save drains it before releasing the old lease', async t => {
+  const f = fixture(), entered = deferred(), write = deferred(), requests = [];
+  t.after(async () => { write.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  let first = true;
+  f.behavior.write = async () => { if (first) { first = false; entered.resolve(); await write.promise; } };
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start(); await entered.promise;
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false); assert.deepEqual(requests, []);
+  write.resolve(); await eventually(() => f.leases[0].closed && requests.length === 1);
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+});
+
+for (const ending of ['storage failure', 'disposal']) test(`recovery cancellation handles ${ending} before a held reply`, async t => {
+  const f = fixture(), gate = deferred(), entered = deferred();
+  t.after(async () => { gate.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => { entered.resolve(); await gate.promise; return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start(); await entered.promise;
+  if (ending === 'storage failure') f.leases[0].failure(new Error('Injected storage failure'));
+  let disposed = false;
+  const closing = f.app.dispose().then(() => { disposed = true; });
+  await eventually(() => disposed); await closing;
+  assert.equal(f.leases[0].closed, true);
+  const before = structuredClone([...f.drafts]);
+  gate.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, ending === 'storage failure' ? 'Injected storage failure' : '');
+});
+
+
+test('a rejected physical selection resumes recovery in the restored loaded view', async t => {
+  const f = fixture(), gate = deferred(), requests = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (requests.length === 1) await gate.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  f.behavior.select = () => { throw new Error('Selection failed'); };
+  await f.app.reopenView('other-view');
+  await eventually(() => requests.length === 2);
+  assert.match(f.app.getSnapshot().error, /Selection failed/);
+  assert.equal(f.leases[0].closed, false);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+});
+
+test('reconnect cancels the previous pass while metadata is held and starts only after refresh finishes', async t => {
+  const f = fixture(), oldReply = deferred(), metadata = deferred(), entered = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); metadata.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (requests.length === 1) await oldReply.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  f.behavior.metadata = async () => { entered.resolve(); await metadata.promise; };
+  const refreshing = f.app.reconnect(); await entered.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().host.kind, 'loading'); assert.equal(requests.length, 1);
+  metadata.resolve(); await refreshing;
+  await eventually(() => requests.length === 2);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+});

@@ -67,11 +67,11 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       transitions.delete(transition); deps.changed(); schedule();
     });
   }
-  async function recover({ viewId, journal, reference, current = () => true }: {
-    viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current?: () => boolean;
+  async function recover({ viewId, journal, reference, current, signal }: {
+    viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current: () => boolean; signal: AbortSignal;
   }): Promise<void> {
     const key = keyFor(viewId, reference.command), authority = session, version = epoch;
-    const valid = () => !closed && !failedViews.has(viewId) && current() && authority === session && version === epoch;
+    const valid = () => !closed && !failedViews.has(viewId) && !signal.aborted && current() && authority === session && version === epoch;
     if (!valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     if (reference.state === 'retained') {
       try { await journal.unavailable(reference.command.clientCommandId); }
@@ -80,9 +80,10 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     if (!valid()) return;
     remember(viewId, reference);
     if (!valid() || !authority || !matches(reference) || reference.state === 'unavailable-confirmed' || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
-    const signal = authorityLifetime.signal;
+    const signals = [authorityLifetime.signal, signal];
+    if (signals.some(item => item.aborted)) return;
     let cancel = () => {};
-    const cancelled = new Promise<null>(resolve => { cancel = () => resolve(null); signal.addEventListener('abort', cancel, { once: true }); });
+    const cancelled = new Promise<null>(resolve => { cancel = () => resolve(null); for (const item of signals) item.addEventListener('abort', cancel, { once: true }); });
     try {
       const result = await Promise.race([authority.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), cancelled]);
       if (result === null) return;
@@ -92,7 +93,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       await journal.acknowledged(response.id);
     } catch (error) {
       if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
-    } finally { signal.removeEventListener('abort', cancel); }
+    } finally { for (const item of signals) item.removeEventListener('abort', cancel); }
   }
   async function read(entry: Entry): Promise<void> {
     if (entry.pending || !session || !matches(entry.reference) || entry.state.status !== 'waiting' || failedViews.has(entry.viewId)) return;

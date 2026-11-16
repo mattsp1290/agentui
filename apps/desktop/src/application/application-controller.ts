@@ -114,6 +114,7 @@ export function createApplicationController(deps: {
   const listeners = new Set<() => void>();
   let sweeping: StoreSlot | null = null, installing: StoreSlot | null = null;
   let recovery: Promise<void> | null = null, recoverAgain = false;
+  let recoveryLifetime: AbortController | null = null;
   let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
   let unsubscribeActive: (() => void) | null = null;
@@ -170,14 +171,20 @@ export function createApplicationController(deps: {
     catch (cause) { failStorage(owner, lease.storage, cause); throw cause; }
     return slot;
   }
+  function cancelRecovery(): void {
+    clearTimeout(recoveryTimer);
+    recoverAgain = true;
+    recoveryLifetime?.abort();
+  }
   function wakeRecovery(): void {
     if (recovery) return;
     const owner = session;
-    if (!owner || state.host.kind !== 'ready' || state.storageFailure || !owner.view) return;
+    if (!owner || state.host.kind !== 'ready' || state.storageFailure || !owner.view || owner.view.saved === null || owner.view.hostId !== state.host.metadata.hostId) return;
     const metadata = state.host.metadata, storage = owner.view.storage, lease = owner.views.get(storage.viewId);
     if (!lease || lease.closing) return;
+    const lifetime = new AbortController(); recoveryLifetime = lifetime;
     clearTimeout(recoveryTimer); recoverAgain = false;
-    const valid = () => session === owner && owner.view?.storage === storage && !lease.closing && !state.storageFailure && state.host.kind === 'ready' && state.host.metadata === metadata;
+    const valid = () => !lifetime.signal.aborted && session === owner && owner.view?.storage === storage && !lease.closing && !state.storageFailure && state.host.kind === 'ready' && state.host.metadata === metadata;
     recovery = (async () => {
       let after: string | null = null;
       do {
@@ -191,7 +198,7 @@ export function createApplicationController(deps: {
             for (let index = 0; index < journal.read().length && valid(); index += 32) {
               for (const reference of journal.read().slice(index, index + 32)) {
                 if (!valid()) return;
-                await frontend.recover({ viewId: storage.viewId, journal, reference, current: valid });
+                await frontend.recover({ viewId: storage.viewId, journal, reference, current: valid, signal: lifetime.signal });
               }
               await new Promise(resolve => setTimeout(resolve, 0));
             }
@@ -201,7 +208,7 @@ export function createApplicationController(deps: {
         await new Promise(resolve => setTimeout(resolve, 0));
       } while (after !== null && valid());
     })().catch(error => { if (valid()) failStorage(owner, storage, error); }).finally(() => {
-      recovery = null;
+      recovery = null; recoveryLifetime = null;
       if (recoverAgain) { recoverAgain = false; wakeRecovery(); }
       else if (session) recoveryTimer = setTimeout(() => wakeRecovery(), 2_000);
     });
@@ -245,6 +252,7 @@ export function createApplicationController(deps: {
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
     if (failure.kind === 'access-revoked') {
+      cancelRecovery();
       void frontend.session(null, owner.connection);
       disconnectActive();
       publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
@@ -261,6 +269,7 @@ export function createApplicationController(deps: {
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
     if (session !== owner || (storage !== null && !owner.views.has(storage.viewId))) return;
     if (storage && owner.view?.storage !== storage && !frontend.holds(storage.viewId)) return;
+    cancelRecovery();
     if (storage) frontend.storageFailed(storage.viewId);
     publish({ storageFailure: message(cause) });
     disconnectActive();
@@ -295,6 +304,7 @@ export function createApplicationController(deps: {
     return storage;
   }
   function selectView(owner: Session, storage: OwnedViewStorage): void {
+    if (owner.view?.storage !== storage) cancelRecovery();
     if (!owner.views.has(storage.viewId)) owner.views.set(storage.viewId, { storage, stores: new Map(), closing: null });
     owner.view = { storage, saved: null };
   }
@@ -408,6 +418,7 @@ export function createApplicationController(deps: {
     }
   }
   async function refresh(owner: Session): Promise<void> {
+    cancelRecovery();
     stopObservation();
     stalePermissions('Reconnecting to refresh permissions.');
     const storage = local(owner);
@@ -516,7 +527,7 @@ export function createApplicationController(deps: {
       if (!session && disposal) return disposal;
       const owner = session;
       session = null;
-      clearTimeout(recoveryTimer);
+      cancelRecovery();
       disconnectActive();
       const previousDisposal = disposal, capturedClosing = frontend.dispose();
       const storesClosing = owner ? [...owner.views.values()].flatMap(lease => [...lease.stores.values()].map(slot => slot.store.dispose())) : [];
@@ -540,7 +551,7 @@ export function createApplicationController(deps: {
       const previous = owner.view;
       const next = await current(owner, acquire(owner, viewId));
       try { next.select(); }
-      catch (error) { owner.view = previous; evictUnused(owner); throw error; }
+      catch (error) { owner.view = previous; evictUnused(owner); wakeRecovery(); throw error; }
       if (previous?.storage === next) { await refresh(owner); return; }
       disconnectActive();
       publish({ ...DETACHED_VIEW, host: { kind: 'loading' } });

@@ -66,17 +66,17 @@ async function setup(t) {
   await page.getByRole('button', { name: 'Pair host', exact: true }).click();
   await wait(() => page.getByRole('button', { name: 'New recorded conversation', exact: true }).isEnabled(), 'pairing');
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
-  const create = async () => {
-    const previous = (await records(page)).find(row => row.route)?.route.conversationId;
-    await page.getByRole('button', { name: 'Chats', exact: true }).click();
-    if (await page.getByRole('button', { name: 'New conversation', exact: true }).count()) await page.getByRole('button', { name: 'New conversation', exact: true }).click();
+  const create = async (target = page) => {
+    const previous = (await records(target)).find(row => row.route)?.route.conversationId;
+    await target.getByRole('button', { name: 'Chats', exact: true }).click();
+    if (await target.getByRole('button', { name: 'New conversation', exact: true }).count()) await target.getByRole('button', { name: 'New conversation', exact: true }).click();
     else {
-      await page.getByRole('button', { name: 'Harness, Recorded', exact: true }).click();
-      await page.getByRole('button', { name: 'Provider', exact: true }).click();
-      await page.getByRole('button', { name: 'Start new chat with Crew researcher', exact: true }).click();
+      await target.getByRole('button', { name: 'Harness, Recorded', exact: true }).click();
+      await target.getByRole('button', { name: 'Provider', exact: true }).click();
+      await target.getByRole('button', { name: 'Start new chat with Crew researcher', exact: true }).click();
     }
-    await wait(async () => (await records(page)).some(row => row.route && row.route.conversationId !== previous), 'new conversation route');
-    await connected(page);
+    await wait(async () => (await records(target)).some(row => row.route && row.route.conversationId !== previous), 'new conversation route');
+    await connected(target);
   };
   return { page, context, browser, host, control, inputs, operations, confirmed, inspect, create, translations: () => translations };
 }
@@ -254,5 +254,61 @@ for (const loss of ['pagehide', 'crash-retained']) test(`production reload in B 
   for (const reference of original) await page.locator(`[data-captured-command="${reference.command.clientCommandId}"]`).getByRole('status').filter({ hasText: 'Captured tools unavailable' }).waitFor();
   assert.equal(f.operations.length, 2); assert.equal(f.translations(), 2);
   assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
+  for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
+});
+
+
+test('production browser switches recovery views and releases the old lock before a held unavailable reply', { timeout: 60_000 }, async t => {
+  const f = await setup(t), { page } = f, requests = [];
+  await f.create(); await draft(page, 'Original physical view'); await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 1, 'original view dispatch');
+  const oldView = await page.evaluate(() => sessionStorage.getItem('agentui.viewId'));
+  const original = (await records(page)).flatMap(row => row.frontendSends ?? [])[0];
+  const other = await f.context.newPage(); await other.goto(`${f.host.origin}/browser.html`);
+  await f.create(other); await draft(other, 'Next physical view'); await other.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 2, 'next view dispatch');
+  const nextView = await other.evaluate(() => sessionStorage.getItem('agentui.viewId'));
+  const successor = (await records(page)).flatMap(row => row.frontendSends ?? []).find(row => row.command.clientCommandId !== original.command.clientCommandId);
+  await other.route('**/api/v1', async route => {
+    const request = route.request().postDataJSON();
+    if (request.op === 'frontend-binding' && request.action === 'unavailable') await route.abort(); else await route.continue();
+  });
+  await other.locator(`[data-captured-command="${successor.command.clientCommandId}"]`).getByRole('button', { name: 'Release captured tools', exact: true }).click();
+  await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).find(row => row.command.clientCommandId === successor.command.clientCommandId).state === 'unavailable-pending', 'next view closure release');
+  await other.close();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await wait(() => page.getByRole('button', { name: 'Reconnect', exact: true }).isEnabled(), 'saved view listing');
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  let releaseOld, releaseNext;
+  const oldGate = new Promise(resolve => { releaseOld = resolve; }), nextGate = new Promise(resolve => { releaseNext = resolve; });
+  t.after(() => { releaseOld(); releaseNext(); });
+  await page.route('**/api/v1', async route => {
+    const request = route.request().postDataJSON();
+    if (request.op === 'frontend-binding' && request.action === 'unavailable') {
+      requests.push(request);
+      await (request.id === original.command.clientCommandId ? oldGate : nextGate);
+    }
+    await route.continue();
+  });
+  const oldRequest = page.waitForRequest(request => request.postDataJSON()?.op === 'frontend-binding' && request.postDataJSON()?.action === 'unavailable', { timeout: 5_000 });
+  await page.locator(`[data-captured-command="${original.command.clientCommandId}"]`).getByRole('button', { name: 'Release captured tools', exact: true }).click();
+  await oldRequest;
+  const nextRequest = page.waitForRequest(request => request.postDataJSON()?.op === 'frontend-binding' && request.postDataJSON()?.id === successor.command.clientCommandId, { timeout: 5_000 });
+  await page.getByRole('button', { name: `Reopen saved view ${nextView}`, exact: true }).click();
+  await nextRequest; await connected(page);
+  await page.waitForFunction(async id => !(await navigator.locks.query()).held.some(lock => lock.name === `agentui-view:${id}`), oldView, { timeout: 5_000 });
+  assert.equal(await page.evaluate(id => navigator.locks.request(`agentui-view:${id}`, { ifAvailable: true }, lock => Boolean(lock)), oldView), true);
+  const before = (await records(page)).flatMap(row => row.frontendSends ?? []);
+  releaseOld();
+  await wait(() => f.inspect(db => db.prepare('SELECT state FROM frontend_sends WHERE command_id=?').get(original.command.clientCommandId).state) === 'unavailable', 'late original host response');
+  assert.deepEqual((await records(page)).flatMap(row => row.frontendSends ?? []), before);
+  releaseNext();
+  await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).find(row => row.command.clientCommandId === successor.command.clientCommandId).state === 'unavailable-confirmed', 'successor view acknowledgment');
+  const after = (await records(page)).flatMap(row => row.frontendSends ?? []);
+  assert.equal(after.find(row => row.command.clientCommandId === original.command.clientCommandId).state, 'unavailable-pending');
+  assert.deepEqual(after.map(({ command, ownerId }) => ({ command, ownerId })), before.map(({ command, ownerId }) => ({ command, ownerId })));
+  assert.deepEqual(requests.map(request => request.id), [original.command.clientCommandId, successor.command.clientCommandId]);
+  assert.equal(f.operations.length, 2); assert.equal(f.translations(), 2); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
   for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
 });
