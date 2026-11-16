@@ -331,15 +331,20 @@ test('original fixed grants are required for explicit retry of a grant mismatch'
   await host.stop();
 });
 
-test('an actual archived v1 bundled reader refuses the v2 journal before importing', { timeout: 120000, skip: !process.env.AGENTUI_OLD_SELECTION_CLI }, async t => {
+test('an actual archived v1 bundled reader refuses database format 4 before importing', { timeout: 120000, skip: !process.env.AGENTUI_OLD_SELECTION_CLI }, async t => {
   const f = await fixture(t);
   let host = f.launch(); await host.ready; await f.select('build-b', 0); await host.stop();
   const imported = await readFile(f.marker, 'utf8');
   assert.equal(f.database(db => db.prepare('SELECT count(*) AS n FROM conversations').get().n), 0);
-  host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI, process.env.AGENTUI_OLD_SELECTION_ASSETS); await host.ready;
-  const status = JSON.parse((await execute(process.execPath, [process.env.AGENTUI_OLD_SELECTION_CLI, 'extensions-status', '--data-dir', f.directory])).stdout).value;
-  assert.deepEqual(status, { kind: 'journal-invalid' }); assert.equal(await readFile(f.marker, 'utf8'), imported);
-  await host.stop();
+  assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 4);
+  assert.equal(f.database(db => db.prepare('SELECT version FROM service_extension_selection_schema').get().version), 2);
+  const database = join(f.directory, 'host.sqlite'), before = await readFile(database);
+  host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI, process.env.AGENTUI_OLD_SELECTION_ASSETS);
+  const refused = await host.exited;
+  assert.equal(refused.code, 1); assert.match(refused.stderr, /Unsupported database version/);
+  assert.equal(refused.stdout, '');
+  assert.deepEqual(await readFile(database), before);
+  assert.equal(await readFile(f.marker, 'utf8'), imported);
 });
 
 for (const cut of ['pending', 'applying', 'replacement', 'observation', 'final-commit']) test(`killed live ${cut} attempt is interrupted and never automatically replayed`, { timeout: 120000 }, async t => {
