@@ -74,6 +74,7 @@ test('v1 migration preserves exact selections, receipts, history and legacy coll
   assert.equal(database.prepare('SELECT version FROM service_extension_selection_schema').get().version, 2);
   assert.equal(owner.status({ kind: 'selection', id: 'disable' }).operation.id, 'disable');
   assert.equal(owner.status({ kind: 'attempt', id: 'disable' }).operation.id, 'startup');
+  for (const id of ['old-0', 'old-1']) assert.deepEqual(owner.status({ kind: 'attempt', id }).operation.outcome, { kind: 'interrupted' });
   await owner.activate();
   await assert.rejects(owner.live({ kind: 'apply', requestId: 'disable', selectionId: 'disable', expectedRevision: 1 }), /id-conflict/);
   await owner.close();
@@ -130,6 +131,79 @@ for (const kind of ['pending', 'applying']) test(`later v2 retry cannot authoriz
   assert.deepEqual(reopened.status(), { kind: 'journal-invalid' }); await reopened.activate();
   assert.deepEqual(snapshot(database), before); assert.equal(database.prepare('SELECT total_changes() AS n').get().n, changes);
   await reopened.close();
+});
+
+for (const outcomes of [ ['pending'], ['applying'], ['applied-empty', 'pending', 'interrupted', 'applying', 'grant-mismatch'] ]) {
+  for (const failure of ['abort', 'ignore', 'commit']) test(`v2 recovery ${failure} failure rolls back ${outcomes.join('/')} history`, async t => {
+    const { owner, database } = await fixture(t); await owner.close();
+    for (const [index, kind] of outcomes.entries()) database.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)')
+      .run('recovery-' + index, 'startup', '{"kind":"boot"}', JSON.stringify({ kind }));
+    const failedId = 'recovery-' + outcomes.findLastIndex(kind => kind === 'pending' || kind === 'applying');
+    if (failure === 'commit') database.exec(`CREATE TABLE recovery_parent (id INTEGER PRIMARY KEY);
+      CREATE TABLE recovery_child (id INTEGER REFERENCES recovery_parent(id) DEFERRABLE INITIALLY DEFERRED)`);
+    database.exec(`CREATE TRIGGER recovery_failure BEFORE UPDATE ON service_extension_attempts WHEN OLD.id='${failedId}' BEGIN
+      ${failure === 'commit' ? 'INSERT INTO recovery_child VALUES(1)' : `SELECT RAISE(${failure === 'abort' ? "ABORT,'PRIVATE_RECOVERY'" : 'IGNORE'})`}; END`);
+    const before = snapshot(database);
+    let effects = 0, stops = 0;
+    await assert.rejects(createServerSelection({ database: { database, hostId: 'attempt-test' }, entries: [],
+      runtime: () => ({ kind: 'empty' }), isClosing: () => false,
+      replace: async () => { effects++; return { kind: 'replaced', generation: null }; }, stopRuntime() { stops++; } }),
+    error => error.message === 'Selection recovery failed');
+    assert.deepEqual(snapshot(database), before);
+    assert.equal(database.prepare('SELECT version FROM service_extension_selection_schema').get().version, 2);
+    assert.equal(effects, 0); assert.equal(stops, 0);
+  });
+}
+
+for (const damage of ['outcome', 'selection', 'intent', 'earlier-row', 'deleted-row']) test(`v2 recovery refuses post-update ${damage} damage before mirroring`, async t => {
+  const { owner, database } = await fixture(t);
+  await owner.select({ id: 'other', expectedRevision: 0, selection: empty }); await owner.close();
+  database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES
+    ('first','startup','{"kind":"boot"}','{"kind":"pending"}'),
+    ('second','startup','{"kind":"boot"}','{"kind":"applying"}')`);
+  const mutations = {
+    outcome: `UPDATE service_extension_attempts SET outcome='{"kind":"applying"}' WHERE id=NEW.id`,
+    selection: "UPDATE service_extension_attempts SET selection='other' WHERE id=NEW.id",
+    intent: `UPDATE service_extension_attempts SET intent='{}' WHERE id=NEW.id`,
+    'earlier-row': `UPDATE service_extension_attempts SET outcome='{"kind":"pending"}' WHERE id='first'`,
+    'deleted-row': 'DELETE FROM service_extension_attempts WHERE id=NEW.id',
+  };
+  database.exec(`CREATE TRIGGER damage_recovery AFTER UPDATE ON service_extension_attempts
+    WHEN NEW.id='second' AND NEW.outcome='{"kind":"interrupted"}' BEGIN ${mutations[damage]}; END`);
+  const before = snapshot(database);
+  let effects = 0;
+  await assert.rejects(createServerSelection({ database: { database, hostId: 'attempt-test' }, entries: [],
+    runtime: () => ({ kind: 'empty' }), isClosing: () => false,
+    replace: async () => { effects++; return { kind: 'replaced', generation: null }; }, stopRuntime() {} }),
+  error => error.message === 'Selection recovery failed');
+  assert.deepEqual(snapshot(database), before); assert.equal(effects, 0);
+});
+
+test('v2 recovery mirrors exactly the interrupted worklist and leaves terminal bytes untouched', async t => {
+  const { owner, database } = await fixture(t); await owner.close();
+  const outcomes = [ { kind: 'applied' }, { kind: 'pending' }, { kind: 'applied-empty' }, { kind: 'applying' },
+    { kind: 'interrupted' }, { kind: 'grant-mismatch' }, { kind: 'deferred', reason: 'active-work' },
+    { kind: 'failed', failure: 'cleanup', recovery: 'restart' } ];
+  for (const [index, outcome] of outcomes.entries()) database.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)')
+    .run('recovery-' + index, 'startup', '{"kind":"boot"}', ' ' + JSON.stringify(outcome) + ' ');
+  database.exec(`CREATE TRIGGER terminal_unchanged BEFORE UPDATE ON service_extension_attempts
+    WHEN json_extract(OLD.outcome,'$.kind') NOT IN ('pending','applying') BEGIN SELECT RAISE(ABORT,'TERMINAL_CHANGED'); END`);
+  const before = database.prepare('SELECT * FROM service_extension_attempts ORDER BY sequence').all();
+  const changes = database.prepare('SELECT total_changes() AS n').get().n;
+  const reopened = await createServerSelection({ database: { database, hostId: 'attempt-test' }, entries: [],
+    runtime: () => ({ kind: 'empty' }), isClosing: () => false, replace: async () => assert.fail('Recovery activated'), stopRuntime() {} });
+  t.after(() => reopened.close());
+  const after = database.prepare('SELECT * FROM service_extension_attempts ORDER BY sequence').all();
+  for (const [index, row] of before.entries()) {
+    const outcome = ['pending', 'applying'].includes(outcomes[index].kind) ? { kind: 'interrupted' } : outcomes[index];
+    assert.deepEqual({ ...after[index] }, { ...row, outcome: outcome.kind === 'interrupted' && outcomes[index].kind !== 'interrupted' ? JSON.stringify(outcome) : row.outcome });
+    assert.deepEqual(reopened.status({ kind: 'attempt', id: row.id }).operation.outcome, outcome);
+  }
+  assert.equal(database.prepare('SELECT total_changes() AS n').get().n - changes, 2);
+  assert.equal(reopened.status().lastApplied.attemptId, 'recovery-2');
+  assert.deepEqual(reopened.status().runtime, { kind: 'withheld' });
+  await reopened.activate();
+  assert.deepEqual(database.prepare('SELECT * FROM service_extension_attempts ORDER BY sequence').all(), after);
 });
 
 test('pre-effect journal loss stops admission and post-effect uncertainty outranks closed status', async () => {

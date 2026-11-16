@@ -80,46 +80,60 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     if (extraUnique) throw new Error('Invalid selection journal');
     return version;
   }
-  function upgrade(version: 1 | 2): void {
-    if (version === 1) {
-      db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
-      db.exec(`INSERT INTO service_extension_attempts SELECT sequence,id,selection,'{"kind":"boot"}',outcome FROM service_extension_boots`);
-      db.exec('DROP TABLE service_extension_boots; UPDATE service_extension_selection_schema SET version=2');
-    }
-    db.exec(`UPDATE service_extension_attempts SET outcome='{"kind":"interrupted"}' WHERE json_extract(outcome,'$.kind') IN ('pending','applying')`);
+  function migrateV1(): void {
+    db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
+    db.exec(`INSERT INTO service_extension_attempts SELECT sequence,id,selection,'{"kind":"boot"}',outcome FROM service_extension_boots`);
+    db.exec('DROP TABLE service_extension_boots; UPDATE service_extension_selection_schema SET version=2');
   }
-  let migrating = false;
-  try {
-    transaction(() => {
-      const version = inspectNamespace();
-      if (!version) return;
-      for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
-        const selection = decodeSelection(row);
-        if (selection.revision !== selections.size || selections.has(selection.id)) throw new Error();
-        selections.set(selection.id, selection); desired = selection;
-      }
-      if (version === 2 && !desired) throw new Error('Invalid selection journal');
-      let sequence = 0;
-      for (const row of db.prepare(`SELECT * FROM service_extension_${version === 1 ? 'boots' : 'attempts'} ORDER BY sequence`).all()) {
-        const id = identifier(row.id), selection = identifier(row.selection, 96), outcome = parseAttemptOutcome(JSON.parse(identifier(row.outcome)));
-        const intent = version === 1 ? '{"kind":"boot"}' : identifier(row.intent);
-        const input = record(JSON.parse(intent));
-        const origin = input.kind === 'boot' ? { kind: 'boot' as const } : parseLiveRequest(input);
-        if (origin.kind === 'boot') record(input, ['kind']);
-        if (canonicalJson(origin) !== intent || count(row.sequence) <= sequence || byId.has(id) || !selections.has(selection) || (version === 1 && outcome.kind === 'deferred')) throw new Error();
-        sequence = count(row.sequence);
-        const previous = attempts.findLast(attempt => attempt.selection === selection);
-        if (origin.kind !== 'boot' && (origin.requestId !== id || origin.selectionId !== selection || origin.expectedRevision !== selections.get(selection)?.revision || selections.has(id) ||
-          !allowsPredecessor(origin, previous))) throw new Error();
-        const attempt: Attempt = { id, selection, intent, origin, outcome };
-        attempts.push(attempt); byId.set(id, attempt);
-      }
-      if (desired) { migrating = true; upgrade(version); }
-    });
-    for (const attempt of attempts) if (attempt.outcome.kind === 'pending' || attempt.outcome.kind === 'applying') attempt.outcome = { kind: 'interrupted' };
-  } catch {
-    if (migrating) throw new Error('Selection migration failed');
-    invalid = true;
+  {
+    let recoveryFailure: 'Selection migration failed' | 'Selection recovery failed' | undefined;
+    const interrupted: AttemptOutcome = { kind: 'interrupted' };
+    try {
+      const unresolved = transaction<Attempt[]>(() => {
+        const version = inspectNamespace();
+        if (!version) return [];
+        for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
+          const selection = decodeSelection(row);
+          if (selection.revision !== selections.size || selections.has(selection.id)) throw new Error();
+          selections.set(selection.id, selection); desired = selection;
+        }
+        if (version === 2 && !desired) throw new Error('Invalid selection journal');
+        let sequence = 0;
+        for (const row of db.prepare(`SELECT * FROM service_extension_${version === 1 ? 'boots' : 'attempts'} ORDER BY sequence`).all()) {
+          const id = identifier(row.id), selection = identifier(row.selection, 96), outcome = parseAttemptOutcome(JSON.parse(identifier(row.outcome)));
+          const intent = version === 1 ? '{"kind":"boot"}' : identifier(row.intent);
+          const input = record(JSON.parse(intent));
+          const origin = input.kind === 'boot' ? { kind: 'boot' as const } : parseLiveRequest(input);
+          if (origin.kind === 'boot') record(input, ['kind']);
+          if (canonicalJson(origin) !== intent || count(row.sequence) <= sequence || byId.has(id) || !selections.has(selection) || (version === 1 && outcome.kind === 'deferred')) throw new Error();
+          sequence = count(row.sequence);
+          const previous = attempts.findLast(attempt => attempt.selection === selection);
+          if (origin.kind !== 'boot' && (origin.requestId !== id || origin.selectionId !== selection || origin.expectedRevision !== selections.get(selection)?.revision || selections.has(id) ||
+            !allowsPredecessor(origin, previous))) throw new Error();
+          const attempt: Attempt = { id, selection, intent, origin, outcome };
+          attempts.push(attempt); byId.set(id, attempt);
+        }
+        const unresolved = attempts.filter(attempt => attempt.outcome.kind === 'pending' || attempt.outcome.kind === 'applying');
+        if (desired) {
+          recoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
+          if (version === 1) migrateV1();
+          const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
+          for (const attempt of unresolved) {
+            if (update.run(outcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
+          }
+          const readAttempt = db.prepare('SELECT selection,intent,outcome FROM service_extension_attempts WHERE id=?');
+          for (const attempt of unresolved) {
+            const written = readAttempt.get(attempt.id);
+            if (written?.selection !== attempt.selection || written.intent !== attempt.intent || written.outcome !== outcome) throw new Error('Invalid selection attempt');
+          }
+        }
+        return unresolved;
+      });
+      for (const attempt of unresolved) attempt.outcome = interrupted;
+    } catch {
+      if (recoveryFailure) throw new Error(recoveryFailure);
+      invalid = true;
+    }
   }
   function allowsPredecessor(origin: Attempt['origin'], previous: Pick<Attempt, 'id' | 'outcome'> | undefined): boolean {
     switch (origin.kind) {
@@ -187,7 +201,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
           db.prepare('INSERT INTO service_extension_selection_schema VALUES(1,2,?)').run(deps.database.hostId);
         } else {
           if (db.prepare('SELECT 1 FROM service_extension_boots LIMIT 1').get()) throw new Error('Invalid selection journal');
-          upgrade(version);
+          migrateV1();
         }
       }
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
@@ -224,15 +238,17 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     try {
       admission = transaction(() => {
         available(); authority(selection);
-        const state = attempt.origin.kind === 'boot' ? undefined : deps.runtime();
         const latest = db.prepare('SELECT id,outcome FROM service_extension_attempts WHERE selection=? ORDER BY sequence DESC LIMIT 1').get(selection.id);
         const previous = latest && { id: identifier(latest.id), outcome: parseAttemptOutcome(JSON.parse(identifier(latest.outcome))) };
         if (!allowsPredecessor(attempt.origin, previous)) {
           if (attempt.origin.kind === 'boot') return 'withheld';
           throw new SelectionRefusal('attempt-conflict');
         }
-        if (state?.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
-        if (attempt.origin.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
+        if (attempt.origin.kind !== 'boot') {
+          const state = deps.runtime();
+          if (state.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
+          if (attempt.origin.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
+        }
         if (db.prepare('SELECT 1 FROM service_extension_selections WHERE id=?').get(attempt.id)) throw new SelectionRefusal('id-conflict');
         db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, canonicalJson(attempt.outcome));
         return 'admitted';
