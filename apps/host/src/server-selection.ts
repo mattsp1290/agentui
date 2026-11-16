@@ -84,6 +84,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
     db.exec(`INSERT INTO service_extension_attempts SELECT sequence,id,selection,'{"kind":"boot"}',outcome FROM service_extension_boots`);
     db.exec('DROP TABLE service_extension_boots; UPDATE service_extension_selection_schema SET version=2');
+    if (inspectNamespace() !== 2) throw new Error('Invalid selection journal');
   }
   {
     let recoveryFailure: 'Selection migration failed' | 'Selection recovery failed' | undefined;

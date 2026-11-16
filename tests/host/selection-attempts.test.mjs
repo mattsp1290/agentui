@@ -120,6 +120,15 @@ test('a failed v1 schema migration rolls back every copied row and old namespace
   assert.deepEqual(snapshot(database), before);
 });
 
+for (const seeded of [true, false]) test(`v1 migration refuses an ignored version marker update: ${seeded ? 'populated' : 'unseeded'}`, async t => {
+  const { database, open } = oldJournal(t, { seeded });
+  database.exec(`CREATE TRIGGER suppress_migration_version BEFORE UPDATE ON service_extension_selection_schema BEGIN SELECT RAISE(IGNORE); END`);
+  const before = snapshot(database);
+  await assert.rejects(open(), error => error.message === (seeded ? 'Selection migration failed' : 'Invalid selection journal'));
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(database.prepare('SELECT version FROM service_extension_selection_schema').get().version, 1);
+});
+
 for (const kind of ['pending', 'applying']) test(`later v2 retry cannot authorize original ${kind} history before normalization`, async t => {
   const { owner, database } = await fixture(t); await owner.close();
   database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES
