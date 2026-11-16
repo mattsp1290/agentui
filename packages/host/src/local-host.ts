@@ -1,4 +1,4 @@
-import { recoverFrontendBinding } from './frontend-sends.js';
+import { FrontendAccessError, recoverFrontendBinding } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
 import type { FrontendToolProducer } from './frontend-tools/index.js';
@@ -7,7 +7,7 @@ import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
-import { budgets, commandKey } from './durable-model.js';
+import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
@@ -122,7 +122,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     await task;
   };
   const assertMayReceiveEvidence = (stored: StoredCommand, actor?: FrontendSendActor) => {
-    if (stored.command.version !== 2) return;
+    if (!isOffered(stored)) return;
     authorized(stored.command.scope);
     store.frontendSends.check({ scope: stored.command.scope, id: stored.command.clientCommandId, actor, stored });
   };
@@ -132,13 +132,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     return stored;
   };
   const assertFrontendTarget = (stored: StoredCommand) => {
-    if (stored.command.version !== 2) return;
-    if (!('kind' in stored) || !options.providers) throw new Error('Original AG-UI provider unavailable');
+    if (!isOffered(stored)) return;
+    if (!options.providers) throw new Error('Original AG-UI provider unavailable');
     options.providers.assertFrontendTarget(stored.target);
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     assertFrontendTarget(stored);
-    if (stored.command.version === 2) {
+    if (isOffered(stored)) {
       if (store.frontendSends.check({ scope: stored.command.scope,
         id: stored.command.clientCommandId, actor, stored }) !== 'available') throw new Error('Frontend owner unavailable');
     } else if (actor) store.frontendSends.assertActor(actor);
@@ -158,7 +158,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     const observed = 'kind' in stored
       ? await options.providers?.executeCommand(stored, false, () => lookupFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
-    if (observed.kind === 'outcome-unknown' && (stored.command.version === 2 || dispatching.has(commandKey(scope, id)))) {
+    if (observed.kind === 'outcome-unknown' && (isOffered(stored) || dispatching.has(commandKey(scope, id)))) {
       const current = store.command(scope, id);
       if (!current) throw new Error('Unknown command');
       return current.receipt;
@@ -168,12 +168,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const blocker = store.blockingSend(scope);
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
-    if (blocker.command.version !== 2 && blocker.receipt.state.kind !== 'accepted') return false;
+    if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
     const assertRequester = () => {
-      if (blocker.command.version === 2) {
+      if (isOffered(blocker)) {
         store.frontendSends.assertActor(actor);
-        if (!('kind' in blocker)) throw new Error('Invalid offered command target');
-        store.frontendSends.assertAdmitted(blocker.command, blocker.agui);
+        store.frontendSends.assertAdmitted(blocker);
       } else if (actor && !actor.authorized()) throw new Error('Unauthorized actor');
       authorized(scope);
     };
@@ -320,7 +319,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     frontendBinding(input, actor, producerFor) {
       const scope = authorized(input.scope);
       return inFlight(() => recoverFrontendBinding({ request: { ...input, scope }, actor, owners: store.frontendSends,
-        command: () => ownedCommand(scope, input.id, actor),
+        command: () => {
+          const stored = ownedCommand(scope, input.id, actor);
+          if (stored && !isOffered(stored)) throw new FrontendAccessError('frontend-owner-missing');
+          return stored;
+        },
         transaction: work => store.transaction(work), reconcile: () => host.reconcile(scope, input.id, actor),
         producer: () => producerFor(scope), providers: options.providers }));
     },
