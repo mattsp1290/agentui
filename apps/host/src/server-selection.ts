@@ -149,9 +149,13 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   function persist(attempt: Attempt, selection: Selection, outcome: AttemptOutcome): void {
     transaction(() => {
       authority(selection);
-      const row = db.prepare('SELECT selection,intent,outcome FROM service_extension_attempts WHERE id=?').get(attempt.id);
+      const readAttempt = db.prepare('SELECT selection,intent,outcome FROM service_extension_attempts WHERE id=?');
+      const row = readAttempt.get(attempt.id), nextOutcome = canonicalJson(outcome);
       if (row?.selection !== selection.id || row.intent !== attempt.intent || row.outcome !== canonicalJson(attempt.outcome)) throw new Error('Invalid selection attempt');
-      if (db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(canonicalJson(outcome), attempt.id).changes !== 1) throw new Error('Selection journal write failed');
+      if (db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(nextOutcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
+      authority(selection);
+      const written = readAttempt.get(attempt.id);
+      if (written?.selection !== selection.id || written.intent !== attempt.intent || written.outcome !== nextOutcome) throw new Error('Invalid selection attempt');
     });
     attempt.outcome = outcome;
   }

@@ -253,7 +253,7 @@ for (const [phase, error, persisted, effects] of [
   ['insert', 'unavailable', undefined, 0],
   ['applying', 'unavailable', 'pending', 0],
   ['grant-mismatch', 'unavailable', 'pending', 0],
-  ['authority', 'unavailable', 'applying', 0],
+  ['authority', 'unavailable', 'pending', 0],
   ['observation', 'uncertain', 'failed', 1],
   ['observation-record', 'uncertain', 'applying', 1],
   ['final', 'uncertain', 'applying', 1],
@@ -282,8 +282,27 @@ for (const [phase, error, persisted, effects] of [
   assert.equal(calls, effects); assert.equal(stops, 1);
   const row = database.prepare("SELECT outcome FROM service_extension_attempts WHERE id='failed'").get();
   assert.equal(row && JSON.parse(row.outcome).kind, persisted);
+  if (phase === 'authority') assert.equal(database.prepare("SELECT revision FROM service_extension_selections WHERE id='startup'").get().revision, 0);
   if (phase === 'observation') assert.deepEqual(JSON.parse(row.outcome), { kind: 'failed', failure: 'discovery', recovery: 'replace' });
   assert.equal(owner.status().runtime.kind, error === 'uncertain' ? 'uncertain' : 'closed');
+});
+
+for (const damage of ['authority', 'outcome']) test(`final outcome trigger damage rolls back before acknowledgement: ${damage}`, async t => {
+  const f = await diskFixture(t), owner = await f.open();
+  const change = damage === 'authority'
+    ? 'UPDATE service_extension_selections SET revision=revision+1 WHERE id=NEW.selection'
+    : `UPDATE service_extension_attempts SET outcome='{"kind":"interrupted"}' WHERE id=NEW.id`;
+  f.database.exec(`CREATE TRIGGER damage_final AFTER UPDATE ON service_extension_attempts
+    WHEN json_extract(NEW.outcome,'$.kind')='applied-empty' BEGIN ${change}; END`);
+  await assert.rejects(owner.live({ kind: 'apply', requestId: 'final', selectionId: 'startup', expectedRevision: 0 }),
+    error => error.message === 'Selection uncertain');
+  assert.equal(f.effects(), 1); assert.equal(f.stops(), 1);
+  assert.equal(f.database.prepare("SELECT revision FROM service_extension_selections WHERE id='startup'").get().revision, 0);
+  assert.equal(f.database.prepare("SELECT outcome FROM service_extension_attempts WHERE id='final'").get().outcome, '{"kind":"applying"}');
+  const status = owner.status();
+  assert.deepEqual(status.runtime, { kind: 'uncertain' });
+  assert.deepEqual(status.operation.outcome, { kind: 'applying' });
+  assert.equal(status.lastApplied, null);
 });
 
 test('first apply records changed grants, exact replay precedes fresh retry refusal', async t => {
