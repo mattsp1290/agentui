@@ -38,7 +38,7 @@ function harness(t, progressMs = 15) {
   const watch = host => {
     const history = [], events = [];
     let document;
-    const feed = host.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => {
+    const feed = host.conversation(scope).watch({ after: null, projectionVersion: 4 }, async item => {
       if (item.kind === 'snapshot') document = item.snapshot.document;
       else for (const envelope of item.events) {
         document = foldDocument(document, envelope.event, transcriptProjection);

@@ -53,8 +53,9 @@ interface AgentDescription {
 }
 export type NativeAgentDescriptor = AgentDescription & {
   readonly runtime: NativeRuntimeIdentity;
-  readonly model?: { readonly id: string; readonly label: string };
+  readonly model?: { readonly id: string; readonly label: string; readonly inputModalities?: readonly InputModality[] };
 };
+export type InputModality = 'text' | 'image';
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
 });
@@ -197,9 +198,16 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   const common = { id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
-  const model = Object.hasOwn(input, 'model') ? record(input.model, ['id', 'label']) : null;
+  const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
+  if (model) exact(model, ['id', 'label', ...(Object.hasOwn(model, 'inputModalities') ? ['inputModalities'] : [])]);
   return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
-    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label) } } : {}) };
+    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label),
+      ...(Object.hasOwn(model, 'inputModalities') ? { inputModalities: inputModalities(model.inputModalities) } : {}) } } : {}) };
+}
+function inputModalities(value: unknown): readonly InputModality[] {
+  if (!Array.isArray(value) || !value.length || new Set(value).size !== value.length ||
+    value.some(item => item !== 'text' && item !== 'image')) throw new Error('Invalid model input modalities');
+  return value as InputModality[];
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);

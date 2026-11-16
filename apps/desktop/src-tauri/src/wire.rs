@@ -67,6 +67,12 @@ enum Body {
     },
     Send {
         text: String,
+        #[serde(
+            default,
+            deserialize_with = "present",
+            skip_serializing_if = "Option::is_none"
+        )]
+        image_id: Option<String>,
     },
     Approve {
         pending_id: String,
@@ -166,6 +172,9 @@ fn encoded_bytes(value: &impl Serialize) -> Result<usize, &'static str> {
     serde_json::to_vec(value)
         .map(|bytes| bytes.len())
         .map_err(|_| INVALID)
+}
+fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
+    String::deserialize(deserializer).map(Some)
 }
 pub fn image_operation(value: &Value) -> bool {
     matches!(value["op"].as_str(), Some("image-upload" | "image-read"))
@@ -269,7 +278,10 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         Request::Submit { command } => {
             let valid = match &command.body {
                 Body::RevokePermission { .. } => true,
-                Body::Send { text } => !text.is_empty(),
+                Body::Send { text, image_id: id } => match id {
+                    Some(id) => image_id(id),
+                    None => !text.is_empty(),
+                },
                 Body::Approve {
                     pending_id,
                     choice_id,
@@ -678,6 +690,32 @@ mod tests {
         large["base64"] = json!("A".repeat(5_592_406) + "==");
         assert!(request(large, "host").is_ok());
         invalid(command(json!({"kind":"send", "text":"x", "image":{}})));
+    }
+
+    #[test]
+    fn send_carries_an_optional_image_reference() {
+        let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        for body in [
+            json!({"kind":"send", "text":"x"}),
+            json!({"kind":"send", "text":"x", "imageId":id}),
+            json!({"kind":"send", "text":"", "imageId":id}),
+        ] {
+            let value = command(body);
+            assert_eq!(
+                serde_json::to_string(&request(value.clone(), "host").unwrap()).unwrap(),
+                serde_json::to_string(&value).unwrap()
+            );
+            valid(value);
+        }
+        for body in [
+            json!({"kind":"send", "text":""}),
+            json!({"kind":"send", "text":"x", "imageId":null}),
+            json!({"kind":"send", "text":"x", "imageId":"AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA"}),
+            json!({"kind":"send", "text":"x", "imageId":"../image"}),
+            json!({"kind":"send", "imageId":id}),
+        ] {
+            invalid(command(body));
+        }
     }
 
     #[test]

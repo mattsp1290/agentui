@@ -1,5 +1,8 @@
 import { record, count, identifier } from './decode.js';
+import { canonicalJson } from './durable.js';
 import type { Projection } from './durable.js';
+import { parseImageAttachment } from './image.js';
+import type { ImageAttachment } from './image.js';
 import { COMMAND_OUTPUT_BYTES, COMMAND_TEXT_BYTES, COMMAND_CWD_BYTES, escapedBytes, parseCommandActivity } from './command-activity.js';
 import type { CommandActivity } from './command-activity.js';
 import { parseActivity, updateActivity } from './activity.js';
@@ -16,6 +19,8 @@ export interface TranscriptMessage {
   readonly role: 'user' | 'assistant';
   readonly text: string;
   readonly complete: boolean;
+  /** Present only on user messages. */
+  readonly image?: ImageAttachment;
 }
 export const CONVERSATION_PREVIEW_LENGTH = 80;
 export function conversationPreview(transcript: Transcript): string | null {
@@ -45,12 +50,13 @@ export type TranscriptEvent =
   | { readonly kind: 'run-ended'; readonly runId: string; readonly outcome: RunOutcome };
 
 function message(value: unknown, event: boolean): TranscriptMessage {
-  const input = record(value, event ? ['kind', 'messageId', 'revision', 'role', 'text', 'complete']
-    : ['messageId', 'revision', 'role', 'text', 'complete']);
+  const hasImage = Object.hasOwn(record(value), 'image');
+  const input = record(value, [...(event ? ['kind'] : []), 'messageId', 'revision', 'role', 'text', 'complete', ...(hasImage ? ['image'] : [])]);
   const messageId = identifier(input.messageId), revision = count(input.revision);
   if (revision < 1 || (input.role !== 'user' && input.role !== 'assistant') || typeof input.text !== 'string' ||
-    typeof input.complete !== 'boolean') throw new Error('Invalid transcript message');
-  return { messageId, revision, role: input.role, text: input.text, complete: input.complete };
+    typeof input.complete !== 'boolean' || (hasImage && input.role !== 'user')) throw new Error('Invalid transcript message');
+  return { messageId, revision, role: input.role, text: input.text, complete: input.complete,
+    ...(hasImage ? { image: parseImageAttachment(input.image) } : {}) };
 }
 function outcome(value: unknown): RunOutcome {
   if (value !== 'completed' && value !== 'interrupted' && value !== 'failed' && value !== 'connection-lost') {
@@ -116,7 +122,7 @@ export function parseTranscript(value: unknown): Transcript {
     ...(activities ? { activities } : {}) };
 }
 export const transcriptProjection: Projection<TranscriptEvent, Transcript> = {
-  version: 3,
+  version: 4,
   initial: () => ({ messages: [], currentRun: null }),
   decodeState: parseTranscript,
   decodeEvent: parseTranscriptEvent,
@@ -153,13 +159,14 @@ export const transcriptProjection: Projection<TranscriptEvent, Transcript> = {
     }
     const index = state.messages.findIndex(item => item.messageId === event.messageId);
     const next: TranscriptMessage = { messageId: event.messageId, revision: event.revision,
-      role: event.role, text: event.text, complete: event.complete };
+      role: event.role, text: event.text, complete: event.complete, ...(event.image ? { image: event.image } : {}) };
     const previous = state.messages[index];
     if (!previous) return { ...state, messages: [...state.messages, next] };
     if (previous.role !== event.role) throw new Error('Transcript message role changed');
     if (event.revision < previous.revision) return state;
     if (event.revision === previous.revision) {
-      if (previous.text !== event.text || previous.complete !== event.complete) throw new Error('Conflicting transcript revision');
+      if (previous.text !== event.text || previous.complete !== event.complete ||
+        canonicalJson(previous.image ?? null) !== canonicalJson(event.image ?? null)) throw new Error('Conflicting transcript revision');
       return state;
     }
     if (previous.complete) throw new Error('Completed transcript message changed');

@@ -207,7 +207,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          const admit = () => store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
+          const image = command.body.kind === 'send' && command.body.imageId !== undefined;
+          const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
+            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);

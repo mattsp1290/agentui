@@ -8,7 +8,7 @@ import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
 import { budgets } from '../../packages/host/dist/durable-model.js';
 import { IMAGE_HOST_MAX_BYTES, IMAGE_HOST_MAX_COUNT, IMAGE_MAX_BYTES } from '@agentui/contracts/image';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
-import { fixture, projection, scope, other, installed } from './fixture.mjs';
+import { fixture, projection, scope, other, installed, command } from './fixture.mjs';
 import { chunk, png, screenshotPng } from './image-fixtures.mjs';
 
 function storeFixture(t) {
@@ -124,7 +124,7 @@ test('version three migration preserves all preexisting tables and exact row val
   access.database.close();
   const store = new SqliteStore(f.path, projection, budgets());
   const savedScope = { hostId, conversationId: 'saved' }; store.create(savedScope, installed);
-  store.db.exec("CREATE TABLE selection_sentinel (data BLOB); INSERT INTO selection_sentinel VALUES (x'0001ff'); DROP TABLE images; PRAGMA user_version=3");
+  store.db.exec("CREATE TABLE selection_sentinel (data BLOB); INSERT INTO selection_sentinel VALUES (x'0001ff'); DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3");
   const tables = store.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(row => row.name);
   const before = tables.map(table => [table, store.db.prepare(`SELECT * FROM ${table}`).all()]);
   store.close();
@@ -138,7 +138,7 @@ test('version three migration preserves all preexisting tables and exact row val
 test('invalid pre-image database is refused before image migration changes its bytes', t => {
   const f = storeFixture(t); f.store.close();
   const db = new DatabaseSync(f.path);
-  db.exec("DROP TABLE images; PRAGMA user_version=3; UPDATE conversations SET document='invalid JSON'"); db.close();
+  db.exec("DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; UPDATE conversations SET document='invalid JSON'"); db.close();
   const before = createHash('sha256').update(readFileSync(f.path)).digest('hex');
   assert.throws(() => f.open(), /Corrupt stored JSON/);
   assert.equal(createHash('sha256').update(readFileSync(f.path)).digest('hex'), before);
@@ -186,10 +186,38 @@ test('simultaneous new uploads cannot exceed the final retained row slot', async
 
 test('failed additive migration rolls back image table creation and format advancement', t => {
   const f = storeFixture(t);
-  f.store.db.exec("DROP TABLE images; PRAGMA user_version=3; CREATE TRIGGER images_no_update BEFORE UPDATE ON conversations BEGIN SELECT 1; END");
+  f.store.db.exec("DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; CREATE TRIGGER images_no_update BEFORE UPDATE ON conversations BEGIN SELECT 1; END");
   f.store.close();
   assert.throws(() => f.open(), /trigger images_no_update already exists/);
   const db = new DatabaseSync(f.path); t.after(() => db.close());
   assert.equal(db.prepare('PRAGMA user_version').get().user_version, 3);
   assert.equal(db.prepare("SELECT 1 FROM sqlite_schema WHERE name='images'").get(), undefined);
+});
+
+test('image sends admit only through image-capable drivers and imageIds in the same conversation', async t => {
+  const f = fixture(t), capable = { ...f.driver, imageInput: true };
+  const host = f.open({ driver: capable });
+  host.createConversation(scope, installed); host.createConversation(other, installed);
+  const own = host.uploadImage(scope, 'owner', randomUUID(), 'Screen.png', png());
+  const foreign = host.uploadImage(other, 'owner', randomUUID(), 'Screen.png', png());
+  const send = (id, imageId) => command(id, { kind: 'send', text: '', imageId });
+  const rows = () => {
+    const db = new DatabaseSync(f.path);
+    try { return { commands: db.prepare('SELECT id FROM commands ORDER BY rowid').all().map(row => row.id),
+      links: db.prepare('SELECT host, conversation, command, image FROM command_images').all().map(row => ({ ...row })) }; }
+    finally { db.close(); }
+  };
+  for (const [id, imageId] of [['foreign', foreign.imageId], ['unknown', randomUUID()]]) {
+    assert.deepEqual(await host.conversation(scope).submit(send(id, imageId)), { kind: 'rejected', reason: 'image-scope' });
+  }
+  const accepted = await host.conversation(scope).submit(send('image', own.imageId));
+  assert.equal(accepted.kind, 'receipt');
+  assert.deepEqual(rows(), { commands: ['image'], links: [{ host: scope.hostId, conversation: scope.conversationId, command: 'image', image: own.imageId }] });
+  host.close(); await host.drained;
+  const textOnly = f.open();
+  assert.deepEqual(await textOnly.conversation(scope).submit(send('image', own.imageId)), accepted);
+  assert.deepEqual(await textOnly.conversation(scope).submit(send('other-image', own.imageId)), { kind: 'rejected', reason: 'This model cannot read images.' });
+  assert.equal((await textOnly.conversation(scope).submit(command('text'))).kind, 'receipt');
+  assert.deepEqual(rows().commands, ['image', 'text']);
+  assert.equal(rows().links.length, 1);
 });

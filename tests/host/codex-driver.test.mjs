@@ -71,7 +71,7 @@ function fixture(t, mode = 'stream') {
 
 async function observe(port, predicate) {
   let latest;
-  const feed = port.watch({ after: null, projectionVersion: 3 }, async item => {
+  const feed = port.watch({ after: null, projectionVersion: 4 }, async item => {
     if (item.kind === 'snapshot') latest = item.snapshot.document;
     else latest = (await snapshot(port)).document;
   });
@@ -152,6 +152,7 @@ test('streams before completion, reuses its thread, resumes from legacy SQLite a
   const log = f.log();
   assert.equal(log.filter(message => message.method === 'thread/start').length, 1);
   assert.deepEqual(log.filter(message => message.method === 'thread/resume').map(message => message.params.threadId), ['fixture-thread']);
+  assert.ok(log.filter(message => message.method === 'thread/resume').every(message => message.params.excludeTurns === true), 'resume never hydrates image history');
   assert.deepEqual(log.filter(message => message.method === 'turn/start').map(message => message.params.threadId), Array(3).fill('fixture-thread'));
   assert.equal(new Set(log.filter(message => message.method === 'initialize').map(message => message.pid)).size, 2);
   assert.deepEqual(log.find(message => message.method === 'turn/interrupt').params, { threadId: 'fixture-thread', turnId: thirdRunId });

@@ -9,7 +9,9 @@ import type { verifyImageUpload } from './image-input.js';
 export function migrateImages(db: DatabaseSync): void {
   const version = db.prepare('PRAGMA user_version').get()?.user_version;
   if (version === 4) {
-    if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name='images'").get()) throw new Error('Incomplete database schema version 4: missing images');
+    for (const table of ['images', 'command_images']) {
+      if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table)) throw new Error(`Incomplete database schema version 4: missing ${table}`);
+    }
     return;
   }
   if (version !== 2 && version !== 3) throw new Error('Unsupported database version');
@@ -25,6 +27,11 @@ export function migrateImages(db: DatabaseSync): void {
     FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
     CREATE TRIGGER images_no_update BEFORE UPDATE ON images BEGIN SELECT RAISE(ABORT,'Images are immutable'); END;
     CREATE TRIGGER images_no_delete BEFORE DELETE ON images BEGIN SELECT RAISE(ABORT,'Images are retained'); END;
+    CREATE TABLE command_images (
+    host TEXT NOT NULL, conversation TEXT NOT NULL, command TEXT NOT NULL, image TEXT NOT NULL,
+    PRIMARY KEY(host,conversation,command),
+    FOREIGN KEY(host,conversation,command) REFERENCES commands(host,conversation,id),
+    FOREIGN KEY(image) REFERENCES images(id));
     PRAGMA user_version=4;`);
 }
 
@@ -79,4 +86,8 @@ export function readImage(db: DatabaseSync, scope: ConversationScope, imageId: I
   const row = db.prepare('SELECT * FROM images WHERE host=? AND conversation=? AND id=?').get(scope.hostId, scope.conversationId, imageId);
   if (!row) throw new ImageInputError('image-scope', 'Image is unavailable in this conversation');
   return storedImage(row);
+}
+
+export function hasImage(db: DatabaseSync, scope: ConversationScope, imageId: ImageId): boolean {
+  return !!db.prepare('SELECT 1 FROM images WHERE host=? AND conversation=? AND id=?').get(scope.hostId, scope.conversationId, imageId);
 }

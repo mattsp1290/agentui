@@ -2,13 +2,15 @@ import { parsePermissionScope } from './permissions.js';
 import type { PermissionScope } from './permissions.js';
 import { record, nonempty, count, identifier, exact } from './decode.js';
 import type { ConversationScope, ProviderBinding, RunAuthority, RunIdentity } from './index.js';
+import { parseImageId } from './image.js';
+import type { ImageId } from './image.js';
 
 export type Json = null | boolean | number | string | readonly Json[] | { readonly [key: string]: Json };
 export const DEFAULT_MAX_COMMAND_BYTES = 64_000;
 export const JSON_MAX_NODES = 100_000;
 export const JSON_MAX_DEPTH = 64;
 export type CommandBody =
-  | { readonly kind: 'send'; readonly text: string }
+  | { readonly kind: 'send'; readonly text: string; readonly imageId?: ImageId }
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }
   | { readonly kind: 'cancel'; readonly runId: string }
   | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope };
@@ -173,8 +175,14 @@ export function parseCommand(value: unknown): ClientCommand {
   let parsed: CommandBody;
   switch (body.kind) {
     case 'send':
-      exact(body, ['kind', 'text']);
-      parsed = { kind: 'send', text: nonempty(body.text) };
+      if (Object.hasOwn(body, 'imageId')) {
+        exact(body, ['kind', 'text', 'imageId']);
+        if (typeof body.text !== 'string') throw new Error('Invalid text');
+        parsed = { kind: 'send', text: body.text, imageId: parseImageId(body.imageId) };
+      } else {
+        exact(body, ['kind', 'text']);
+        parsed = { kind: 'send', text: nonempty(body.text) };
+      }
       break;
     case 'approve':
       exact(body, ['kind', 'pendingId', 'choiceId']);

@@ -558,7 +558,7 @@ async function openCommands(t, runtime = RECORDED_RUNTIME) {
 }
 async function deliver(f, domain = { messages: [], currentRun: null }) {
   const feed = f.feeds.at(-1);
-  await feed.receive({ kind: 'snapshot', snapshot: { scope: feed.scope, projectionVersion: 3,
+  await feed.receive({ kind: 'snapshot', snapshot: { scope: feed.scope, projectionVersion: 4,
     cursor: (f.app.getSnapshot().active.store.getSnapshot().cursor ?? -1) + 1,
     document: { domain, decisions: {}, receipts: {} } } });
   assert.equal(f.app.getSnapshot().active.store.getSnapshot().connection.kind, 'connected');
