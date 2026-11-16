@@ -26,6 +26,11 @@ class AdmissionError extends Error {}
 class OutputApplicationError extends Error {}
 export class CapacityError extends Error {}
 const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
+const taggedSendSql = `json_extract(target, '$.kind')='provider' AND json_extract(target, '$.operation.kind')='send' AND json_extract(target, '$.operation.protocol')='ag-ui'`;
+const taggedThreadSql = `json_extract(target, '$.operation.request.threadId')`;
+const taggedRunSql = `json_extract(target, '$.operation.request.runId')`;
+const taggedKeySql = `${taggedSendSql} AND ${taggedThreadSql}=? AND ${taggedRunSql}=?`;
+const taggedHistorySql = `SELECT 1 FROM commands INDEXED BY commands_tagged_send_key WHERE host=? AND conversation=? AND ${taggedKeySql} LIMIT 1`;
 
 export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
@@ -66,8 +71,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           UNIQUE(host,conversation,thread_id,run_id),
           PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
           CREATE UNIQUE INDEX IF NOT EXISTS frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
-          PRAGMA user_version=4;`);
+          CREATE INDEX IF NOT EXISTS commands_tagged_send_key ON commands(host,conversation,${taggedThreadSql},${taggedRunSql}) WHERE ${taggedSendSql};`);
         this.db.prepare('SELECT actor_id,thread_id,run_id FROM frontend_sends LIMIT 1').get();
+        this.db.prepare(taggedHistorySql);
+        if (format !== 4) this.db.exec('PRAGMA user_version=4');
       });
     } catch (error) { this.db.close(); throw error; }
   }
@@ -380,7 +387,14 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         const target = capture.target;
         if (canonicalJson(target.installation) !== canonicalJson(installed) || canonicalJson(target.credential) !== canonicalJson(original.credential) ||
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
-        if (Buffer.byteLength(canonicalJson(target)) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
+        const encodedTarget = canonicalJson(target);
+        if (Buffer.byteLength(encodedTarget) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
+        if (capture.agui !== null) {
+          if (!this.db.prepare(`SELECT 1 FROM (SELECT ? AS target) WHERE ${taggedKeySql}`)
+            .get(encodedTarget, capture.agui.threadId, capture.agui.runId)) throw new AdmissionError('provider-command-unavailable');
+          if (command.version === 2 && this.db.prepare(taggedHistorySql)
+            .get(...key(scope), capture.agui.threadId, capture.agui.runId)) throw new AdmissionError('frontend-run-reused');
+        }
         this.frontendSends.admitCapture(capture, actor);
         stored = { kind: 'provider', ...capture, receipt: admitted, observation: null };
       } else {
