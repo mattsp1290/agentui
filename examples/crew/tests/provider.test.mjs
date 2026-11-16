@@ -133,6 +133,35 @@ test('Crew public entry creates, observes actual SSE text, approves, stops and r
   assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel')).length, 1);
 });
 
+test('Crew follow-up confirms the original completed request before admitting its own send once', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  const port = f.client.conversation(scope), first = await port.submit(send(scope));
+  assert.equal(first.receipt.state.kind, 'accepted');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
+  const [requestId, receipt] = [...remote.receipts][0];
+  const target = f.inspect(db => db.prepare("SELECT target FROM commands WHERE id='send'").get().target);
+  const captured = JSON.parse(target);
+  assert.equal(requestId, captured.operation.operationId);
+  assert.equal(receipt.conversationId, captured.operation.binding.authority.binding.opaqueSessionId);
+  receipt.status = 'completed'; receipt.result = { text: 'Finished' };
+  const before = remote.calls.length;
+  const next = send(scope, 'follow-up');
+  const result = await port.submit(next);
+  assert.equal(result.kind, 'receipt');
+  assert.equal(result.receipt.state.kind, 'accepted');
+  assert.equal((await port.receipt('send')).state.kind, 'completed');
+  assert.deepEqual(await port.submit(next), result);
+  assert.equal((await port.submit({ ...next, body: { kind: 'send', text: 'Changed' } })).reason, 'command-id-conflict');
+  const posts = remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests'));
+  assert.deepEqual(posts.map(call => call.input.requestId), [requestId, result.receipt.hostOperationId]);
+  assert.notEqual(result.receipt.hostOperationId, requestId);
+  const lookup = remote.calls.findIndex((call, index) => index >= before && call.method === 'GET' &&
+    call.path === `/v1/conversations/${receipt.conversationId}/requests/${requestId}`);
+  assert(lookup >= before);
+  assert(lookup < remote.calls.indexOf(posts[1]));
+  assert.equal(f.inspect(db => db.prepare("SELECT target FROM commands WHERE id='send'").get().target), target);
+});
+
 test('Crew lost submit remains original-only GET recovery and does not turn missing lookup into rejection', async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
   remote.setLost(true);

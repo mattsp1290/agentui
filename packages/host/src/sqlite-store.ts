@@ -252,6 +252,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
   }
+  blockingSend(scope: ConversationScope): StoredCommand | null {
+    const row = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted') LIMIT 1").get(...key(scope));
+    return row ? this.command(scope, nonempty(row.id)) : null;
+  }
   private snapshotOverheadBytes(scope: ConversationScope): number {
     return Buffer.byteLength(canonicalJson({ scope, projectionVersion: this.projection.version,
       cursor: Number.MAX_SAFE_INTEGER, document: null })) - 4;
@@ -317,8 +321,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         if (!row) return { kind: 'rejected', reason: 'unknown-run' };
         run = nativeRun(json(row.data), installed, scope);
       } else if (command.body.kind === 'send') {
-        const outstanding = this.db.prepare("SELECT 1 FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted') LIMIT 1").get(...key(scope));
-        if (outstanding) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
+        if (this.blockingSend(scope)) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
         const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? ORDER BY rowid DESC LIMIT 1').get(...key(scope));
         if (row && !('kind' in installed)) run = nativeRun(json(row.data), installed, scope);
       }
