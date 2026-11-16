@@ -265,7 +265,9 @@ let parent;
 const timer = setInterval(() => {
   if (parent === undefined) {
     try {
-      parent = Number(fs.readFileSync(process.env.TEST_SETUP_OWNER, 'utf8'));
+      const owner = Number(fs.readFileSync(process.env.TEST_SETUP_OWNER, 'utf8'));
+      if (!Number.isSafeInteger(owner) || owner <= 0) return;
+      parent = owner;
       process.stderr.write('SETUP_RUNNING\\n');
     } catch (error) {
       if (error.code === 'ENOENT' && !fs.existsSync(path.dirname(process.env.TEST_SETUP_OWNER))) process.exit(0);
@@ -333,6 +335,7 @@ setTimeout(() => {
 `;
     const { child, stderr } = await cancellationFixture(t, ssh);
     await waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr);
+    await writeFile(join(probe, 'ready'), '');
     while (true) {
       try { await readFile(join(probe, 'arm')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
       t.signal.throwIfAborted();
@@ -364,9 +367,9 @@ setTimeout(() => {
       await rm(directory, { recursive: true, force: true });
     });
     while (true) {
-      try { await readFile(join(directory, 'started')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      try { await readFile(join(directory, 'ready')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
       if (runnerError) throw runnerError;
-      if (runner.exitCode !== null || runner.signalCode !== null) throw new Error('Deadline runner exited before fixture startup');
+      if (runner.exitCode !== null || runner.signalCode !== null) throw new Error('Deadline runner exited before the deadline was ready');
       t.signal.throwIfAborted();
       await new Promise(resolve => setTimeout(resolve, 20));
     }
