@@ -309,3 +309,35 @@ test('a live binding read removes its listener when authority ends before the re
   gate.resolve(bound(command)); await flush();
   assert.deepEqual(f.owner.snapshot(), []); assert.deepEqual(f.drafts.value, before); assert.deepEqual(f.calls, []);
 });
+
+test('reload remembers local repairs and later acknowledgments but leaves unchanged offline pending history durable only', async t => {
+  let online = false;
+  const f = await fixture(t, { reply: request => {
+    if (!online) throw new Error('Notification offline');
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  } });
+  await f.store.send('Template'); await f.owner.dispose();
+  const original = f.drafts.value.frontendSends[0];
+  const saved = { ...f.drafts.value, outbox: [], frontendSends: [
+    { ...original, state: 'retained', command: { ...original.command, clientCommandId: 'repair' } },
+    { ...original, state: 'unavailable-pending', command: { ...original.command, clientCommandId: 'pending' } },
+    { ...original, ownerId: 'foreign', state: 'retained', command: { ...original.command, clientCommandId: 'foreign' } },
+  ] };
+  f.owner.start(); await f.owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
+  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'new' });
+  t.after(() => store.dispose()); await store.ready;
+  const recover = async () => { for (const reference of store.frontendJournal.read()) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
+  await recover();
+  assert.deepEqual(f.owner.snapshot().map(row => row.command.clientCommandId), ['repair']);
+  assert.ok(drafts.value.frontendSends.every(row => row.state === 'unavailable-pending'));
+  const row = f.owner.snapshot()[0], changes = f.changes(), writes = drafts.writes.length;
+  await recover();
+  assert.equal(f.changes(), changes); assert.equal(drafts.writes.length, writes);
+  assert.equal(f.owner.snapshot()[0], row);
+  online = true; await recover();
+  assert.deepEqual(f.owner.snapshot().map(row => row.command.clientCommandId), ['repair', 'pending']);
+  assert.deepEqual(drafts.value.frontendSends.map(row => row.state), ['unavailable-confirmed', 'unavailable-confirmed', 'unavailable-pending']);
+  assert.deepEqual(drafts.value.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })), saved.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })));
+  assert.ok(f.requests.every(request => request.id !== 'foreign' && request.action === 'unavailable'));
+  assert.deepEqual(f.calls, []);
+});

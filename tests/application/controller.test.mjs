@@ -1126,6 +1126,58 @@ const journalRecord = (selected, count = 1) => ({ version: 2, scope: selected, d
     clientCommandId: `${selected.conversationId}-${index}`, body: { kind: 'send', text: 'Original', frontend: { platform: 'desktop', tools: [{ activationId: 'old', definition: { name: 'fixture__echo', description: 'Original' } }] } } } })) });
 const eventually = async predicate => { for (let attempt = 0; attempt < 500; attempt++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('Recovery did not reach its durable state'); };
 
+test('foreign pending history never republishes or replaces the current owner row on later passes', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const record = journalRecord(scope, 33), requests = [];
+  for (const reference of record.frontendSends.slice(0, 32)) reference.ownerId = 'foreign';
+  f.drafts.set('original-view/host/conversation', record);
+  f.behavior.binding = async request => { requests.push(request); throw new Error('Notification offline'); };
+  await f.app.start();
+  await eventually(() => requests.length === 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const saved = f.drafts.get('original-view/host/conversation');
+  assert.ok(saved.frontendSends.every(row => row.state === 'unavailable-pending'));
+  const rows = f.app.getSnapshot().capturedSends;
+  assert.deepEqual(rows.map(row => row.command.clientCommandId), ['conversation-32']);
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  await eventually(() => requests.length === 2);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(publications, 0);
+  assert.equal(f.app.getSnapshot().capturedSends, rows);
+  assert.equal(f.app.getSnapshot().capturedSends[0], rows[0]);
+  assert.ok(requests.every(request => request.id === 'conversation-32' && request.action === 'unavailable'));
+  assert.equal(f.drafts.get('original-view/host/conversation'), saved);
+  assert.deepEqual(saved.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })), record.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })));
+});
+
+for (const count of [1, 40]) test(`${count} own pending notifications keep captured keys and row identities stable across two failed passes`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const record = journalRecord(scope, count), requests = [];
+  f.drafts.set('original-view/host/conversation', record);
+  f.behavior.binding = async request => { requests.push(request); throw new Error('Notification offline'); };
+  await f.app.start();
+  await eventually(() => requests.length === count);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const rows = f.app.getSnapshot().capturedSends, keys = rows.map(row => row.key);
+  assert.deepEqual(rows.map(row => row.command.clientCommandId), Array.from({ length: Math.min(count, 32) }, (_, index) => `conversation-${index + Math.max(0, count - 32)}`));
+  const saved = f.drafts.get('original-view/host/conversation');
+  assert.ok(saved.frontendSends.every(row => row.state === 'unavailable-pending'));
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  for (const pass of [2, 3]) {
+    await eventually(() => requests.length === count * pass);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(publications, 0);
+    assert.equal(f.app.getSnapshot().capturedSends, rows);
+    assert.deepEqual(f.app.getSnapshot().capturedSends.map(row => row.key), keys);
+    for (let index = 0; index < rows.length; index++) assert.equal(f.app.getSnapshot().capturedSends[index], rows[index]);
+    assert.equal(f.drafts.get('original-view/host/conversation'), saved);
+  }
+  assert.ok(requests.every(request => request.action === 'unavailable'));
+  assert.deepEqual(saved.frontendSends.map(row => row.command), record.frontendSends.map(row => row.command));
+});
+
 test('settled history beyond 32 references keeps captured rows stable on the next recovery pass', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.drafts.set('original-view/host/conversation', journalRecord(scope, 40));

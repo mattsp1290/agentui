@@ -87,10 +87,9 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     if (reference.state === 'retained') {
       try { await journal.unavailable(reference.command.clientCommandId); }
       catch (error) { if (valid()) deps.failed(viewId, error); return; }
+      if (!valid()) return;
+      if (matches(reference)) { remember(viewId, reference); deps.changed(); }
     }
-    if (!valid()) return;
-    remember(viewId, reference);
-    deps.changed();
     if (!valid() || !session || !matches(reference) || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     try {
       const result = await raceAbort(() => session.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), [currentAuthority.lifetime.signal, signal]);
@@ -99,6 +98,9 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       if (!valid() || !matches(reference) || entries.has(key)) return;
       if (response.kind !== 'unavailable' || response.id !== reference.command.clientCommandId) return;
       await journal.acknowledged(response.id);
+      if (valid() && matches(reference) && reference.state === 'unavailable-pending') {
+        remember(viewId, reference); deps.changed();
+      }
     } catch (error) {
       if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
     }
