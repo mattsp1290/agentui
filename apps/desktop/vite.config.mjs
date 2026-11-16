@@ -5,7 +5,9 @@ export default defineConfig(({ mode }) => ({
   base: './',
   build: mode === 'browser' ? { outDir: 'web-dist-browser', target: 'safari14', rollupOptions: {
     input: ['index.html', 'browser.html'].map(entry => fileURLToPath(new URL(entry, import.meta.url))),
-  } } : { outDir: 'web-dist', target: 'safari14' },
+  } } : { outDir: 'web-dist', target: 'safari14', rollupOptions: {
+    input: ['index.html', 'provider-setup.html'].map(entry => fileURLToPath(new URL(entry, import.meta.url))),
+  } },
   server: {
     host: '127.0.0.1',
     port: 1420,

@@ -29,6 +29,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const enabled = applicationEnabled(app) && !suspended;
   const metadata = 'metadata' in app.host ? app.host.metadata : null;
   const choices = metadata?.agents ?? [];
+  const pi = choices.find(agent => 'runtime' in agent && agent.runtime.engine === 'pi');
+  const setupPi = () => setSelectedView('settings');
   const selected = choices.find(agent => agent.id === app.active?.agent.id && agent.availability.kind === 'ready')
     ?? choices.find(agent => agent.id === metadata?.defaultAgentId && agent.availability.kind === 'ready')
     ?? choices.find(agent => agent.availability.kind === 'ready');
@@ -44,13 +46,13 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
         observation={app.observation} actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
-        composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} />}
+        composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
         <p>{app.host.kind === 'ready' && !selected ? 'No agents are available to start a conversation.' : 'Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.'}</p>
-        <div className="composer empty-composer"><p>Choose your chat settings.</p><ComposerAgentControls agents={choices} agent={selected ?? null} hasConversation={false} enabled={enabled && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} /></div>
+        <div className="composer empty-composer"><p>Choose your chat settings.</p><ComposerAgentControls agents={choices} agent={selected ?? null} hasConversation={false} enabled={enabled && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} /></div>
       </section>;
   const controls = <div className="application-controls">
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : 'Settings'}</h2>
@@ -102,6 +104,16 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
         <p>{presentation.settings}</p>
         {connectionControls}
         <button disabled={suspended || app.busy || Boolean(app.storageFailure)} onClick={() => reconnect ? reconnect() : void controller.reconnect()}>Reconnect</button>
+      </section>
+      <section className="settings-section" aria-label="Pi and OpenCode Go"><h2>Pi and OpenCode Go</h2>
+        <p>AgentUI includes a compatible Pi runtime. Your installed Pi command is separate and is not required for this chat.</p>
+        <p role="status">{pi?.availability.kind === 'ready' ? 'Pi is configured for GLM 5.3 through OpenCode Go.'
+          : pi?.availability.kind === 'unavailable' ? pi.availability.reason
+          : 'This host does not offer Pi. Start AgentUI with ./agentui to include Pi, or ./agentui --agent pi for Pi only.'}</p>
+        {pi && <><a className="settings-link" href="/setup/pi">Open secure Pi setup</a>
+          <p>In the Mac app, setup opens a separate protected window. Your API key is saved in macOS Keychain. Return here and select Reconnect after setup.</p>
+          <p>In a browser, reopen this host with the AgentUI Mac app to use protected setup. You can also supply OPENCODE_GO_API_KEY in the host environment.</p></>}
+        <p>Pi supports text chat, saved conversations, and Stop. Tools and file access are unavailable in this integration.</p>
       </section>
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>

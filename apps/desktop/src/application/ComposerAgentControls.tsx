@@ -33,12 +33,13 @@ function Chevron() {
   return <svg viewBox="0 0 12 12" aria-hidden="true"><path d="m3 4.5 3 3 3-3" /></svg>;
 }
 
-export function ComposerAgentControls({ agents, agent, hasConversation, enabled, onStartConversation }: {
+export function ComposerAgentControls({ agents, agent, hasConversation, enabled, onStartConversation, onSetupPi }: {
   readonly agents: readonly AgentDescriptor[];
   readonly agent: AgentDescriptor | null;
   readonly hasConversation: boolean;
   readonly enabled: boolean;
   readonly onStartConversation: (agentId: string) => void;
+  readonly onSetupPi?: () => void;
 }) {
   const [picker, setPicker] = useState<Picker>({ kind: 'closed' });
   const root = useRef<HTMLDivElement>(null);
@@ -103,8 +104,12 @@ export function ComposerAgentControls({ agents, agent, hasConversation, enabled,
           const ready = entries.some(entry => entry.availability.kind === 'ready');
           const unavailable = entries.find(entry => entry.availability.kind === 'unavailable');
           const reason = unavailable?.availability.kind === 'unavailable' ? unavailable.availability.reason : 'Not configured on this host';
-          return <button type="button" key={kind} className="composer-picker-option" disabled={!ready} aria-label={`${harnessLabels[kind]}${ready ? '' : ', unavailable'}`} title={ready ? undefined : reason} onClick={() => setPicker({ kind: 'model', harness: kind })}>
-            <span>{harnessLabels[kind]}</span><small>{ready ? `${entries.filter(entry => entry.availability.kind === 'ready').length} available` : reason}</small><span className="picker-check" aria-hidden="true">{kind === currentHarness ? '✓' : '›'}</span>
+          const setup = kind === 'pi' && !ready ? onSetupPi : undefined;
+          return <button type="button" key={kind} className="composer-picker-option" disabled={!ready && !setup} aria-label={`${harnessLabels[kind]}${ready ? '' : setup ? ', set up OpenCode Go' : ', unavailable'}`} title={ready ? undefined : reason} onClick={() => {
+            if (setup) { close(); setup(); }
+            else setPicker({ kind: 'model', harness: kind });
+          }}>
+            <span>{harnessLabels[kind]}</span><small>{ready ? `${entries.filter(entry => entry.availability.kind === 'ready').length} available` : setup ? 'Set up OpenCode Go' : reason}</small><span className="picker-check" aria-hidden="true">{kind === currentHarness ? '✓' : '›'}</span>
           </button>;
         }) : modelChoices.filter(entry => harness(entry) === selectedHarness).map(entry => {
           const selected = entry.id === selectedChoiceId;

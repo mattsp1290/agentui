@@ -1,5 +1,5 @@
 import { spawn } from 'node:child_process';
-import { createHash } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { createReadStream, realpathSync } from 'node:fs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
@@ -19,7 +19,7 @@ Starts a trusted single-user host and opens the Mac client without pairing.
 The SSH form installs the matching tools and host on the selected machine.
 Keep this terminal running. Quit the app or press Ctrl+C to stop the session.
 Local workspaces default to the current directory. SSH workspaces default to the remote home.
---agent pi uses GLM 5.3 and OPENCODE_GO_API_KEY from the server or this terminal.
+Pi uses bundled GLM 5.3 chat. Open Settings to connect OpenCode Go securely, or supply OPENCODE_GO_API_KEY.
 --no-open starts the session without a window and prints a ready JSON record.
 --skip-build uses existing built artifacts. --help prints this text without setup.
 `;
@@ -113,7 +113,7 @@ function checkArtifacts(host, browser, nodeVersion) {
 }
 
 function sessionArguments(setup, directory, workspace, dataDir, agent, port) {
-  return [setup.node, join(directory, 'host', 'main.js'), agent, '--trusted', '--workspace', workspace,
+  return [setup.node, join(directory, 'host', 'main.js'), 'desktop', '--preferred', agent, '--trusted', '--workspace', workspace,
     '--data-dir', dataDir, '--assets', join(directory, 'browser'), '--port', String(port),
     ...(agent === 'codex' ? ['--executable', setup.codex] : [])];
 }
@@ -203,9 +203,10 @@ export async function launch(options) {
       await build.exited;
     }
     checkRunning();
-    const open = async url => {
+    const open = async (url, setupEnvironment = {}) => {
       checkRunning();
-      const app = command('/usr/bin/open', ['-W', '-n', join(root, 'apps/desktop/src-tauri/target/release/bundle/macos/AgentUI.app'), '--args', '--host-url', url], lifecycle);
+      const app = command(join(root, 'apps/desktop/src-tauri/target/release/bundle/macos/AgentUI.app/Contents/MacOS/agentui-desktop'), ['--host-url', url],
+        { ...lifecycle, env: { ...process.env, ...setupEnvironment } });
       await app.exited;
     };
     if (options.kind === 'existing') { await open(options.url); return; }
@@ -230,6 +231,7 @@ export async function launch(options) {
     await assertPortAvailable(port);
     checkRunning();
     const dataDir = join(setup.root, 'data', profile.id);
+    const setupCapability = randomBytes(32).toString('hex');
     const origin = `http://127.0.0.1:${port}`;
     let session;
     if (options.kind === 'ssh') {
@@ -241,18 +243,18 @@ export async function launch(options) {
       const script = `export PATH=${shellQuote(`${dirname(setup.node)}:`)}"$PATH"; exec ${args.map(shellQuote).join(' ')}`;
       session = command('ssh', [...sshOptions, '-o', 'ExitOnForwardFailure=yes', '-L', `${port}:127.0.0.1:${port}`, options.destination, script], { ...lifecycle, lease: true });
     } else {
-      const args = [setup.node, join(root, 'apps/host/dist/main.js'), options.agent, '--trusted', '--workspace', workspace,
+      const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--trusted', '--workspace', workspace,
         '--data-dir', dataDir, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port),
         ...(options.agent === 'codex' ? ['--executable', setup.codex] : [])];
       session = command(setup.node, [join(root, 'scripts/agentui-launch-session.mjs'), ...args],
         { ...lifecycle, lease: true, env: { ...process.env, PATH: `${dirname(setup.node)}:${process.env.PATH}` } });
     }
-    session.child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: options.agent === 'pi' ? process.env.OPENCODE_GO_API_KEY ?? null : null })}\n`);
+    session.child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: process.env.OPENCODE_GO_API_KEY ?? null, AGENTUI_SETUP_CAPABILITY: setupCapability })}\n`);
     await waitForHost(session, origin, host.artifactId);
     checkRunning();
     process.stdout.write(`${JSON.stringify({ event: 'ready', url: `${origin}/browser.html`, target, workspace, dataDir, port, agent: options.agent, platform })}\n`);
     process.stderr.write(`AgentUI is ready. ${target} runs ${options.agent} in ${workspace}. Keep this terminal running.\n`);
-    if (options.open) await Promise.race([open(`${origin}/browser.html`), session.exited.then(() => { if (!stopping) throw new Error('AgentUI host stopped.'); })]);
+    if (options.open) await Promise.race([open(`${origin}/browser.html`, { AGENTUI_SETUP_CAPABILITY: setupCapability, AGENTUI_SETUP_PROFILE: profile.id, AGENTUI_SETUP_TARGET: `${target} · ${workspace}` }), session.exited.then(() => { if (!stopping) throw new Error('AgentUI host stopped.'); })]);
     else await session.exited;
   } finally {
     await stop();

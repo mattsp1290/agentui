@@ -1,4 +1,6 @@
 import { createServer } from 'node:http';
+import { createPiSetup, piSetupEndpoint } from './pi-setup.js';
+import type { PiSetup } from './pi-setup.js';
 import { execFile } from 'node:child_process';
 import { stat } from 'node:fs/promises';
 import { dirname, join } from 'node:path';
@@ -47,6 +49,7 @@ export interface BrowserHostOptions {
   readonly observability?: ObservabilityConfiguration;
   readonly providerExtensions?: readonly BrowserProviderExtension[];
   readonly accessMode?: 'paired' | 'trusted';
+  readonly setupCapability?: string;
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -64,14 +67,16 @@ export type HostAgentStartup =
   | { readonly kind: 'recorded' }
   | { readonly kind: 'provider'; readonly provider: NativeProvider }
   | { readonly kind: 'configured'; readonly configuration: AgentConfiguration }
+  | { readonly kind: 'desktop'; readonly configuration: AgentConfiguration }
   | { readonly kind: 'extensions' };
 export async function startBrowserHost(options: BrowserHostOptions) {
   const startup = options.agentStartup;
   const artifactsSelected = options.providerExtensions?.some(extension => extension.kind === 'artifact') ?? false;
-  const configured = startup.kind === 'configured' ? startup.configuration : startup.kind === 'provider'
+  const configured = startup.kind === 'configured' || startup.kind === 'desktop' ? startup.configuration : startup.kind === 'provider'
     ? { default: 'default', agents: [{ ...startup.provider, name: 'default' }] } : null;
   if (startup.kind === 'provider' && startup.provider.kind === 'pi') piApiKey();
   if (startup.kind === 'provider' && startup.provider.kind === 'claude-sdk') claudeApiKey();
+  if (startup.kind === 'desktop' && !/^[a-f0-9]{64}$/.test(options.setupCapability ?? '')) throw new Error('Launch desktop setup through ./agentui.');
   const observability = createHostObservability(options.observability ?? { kind: 'disabled' });
   let owner: ReturnType<typeof ownDirectory>;
   try { owner = ownDirectory(options.directory); }
@@ -80,6 +85,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
   const drivers: Driver[] = [];
+  let piSetup: PiSetup | undefined;
   const modelDrivers: ProviderDriver<TranscriptEvent>[] = [];
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
@@ -157,6 +163,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         try {
           switch (provider.kind) {
             case 'pi':
+              if (startup.kind === 'desktop') {
+                const setup = createPiSetup({ cwd: provider.cwd, sessionDirectory: join(owner.directory, 'pi-sessions'), append, currentRunId }, () => closing);
+                piSetup = setup;
+                driver = setup.driver;
+                if (process.env.OPENCODE_GO_API_KEY?.trim()) await setup.configure(process.env.OPENCODE_GO_API_KEY, 'environment').catch(() => {});
+                break;
+              }
               driver = await (await import('@agentui/host/pi')).createPiDriver({ cwd: provider.cwd,
                 sessionDirectory: join(owner.directory, 'pi-sessions'), apiKey: piApiKey(), append, currentRunId });
               break;
@@ -177,6 +190,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
                 version = result.stdout.trim();
               } catch { throw new Error(`Codex CLI is unavailable. Install Codex ${CODEX_RUNTIME.version}, run codex login, and restart this host.`); }
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
+              if (startup.kind === 'desktop') await promisify(execFile)(provider.executable ?? 'codex', ['login', 'status'], { timeout: 5000, maxBuffer: 4096, env });
               const codex = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
                 ...(provider.executable ? { executable: provider.executable } : {}), env, append });
               driver = codex;
@@ -191,14 +205,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
             if (!selected) throw new Error('Codex did not offer any available models.');
             if (provider.name === configured.default) defaultInstallation = selected.driver.installation;
           }
-          agents.push({ installation, ...('models' in driver ? { selectable: false } : {}), ...(startup.kind === 'configured' ? { name: provider.name } : {}), availability: { kind: 'ready' } },
+          agents.push({ installation, ...('models' in driver ? { selectable: false } : {}), ...(startup.kind === 'configured' ? { name: provider.name } : {}), get availability(): InstalledAgent['availability'] { return provider.kind === 'pi' && piSetup ? piSetup.availability() : { kind: 'ready' }; } },
             ...discovered.map((entry): InstalledAgent => ({ installation: entry.driver.installation, model: entry.model, selectable: entry.selectable,
               ...(startup.kind === 'configured' ? { name: provider.name } : {}), availability: { kind: 'ready' } })));
           modelDrivers.push(...discovered.map(entry => entry.driver));
         } catch (error) {
-          if (startup.kind !== 'configured') throw error;
+          if (startup.kind !== 'configured' && startup.kind !== 'desktop') throw error;
           if (driver) { await driver.close(); const index = drivers.indexOf(driver); if (index !== -1) drivers.splice(index, 1); }
-          agents.push({ installation, name: provider.name, availability: { kind: 'unavailable', reason: 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
+          agents.push({ installation, ...(startup.kind === 'configured' ? { name: provider.name } : {}), availability: { kind: 'unavailable', reason: provider.kind === 'codex' ? `Codex is unavailable. Run codex login on this host, then restart AgentUI. This app requires Codex ${CODEX_RUNTIME.version}.` : 'Agent unavailable. Check its installed runtime and host credentials, then restart the host.' } });
         }
       }
     }
@@ -240,7 +254,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
       files: browser.files, isClosing: apiOptions.isClosing, observability });
     const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing, observability });
+    const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
     http.on('request', (request, response) => {
+      if (request.url === '/setup/pi' && setupHandler) {
+        void setupHandler(request, response).catch(() => response.destroy());
+        return;
+      }
       const route = request.url?.startsWith('/native/') ? native : handler;
       void route(request, response).catch(() => response.destroy());
     });

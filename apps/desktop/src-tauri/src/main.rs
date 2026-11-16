@@ -3,6 +3,7 @@
 use tauri::Manager;
 mod keychain;
 mod native;
+mod provider_setup;
 mod wire;
 
 struct NativeState {
@@ -55,6 +56,45 @@ async fn native_access(
     .map_err(|_| "keychain-unavailable")?
 }
 
+#[tauri::command]
+async fn provider_setup(
+    window: tauri::WebviewWindow,
+    state: tauri::State<'_, provider_setup::SetupState>,
+    command: serde_json::Value,
+) -> Result<provider_setup::Status, &'static str> {
+    if !provider_setup::admitted(window.label(), &window.url().map_err(|_| "forbidden")?) {
+        return Err("forbidden");
+    }
+    let command: provider_setup::Command =
+        serde_json::from_value(command).map_err(|_| "invalid-input")?;
+    let configuration = state.inner().0.clone().ok_or("setup-unavailable")?;
+    tauri::async_runtime::spawn_blocking(move || {
+        let configuration = configuration.lock().map_err(|_| "setup-unavailable")?;
+        provider_setup::run(&configuration, command)
+    })
+    .await
+    .map_err(|_| "setup-unavailable")?
+}
+
+fn open_provider_setup(app: &tauri::AppHandle) -> tauri::Result<()> {
+    if let Some(window) = app.get_webview_window("provider-setup") {
+        window.show()?;
+        return window.set_focus();
+    }
+    tauri::WebviewWindowBuilder::new(
+        app,
+        "provider-setup",
+        tauri::WebviewUrl::App("provider-setup.html".into()),
+    )
+    .title("Set up Pi · AgentUI")
+    .inner_size(520.0, 650.0)
+    .min_inner_size(360.0, 480.0)
+    .on_navigation(|url| provider_setup::admitted("provider-setup", url))
+    .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
+    .build()?;
+    Ok(())
+}
+
 fn local_host_url() -> Result<Option<tauri::Url>, Box<dyn std::error::Error>> {
     parse_host_args(&std::env::args().skip(1).collect::<Vec<_>>())
 }
@@ -85,18 +125,35 @@ fn main() {
         eprintln!("Cannot connect to AgentUI host: {error}");
         None
     });
+    let setup = provider_setup::Configuration::from_environment(host_url.as_ref());
+    let setup_url = setup
+        .as_ref()
+        .map(|configuration| configuration.setup_url().clone());
     tauri::Builder::default()
-        .invoke_handler(tauri::generate_handler![native_access])
+        .invoke_handler(tauri::generate_handler![native_access, provider_setup])
         .setup(move |app| {
             app.manage(NativeState {
                 owner: std::sync::Arc::new(std::sync::Mutex::new(None)),
                 directory: app.path().app_data_dir()?,
                 enabled: host_url.is_none(),
             });
+            app.manage(provider_setup::SetupState(setup.map(|configuration| {
+                std::sync::Arc::new(std::sync::Mutex::new(configuration))
+            })));
             let browser_url = host_url.clone();
+            let setup_app = app.handle().clone();
             let window =
                 tauri::WebviewWindowBuilder::from_config(app, &app.config().app.windows[0])?
-                    .on_navigation(move |url| bundled(url) || browser_url.as_ref() == Some(url))
+                    .on_navigation(move |url| {
+                        if setup_url.as_ref() == Some(url) {
+                            let app = setup_app.clone();
+                            let _ = setup_app.run_on_main_thread(move || {
+                                let _ = open_provider_setup(&app);
+                            });
+                            return false;
+                        }
+                        bundled(url) || browser_url.as_ref() == Some(url)
+                    })
                     .on_new_window(|_, _| tauri::webview::NewWindowResponse::Deny)
                     .build()?;
             let background = |theme| match theme {

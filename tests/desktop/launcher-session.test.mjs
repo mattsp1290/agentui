@@ -51,6 +51,12 @@ test('Pi provisioning does not install Codex or require its login', () => {
   assert.ok(bootstrapScript('24.22.3', 'codex', CODEX_RUNTIME.version).includes(`@openai/codex@${CODEX_RUNTIME.version}`));
 });
 
+test('Codex provisioning leaves login readiness to the host so Pi setup can open', () => {
+  const script = bootstrapScript('24.22.3', 'codex', CODEX_RUNTIME.version);
+  assert.doesNotMatch(script, /login status/);
+  assert.ok(script.includes(`@openai/codex@${CODEX_RUNTIME.version}`));
+});
+
 test('launcher refuses an occupied local port without affecting the listener', async t => {
   const server = createServer();
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

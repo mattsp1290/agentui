@@ -34,7 +34,8 @@ lines.once('line', line => {
   try {
     const supplied = JSON.parse(line);
     if (supplied.OPENCODE_GO_API_KEY !== null && typeof supplied.OPENCODE_GO_API_KEY !== 'string') throw new Error();
-    environment = { ...process.env, ...(process.env.OPENCODE_GO_API_KEY ? {} : supplied.OPENCODE_GO_API_KEY ? { OPENCODE_GO_API_KEY: supplied.OPENCODE_GO_API_KEY } : {}) };
+    if (supplied.AGENTUI_SETUP_CAPABILITY !== undefined && (typeof supplied.AGENTUI_SETUP_CAPABILITY !== 'string' || !/^[a-f0-9]{64}$/.test(supplied.AGENTUI_SETUP_CAPABILITY))) throw new Error();
+    environment = { ...process.env, ...(supplied.AGENTUI_SETUP_CAPABILITY ? { AGENTUI_SETUP_CAPABILITY: supplied.AGENTUI_SETUP_CAPABILITY } : {}), ...(process.env.OPENCODE_GO_API_KEY ? {} : supplied.OPENCODE_GO_API_KEY ? { OPENCODE_GO_API_KEY: supplied.OPENCODE_GO_API_KEY } : {}) };
   } catch {
     process.stderr.write('Invalid AgentUI session environment.\n');
     process.exitCode = 1;
