@@ -124,7 +124,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const assertMayReceiveEvidence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     if (!isOffered(stored)) return;
     authorized(stored.command.scope);
-    store.frontendSends.check({ scope: stored.command.scope, id: stored.command.clientCommandId, actor, stored });
+    store.frontendSends.assertAuthority({ stored, actor, intent: 'owner-evidence' });
   };
   const ownedCommand = (scope: ConversationScope, id: string, actor?: FrontendSendActor) => {
     const stored = store.command(authorized(scope), nonempty(id));
@@ -138,10 +138,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     assertFrontendTarget(stored);
-    if (isOffered(stored)) {
-      if (store.frontendSends.check({ scope: stored.command.scope,
-        id: stored.command.clientCommandId, actor, stored }) !== 'available') throw new Error('Frontend owner unavailable');
-    } else if (actor) store.frontendSends.assertActor(actor);
+    store.frontendSends.assertAuthority({ stored, actor, intent: 'dispatch' });
     authorized(stored.command.scope);
     store.verifyIntent(stored);
   };
@@ -170,10 +167,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
     if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
     const assertRequester = () => {
-      if (isOffered(blocker)) {
-        store.frontendSends.assertActor(actor);
-        store.frontendSends.assertAdmitted(blocker);
-      } else if (actor && !actor.authorized()) throw new Error('Unauthorized actor');
+      store.frontendSends.assertAuthority({ stored: blocker, actor, intent: 'private-settler' });
       authorized(scope);
     };
     assertRequester();
