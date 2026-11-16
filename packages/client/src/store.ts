@@ -3,7 +3,7 @@ import type { CommandBody, Feed, Receipt, SubmitResult } from '@agentui/contract
 import { applyDelivery, decodeReceipt, DeliveryError } from './delivery.js';
 import type { DeliveryState } from './delivery.js';
 import { copyCanonicalJson, immutable, restore } from './local-state.js';
-import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
+import type { FrontendJournal, FrontendRecoveryReference, ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
 type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
 type ReplayState<P> = { readonly delivery: DeliveryState<P> } &
@@ -38,7 +38,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
   let feed: Feed | null = null;
-  let generation = 0;
+  let generation = 0, closed = false;
+  let disposal: Promise<void> | null = null;
   function makeView(): ClientView<P> {
     const applied = replay.delivery;
     return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection), submitting: Object.freeze([...inFlight]) });
@@ -54,13 +55,29 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   }).catch(() => undefined);
   let saves: Promise<void> = ready;
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = saves.then(operation);
+    if (closed) return Promise.reject(new Error('This conversation store has closed.'));
+    const result = saves.then(async () => {
+      await ready;
+      return operation();
+    });
     saves = result.then(() => undefined, () => undefined);
     return result;
   }
+  function requireOpen(): void { if (closed) throw new Error('This conversation store has closed.'); }
   async function persist(next: LocalRecords): Promise<void> {
     await drafts.save(next);
     local = next;
+  }
+  const journal: FrontendJournal = {
+    read: () => local.frontendSends,
+    unavailable: id => updateFrontend(id, 'unavailable-pending'),
+    acknowledged: id => updateFrontend(id, 'unavailable-confirmed'),
+  };
+  function updateFrontend(id: string, state: 'unavailable-pending' | 'unavailable-confirmed'): Promise<void> {
+    return enqueue(async () => {
+      await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id && entry.state !== 'unavailable-confirmed' ? { ...entry, state } : entry) }));
+      publish();
+    });
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
   function requireCompatible(): void {
@@ -79,18 +96,21 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     publish();
   }
   async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
-    requireCompatible();
+    requireOpen(); requireCompatible();
     const id = entry.command.clientCommandId;
+    if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
       publish();
       const result = await port.submit(entry.command);
+      requireOpen();
       if (result.kind === 'rejected') {
         if (admission === 'known-absent') await enqueue(async () => {
           await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
           publish();
         });
+        if (admission === 'known-absent' && entry.command.version === 2) await options.frontend?.rejected(id);
         return result;
       }
       if (result.kind !== 'receipt') throw new Error('Unsupported submit result');
@@ -107,17 +127,33 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     await ready;
     const entry = await enqueue(async () => {
       requireCompatible();
-      const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? { kind: 'send', text: local.draft } }));
-      if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
-      const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
-      await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
-      publish();
-      return created;
+      const id = createCommandId(), intent = body ?? { kind: 'send', text: local.draft };
+      if (local.outbox.some(value => value.command.clientCommandId === id) || local.frontendSends.some(value => value.command.clientCommandId === id) || Object.hasOwn(view.document.receipts, id)) throw new Error('Command ID generator reused an existing ID');
+      const capture = intent.kind === 'send' ? options.frontend?.capture(id) : null;
+      try {
+        const command = immutable(parseCommand(capture ? { version: 2, scope, clientCommandId: id, body: { ...intent, frontend: capture.offer } }
+          : { version: 1, scope, clientCommandId: id, body: intent }));
+        const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
+        const offered = capture && command.version === 2 ? { capture, command } : null;
+        const reference: FrontendRecoveryReference[] = offered ? [{ command: offered.command, ownerId: offered.capture.ownerId, state: 'retained' }] : [];
+        await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
+        if (offered && !offered.capture.commit(offered.command, journal)) {
+          await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id ? { ...entry, state: 'unavailable-pending' } : entry) }));
+          throw new Error('The capture session changed before sending. Reconnect to recover.');
+        }
+        publish();
+        return created;
+      } catch (error) { capture?.release(); throw error; }
     });
     return dispatch(entry, 'known-absent');
   }
   return {
     ready,
+    frontendJournal: journal,
+    dispose() {
+      if (!disposal) { closed = true; disposal = saves.then(() => undefined, () => undefined); stop(connection.kind === 'failed' ? connection : { kind: 'disconnected' }); }
+      return disposal;
+    },
     getSnapshot: () => view,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async setDraft(text) {
@@ -145,7 +181,9 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     },
     async refreshReceipt(clientCommandId) {
       await ready;
+      requireOpen();
       const value = await port.receipt(clientCommandId);
+      requireOpen();
       if (value === null) return null;
       const receipt = immutable(decodeReceipt(copyCanonicalJson(value), scope));
       if (receipt.clientCommandId !== clientCommandId) throw new Error('Lookup receipt command ID mismatch');
@@ -156,6 +194,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       return receipt;
     },
     async connect() {
+      requireOpen();
       stop({ kind: 'connecting' });
       const current = generation;
       let receiving = false;

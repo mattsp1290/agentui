@@ -112,6 +112,8 @@ Confirmed history and existing receipts remain readable when their provider is u
 The authenticated submit route captures provider sends in the existing command ledger after exact-ID retry detection.
 The stored target contains the original installation, configured authority, credential handle, confirmed binding and translated request.
 Translation runs once for a new admitted command. Admission bounds the translated target and commits it with the pending receipt before submission.
+The command and complete target have separate size limits.
+A wire-valid offer can still be refused when its translated target, including saved history, exceeds its limit.
 Retries return the saved receipt. Explicit reconciliation decodes the original request without translation and calls only `reconcileCommand`.
 A changed decoder, credential or generation cannot replace the original operation.
 
@@ -119,8 +121,79 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 7, SDK compatibility 0.5.0, package versions 0.0 and transcript projection 3.
+The current integration uses wire version 8, SDK compatibility 0.5.0, package versions 0.0 and transcript projection 3.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
+
+## Captured frontend offers
+
+An `addAgui` provider advertises `frontendOffers: 'ag-ui-capture-and-bind'` only when send and reconciliation are supported.
+Generic and native providers advertise `unsupported`. This does not change AG-UI executable-tool capabilities.
+The paired service accepts a version-2 send containing a desktop offer of definitions and original activation IDs.
+Version-1 commands retain their existing shape and canonical identity.
+The offer definition type follows its parsed wire shape, with optional object-valued parameters and metadata.
+The SDK tool type remains derived from the pinned AG-UI package; the host still validates definitions with its schemas.
+Packed contracts and client consumers need no AG-UI package or checkout-specific dependency override.
+
+Admission binds the authenticated principal, command, original provider installation and credentials in one durable transaction.
+The host validates the actual AG-UI input, appends noncolliding captured definitions, and saves the complete raw request.
+Schema defaults and state transforms do not rewrite that request. Retry and reconciliation use only its saved bytes.
+New AG-UI send targets carry a private `protocol: 'ag-ui'` tag, including version-1 sends.
+The target parser validates the raw request and derives the expected run ID without adding schema defaults.
+Both fresh and restored confirmation evidence for tagged targets must name that saved run ID.
+The tag never enters the public provider operation. A generic live provider cannot execute a tagged target.
+Historical untagged targets and their evidence correlations stay byte-identical.
+Version-2 commands require the tag and the exact authored offer suffix.
+Untagged version-1 requests remain generic, including after registration through `addAgui`.
+Admission permanently reserves each offered conversation, thread and run for its original command.
+Another command using that identity is rejected with `frontend-run-reused` before dispatch, including after release.
+An exact command retry returns its existing receipt without translating or dispatching again.
+This reservation does not qualify frontend handler execution ownership.
+
+`connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
+Pending does not prove host admission. Retain the original closures and exact saved command ID and body for submission retry.
+A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
+Command receipts remain visible to devices that can read the conversation.
+The owner checks protect direct receipt lookup and the captured offer association.
+Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
+The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
+It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.
+Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive evidence keep the blocker.
+An authorized original owner can still reconcile its receipt after releasing closures.
+A terminal rejection without a retained run returns `unavailable` with `provider-rejected`; not-dispatched returns `not-dispatched`.
+Both final no-run results work offline and need no coordinator. Explicit closure release takes precedence as `closures-unavailable`.
+A prior confirmed run retained through later rejection remains a binding. Command settlement does not finish the run.
+`action: 'unavailable'` irreversibly releases host availability. Before admission it records an owner-specific tombstone that cannot reserve another principal's command ID.
+After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
+Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
+
+Database format 4 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
+Both belong to the same initial format-4 release; released format-3 hosts refuse this format.
+Wire 8 and SDK 0.5.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 3.
+Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
+The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
+There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
+The application shows at most 32 recent unavailable rows in addition to live captures.
+Recent rows record an in-session release, a local repair of lost retained closures, or acknowledgment of a pending unavailable notification.
+Rediscovering unchanged pending or confirmed history does not republish or reorder these rows.
+After reload, an already-pending offline reference remains only in durable history until acknowledgment.
+
+On reload, the desktop scans draft keys for the physical view whose exclusive lock it owns, independently of the selected conversation or agent catalog.
+Each page contains at most 100 keys. One worker borrows the conversation's canonical store and examines at most 32 journal references per slice.
+Lost closures become unavailable locally. Only the original matching principal can send their unavailable notifications.
+The worker never submits a saved command, binds replacement tools, or opens another tab's view.
+It advances past foreign owners and failed requests, then retries completed passes every two seconds.
+
+Live captures retain their original store and view lock through navigation.
+Bound captures keep that lock until explicit release, a change of principal, storage failure, or reload.
+Release keeps that writer until the admitted unavailable save finishes.
+After leaving a physical view, pending notifications alone do not retain its lock. Remaining retries resume when that physical view is reopened.
+Conversation navigation within the selected physical view continues background recovery.
+Inactive stores close new writes synchronously and drain admitted saves before eviction. Delayed transport replies cannot overwrite a successor store.
+
+Local v1 records remain readable and upgrade to v2 when saved. Full journal commands and original owner IDs remain durable, including confirmed history needed to reject reused command IDs.
+The bounds above apply to live resources and recovery work, not to one whole record's byte size or total disk history.
+This integration executes no frontend handlers.
+Consent, claiming, durable execution receipts and continuation remain separate work.
 
 ## Durable response streams
 
@@ -153,7 +226,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 7, transcript projection 3, SDK compatibility 0.5.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 8, transcript projection 3, SDK compatibility 0.5.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -300,6 +373,6 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.5.0 and wire 7 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.5.0 and wire 8 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.

@@ -373,6 +373,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
   }
   async function dispatch(command: ClientCommand, target: CapturedTarget, expected: Installation, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
     if (canonicalJson(target.installation) !== canonicalJson(expected)) throw new Error('Wrong Codex installation');
+    if (command.version !== 1) return { kind: 'not-dispatched', reason: 'frontend-offers-unsupported' };
     switch (command.body.kind) {
       case 'revoke-permission': return { kind: 'not-dispatched', reason: 'permission-management-unsupported' };
       case 'send': return send({ ...command, body: command.body }, target, model);

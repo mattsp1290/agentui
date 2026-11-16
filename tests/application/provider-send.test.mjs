@@ -1,103 +1,15 @@
+import { canonicalJson } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
-import { registerHooks } from 'node:module';
-import { createConnection } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { DatabaseSync } from 'node:sqlite';
-import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { createBrowserConnection } from '@agentui/client/service';
 import { createProviderRegistry } from '@agentui/host';
+import { frontendToolsFor } from '@agentui/host/frontend-tools';
 import { createServerExtensions } from '@agentui/host/extensions';
 import { entry } from '../host/extensions/fixtures.mjs';
 import { fixture as hostFixture, scope as hostScope, snapshot } from '../host/fixture.mjs';
-import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { SERVICE_WIRE_VERSION } from '@agentui/contracts/compatibility';
-import { crew, crewBackend, crewPresentation } from '../extensions/providers/contracts/crew.ts';
-import { local, localBackend, localPresentation } from '../extensions/providers/contracts/local.ts';
-
-const artifact = new URL('../../apps/host/build/tsc/artifact.js', import.meta.url).href;
-registerHooks({ resolve(specifier, context, next) {
-  if (specifier === './artifact.js' && context.parentURL?.endsWith('/server.js')) {
-    const source = `export * from ${JSON.stringify(artifact)};
-      import { readInstalledArtifact as read } from ${JSON.stringify(artifact)};
-      export function readInstalledArtifact() { return read(${JSON.stringify(fileURLToPath(new URL('../../apps/host/dist/', import.meta.url)))}); }`;
-    return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true };
-  }
-  return next(specifier, context);
-} });
-const { startBrowserHost } = await import('../../apps/host/build/tsc/server.js');
-const secret = 'PRIVATE_CREATION_SECRET';
-function extension({ native = false, create, lookup, submit, reconcile, request, decode, reconcileSupported = true, service = 'http://127.0.0.1:12345', revision = '1', generation, name } = {}) {
-  const base = native ? localBackend : crewBackend, provider = native ? local : crew;
-  const presentation = { ...(native ? localPresentation : crewPresentation) };
-  if (generation) presentation.instance = { ...presentation.instance, generation };
-  const calls = { creates: [], lookups: [], submits: [], reconciles: [], translations: 0, close: 0, dispose: 0 };
-  const originalRequest = presentation.request;
-  presentation.request = (text, binding) => { calls.translations++; return request ? request(text, binding) : originalRequest(text, binding); };
-  if (decode) presentation.decodeRequest = decode;
-  let context, credential;
-  const binding = operation => ({ kind: 'agentui-created', creation: operation, authority: {
-    kind: native ? 'agentui-host' : 'remote-provider', ...(native ? { hostId: operation.scope.hostId } : {}),
-    binding: { namespace: presentation.instance.namespace, installationId: presentation.instance.installationId, opaqueSessionId: 'same-session' },
-  } });
-  const confirmed = operation => ({ kind: 'confirmed', value: binding(operation), evidence: { operationId: operation.operationId } });
-  const effect = (operation, state = 'accepted', run = 'same-run') => ({ kind: 'confirmed', value: { kind: 'send', state,
-    run: { binding: operation.binding, ref: { kind: 'run', instance: presentation.instance, opaqueId: run } } }, evidence: { accepted: true } });
-  const connected = { ...base, instance: presentation.instance,
-    capabilities: { ...base.capabilities, reconcile: reconcileSupported ? { kind: 'supported' } : { kind: 'unsupported', reason: 'No lookup' } },
-    async discover() { return { kind: 'available', agents: [{ ref: { kind: 'agent', instance: presentation.instance, opaqueId: 'same-agent' }, name: name ?? (native ? 'Local provider' : 'Remote provider') }] }; },
-    async create(operation) { calls.creates.push(structuredClone(operation)); return create ? create(operation, { confirmed, context, credential }) : confirmed(operation); },
-    async reconcileCreation(operation) { calls.lookups.push(structuredClone(operation)); return lookup ? lookup(operation, { confirmed, context, credential }) : confirmed(operation); },
-    async submit(operation) { calls.submits.push(structuredClone(operation)); return submit ? submit(operation, { effect, context, credential }) : effect(operation); },
-    async reconcileCommand(operation) { calls.reconciles.push(structuredClone(operation)); return reconcile ? reconcile(operation, { effect, context, credential }) : effect(operation); }, async close() { calls.close++; },
-  };
-  return { calls, connected, confirmed, effect, get context() { return context; }, get credential() { return credential; }, rename(value) { name = value; }, value: {
-    manifest: { namespace: presentation.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
-    entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(value) {
-      context = value;
-      value.providers.add('service', { ...provider, async connect(request) { credential = request.credential; return { kind: 'connected', backend: connected }; } }, presentation);
-      return { async dispose() { calls.dispose++; } };
-    } },
-    installations: [{ id: 'service', instance: presentation.instance, service, expectedAuthority: native ? 'agentui-host' : 'remote-provider',
-      authentication: { kind: 'secret', revision, resolve: async () => secret } }],
-  } };
-}
-async function fixture(t, extensions) {
-  const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-send-'));
-  let running, cookie;
-  const control = op => new Promise((resolve, reject) => {
-    const socket = createConnection(join(directory, 'control.sock')); let output = '';
-    socket.once('error', reject); socket.once('connect', () => socket.end(`${JSON.stringify(op)}\n`));
-    socket.on('data', data => { output += data; });
-    socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
-  });
-  const client = createBrowserConnection({ fetch: async (url, init) => {
-    const response = await fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Origin: running.origin, ...(cookie ? { Cookie: cookie } : {}) } });
-    if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
-    return response;
-  } });
-  const start = async values => {
-    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), extensions: { kind: 'transient', entries: values.map(item => item.value) } });
-    if (!cookie) await client.pair((await control({ op: 'invite' })).code);
-  };
-  await start(extensions);
-  t.after(async () => { await running.close(); rmSync(directory, { recursive: true, force: true }); });
-  const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
-  return { client, directory, inspect, get running() { return running; }, get cookie() { return cookie; },
-    scope: id => ({ hostId: running.hostId, conversationId: id }),
-    async restart(values) { await running.close(); await start(values); },
-  };
-}
-const selected = async (f, label = 'Remote provider') => (await f.client.metadata()).agents.find(agent => agent.label === label);
-const unavailable = promise => assert.rejects(promise, error => error.kind === 'unavailable');
-const send = (scope, id = 'send', text = 'Hello') => ({ version: 1, scope, clientCommandId: id, body: { kind: 'send', text } });
-const stored = (f, conversation) => f.inspect(db => db.prepare('SELECT target,observation,receipt FROM commands WHERE conversation=?').get(conversation));
-async function create(f, name = 'chat', label) { const scope = f.scope(name); await f.client.create(scope, (await selected(f, label)).id); return scope; }
-
+import { extension, fixture, create, stored, send, unavailable, actualInput, offered, aguiExtension, secret, selected } from './provider-send-fixture.mjs';
 
 test('authenticated send commits exact target before HTTP effect, persists accepted runs for distinct typed models, and emits receipts only', async t => {
   let f;
@@ -586,4 +498,244 @@ test('foreign permission references and authority revoked during a read never be
   changed = true;
   assert.equal((await f.client.conversationPermissions(scope)).kind, 'unavailable');
   await assert.rejects(f.client.conversationPermissions({ ...scope, hostId: 'foreign' }), error => error.kind === 'forbidden');
+});
+
+
+test('offered send binds the actual HTTP input to its authenticated original owner', async t => {
+  let f, input;
+  const remote = createServer(async (request, response) => {
+    let body = ''; for await (const part of request) body += part;
+    input = JSON.parse(body);
+    assert.deepEqual(JSON.parse(stored(f, 'offered').target).operation.request, input);
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify(a.effect(a.calls.submits[0], 'completed', input.runId)));
+  });
+  await new Promise(resolve => remote.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => remote.close(resolve)));
+  const a = extension({ agui: true, service: `http://127.0.0.1:${remote.address().port}`,
+    request: text => ({ runId: 'actual-run', threadId: 'actual-thread', messages: [{ id: 'user', role: 'user', content: text }],
+      tools: [{ name: 'server', description: 'Server tool', parameters: {} }], context: [], state: null, forwardedProps: { original: true }, custom: 'preserved' }),
+    decode: value => value,
+    submit: async operation => (await fetch(`http://127.0.0.1:${remote.address().port}`, { method: 'POST', body: JSON.stringify(operation.request) })).json(),
+  });
+  f = await fixture(t, [a]);
+  assert.equal((await selected(f)).frontendOffers, 'ag-ui-capture-and-bind');
+  const scope = await create(f, 'offered');
+  const command = { version: 2, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Hello', frontend: {
+    platform: 'desktop', tools: [{ definition: { name: 'test__inspect', description: 'Inspect', parameters: { type: 'object' } }, activationId: 'activation-a' }],
+  } } };
+  const result = await f.client.conversation(scope).submit(command);
+  assert.equal(result.kind, 'receipt');
+  assert.equal(result.receipt.state.kind, 'completed');
+  assert.deepEqual(input.tools, [{ name: 'server', description: 'Server tool', parameters: {} }, command.body.frontend.tools[0].definition]);
+  assert.equal(input.state, null);
+  assert.equal(input.custom, 'preserved');
+  const bound = await f.client.frontendBinding({ scope, id: 'original', action: 'recover' });
+  assert.equal(bound.kind, 'bound');
+  assert.deepEqual(bound.command, command);
+  assert.equal(bound.run.runId, input.runId);
+  assert.equal(bound.threadId, input.threadId);
+  assert.equal(bound.hostOperationId, result.receipt.hostOperationId);
+  assert.equal(a.calls.translations, 1);
+  for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
+  await f.restart([a]);
+  assert.deepEqual(await f.client.frontendBinding({ scope, id: 'original', action: 'recover' }), bound);
+  assert.equal((await f.client.frontendBinding({ scope, id: 'original', action: 'unavailable' })).kind, 'unavailable');
+  assert.equal((await f.client.frontendBinding({ scope, id: 'original', action: 'recover' })).kind, 'unavailable');
+  assert.deepEqual((await f.client.conversation(scope).submit(command)).receipt, result.receipt);
+  assert.equal(a.calls.translations, 1);
+  assert.equal(a.calls.submits.length, 1);
+});
+
+
+test('offered owner identity fences admission, receipt, recovery, reconciliation and tombstones across paired principals', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
+  const command = offered(scope);
+  await other.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  for (const action of ['recover', 'unavailable']) await unavailable(other.frontendBinding({ scope, id: command.clientCommandId, action }));
+  await unavailable(other.reconcile(scope, command.clientCommandId));
+  await unavailable(other.conversation(scope).receipt(command.clientCommandId));
+  assert.equal((await other.conversation(scope).submit(command)).kind, 'rejected');
+  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'bound');
+  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM frontend_sends WHERE state='available'").get().n), 1);
+  const late = offered(scope, 'late');
+  f.loseNext('frontend-binding');
+  await assert.rejects(f.client.frontendBinding({ scope, id: late.clientCommandId, action: 'unavailable' }));
+  assert.equal((await f.client.frontendBinding({ scope, id: late.clientCommandId, action: 'unavailable' })).kind, 'unavailable');
+  assert.equal((await f.client.conversation(scope).submit(late)).kind, 'rejected');
+  assert.equal(a.calls.translations, 1);
+  assert.equal(a.calls.submits.length, 1);
+});
+
+test('offered recovery survives lost replies and registration crash gaps using only original durable bytes', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  f.loseNext('submit');
+  await assert.rejects(f.client.conversation(scope).submit(command));
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
+  const original = stored(f, 'chat');
+  await f.restart([a]);
+  assert.equal(a.calls.reconciles.length, 0);
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  f.loseNext('frontend-binding');
+  await assert.rejects(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
+  const bound = await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' });
+  assert.equal(bound.kind, 'bound');
+  assert.deepEqual(stored(f, 'chat'), original);
+  assert.equal(a.calls.translations, 1); assert.equal(a.calls.submits.length, 1);
+  f.inspect(db => db.exec("UPDATE frontend_sends SET state='unavailable'"));
+  await f.restart([]);
+  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'unavailable');
+  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+});
+
+test('offered conflicts cannot alter original text, definitions, activations, ordering or platform', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  command.body.frontend.tools.push({ definition: { name: 'test__second', description: 'Second' }, activationId: 'second-a' });
+  await f.client.conversation(scope).submit(command);
+  const original = stored(f, 'chat');
+  for (const change of [value => { value.body.text = 'Changed'; }, value => { value.body.frontend.tools[0].definition.description = 'Changed'; },
+    value => { value.body.frontend.tools[0].activationId = 'replacement-b'; }, value => { value.body.frontend.tools.reverse(); },
+    value => { value.body.frontend.platform = 'ios'; }]) {
+    const changed = structuredClone(command); change(changed);
+    assert.equal((await f.client.conversation(scope).submit(changed)).kind, 'rejected');
+  }
+  assert.deepEqual(stored(f, 'chat'), original);
+  assert.equal(a.calls.translations, 1); assert.equal(a.calls.submits.length, 1);
+});
+
+test('offered delayed recovery cannot revive a released owner or return evidence to a revoked actor', async t => {
+  for (const revoke of [false, true]) {
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    const a = aguiExtension({ submit: () => ({ kind: 'pending', evidence: {} }), reconcile: async (operation, { effect }) => {
+      entered.resolve(); await release.promise; return effect(operation, 'completed', operation.request.runId);
+    } });
+    const f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+    await f.client.conversation(scope).submit(command);
+    const recovery = f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' });
+    const observed = recovery.then(value => ({ value }), error => ({ error }));
+    await entered.promise;
+    if (revoke) f.inspect(db => db.exec('UPDATE service_devices SET revoked=1'));
+    else await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
+    release.resolve();
+    const result = await observed;
+    if (revoke) assert.ok(result.error);
+    else {
+      assert.equal(result.value.kind, 'unavailable');
+      assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+    }
+    assert.equal(a.calls.submits.length, 1);
+  }
+});
+
+for (const authority of ['actor', 'provider']) test(`offered ${authority} revocation after admission and during awaited connection prevents dispatch`, async t => {
+  let f;
+  const a = aguiExtension({ request(text) {
+    queueMicrotask(() => f.inspect(db => db.exec(`UPDATE ${authority === 'actor' ? 'service_devices' : 'service_provider_credentials'} SET revoked=1`)));
+    return actualInput(text);
+  } });
+  f = await fixture(t, [a]);
+  const scope = await create(f), command = offered(scope);
+  if (authority === 'actor') await assert.rejects(f.client.conversation(scope).submit(command));
+  else assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'not-dispatched');
+  assert.equal(a.calls.submits.length, 0);
+  assert.equal(JSON.parse(stored(f, 'chat').receipt).state.kind, 'not-dispatched');
+});
+
+test('offered mismatched actual run confirmation never establishes a successful receipt, run or binding', async t => {
+  const a = aguiExtension({ submit: (operation, { effect }) => effect(operation, 'completed', 'wrong-run'),
+    reconcile: (operation, { effect }) => effect(operation, 'completed', 'wrong-run') });
+  const f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'uncertain');
+  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'pending');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM runs').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
+  assert.deepEqual(JSON.parse(stored(f, 'chat').observation), { kind: 'outcome-unknown' });
+});
+
+for (const fault of ['generic', 'collision', 'duplicate', 'invalid-input', 'decoder-drift']) test(`offered ${fault} producer refuses before admission or effects`, async t => {
+  const a = aguiExtension({ agui: fault !== 'generic', request(text) {
+    const input = actualInput(text);
+    if (fault === 'collision') input.tools = [{ name: 'test__inspect', description: 'Collision' }];
+    if (fault === 'duplicate') input.tools = [{ name: 'server', description: 'One' }, { name: 'server', description: 'Two' }];
+    if (fault === 'invalid-input') input.runId = '';
+    return input;
+  }, decode: value => fault === 'decoder-drift' ? { ...value, state: {} } : value });
+  const f = await fixture(t, [a]), scope = await create(f);
+  assert.equal((await f.client.conversation(scope).submit(offered(scope))).kind, 'rejected');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_sends').get().n), 0);
+  assert.equal(a.calls.submits.length, 0);
+});
+
+test('offered reentrant provider decoding cannot revoke its actor after the final authority check', async t => {
+  let f, admittedDecodes = 0;
+  const a = aguiExtension({ decode(value) {
+    if (f && f.inspect(db => db.prepare('SELECT 1 FROM commands').get()) && ++admittedDecodes === 1) {
+      f.inspect(db => db.exec('UPDATE service_devices SET revoked=1'));
+    }
+    return value;
+  } });
+  f = await fixture(t, [a]);
+  const scope = await create(f);
+  await assert.rejects(f.client.conversation(scope).submit(offered(scope)));
+  assert.equal(a.calls.submits.length, 0);
+});
+
+
+test('offered recovery rejects forged restored run evidence and ownerless commands', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  await f.client.conversation(scope).submit(command);
+  const original = stored(f, 'chat').observation, forged = JSON.parse(original);
+  forged.evidence.source.run.identity.runId = 'foreign-run';
+  forged.evidence.source.run.reference.ref.opaqueId = 'foreign-run';
+  forged.evidence.operation.id = canonicalJson(forged.evidence.source.run.reference);
+  f.inspect(db => db.prepare('UPDATE commands SET observation=?').run(canonicalJson(forged)));
+  await f.restart([a]);
+  await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
+  f.inspect(db => { db.prepare('UPDATE commands SET observation=?').run(original); db.exec('DELETE FROM frontend_sends'); });
+  await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
+  assert.equal((await f.client.conversation(scope).submit(command)).kind, 'rejected');
+  assert.equal(a.calls.submits.length, 1);
+});
+
+test('offered input preserves absent defaults and ownership admission rolls back with command persistence', async t => {
+  const a = aguiExtension({ request(text) { const input = actualInput(text); delete input.context; delete input.tools; return input; } });
+  const f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  f.inspect(db => db.exec("CREATE TRIGGER fail_owner BEFORE INSERT ON frontend_sends BEGIN SELECT RAISE(ABORT,'injected'); END"));
+  await unavailable(f.client.conversation(scope).submit(command));
+  for (const table of ['commands', 'frontend_sends']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
+  assert.equal(a.calls.submits.length, 0);
+  f.inspect(db => db.exec('DROP TRIGGER fail_owner'));
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  assert.equal(Object.hasOwn(a.calls.submits[0].request, 'context'), false);
+  assert.equal(a.calls.submits[0].request.state, null);
+  assert.deepEqual(a.calls.submits[0].request.tools, command.body.frontend.tools.map(tool => tool.definition));
+});
+
+test('offered commands require a fresh actor after host restart and keep old evidence private during blocker settlement', async t => {
+  const a = aguiExtension({ submit: (operation, { effect }) => effect(operation, 'accepted', operation.request.runId) });
+  const registry = createProviderRegistry([{ ...a.value, authority: { credentials: {},
+    issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {} } }]);
+  await registry.activate(); t.after(() => registry.close());
+  const [discovered] = await registry.discover();
+  const target = { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance, agent: discovered.agents[0],
+    presentationVersion: 1, expectedAuthority: discovered.expectedAuthority };
+  const f = hostFixture(t), actor = { id: 'original-owner', platform: 'desktop', authorized: () => true };
+  let host = f.open({ providers: registry });
+  await host.createProviderConversation(hostScope, target, registry);
+  const command = offered(hostScope);
+  assert.equal((await host.conversation(hostScope).submit(command)).kind, 'rejected');
+  await host.conversation(hostScope, actor).submit(command);
+  host.close(); await host.drained; host = f.open({ providers: registry });
+  await assert.rejects(host.reconcile(hostScope, command.clientCommandId), /frontend-owner/);
+  const other = { ...actor, id: 'different-owner' };
+  assert.equal((await host.conversation(hostScope).submit(send(hostScope, 'actorless'))).reason, 'send-awaiting-confirmation');
+  assert.equal(a.calls.reconciles.length, 0);
+  assert.equal((await host.conversation(hostScope, other).submit(send(hostScope, 'follow-up'))).receipt.state.kind, 'accepted');
+  await assert.rejects(host.reconcile(hostScope, command.clientCommandId, other), /frontend-owner/);
+  await assert.rejects(host.conversation(hostScope, other).receipt(command.clientCommandId), /frontend-owner/);
+  assert.equal((await host.frontendBinding({ scope: hostScope, id: command.clientCommandId, action: 'recover' }, actor, scope => frontendToolsFor(host).producer(scope))).kind, 'bound');
+  assert.equal(a.calls.reconciles.length, 1);
 });

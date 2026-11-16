@@ -101,11 +101,11 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
   const host = openLocalHost({ path: options.path, projection: transcriptProjection, driver,
     ...(options.providers ? { providers: options.providers } : {}),
     authorize: scope => scope.hostId === options.hostId });
-  return { ...host,
-    close() { closing = true; host.close(); },
-    createConversation(scope, installation) {
-      if (canonicalJson(installation) !== canonicalJson(recordedInstallation)) throw new Error('Recorded installation required');
-      host.createConversation(scope, installation);
-    },
+  const close = host.close, createConversation = host.createConversation;
+  host.close = () => { closing = true; close(); };
+  host.createConversation = (scope, installation) => {
+    if (canonicalJson(installation) !== canonicalJson(recordedInstallation)) throw new Error('Recorded installation required');
+    createConversation(scope, installation);
   };
+  return host;
 }

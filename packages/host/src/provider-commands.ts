@@ -1,5 +1,6 @@
+import { aguiInput, assertOfferSuffix } from './agui-input.js';
 import { canonicalJson, copyJson, parseRunIdentity, parsePermissionScope } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope, FrontendOffer } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { ConversationRef, ConversationRefKind, ProviderConversation, ProviderInstance } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
@@ -9,13 +10,13 @@ import type { SettlementObservation } from './settlement.js';
 export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 'credential'> {
   readonly kind: 'provider';
   readonly operation: { readonly operationId: string; readonly binding: ProviderConversation<string> } & (
-    { readonly kind: 'send'; readonly request: Json }
+    { readonly kind: 'send'; readonly request: Json; readonly protocol?: 'ag-ui' }
     | { readonly kind: 'revoke-permission'; readonly permission: ConversationRef<string, 'permission'>; readonly scope: PermissionScope }
     | { readonly kind: 'cancel'; readonly run: ConversationRef<string, 'run'> }
     | { readonly kind: 'decide'; readonly run: ConversationRef<string, 'run'>;
       readonly decision: ConversationRef<string, 'decision'>; readonly choice: ConversationRef<string, 'choice'> });
 }
-export type ProviderAction = { readonly kind: 'send'; readonly text: string }
+export type ProviderAction = { readonly kind: 'send'; readonly text: string; readonly frontend?: FrontendOffer }
   | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope }
   | { readonly kind: 'cancel'; readonly run: unknown }
   | { readonly kind: 'decide'; readonly run: unknown; readonly decision: unknown; readonly choice: unknown };
@@ -30,10 +31,15 @@ export interface ProviderEvidence {
   readonly run: ProviderRun | null;
 }
 export type ProviderObservation = SettlementObservation<ProviderEvidence>;
-export function providerTarget(value: unknown, scope: ConversationScope): ProviderTarget {
+export type AguiRunKey = Pick<ReturnType<typeof aguiInput>, 'threadId' | 'runId'>;
+export interface ProviderCapture {
+  readonly target: ProviderTarget;
+  readonly agui: AguiRunKey | null;
+}
+export function parseProviderCapture(value: unknown, scope: ConversationScope): ProviderCapture {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
   const operation = record(input.operation);
-  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'revoke-permission' ? ['permission', 'scope'] : operation.kind === 'send' ? ['request'] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
+  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'revoke-permission' ? ['permission', 'scope'] : operation.kind === 'send' ? ['request', ...(Object.hasOwn(operation, 'protocol') ? ['protocol'] : [])] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
   const binding = record(operation.binding, ['kind', 'creation', 'authority']);
   const original = providerCreation({ installation: input.installation, credential: input.credential, intent: binding.creation }, scope);
   const operationId = identifier(operation.operationId);
@@ -42,18 +48,32 @@ export function providerTarget(value: unknown, scope: ConversationScope): Provid
   const base = { operationId, binding: creationBinding(binding, original.intent, original.installation) };
   const reference = <K extends ConversationRefKind>(value: unknown, kind: K) => providerReference(value, base.binding, original.installation, kind);
   let captured: ProviderTarget['operation'];
-  if (operation.kind === 'send') captured = { ...base, kind: 'send', request: copyJson(operation.request) };
-  else if (operation.kind === 'revoke-permission') captured = { ...base, kind: 'revoke-permission', permission: reference(operation.permission, 'permission'), scope: parsePermissionScope(operation.scope) };
+  let agui: AguiRunKey | null = null;
+  if (operation.kind === 'send') {
+    const request = copyJson(operation.request);
+    if (Object.hasOwn(operation, 'protocol')) {
+      if (operation.protocol !== 'ag-ui') throw new Error('Invalid provider protocol');
+      const { threadId, runId } = aguiInput(request);
+      agui = { threadId, runId };
+      captured = { ...base, kind: 'send', request, protocol: 'ag-ui' };
+    } else captured = { ...base, kind: 'send', request };
+  } else if (operation.kind === 'revoke-permission') captured = { ...base, kind: 'revoke-permission', permission: reference(operation.permission, 'permission'), scope: parsePermissionScope(operation.scope) };
   else if (operation.kind === 'cancel') captured = { ...base, kind: 'cancel', run: reference(operation.run, 'run') };
   else if (operation.kind === 'decide') captured = { ...base, kind: 'decide', run: reference(operation.run, 'run'),
     decision: reference(operation.decision, 'decision'), choice: reference(operation.choice, 'choice') };
   else throw new Error('Invalid provider command');
-  return { kind: 'provider', installation: original.installation, credential: original.credential, operation: captured };
+  return { target: { kind: 'provider', installation: original.installation, credential: original.credential, operation: captured }, agui };
 }
-export function matchProviderCommand(target: ProviderTarget, body: ClientCommand['body']): void {
-  const operation = target.operation;
+export function matchProviderCommand(capture: ProviderCapture, body: ClientCommand['body']): void {
+  const operation = capture.target.operation;
   if (body.kind === 'revoke-permission' && operation.kind === 'revoke-permission' && body.permissionId === operation.permission.ref.opaqueId && body.scope === operation.scope) return;
-  if (body.kind === 'send' && operation.kind === 'send') return;
+  if (body.kind === 'send' && operation.kind === 'send') {
+    if ('frontend' in body) {
+      if (capture.agui === null) throw new Error('Invalid offered command target');
+      assertOfferSuffix(operation.request, body.frontend);
+    }
+    return;
+  }
   if (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) return;
   if (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId) return;
   throw new Error('Invalid provider command association');
@@ -71,7 +91,8 @@ export function providerRun(value: unknown, binding: ProviderConversation<string
   return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope,
     runId: reference.ref.opaqueId, authority: binding.authority }), reference };
 }
-export function providerObservation(value: unknown, target: ProviderTarget): ProviderObservation {
+export function providerObservation(value: unknown, capture: ProviderCapture): ProviderObservation {
+  const { target, agui } = capture;
   const input = record(value);
   if (input.kind === 'outcome-unknown') { record(input, ['kind']); return { kind: 'outcome-unknown' }; }
   if (input.kind === 'not-dispatched') { record(input, ['kind', 'reason']); return { kind: 'not-dispatched', reason: identifier(input.reason) }; }
@@ -86,7 +107,7 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
     if (target.operation.kind !== 'send') throw new Error('Unexpected provider run output');
     const stored = record(source.run, ['kind', 'identity', 'reference']);
     run = providerRun(stored.reference, target.operation.binding, target.installation);
-    if (canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
+    if ((agui !== null && run.identity.runId !== agui.runId) || canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
   }
   const parsed = { correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
     source: { source: source.source, data, run } } satisfies Extract<ProviderObservation, { kind: 'pending' }>['evidence'];
@@ -100,7 +121,8 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
   if (result.kind === 'rejected') { record(result, ['kind', 'reason']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'rejected', reason: identifier(result.reason) } }; }
   throw new Error('Invalid provider result');
 }
-export function providerOutcome(value: unknown, target: ProviderTarget, fresh: boolean): ProviderObservation {
+export function providerOutcome(value: unknown, capture: ProviderCapture, fresh: boolean): ProviderObservation {
+  const { target } = capture;
   const input = record(copyJson(value));
   const source: ProviderEvidence['source'] = fresh ? 'provider-reply' : 'provider-lookup';
   let run: ProviderRun | null = null;
@@ -127,7 +149,7 @@ export function providerOutcome(value: unknown, target: ProviderTarget, fresh: b
   return providerObservation({ kind, ...(result ? { result } : {}), evidence: {
     correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
     source: { source, data: input.evidence, run },
-  } }, target);
+  } }, capture);
 }
 
 export function retainProviderRun(incoming: ProviderObservation, previous: ProviderObservation | null): ProviderObservation {

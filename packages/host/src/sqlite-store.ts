@@ -1,7 +1,9 @@
+import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
+import type { FrontendSendActor } from './frontend-sends.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
-import { providerTarget, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
-import type { ProviderTarget, ProviderRun, ProviderAction } from './provider-commands.js';
+import { parseProviderCapture, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
+import type { ProviderCapture, ProviderTarget, ProviderRun, ProviderAction } from './provider-commands.js';
 import { creationObservation, providerCreation, conversationInstallation } from './provider-creation.js';
 import type { ConversationInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 import { randomUUID } from 'node:crypto';
@@ -27,9 +29,11 @@ const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
 export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
+  readonly frontendSends: FrontendSends;
   onCommit: (() => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
+    this.frontendSends = new FrontendSends(this.db);
     try {
       this.transaction(() => {
         const configured = canonicalJson({ maxEventBytes: limits.maxEventBytes, maxCommandBytes: limits.maxCommandBytes, snapshotBytes: limits.snapshotBytes });
@@ -52,8 +56,18 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
       this.transaction(() => {
         const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
-        if (format !== 2 && format !== 3) throw new Error('Unsupported database version');
-        this.db.exec('PRAGMA user_version=3');
+        if (format !== 2 && format !== 3 && format !== 4) throw new Error('Unsupported database version');
+        if (format !== 4) this.db.exec(`CREATE TABLE IF NOT EXISTS frontend_sends (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+          platform TEXT NOT NULL CHECK(platform='desktop'), state TEXT NOT NULL CHECK(state IN ('tombstone','available','unavailable')),
+          thread_id TEXT, run_id TEXT,
+          CHECK((thread_id IS NULL) = (run_id IS NULL)),
+          CHECK(state='tombstone' OR (thread_id IS NOT NULL AND run_id IS NOT NULL)),
+          UNIQUE(host,conversation,thread_id,run_id),
+          PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
+          CREATE UNIQUE INDEX IF NOT EXISTS frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
+          PRAGMA user_version=4;`);
+        this.db.prepare('SELECT actor_id,thread_id,run_id FROM frontend_sends LIMIT 1').get();
       });
     } catch (error) { this.db.close(); throw error; }
   }
@@ -241,14 +255,16 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     const row = this.db.prepare('SELECT intent, target, observation, receipt FROM commands WHERE host=? AND conversation=? AND id=?').get(...key(scope), id);
     if (!row) return null;
     const command = parseCommand(json(row.intent)), rawTarget = json(row.target);
-    const target = object(rawTarget).kind === 'provider' ? providerTarget(rawTarget, scope) : capturedTarget(rawTarget, scope);
+    const capture = object(rawTarget).kind === 'provider' ? parseProviderCapture(rawTarget, scope) : null;
+    const target = capture ? capture.target : capturedTarget(rawTarget, scope);
     const parsedReceipt = parseReceipt(json(row.receipt));
     if (!sameScope(command.scope, scope) || command.clientCommandId !== id || parsedReceipt.hostOperationId !== ('kind' in target ? target.operation.operationId : target.identity.hostOperationId)) throw new Error('Corrupt command');
-    if ('kind' in target) {
-      matchProviderCommand(target, command.body);
-      return { kind: 'provider', command, target, receipt: parsedReceipt,
-        observation: row.observation === null ? null : providerObservation(json(row.observation), target) };
+    if (capture) {
+      matchProviderCommand(capture, command.body);
+      return { kind: 'provider', command, ...capture, receipt: parsedReceipt,
+        observation: row.observation === null ? null : providerObservation(json(row.observation), capture) };
     }
+    if ('kind' in target) throw new Error('Invalid native target');
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
   }
@@ -291,9 +307,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
-  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget): Admission {
+  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget, actor?: FrontendSendActor): Admission {
     try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
+      this.frontendSends.admission(command, existing, actor);
       if (existing) return canonicalJson(existing.command) === canonicalJson(command)
         ? { kind: 'existing', receipt: existing.receipt }
         : { kind: 'rejected', reason: 'command-id-conflict' };
@@ -303,6 +320,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (expectedInstallation && canonicalJson(installed) !== canonicalJson(expectedInstallation)) {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
+      if (command.version === 2 && !('kind' in installed)) return { kind: 'rejected', reason: 'frontend-offers-unsupported' };
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
@@ -330,6 +348,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         sequence: this.head(scope) + 1, state: { kind: 'pending' } };
       this.appendEvents(scope, [{ kind: 'receipt', receipt: admitted }]);
       let target;
+      let capture: ProviderCapture | null = null;
       let providerPending: ProviderDecision | null = null;
       if ('kind' in installed) {
         const original = this.creation(scope);
@@ -337,7 +356,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
         let action: ProviderAction;
         if (command.body.kind === 'revoke-permission') action = command.body;
-        else if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text };
+        else if (command.body.kind === 'send') action = command.body;
         else {
           if (command.body.kind === 'approve') {
             const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);
@@ -356,14 +375,19 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
             action = { kind: 'decide', run: run.reference, decision: providerPending.reference, choice: choice.reference };
           }
         }
-        try { target = providerTarget(captureProvider(original, operation, action), scope); matchProviderCommand(target, command.body); }
+        try { capture = parseProviderCapture(captureProvider(original, operation, action), scope); matchProviderCommand(capture, command.body); }
         catch { throw new AdmissionError('provider-command-unavailable'); }
+        target = capture.target;
         if (canonicalJson(target.installation) !== canonicalJson(installed) || canonicalJson(target.credential) !== canonicalJson(original.credential) ||
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
         if (Buffer.byteLength(canonicalJson(target)) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
       } else target = captureTarget({ installation: installed, run, decision: pending }, operation);
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
+      if (command.version === 2) {
+        if (!capture?.agui) throw new AdmissionError('provider-command-unavailable');
+        this.frontendSends.admit(command, capture.agui, actor);
+      }
       if (providerPending) {
         this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
           .run(operation, ...key(scope), providerPending.visible.pendingId);
@@ -371,11 +395,11 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       }
       if (pending) this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
         .run(operation, ...key(scope), pending.visible.pendingId);
-      return 'kind' in target
-        ? { kind: 'owned', stored: { kind: 'provider', command, target, receipt: admitted, observation: null } }
-        : { kind: 'owned', stored: { command, target, receipt: admitted, observation: null } };
+      if (capture) return { kind: 'owned', stored: { kind: 'provider', command, ...capture, receipt: admitted, observation: null } };
+      if ('kind' in target) throw new Error('Invalid native target');
+      return { kind: 'owned', stored: { command, target, receipt: admitted, observation: null } };
     }); } catch (error) {
-      if (error instanceof AdmissionError) return { kind: 'rejected', reason: error.message };
+      if (error instanceof AdmissionError || error instanceof FrontendAccessError) return { kind: 'rejected', reason: error.message };
       if (error instanceof CapacityError) return { kind: 'rejected', reason: 'conversation-capacity' };
       throw error;
     }
@@ -420,7 +444,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
       if ('kind' in stored) {
-        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored.target), stored.observation), { quarantined: isQuarantined(stored) });
+        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored), stored.observation), { quarantined: isQuarantined(stored) });
         switch (transition.kind) {
           case 'keep': return stored.receipt;
           case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

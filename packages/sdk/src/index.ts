@@ -5,7 +5,7 @@ export type { SecretProvider } from './secrets.js';
 export { EXTENSION_SDK_VERSION, parseExtensionManifest, checkExtensionEntrypoint, validateExtensionLifetime } from './extensions.js';
 export type {
   ExtensionEntryKind, ExtensionEntry, ExtensionManifest, ExtensionLifetime, ExtensionCompatibility,
-  ProviderContributions, ServerExtensionContext, ServerExtensionEntry,
+  AguiModel, ProviderContributions, ServerExtensionContext, ServerExtensionEntry,
 } from './extensions.js';
 
 export { backendProviderContractVersion } from './providers.js';

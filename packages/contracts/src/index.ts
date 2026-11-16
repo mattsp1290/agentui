@@ -37,3 +37,5 @@ export * from './observation.js';
 
 export { parseConversationPermissions, parsePermissionScope } from './permissions.js';
 export type { ConversationPermission, ConversationPermissions, PermissionScope } from './permissions.js';
+
+export * from './frontend-sends.js';
