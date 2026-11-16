@@ -112,6 +112,8 @@ Confirmed history and existing receipts remain readable when their provider is u
 The authenticated submit route captures provider sends in the existing command ledger after exact-ID retry detection.
 The stored target contains the original installation, configured authority, credential handle, confirmed binding and translated request.
 Translation runs once for a new admitted command. Admission bounds the translated target and commits it with the pending receipt before submission.
+The command and complete target have separate size limits.
+A wire-valid offer can still be refused when its translated target, including saved history, exceeds its limit.
 Retries return the saved receipt. Explicit reconciliation decodes the original request without translation and calls only `reconcileCommand`.
 A changed decoder, credential or generation cannot replace the original operation.
 
@@ -136,9 +138,13 @@ Admission binds the authenticated principal, command, original provider installa
 The host validates the actual AG-UI input, appends noncolliding captured definitions, and saves the complete raw request.
 Schema defaults and state transforms do not rewrite that request. Retry and reconciliation use only its saved bytes.
 Both fresh and restored confirmation evidence must name the saved actual run ID.
+Request builders should use a distinct run ID for each offered send.
+Reused run IDs currently share coordinator registration and release state; their execution ownership remains unqualified.
 
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
 A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
+Command receipts remain visible to devices that can read the conversation.
+The owner checks protect direct receipt lookup and the captured offer association.
 Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
 The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
 It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.

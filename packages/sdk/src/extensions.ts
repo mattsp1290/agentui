@@ -1,4 +1,4 @@
-import type { RunAgentInput } from '@ag-ui/core';
+import type { RunAgentInput } from '@agentui/protocol';
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import { nonempty, record } from '@agentui/contracts/decode';
 import type { BackendProvider, ProviderModel } from './providers.js';
