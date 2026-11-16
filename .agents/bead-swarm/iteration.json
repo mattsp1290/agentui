@@ -1,0 +1,11 @@
+{
+  "iteration": 3,
+  "branch": "bead-swarm/iteration-3-customization-inputs-and-urls",
+  "slug": "customization-inputs-and-urls",
+  "main_branch": "main",
+  "main_branch_source": "default",
+  "selected_beans": ["agentui-xnbd", "agentui-qkmq"],
+  "beans_done_pending_close": [],
+  "beans_blocked": [],
+  "beans_partial": []
+}
