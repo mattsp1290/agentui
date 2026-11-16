@@ -11,6 +11,7 @@ function fixture() {
   const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
   const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+    permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
     observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false,
@@ -37,6 +38,7 @@ function fixture() {
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value, agentId) { created.push(value); selected.push(agentId); captured.set(value.conversationId, descriptor(agentId)); await behavior.create(); return value; },
     async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
+    conversationPermissions: input => behavior.permissions(input),
     providerObservation: input => behavior.observation(input),
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
@@ -988,4 +990,25 @@ test('empty provider hosts reject create before saving and retain original pendi
   assert.deepEqual(f.selected, ['original-provider']);
   assert.deepEqual(f.app.getSnapshot().saved.pendingCreation, original);
   assert.match(f.app.getSnapshot().error, /Original provider unavailable/);
+});
+
+test('module permission reads reject stale conversation results and revoke retains exact confirmed scope', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const active = f.app.getSnapshot().active, actions = f.app.conversationActions(active), read = deferred();
+  f.behavior.permissions = value => { assert.deepEqual(value, scope); return read.promise; };
+  const pending = actions.permissions.read();
+  await f.app.open({ ...scope, conversationId: 'other' });
+  read.resolve({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] });
+  await assert.rejects(pending, /conversation/);
+  await assert.rejects(actions.commands.revokePermission('permission', 'agent'), /conversation/);
+  assert.deepEqual(f.submitted, []);
+  await f.app.open(scope);
+  const current = f.app.getSnapshot().active;
+  await current.store.setDraft('Keep my draft');
+  await assert.rejects(f.app.conversationActions(current).commands.revokePermission('permission', 'agent'), /Reply lost/);
+  assert.deepEqual(f.submitted[0].body, { kind: 'revoke-permission', permissionId: 'permission', scope: 'agent' });
+  assert.deepEqual(current.store.getSnapshot().outbox[0].command, f.submitted[0]);
+  assert.equal(current.store.getSnapshot().draft, 'Keep my draft');
 });

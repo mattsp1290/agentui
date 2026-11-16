@@ -127,6 +127,7 @@ export function createServerExtensions() {
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
   const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
   const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
+  const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
   const observe: ProviderConversationOperations['observe'] = (...args) => current().observe(...args);
   function close(): Promise<void> {
     if (closing) return closing;
@@ -160,5 +161,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, observe, status, close };
+  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, readPermissions, observe, status, close };
 }

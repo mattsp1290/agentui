@@ -2,7 +2,7 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -28,6 +28,7 @@ export interface LocalHost<E, P> {
   createConversation(scope: ConversationScope, target: Installation): void;
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
+  conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   observeProvider(scope: ConversationScope): Promise<void>;
   observationStatus(scope: ConversationScope): ProviderObservationStatus;
   retryObservation(scope: ConversationScope): Promise<ProviderObservationStatus>;
@@ -127,6 +128,20 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
+    conversationPermissions(value) {
+      const scope = authorized(value), original = store.creation(scope);
+      if (!original) {
+        const installed = store.findInstallation(scope);
+        return Promise.resolve(installed && 'kind' in installed
+          ? { kind: 'unavailable', reason: 'Original provider binding unavailable.' }
+          : { kind: 'unsupported', reason: 'This conversation does not report permissions.' });
+      }
+      return inFlight(async () => {
+        const result: ConversationPermissions = await options.providers?.readPermissions(original) ?? { kind: 'unavailable', reason: 'Original provider unavailable.' };
+        authorized(scope);
+        return result;
+      });
+    },
     creation(scope) { return store.creation(authorized(scope)); },
     async createProviderConversation(scope, target, providers) {
       authorized(scope);
@@ -187,7 +202,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          const admitted = store.admit(command, provider ? { kind: 'supported' } : driver?.capability(command) ??
+          const admitted = store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
+            ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);
           if (admitted.kind === 'rejected') return admitted;

@@ -303,3 +303,38 @@ test('explicit send restores without dispatch and retries its exact ID, body and
   assert.equal(second.store.getSnapshot().draft, 'review prompt');
   assert.deepEqual(second.store.getSnapshot().outbox, []);
 });
+
+test('revoke scope and identity restore without replay alongside old drafts and approval intents', async () => {
+  const first = fixture();
+  await first.store.setDraft('Keep my draft');
+  await first.store.approve('old-decision', 'allow');
+  first.port.submit = async command => {
+    assert.deepEqual(first.drafts.value.outbox.at(-1).command, command);
+    throw new Error('Reply lost');
+  };
+  await assert.rejects(first.store.revokePermission('permission', 'agent'), /Reply lost/);
+  const saved = structuredClone(first.drafts.value), second = fixture({ drafts: storage(saved) });
+  await second.store.ready;
+  assert.deepEqual(second.drafts.value, saved);
+  assert.deepEqual(second.port.submitted, []);
+  await second.store.retry(saved.outbox.at(-1).command.clientCommandId);
+  assert.deepEqual(second.port.submitted, [saved.outbox.at(-1).command]);
+  assert.equal(second.store.getSnapshot().draft, 'Keep my draft');
+  assert.deepEqual(second.store.getSnapshot().outbox, saved.outbox);
+});
+
+test('an unknown saved command prevents writes and retains the complete draft and outbox', async () => {
+  const first = fixture();
+  await first.store.setDraft('Preserve this draft');
+  await first.store.approve('old-decision', 'allow');
+  const saved = structuredClone(first.drafts.value);
+  saved.outbox.push({ command: { version: 1, scope, clientCommandId: 'future-command',
+    body: { kind: 'future-command', privateData: { original: true } } }, draftRevision: null });
+  const second = fixture({ drafts: storage(saved) });
+  await assert.rejects(second.store.ready, /Unsupported command kind/);
+  await assert.rejects(second.store.setDraft('overwrite'), /Unsupported command kind/);
+  await assert.rejects(second.store.revokePermission('permission', 'agent'), /Unsupported command kind/);
+  assert.deepEqual(second.drafts.value, saved);
+  assert.deepEqual(second.drafts.writes, []);
+  assert.deepEqual(second.port.submitted, []);
+});

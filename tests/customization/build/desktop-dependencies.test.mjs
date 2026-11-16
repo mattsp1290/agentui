@@ -6,10 +6,10 @@ import test from 'node:test';
 import { readArtifactBytes } from '../../../apps/host/build/tsc/artifact.js';
 import { fixture, locked, tarball, write } from './preparation-support.mjs';
 
-const extension = { extension: { namespace: 'workspace', trust: 'full', sdkVersion: '0.1.0', entries: [{ kind: 'desktop', module: './desktop.js' }] }, sources: { './desktop.js': './index.tsx' } };
+const extension = { extension: { namespace: 'workspace', trust: 'full', sdkVersion: '0.2.0', entries: [{ kind: 'desktop', module: './desktop.js' }] }, sources: { './desktop.js': './index.tsx' } };
 const source = `import value from 'sibling'; import {useState} from 'react';
 function Component(){const [text] = useState(value); return <p>{text}</p>}
-export default {kind:'desktop',sdkVersion:'0.1.0',activate(){return {modules:[{id:'a',label:'A',component:Component}],dispose(){}}}};`;
+export default {kind:'desktop',sdkVersion:'0.2.0',activate(){return {modules:[{id:'a',label:'A',component:Component}],dispose(){}}}};`;
 const build = (repo, commit, out, subdirectory) => execFileSync(process.execPath, ['scripts/build-local-customization.mjs', '--repository', repo.directory, '--commit', commit, '--out', out, ...(subdirectory ? ['--subdirectory', subdirectory] : [])], { encoding: 'utf8', stdio: 'pipe' });
 
 test('a linked workspace and locked dependency compile into the desktop app', { timeout: 60_000 }, async t => {

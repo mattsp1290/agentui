@@ -119,7 +119,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 6, SDK compatibility 0.1, package versions 0.0 and transcript projection 2.
+The current integration uses wire version 7, SDK compatibility 0.2.0, package versions 0.0 and transcript projection 2.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Durable response streams
@@ -153,7 +153,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 6, transcript projection 2, SDK compatibility 0.1 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 7, transcript projection 2, SDK compatibility 0.2.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -285,3 +285,21 @@ results. The notice and retry progress live outside the canonical document and
 only an authenticated stopped status produces the paused notice. Unauthorized
 responses still use the existing access-revoked path. Retry remains local so
 navigation and saved drafts stay available.
+
+
+## Permission management
+
+A connected provider can implement the optional `permissions` manager with `read`, `revoke`, and `reconcileRevoke`.
+Reads report every effective permission in the supported domain for the original conversation binding.
+A successful empty result describes that domain. Unsupported or incomplete reads remain explicit failures.
+The authenticated `conversation-permissions` service operation returns display data and a host observation time.
+
+The durable `revoke-permission` command captures the permission ID and owner-confirmed `conversation` or `agent` scope.
+The provider validates both against a fresh authenticated listing before dispatch.
+The existing outbox and command store retain the original creation, provider generation, credential handle, and operation ID independently of any run or approval card.
+`reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
+A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
+
+SDK compatibility 0.2.0 and wire 7 require rebuilt extensions and matching host and client releases.
+The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
+Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.

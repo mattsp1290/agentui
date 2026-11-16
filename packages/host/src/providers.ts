@@ -1,10 +1,10 @@
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, copyJson } from '@agentui/contracts';
+import { canonicalJson, copyJson, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationScope, RunAuthority } from '@agentui/contracts';
+import type { ConversationPermissions, ConversationScope, RunAuthority } from '@agentui/contracts';
 import { providerTarget, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
@@ -55,6 +55,7 @@ interface BoundProvider {
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
+  readPermissions(original: StoredCreation): Promise<ConversationPermissions>;
   captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
   executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
   observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream>;
@@ -83,7 +84,8 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       if (result.kind !== 'connected') throw new Error('Provider unavailable');
       acquired = result.backend;
       assertAuthorized();
-      if (identityKey(acquired.instance) !== key || typeof acquired.close !== 'function' || typeof acquired.discover !== 'function') {
+      if (identityKey(acquired.instance) !== key || typeof acquired.close !== 'function' || typeof acquired.discover !== 'function' ||
+        (acquired.permissions && [acquired.permissions.read, acquired.permissions.revoke, acquired.permissions.reconcileRevoke].some(method => typeof method !== 'function'))) {
         throw new Error('Invalid provider connection');
       }
       return acquired;
@@ -156,12 +158,46 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
         credential: original.credential }, binding, authorize, store, freshSnapshot);
     },
+    async readPermissions(original) {
+      const authorize = () => {
+        const granted = validate(original.installation);
+        if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Original credentials unavailable');
+      };
+      try {
+        authorize();
+        if (original.observation?.kind !== 'confirmed') throw new Error('Original binding unavailable');
+        const intent = creationIntent(original.intent, original.installation, instance);
+        const binding = creationBinding(original.observation.binding, intent, original.installation);
+        const connected = await connect();
+        authorize();
+        if (!connected.permissions) return { kind: 'unsupported', reason: 'This provider does not report permissions.' };
+        const result = record(copyJson(await connected.permissions.read(binding)));
+        authorize();
+        if (result.kind !== 'available') {
+          record(result, ['kind', 'reason']); text(result.reason);
+          return { kind: result.kind === 'unsupported' ? 'unsupported' : 'unavailable', reason: 'Provider permissions unavailable.' };
+        }
+        record(result, ['kind', 'permissions']);
+        if (!Array.isArray(result.permissions) || result.permissions.length > 1000 ||
+          canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Invalid permissions');
+        return parseConversationPermissions({ kind: 'available', observedAt: new Date().toISOString(), permissions: result.permissions.map(value => {
+          const row = record(value, ['ref', 'scope', 'actionLabel', 'detail']);
+          const ref = providerReference(row.ref, binding, original.installation, 'permission', instance);
+          return { permissionId: ref.ref.opaqueId, scope: row.scope, actionLabel: row.actionLabel, detail: row.detail };
+        }) });
+      } catch { return { kind: 'unavailable', reason: 'Original provider permissions unavailable.' }; }
+    },
     captureCommand(original, action, operationId) {
       const granted = validate(original.installation);
       if (original.observation?.kind !== 'confirmed' || canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
       const intent = creationIntent(original.intent, original.installation, instance);
       const binding = creationBinding(original.observation.binding, intent, original.installation);
       const target = (operation: unknown) => providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential, operation }, intent.scope);
+      if (action.kind === 'revoke-permission') {
+        if (!acquired?.permissions) throw new Error('Permission management unavailable');
+        return target({ kind: action.kind, operationId, binding, scope: action.scope,
+          permission: { binding, ref: { kind: 'permission', instance, opaqueId: action.permissionId } } });
+      }
       if (action.kind === 'send') {
         const request = copyJson(presentation.request(action.text, binding));
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
@@ -187,6 +223,20 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         const captured = original.operation;
         const intent = creationIntent(captured.binding.creation, original.installation, instance);
         const binding = creationBinding(captured.binding, intent, original.installation);
+        const connected = await connect();
+        authorize();
+        if (captured.kind === 'revoke-permission') {
+          const manager = connected.permissions;
+          if (!manager) throw new Error('Permission management unavailable');
+          const operation = { operationId: captured.operationId, binding, scope: captured.scope,
+            permission: providerReference(captured.permission, binding, original.installation, 'permission', instance) };
+          beforeEffect();
+          authorize();
+          entered = true;
+          const result = await (fresh ? manager.revoke(operation) : manager.reconcileRevoke(operation));
+          authorize();
+          return providerOutcome(result, original, fresh);
+        }
         let operation: ProviderCommand<M, I>;
         const operationId = captured.operationId;
         if (captured.kind === 'send') {
@@ -201,8 +251,6 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
             decision: providerReference(captured.decision, binding, original.installation, 'decision', instance),
             choice: providerReference(captured.choice, binding, original.installation, 'choice', instance) };
         }
-        const connected = await connect();
-        authorize();
         if (!capability(connected.capabilities.reconcile) || (fresh && !capability(connected.capabilities[captured.kind]))) throw new Error('Provider command unavailable');
         beforeEffect();
         authorize();
@@ -372,9 +420,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       const selected = original.installation;
       const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
       const binding = bindings.find(binding => binding.matches(selected));
-      if (!binding || !discovered?.capabilities[action.kind] || !discovered.capabilities.reconcile ||
+      if (!binding || !discovered || (action.kind !== 'revoke-permission' && (!discovered.capabilities[action.kind] || !discovered.capabilities.reconcile)) ||
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
       return binding.captureCommand(original, action, operationId);
+    },
+    readPermissions(original: StoredCreation): Promise<ConversationPermissions> {
+      return track(async () => {
+        const binding = bindings.find(binding => binding.matches(original.installation));
+        if (phase !== 'active' || !binding) return { kind: 'unavailable', reason: 'Original provider unavailable.' };
+        return binding.readPermissions(original);
+      });
     },
     observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream> {
       return track(async () => {
@@ -407,4 +462,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions'>;

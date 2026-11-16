@@ -162,6 +162,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     search: (query, after = null) => request({ op: 'search', query, after }),
     create: (scope, agentId) => request({ op: 'create', scope, agentId }),
     providerObservation: input => request({ op: 'provider-observation', ...input }),
+    conversationPermissions: scope => request({ op: 'conversation-permissions', scope }),
     conversationAgent: scope => request({ op: 'conversation-agent', scope }),
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
     conversation(value) {

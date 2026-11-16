@@ -1,4 +1,4 @@
-import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
+import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, PermissionScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
 
 export interface OutboxEntry {
   readonly command: ClientCommand;
@@ -33,6 +33,7 @@ export interface ConversationStore<P> {
   setDraft(text: string): Promise<void>;
   send(text?: string): Promise<SubmitResult>;
   approve(pendingId: string, choiceId: string): Promise<SubmitResult>;
+  revokePermission(permissionId: string, scope: PermissionScope): Promise<SubmitResult>;
   cancel(runId: string): Promise<SubmitResult>;
   retry(clientCommandId: string): Promise<SubmitResult>;
   refreshReceipt(clientCommandId: string): Promise<Receipt | null>;

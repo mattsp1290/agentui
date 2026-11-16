@@ -1,3 +1,5 @@
+import { parseConversationPermissions } from './permissions.js';
+import type { ConversationPermissions } from './permissions.js';
 import { parseProviderObservationStatus } from './observation.js';
 import type { ProviderObservationStatus } from './observation.js';
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
@@ -31,6 +33,7 @@ export type ServiceRequest =
   | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
+  | { readonly op: 'conversation-permissions'; readonly scope: ConversationScope }
   | { readonly op: 'conversation-agent'; readonly scope: ConversationScope }
   | { readonly op: 'provider-observation'; readonly scope: ConversationScope; readonly action: 'read' | 'retry' }
   | { readonly op: 'submit'; readonly command: ClientCommand }
@@ -78,6 +81,7 @@ export interface ServiceValueMap {
   readonly metadata: ServiceMetadata;
   readonly catalog: readonly ConversationCatalogEntry[];
   readonly search: ConversationSearchPage;
+  readonly 'conversation-permissions': ConversationPermissions;
   readonly 'conversation-agent': AgentDescriptor | null;
   readonly 'provider-observation': ProviderObservationStatus;
   readonly create: ConversationScope;
@@ -100,6 +104,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
+  conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   conversationAgent(scope: ConversationScope): Promise<AgentDescriptor | null>;
   providerObservation(input: { readonly scope: ConversationScope; readonly action: 'read' | 'retry' }): Promise<ProviderObservationStatus>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
@@ -128,6 +133,7 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
       return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
     }
+    case 'conversation-permissions': exact(input, ['op', 'scope']); return { op: 'conversation-permissions', scope: parseScope(input.scope) };
     case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
     case 'provider-observation':
       exact(input, ['op', 'scope', 'action']);
@@ -255,6 +261,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     });
     return { items: entries, after: input.after === null ? null : identifier(input.after) };
   },
+  'conversation-permissions': parseConversationPermissions,
   'provider-observation': parseProviderObservationStatus,
   'conversation-agent': value => value === null ? null : agentDescriptor(value),
   create: parseScope,

@@ -130,6 +130,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     },
     send: text => submit(text === undefined ? null : { kind: 'send', text }),
     approve: (pendingId, choiceId) => submit({ kind: 'approve', pendingId, choiceId }),
+    revokePermission: (permissionId, scope) => submit({ kind: 'revoke-permission', permissionId, scope }),
     cancel: runId => submit({ kind: 'cancel', runId }),
     async retry(clientCommandId) {
       await ready;
