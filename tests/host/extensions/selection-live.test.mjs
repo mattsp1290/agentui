@@ -55,6 +55,7 @@ test('packaged apply observes every saved page, recovers lost replies and explic
   const f = await liveFixture(t);
   await saved(f, 101);
   f.database(db => db.exec('DELETE FROM provider_checkpoints'));
+  const startup = await f.cli('extensions-status');
   const staged = await f.select();
   assert.equal((await f.host.discoverProviders())[0].agents[0].name, 'artifact-a');
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
@@ -68,11 +69,20 @@ test('packaged apply observes every saved page, recovers lost replies and explic
     assert.equal((await f.cli('extensions-status', ['--attempt', 'apply-b'])).operation.outcome.kind, 'applying');
     assert.deepEqual(await f.send(f.apply('other')), { ok: false, error: 'Selection busy' });
     await assert.rejects(f.select('late', 1), /busy/);
+    assert.equal((await f.host.discoverProviders())[0].agents[0].name, 'artifact-b');
+    assert.equal(f.count(f.state.modules[0], 'dispose'), 1);
+    assert.equal(f.state.modules[0].feeds.length, 101);
+    assert.ok(f.state.modules[0].feeds.every(feed => feed.closes === 1));
     const during = await f.cli('extensions-status');
-    assert.equal(during.runtime.id, 'startup');
+    assert.deepEqual(during.lastApplied, startup.lastApplied);
+    assert.equal(during.operation.outcome.kind, 'applying');
+    assert.deepEqual(during.runtime, { kind: 'withheld' });
     finish.resolve();
     const applied = await f.cli('extensions-apply', ['--operation', 'build-b', '--expected-revision', '1', '--request', 'apply-b']);
     assert.equal(applied.outcome.kind, 'applied'); assert.equal(applied.receiptDigest, staged.receiptDigest);
+    const committed = await f.cli('extensions-status');
+    assert.deepEqual(committed.lastApplied, applied);
+    assert.deepEqual(committed.runtime, { kind: 'active', id: 'build-b', revision: 1, attemptId: 'apply-b' });
     assert.equal(observations, 101); assert.equal(f.count(f.state.modules[1], 'observe'), 101);
     assert.equal(f.state.modules[0].feeds.length, 101); assert.ok(f.state.modules[0].feeds.every(feed => feed.closes === 1));
     assert.equal(f.state.modules[1].feeds.length, 101); assert.ok(f.state.modules[1].feeds.every(feed => feed.closes === 0));
@@ -82,6 +92,7 @@ test('packaged apply observes every saved page, recovers lost replies and explic
     assert.deepEqual((await f.send(request)).value, applied);
     const empty = await f.cli('extensions-apply', ['--operation', 'disable', '--expected-revision', '2', '--request', 'apply-empty']);
     assert.equal(empty.outcome.kind, 'applied-empty');
+    assert.deepEqual((await f.cli('extensions-status')).runtime, { kind: 'applied-empty', id: 'disable', revision: 2, attemptId: 'apply-empty' });
     assert.equal((await f.cli('extensions-status', ['--attempt', 'apply-b'])).operation.outcome.kind, 'applied');
     await f.restart();
     assert.equal((await f.cli('extensions-status')).runtime.kind, 'applied-empty');
@@ -93,6 +104,7 @@ test('packaged apply observes every saved page, recovers lost replies and explic
 
 test('real active work persists deferred without reads, restart withholds, explicit retry recovers its lost reply', { timeout: 120000 }, async t => {
   const f = await liveFixture(t); await f.select();
+  const startup = await f.cli('extensions-status');
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   f.state.hooks['artifact-a'] = { async discover() { entered.resolve(); await finish.promise; } };
   const discovery = f.host.discoverProviders(); await entered.promise;
@@ -101,6 +113,10 @@ test('real active work persists deferred without reads, restart withholds, expli
   syncBuiltinESMExports();
   try {
     assert.deepEqual((await f.send(f.apply())).value.outcome, { kind: 'deferred', reason: 'active-work' });
+    const deferred = await f.cli('extensions-status');
+    assert.deepEqual(deferred.runtime, startup.runtime);
+    assert.equal(deferred.runtime.id, 'startup');
+    assert.deepEqual(deferred.lastApplied, startup.lastApplied);
     assert.deepEqual(reads, []); assert.equal(f.state.modules.length, 1);
   } finally { mock.mock.restore(); syncBuiltinESMExports(); finish.resolve(); await discovery; }
   assert.equal(f.state.modules.length, 1);
@@ -131,6 +147,32 @@ test('real active work persists deferred without reads, restart withholds, expli
     await f.restart();
     assert.deepEqual((await f.send(request)).value, result);
   } finally { release.resolve(); readMock.mock.restore(); syncBuiltinESMExports(); await lost; }
+});
+
+test('acknowledged empty runtime is withheld while a new generation awaits observation', { timeout: 120000 }, async t => {
+  const f = await liveFixture(t); await saved(f, 1);
+  await f.select('disable', 0, null);
+  const empty = (await f.send(f.apply('apply-empty', 'disable', 1))).value;
+  assert.equal(empty.outcome.kind, 'applied-empty');
+  assert.deepEqual((await f.cli('extensions-status')).runtime, { kind: 'applied-empty', id: 'disable', revision: 1, attemptId: 'apply-empty' });
+  f.database(db => db.exec('DELETE FROM provider_checkpoints'));
+  await f.select('build-b', 1);
+  const entered = Promise.withResolvers(), release = Promise.withResolvers();
+  f.state.hooks['artifact-b'] = { async snapshot() { entered.resolve(); await release.promise; } };
+  let acknowledged = false;
+  const applying = f.send(f.apply('apply-b', 'build-b', 2)).then(result => { acknowledged = true; return result; });
+  try {
+    await entered.promise;
+    assert.equal((await f.host.discoverProviders())[0].agents[0].name, 'artifact-b');
+    const during = await f.cli('extensions-status');
+    assert.equal(acknowledged, false);
+    assert.deepEqual(during.lastApplied, empty);
+    assert.equal(during.operation.outcome.kind, 'applying');
+    assert.deepEqual(during.runtime, { kind: 'withheld' });
+    release.resolve();
+    assert.equal((await applying).value.outcome.kind, 'applied');
+    assert.deepEqual((await f.cli('extensions-status')).runtime, { kind: 'active', id: 'build-b', revision: 2, attemptId: 'apply-b' });
+  } finally { release.resolve(); await applying; }
 });
 
 for (const fault of ['final-write', 'desired-cas', 'observation']) test(`${fault} after replacement never reports applied and promptly freezes credentials without a shutdown cycle`, { timeout: 120000 }, async t => {

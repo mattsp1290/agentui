@@ -21,6 +21,8 @@ const legacyColumns = 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, se
 type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
 type Attempt = { readonly id: string; readonly selection: string; readonly intent: string; readonly origin: LiveRequest | { readonly kind: 'boot' }; outcome: AttemptOutcome };
+type Running = { readonly kind: 'withheld' | 'uncertain' }
+  | { readonly kind: 'acknowledged'; readonly generation: number | null; readonly identity: Extract<SelectionRuntime, { id: string }> };
 export type ExtensionStartup = { readonly kind: 'transient'; readonly entries: readonly BrowserProviderExtension[] }
   | { readonly kind: 'durable-artifacts'; readonly entries: readonly (Extract<BrowserProviderExtension, { kind: 'artifact' }>)[] };
 
@@ -38,7 +40,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   const grantsDigest = digest('[' + grants.map(grant => canonicalJson(publicGrantBinding(grant))).sort().join(',') + ']');
   const selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
   let desired: Selection | undefined, invalid = false, poisoned = false, busy: Promise<unknown> | undefined, closed = false, booted = false;
-  let running: SelectionRuntime = { kind: 'withheld' };
+  let running: Running = { kind: 'withheld' };
   function transaction<T>(work: () => T): T {
     db.exec('BEGIN IMMEDIATE');
     try { const value = work(); db.exec('COMMIT'); return value; }
@@ -236,7 +238,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         ? { kind: result.generation === null ? 'applied-empty' : 'applied' } : { kind: 'interrupted' };
       persist(attempt, selection, outcome);
       if (outcome.kind !== 'deferred') running = { kind: 'withheld' };
-      if (outcome.kind === 'applied' || outcome.kind === 'applied-empty') running = { kind: outcome.kind === 'applied' ? 'active' : 'applied-empty', id: selection.id, revision: selection.revision, attemptId: attempt.id };
+      if (result.kind === 'replaced' && (outcome.kind === 'applied' || outcome.kind === 'applied-empty')) running = {
+        kind: 'acknowledged', generation: result.generation,
+        identity: { kind: outcome.kind === 'applied' ? 'active' : 'applied-empty', id: selection.id, revision: selection.revision, attemptId: attempt.id } };
       return summary(selection, attempt);
     } catch (error) {
       if (!effect && error instanceof SelectionRefusal && !byId.has(attempt.id)) throw error;
@@ -282,7 +286,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       const last = attempts.findLast(value => value.outcome.kind === 'applied' || value.outcome.kind === 'applied-empty');
       const lastSelection = last && selections.get(last.selection);
       const state = deps.runtime();
-      const runtime = running.kind === 'uncertain' ? running : closed || deps.isClosing() ? { kind: 'closed' as const } : state.kind === 'active' || state.kind === 'empty' ? running : { kind: 'withheld' as const };
+      const runtime: SelectionRuntime = running.kind === 'uncertain' ? running : closed || deps.isClosing() ? { kind: 'closed' }
+        : running.kind === 'acknowledged' && (running.generation === null ? state.kind === 'empty' : state.kind === 'active' && state.generation === running.generation)
+          ? running.identity : { kind: 'withheld' };
       return { kind: 'ready', desiredRevision: desired.revision, desired: summary(desired), operation: summary(selected, exact),
         lastApplied: lastSelection && last ? summary(lastSelection, last) : null, runtime };
     },
