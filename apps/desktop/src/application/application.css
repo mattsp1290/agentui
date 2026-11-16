@@ -15,9 +15,9 @@
 .progress-label { display: block; font-size: .75rem; margin-top: .8rem; color: var(--aui-color-muted); }
 .empty-state, .empty-workspace > p:last-child { color: var(--aui-color-muted); line-height: 1.6; }
 .composer-footer { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
-.decision-card, .outbox { padding: 1.25rem; margin-top: 1.5rem; border: 1px solid var(--aui-color-border); border-radius: .8rem; }
-.decision-card h2, .outbox h2 { margin-top: 0; font-size: 1rem; }
-.decision-card p { white-space: pre-wrap; overflow-wrap: anywhere; }
+.decision-card, .permissions-panel, .outbox { padding: 1.25rem; margin-top: 1.5rem; border: 1px solid var(--aui-color-border); border-radius: .8rem; }
+.decision-card h2, .permissions-panel h2, .outbox h2 { margin-top: 0; font-size: 1rem; }
+.decision-card p, .permissions-panel p { white-space: pre-wrap; overflow-wrap: anywhere; }
 .outbox > p { color: var(--aui-color-muted); font-size: .85rem; }
 .outbox article + article { border-top: 1px solid var(--aui-color-border); padding-top: 1rem; margin-top: 1rem; }
 .outbox code { font-size: .7rem; overflow-wrap: anywhere; }
@@ -123,7 +123,7 @@
 .composer:focus-within { box-shadow: 0 0 0 2px var(--aui-color-accent); }
 .composer-footer span { font-size: 10px; color: var(--aui-color-muted); }
 .composer-footer button { background: var(--aui-color-accent); color: var(--aui-color-on-accent); border: 0; border-radius: 20px; padding: 6px 14px; font-size: 12px; }
-.decision-card { flex: none; max-height: 30vh; overflow-y: auto; padding: 14px; margin-top: 12px; background: var(--aui-color-surface); font-size: 12px; }
+.decision-card, .permissions-panel { flex: none; max-height: 30vh; overflow-y: auto; padding: 14px; margin-top: 12px; background: var(--aui-color-surface); font-size: 12px; }
 .outbox { flex: none; max-height: 22vh; overflow-y: auto; }
 .empty-workspace { padding: 24px; max-width: 38rem; justify-content: center; }
 .empty-workspace .eyebrow { font-size: 11px; }
