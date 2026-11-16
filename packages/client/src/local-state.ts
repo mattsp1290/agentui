@@ -47,6 +47,7 @@ export function restore(value: unknown, scope: ConversationScope): LocalRecords 
   const outbox: OutboxEntry[] = input.outbox.map(value => {
     const entry = object(value);
     const command = parseCommand(entry.command);
+    if (command.version !== 1) throw new Error('Unsupported saved command version');
     if (!sameScope(command.scope, scope)) throw new Error('Outbox scope mismatch');
     if (ids.has(command.clientCommandId)) throw new Error('Duplicate outbox command ID');
     ids.add(command.clientCommandId);

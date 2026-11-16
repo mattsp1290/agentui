@@ -150,7 +150,9 @@ For each independent offered send, an `addAgui` provider must allocate a fresh r
 An exact retry retains the original run ID and saved command.
 Another tagged send using that identity is rejected with `frontend-run-reused` before dispatch, including after release or terminal settlement.
 A new offered command also rejects a key captured by any earlier tagged send.
-Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic sends keep their historical semantics.
+Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic run-key reuse is unchanged.
+
+Provider dispatch, including generic sends, rechecks the authenticated actor before the effect. These actor fences do not change native driver dispatch. A follow-up send does not reconcile a provider blocker while its original dispatch is still running locally.
 An exact command retry returns its existing receipt without translating or dispatching again.
 This reservation does not qualify frontend handler execution ownership.
 
