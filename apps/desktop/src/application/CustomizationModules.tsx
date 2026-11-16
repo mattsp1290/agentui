@@ -1,6 +1,6 @@
 import { Suspense, useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
-import type { ConversationModule, ConversationModuleProps, ModuleAction, UiExtensionContributions } from '@agentui/sdk/react';
+import type { ConversationModule, ConversationModuleProps, ModuleAction } from '@agentui/sdk/react';
 import type { SubmitResult } from '@agentui/contracts';
 import { Button } from '@agentui/ui-primitives/desktop';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
@@ -58,8 +58,8 @@ function ConversationModuleView({ module, context }: { readonly module: Conversa
   </section>;
 }
 
-function ConversationModules({ value, active, actions, enabled, agent }: {
-  readonly value: UiExtensionContributions; readonly active: OpenConversation; readonly actions: ConversationActions;
+function ConversationModules({ modules, active, actions, enabled, agent }: {
+  readonly modules: readonly ConversationModule[]; readonly active: OpenConversation; readonly actions: ConversationActions;
   readonly enabled: boolean; readonly agent: string;
 }) {
   const view = useConversation(active.store);
@@ -68,7 +68,7 @@ function ConversationModules({ value, active, actions, enabled, agent }: {
   return <fieldset disabled={!available} className="customization-modules">
     <legend>Custom tools</legend>
     {!available && <p>Available when this conversation is connected and ready.</p>}
-    {value.modules.map(module => <ConversationModuleView key={module.id} module={module} context={context} />)}
+    {modules.map(module => <ConversationModuleView key={module.id} module={module} context={context} />)}
   </fieldset>;
 }
 
@@ -82,7 +82,7 @@ export function CustomizationModules({ owner, active, actions, enabled, agent }:
     {owner.kind === 'failed' && <p role="alert">Custom tools could not load. {owner.message} Use Restore default view to continue without them.</p>}
     {owner.kind === 'ready' && active && actions && <Suspense fallback={<p role="status">Loading custom tools…</p>}>
       <CustomizationBoundary key={`${owner.lifetime}/${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`} fail={owner.fail} fallback={null}>
-        <ConversationModules value={owner.value} active={active} actions={actions} enabled={enabled} agent={agent} />
+        <ConversationModules modules={owner.presentation.modules} active={active} actions={actions} enabled={enabled} agent={agent} />
       </CustomizationBoundary>
     </Suspense>}
   </aside>;

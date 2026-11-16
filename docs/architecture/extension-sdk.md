@@ -34,10 +34,13 @@ Workspace package versions remain `0.0.0`; service wire version 2 and transcript
 
 A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`.
 Its activation returns modules and a required `dispose` function, either directly or through a promise.
-Call `validateUiExtensionContributions` on the returned contribution before rendering or invoking modules.
-The activation owner withdraws contributions and calls disposal on deactivation.
-It must also dispose a valid lifetime if later contribution validation fails.
-For UI activation, check the lifetime first and retain it for cleanup before validating modules.
+Hosts call `parseUiExtensionContributions` once on the returned contribution.
+The result distinguishes an invalid lifetime, invalid presentation with an acquired disposer, and ready presentation with a disposer.
+The owner retains the disposer before handling presentation failure or removal, including late activation results.
+It withdraws contributions and calls that disposer on deactivation. Repeated calls share the same completion or rejection.
+Render only the ready result's `presentation`, whose module/action records and arrays are copied recursively.
+Captured actions and disposal retain their original receivers. Component references stay opaque, including React wrappers.
+The standalone assertion helpers never invoke disposal; hosts use the parser to retain captured values.
 Behaviour checks accept class instances, accessors, and callable objects with the required fields.
 They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
@@ -264,7 +267,10 @@ UI contributions may also replace the desktop transcript with `overrides: { tran
 `MyTranscript` is a React component receiving the same `ConversationModuleProps` as modules.
 `modules` and `dispose` remain required. An override-only extension returns `modules: []`.
 Function, memo, forwardRef, and lazy components follow the same validation as module components.
-Unknown override slots and malformed components are rejected.
+Unknown own or inherited override slots and malformed components are rejected.
+Class transcript accessors are supported; ordinary prototype constructor metadata is ignored.
+Changing author records or arrays after capture does not change the selected transcript, modules, or actions.
+This captures presentation slots, not the internal behavior of full-trust component code.
 
 ```tsx
 function MyTranscript({ conversation, activity }: ConversationModuleProps) {
