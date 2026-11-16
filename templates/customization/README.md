@@ -79,7 +79,7 @@ An activation can add `overrides: { transcript: MyTranscript }` alongside its re
 See the [SDK transcript example](../../docs/architecture/extension-sdk.md#contribute-conversation-views-and-actions).
 Only transcript presentation changes. The ordinary composer, approvals, Stop, and recovery remain available.
 The host retains the default transcript while selected activations or a lazy override load, and reports a conflict if multiple namespaces claim it.
-A failed namespace is disposed once. Restore default view removes both contributions and preserves the draft.
+A failed namespace is disposed once. Restore default view removes all presentation contributions and preserves the draft.
 
 ### Arrange transcript and modules
 

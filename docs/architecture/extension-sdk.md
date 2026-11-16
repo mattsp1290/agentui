@@ -300,7 +300,7 @@ The override changes only transcript presentation. The ordinary composer, approv
 The default transcript stays visible while any selected activation is pending or a lazy override is loading.
 If multiple ready namespaces claim the transcript after all activations settle, the host reports their sorted names and keeps the default transcript.
 A failed namespace releases its claim and disposes once; other namespaces remain available.
-Restore default view removes both override and additive contributions while preserving the composer and draft.
+Restore default view removes all presentation contributions while preserving the composer and draft.
 This slot does not provide a layout language, split conversations, or live artifact refresh.
 
 The host calls `action.run(context)` directly.
@@ -318,6 +318,7 @@ The optional top-level `contentLayout` contribution arranges the selected conver
 `ConversationContentLayoutProps` has exactly two readonly `ReactNode` properties, `transcript` and `modules`.
 The transcript already reflects independent transcript override selection. The modules include nested views, actions, and namespace diagnostics.
 Render each supplied node once and treat it as an opaque presentation value.
+Inspecting, cloning, or rendering these elements' props is unsupported and does not provide an isolation boundary for full-trust code.
 The typed layout props add no commands, draft editor, conversation selector, or lifetime API.
 
 ```tsx
