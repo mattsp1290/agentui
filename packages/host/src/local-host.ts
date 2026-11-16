@@ -124,7 +124,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const assertMayReceiveEvidence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     if (stored.command.version !== 2) return;
     authorized(stored.command.scope);
-    store.frontendSends.check({ scope: stored.command.scope, id: stored.command.clientCommandId, actor, command: stored.command });
+    store.frontendSends.check({ scope: stored.command.scope, id: stored.command.clientCommandId, actor, stored });
   };
   const ownedCommand = (scope: ConversationScope, id: string, actor?: FrontendSendActor) => {
     const stored = store.command(authorized(scope), nonempty(id));
@@ -138,9 +138,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     assertFrontendTarget(stored);
-    if (stored.command.version === 2 && store.frontendSends.check({ scope: stored.command.scope,
-      id: stored.command.clientCommandId, actor, command: stored.command }) !== 'available') throw new Error('Frontend owner unavailable');
-    if (actor) store.frontendSends.assertActor(actor);
+    if (stored.command.version === 2) {
+      if (store.frontendSends.check({ scope: stored.command.scope,
+        id: stored.command.clientCommandId, actor, stored }) !== 'available') throw new Error('Frontend owner unavailable');
+    } else if (actor) store.frontendSends.assertActor(actor);
     authorized(stored.command.scope);
     store.verifyIntent(stored);
   };
@@ -155,7 +156,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
-      ? await options.providers?.executeCommand(stored.target, false, () => lookupFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
+      ? await options.providers?.executeCommand(stored, false, () => lookupFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
     if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
       const current = store.command(scope, id);
@@ -171,7 +172,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     const assertRequester = () => {
       if (blocker.command.version === 2) {
         store.frontendSends.assertActor(actor);
-        store.frontendSends.assertAdmitted(blocker.command);
+        if (!('kind' in blocker)) throw new Error('Invalid offered command target');
+        store.frontendSends.assertAdmitted(blocker.command, blocker.agui);
       } else if (actor && !actor.authorized()) throw new Error('Unauthorized actor');
       authorized(scope);
     };
@@ -290,7 +292,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             dispatching.add(key);
             try {
               const observed = 'kind' in stored
-                ? await registry?.executeCommand(stored.target, true, () => dispatchFence(stored, actor)) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
+                ? await registry?.executeCommand(stored, true, () => dispatchFence(stored, actor)) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
               const receipt = store.settle(scope, command.clientCommandId, observed);
               assertMayReceiveEvidence(stored, actor);

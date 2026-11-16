@@ -142,11 +142,12 @@ The target parser validates the raw request and derives the expected run ID with
 Both fresh and restored confirmation evidence for tagged targets must name that saved run ID.
 The tag never enters the public provider operation. A generic live provider cannot execute a tagged target.
 Historical untagged targets and their evidence correlations stay byte-identical.
-Untagged version-2 commands retain exact-offer and authored-run checks.
-Untagged version-1 history has no durable protocol provenance; live AG-UI lookup retains its provider-mode run check.
-Generic version-1 requests remain generic even if their fields resemble AG-UI input.
-Request builders should use a distinct run ID for each offered send.
-Reused run IDs currently share coordinator registration and release state; their execution ownership remains unqualified.
+Version-2 commands require the tag and the exact authored offer suffix.
+Untagged version-1 requests remain generic, including after registration through `addAgui`.
+Admission permanently reserves each offered conversation, thread and run for its original command.
+Another command using that identity is rejected with `frontend-run-reused` before dispatch, including after release.
+An exact command retry returns its existing receipt without translating or dispatching again.
+This reservation does not qualify frontend handler execution ownership.
 
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
 Pending does not prove host admission. Retain the original closures and exact saved command ID and body for submission retry.
