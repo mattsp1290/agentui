@@ -26,7 +26,7 @@ The command prints an `installed` JSON record with the executable path and versi
 
 Codex follows the app-server runtime pin. Pi follows the coding-agent package pin. Claude CLI 2.1.323 is explicitly mapped to Claude SDK 0.3.323 and checked against that SDK's `claudeCodeVersion` during verification. Updating that SDK requires reviewing the CLI mapping. Top-level harness versions are pinned. Their fresh npm dependency graphs are not frozen by a checked-in per-harness lockfile.
 
-Installing a CLI does not change the current chat integration. Pi chat still uses the embedded SDK. Claude chat still uses the separate Claude SDK host entry. The launcher chat selector accepts Codex or Pi. Native credential entry, encrypted secret storage, and first-run provider login are separate work.
+Installing a CLI does not change the current chat integration. Pi chat uses the bundled SDK, so a global `pi` installation is not required. Claude chat uses the separate Claude SDK host entry. The normal launcher offers Codex and Pi. The Mac app includes protected OpenCode Go key entry and Keychain storage. Provider login and Linux encrypted storage remain separate work.
 
 ## Start a local workspace
 
@@ -44,7 +44,7 @@ To choose a different workspace, pass its absolute path:
 ./agentui --workspace /Users/punk1290/git/your-project
 ```
 
-Codex is the default agent. It uses the selected host user's existing Codex login. The launcher provisions a private compatible Codex CLI without replacing the global installation. If the host reports missing provider credentials, sign in to Codex on that machine and launch again.
+Codex is the default agent. It uses the selected host user's existing Codex login. The launcher provisions a private compatible Codex CLI without replacing the global installation. Pi also appears in the harness picker, with setup guidance when its key is missing. If Codex reports missing credentials, sign in to Codex on that machine and launch again.
 
 ## Start a remote workspace
 
@@ -80,7 +80,7 @@ The host runs the agent and keeps its conversation history on that machine. Agen
 
 ## Select Pi with GLM 5.3
 
-Set `OPENCODE_GO_API_KEY` through your shell or secret manager. Keep its value out of command arguments and repository files.
+To start with Pi only, run one of these commands. No key is required to open setup.
 
 ```sh
 ./agentui --agent pi
@@ -88,6 +88,14 @@ Set `OPENCODE_GO_API_KEY` through your shell or secret manager. Keep its value o
 ```
 
 Pi uses provider `opencode-go` and model `glm-5.3`. It supports streamed text, follow-ups, saved sessions, and Stop. This mode has no tools or file access. It does not install or launch the Codex CLI.
+
+In the Mac app, choose **Pi** in the harness picker, then select **Open secure Pi setup** in Settings. The separate app-owned window accepts your OpenCode Go API key. Select **Save in Keychain and connect**. Return to chat and select **Reconnect** to refresh the harness choices.
+
+The key stays out of the chat page, browser storage, conversation database, URLs, command arguments, and logs. A dedicated macOS Keychain record stores it for the selected launcher profile. On a later launch, open setup and select **Connect saved key**. Locked or denied Keychain access produces an error without a plaintext fallback. Rebuilding or changing the app's signature can require new Keychain authorization.
+
+Setup readiness means the host has a configured key. It does not validate your subscription with a paid request. The provider can still reject a chat request because the key is invalid, its limits are exhausted, or the service is unavailable.
+
+Protected setup requires the launcher-managed Mac app. Browser-only users can set `OPENCODE_GO_API_KEY` through their shell or secret manager. Keep its value out of command arguments and repository files. The manually managed `main.js pi` command still requires this variable before startup.
 
 For SSH launches, the remote host uses its exported `OPENCODE_GO_API_KEY` when present. Otherwise, the launcher forwards the local variable through the SSH session in memory. It does not save the key on the remote machine.
 
@@ -109,7 +117,7 @@ If a port is already in use, stop the launcher using that port or choose another
 
 Use the same chosen port on later launches to keep the same client origin and local drafts. The launcher uses that port on both ends of the tunnel.
 
-If a provider reports missing credentials, configure the provider on the selected host. AgentUI pairing codes and Keychain access are not part of this launcher flow.
+For a missing Pi key, open **Settings**, then **Open secure Pi setup** in the Mac app. If setup cannot reach the host, check that the launcher terminal is still running and the SSH connection is active. If the Pi runtime is unavailable, rebuild with `./agentui` and retry. AgentUI pairing codes are not required by the launcher.
 
 ## Verify local and remote chat
 

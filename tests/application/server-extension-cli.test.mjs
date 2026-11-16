@@ -126,7 +126,9 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
     if (process.argv.includes('--version')) {
       writeFileSync(${JSON.stringify(nativeEnvironment)}, JSON.stringify({
         credentialPresent: Object.hasOwn(process.env, 'AGENTUI_EXTENSION_CREW_TOKEN'),
-        unselected: process.env.AGENTUI_EXTENSION_UNSELECTED, nativeKey: process.env.OPENCODE_GO_API_KEY,
+        unselected: process.env.AGENTUI_EXTENSION_UNSELECTED,
+        nativeKeyPresent: Object.hasOwn(process.env, 'OPENCODE_GO_API_KEY'),
+        setupCapabilityPresent: Object.hasOwn(process.env, 'AGENTUI_SETUP_CAPABILITY'),
         anthropicKey: process.env.AGENTUI_ANTHROPIC_API_KEY, path: process.env.PATH, sentinel: process.env.AGENTUI_ENV_SENTINEL,
       }));
       console.log(${JSON.stringify('codex-cli ' + CODEX_RUNTIME.version)});
@@ -137,12 +139,13 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
     { name: 'native', kind: 'codex', workspace: f.directory, executable },
   ] }));
   const environment = { AGENTUI_EXTENSION_UNSELECTED: 'unselected', OPENCODE_GO_API_KEY: 'native-key',
+    AGENTUI_SETUP_CAPABILITY: 'synthetic-setup-capability',
     AGENTUI_ANTHROPIC_API_KEY: 'anthropic-key', PATH: process.env.PATH, AGENTUI_ENV_SENTINEL: 'preserved' };
   const running = f.start([], environment), info = await ready(running);
   assert.equal(info.mode, 'serve');
   assert.deepEqual(JSON.parse(await readFile(f.marker, 'utf8')), { credentialPresent: false });
   assert.deepEqual(JSON.parse(await readFile(nativeEnvironment, 'utf8')), {
-    credentialPresent: false, unselected: 'unselected', nativeKey: 'native-key', anthropicKey: 'anthropic-key',
+    credentialPresent: false, unselected: 'unselected', nativeKeyPresent: false, setupCapabilityPresent: false, anthropicKey: 'anthropic-key',
     path: process.env.PATH, sentinel: 'preserved',
   });
   let cookie = ''; const payloads = [];

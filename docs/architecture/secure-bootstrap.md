@@ -2,7 +2,7 @@
 
 AgentUI should let a fresh Mac install Pi, Claude, or Codex on itself or a Linux target and configure provider credentials. Neither machine needs an existing provider login. The private Tailscale or NetBird network supplies the access boundary. The design concentrates on encrypted transport, encrypted persistence, and provider refresh ownership.
 
-The first delivery supplies an install-only command and a public secret-provider interface. It does not yet supply native credential entry, encrypted credential persistence, or subscription login from the Mac. Beans task `agentui-w4wf` tracks that remaining work.
+The first delivery supplies an install-only command and a public secret-provider interface. Launcher-managed Pi now also has a separate bundled Mac setup window that stores a static OpenCode Go key in Keychain and delivers it to the running host. Provider-native subscription login and encrypted Linux persistence remain open. Beans task `agentui-w4wf` tracks the broader onboarding work.
 
 ## Keep three responsibilities separate
 
@@ -19,7 +19,7 @@ The eventual setup flow is as follows.
 5. Confirm credential readiness separately from installation success.
 6. Start the target runtime with only the credential source it needs.
 
-The native setup controls belong outside customizable chat content. The current launcher opens host-served content through `--host-url`. That mode deliberately has no native Keychain command authority. Existing pairing Keychain records are not provider credentials. Extending this boundary requires its own native implementation and qualification.
+The native setup controls belong outside customizable chat content. The launcher opens host-served chat through `--host-url`. That document has no native Keychain command authority. Pi setup opens a separate bundled document with a distinct window identity and a narrowly scoped native command. Its Keychain record is separate from pairing credentials. A per-launch capability admits delivery to a fixed loopback host endpoint. SSH launches use the existing tunnel. The host keeps the delivered key in memory. It does not persist it on the target.
 
 ## Let the target own subscription refresh
 

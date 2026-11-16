@@ -99,11 +99,7 @@ fi
 export PATH="$(dirname "$node"):$PATH"
 codex=''
 ${agent === 'codex' ? `${harnessInstallScript({ id: 'codex', packageName: '@openai/codex', version: codexVersion, executable: 'codex', expectedVersion: `codex-cli ${codexVersion}` })}
-codex="$harness"
-if ! "$codex" login status >&2; then
-  echo "Codex login is required on this server. Run $codex login there, then rerun AgentUI." >&2
-  exit 1
-fi` : ''}
+codex="$harness"` : ''}
 "$node" -e 'console.log("AGENTUI_SETUP " + JSON.stringify({home:process.env.HOME,root:process.argv[1],node:process.argv[2],codex:process.argv[3],os:process.argv[4],arch:process.argv[5]}))' "$root" "$node" "$codex" "$os" "$arch"
 `;
 }

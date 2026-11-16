@@ -26,13 +26,13 @@ export function createApi(options: {
   const { access, host, feeds } = options;
   const selection = options.agentSelection;
   const configured = selection.kind === 'native' ? selection.agents : [];
-  const agents = new Map(configured.map(entry => {
+  const agents = () => new Map(configured.map(entry => {
     const descriptor = describeAgent(entry.installation, entry.availability, entry.model);
     return [canonicalJson(entry.installation), { ...descriptor, label: entry.name ? `${entry.name} · ${descriptor.label}` : descriptor.label }];
   }));
   const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability).id));
   const nativeDefault = selection.kind === 'native' ? describeAgent(selection.defaultInstallation, { kind: 'ready' }).id : null;
-  if (agents.size !== configured.length || (nativeDefault !== null && !selectable.has(nativeDefault))) throw new Error('Invalid configured agents');
+  if (agents().size !== configured.length || (nativeDefault !== null && !selectable.has(nativeDefault))) throw new Error('Invalid configured agents');
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
@@ -56,7 +56,7 @@ export function createApi(options: {
     return 'kind' in installation
       ? providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor ?? describeProviderAgent(installation,
         { kind: 'unavailable', reason: 'This conversation’s provider is no longer configured.' })
-      : agents.get(canonicalJson(installation)) ?? describeAgent(installation,
+      : agents().get(canonicalJson(installation)) ?? describeAgent(installation,
       { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
   }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
@@ -65,7 +65,7 @@ export function createApi(options: {
         const providerAgents = providerChoices();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
           descriptor.availability.kind === 'ready' && (selected === null || descriptor.id < selected) ? descriptor.id : selected, null);
-        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents.values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor)], defaultAgentId } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),

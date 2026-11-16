@@ -176,8 +176,17 @@ test('authorized agent API and browser route two recorded agents and retain unav
   assert.equal(await model.evaluate(node => node === document.activeElement), true);
   await harness.click();
   assert.match(await page.getByRole('button', { name: 'Codex', exact: true }).textContent(), /1 available/);
-  assert.equal(await page.getByRole('button', { name: 'Pi, unavailable', exact: true }).isDisabled(), true);
+  const piSetup = page.getByRole('button', { name: 'Pi, set up OpenCode Go', exact: true });
+  assert.equal(await piSetup.isEnabled(), true);
   await page.screenshot({ path: '.audit/composer/harness-menu.png' });
+  await piSetup.click();
+  const piSettings = page.getByRole('region', { name: 'Pi and OpenCode Go', exact: true });
+  await piSettings.waitFor();
+  assert.match(await piSettings.textContent(), /This host does not offer Pi/);
+  assert.equal(await piSettings.getByRole('textbox').count(), 0);
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  assert.equal(await message.inputValue(), 'Draft for Codex');
+  await harness.click();
   await page.getByRole('button', { name: 'Claude', exact: true }).click();
   assert.equal(await page.getByRole('button', { name: `Start new chat with ${opus.label}`, exact: true }).isDisabled(), true);
   assert.equal(await page.getByRole('button', { name: `Start new chat with ${sonnet.label}`, exact: true }).isEnabled(), true);
