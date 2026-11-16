@@ -111,7 +111,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     </div>}
     <CustomizationTranscript selection={transcript}
       conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
-      context={{ conversation: active.scope, activity: view.document, commands: actions.commands }}
+      context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
       fallback={<div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>

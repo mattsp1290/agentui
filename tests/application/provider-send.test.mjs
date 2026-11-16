@@ -354,3 +354,138 @@ test('inactive owner refuses fresh sends and preserves lookup uncertainty withou
     assert.deepEqual(await owner.executeCommand(null, false, () => assert.fail('inactive lookup effect')), { kind: 'outcome-unknown' });
   }
 });
+
+
+function permissions(a, { read, revoke, reconcile } = {}) {
+  const calls = { reads: [], revokes: [], reconciles: [] };
+  const listing = binding => ({ kind: 'available', permissions: [{
+    ref: { binding, ref: { kind: 'permission', instance: a.connected.instance, opaqueId: 'permission' } },
+    scope: 'agent', actionLabel: 'Create work items', detail: 'Applies to all conversations for this agent',
+  }] });
+  const effect = { kind: 'confirmed', value: { kind: 'revoke-permission', state: 'completed' }, evidence: { revoked: true } };
+  a.connected.permissions = {
+    async read(binding) { calls.reads.push(structuredClone(binding)); return read ? read(binding, listing) : listing(binding); },
+    async revoke(operation) {
+      calls.revokes.push(structuredClone(operation));
+      const observed = await this.read(operation.binding);
+      if (observed.kind !== 'available' || !observed.permissions.some(row => row.ref.ref.opaqueId === operation.permission.ref.opaqueId && row.scope === operation.scope)) {
+        return { kind: 'not-dispatched', reason: 'Permission or confirmed scope changed' };
+      }
+      return revoke ? revoke(operation, effect) : effect;
+    },
+    async reconcileRevoke(operation) { calls.reconciles.push(structuredClone(operation)); return reconcile ? reconcile(operation) : { kind: 'uncertain', reason: 'Original acknowledgement unavailable', evidence: null }; },
+  };
+  return calls;
+}
+const revoke = (scope, id = 'revoke', permissionScope = 'agent', permissionId = 'permission') => ({ version: 1, scope, clientCommandId: id,
+  body: { kind: 'revoke-permission', permissionId, scope: permissionScope } });
+
+test('permission read and authenticated durable revoke survive absent run and decision records', async t => {
+  let f, writes = 0;
+  const remote = createServer(async (request, response) => {
+    assert.equal(request.headers.authorization, `Bearer ${secret}`);
+    let body = ''; for await (const part of request) body += part;
+    const operation = JSON.parse(body);
+    const row = f.inspect(db => db.prepare("SELECT target,receipt FROM commands WHERE id='revoke'").get());
+    const captured = JSON.parse(row.target);
+    assert.deepEqual(captured.operation, { kind: 'revoke-permission', ...operation });
+    assert.deepEqual(captured.credential, a.credential);
+    assert.equal(JSON.parse(row.receipt).state.kind, 'pending');
+    assert.equal(operation.scope, 'agent'); writes++;
+    response.setHeader('content-type', 'application/json');
+    response.end(JSON.stringify({ kind: 'confirmed', value: { kind: 'revoke-permission', state: 'completed' }, evidence: { revoked: true } }));
+  });
+  await new Promise(resolve => remote.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => remote.close(resolve)));
+  const service = `http://127.0.0.1:${remote.address().port}`, a = extension({ service });
+  const calls = permissions(a, { revoke: operation => a.context.credentials.use({ credential: a.credential, service }, async token =>
+    (await fetch(service, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(operation) })).json()) });
+  let pending = true;
+  a.connected.snapshot = async binding => {
+    const ref = kind => ({ binding, ref: { kind, instance: a.connected.instance, opaqueId: `same-${kind}` } });
+    return { kind: 'available', snapshot: { binding, cursor: { binding, kind: 'provider-cursor', opaque: { checkpoint: pending ? 'pending' : 'ended', stream: 1 } },
+      projectionVersion: 1, state: { messages: [] }, decisions: pending ? [{ ref: ref('decision'), run: ref('run'), prompt: 'Continue?',
+        choices: [{ ref: ref('choice'), label: 'Yes' }] }] : [] } };
+  };
+  a.connected.observe = () => ({ close() {}, ended: Promise.resolve({ kind: 'disconnected', cursor: null, reason: 'Run ended' }) });
+  f = await fixture(t, [a]);
+  const scope = await create(f);
+  assert.equal(Object.keys((await snapshot(f.client.conversation(scope), 2)).document.decisions).length, 1);
+  pending = false;
+  await f.client.providerObservation({ scope, action: 'retry' });
+  assert.deepEqual((await snapshot(f.client.conversation(scope), 2)).document.decisions, {});
+  f.inspect(db => db.exec('DELETE FROM pending_decisions; DELETE FROM runs'));
+  const original = f.inspect(db => JSON.parse(db.prepare('SELECT observation FROM provider_creations').get().observation).binding);
+  const listing = await f.client.conversationPermissions(scope);
+  assert.equal(listing.kind, 'available'); assert.equal(listing.permissions[0].scope, 'agent');
+  assert.deepEqual(calls.reads, [original]);
+  assert.doesNotMatch(JSON.stringify(listing), /opaqueHandle|PRIVATE_CREATION|same-session/);
+  for (const [id, scopeName, permissionId] of [['wrong-scope', 'conversation', 'permission'], ['foreign', 'agent', 'foreign']]) {
+    assert.equal((await f.client.conversation(scope).submit(revoke(scope, id, scopeName, permissionId))).receipt.state.kind, 'not-dispatched');
+  }
+  assert.equal(writes, 0);
+  assert.equal((await f.client.conversation(scope).submit(revoke(scope))).receipt.state.kind, 'completed');
+  assert.equal(writes, 1);
+  assert.deepEqual(calls.revokes.at(-1).binding, original);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM pending_decisions').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM runs').get().n), 0);
+  assert.equal((await f.client.conversation(scope).submit(revoke(scope))).receipt.state.kind, 'completed');
+  assert.equal(writes, 1);
+});
+
+test('lost revoke acknowledgement remains uncertain after empty read and restart without automatic replay', async t => {
+  const a = extension(); permissions(a, { revoke() { throw new Error('Reply lost'); } });
+  const f = await fixture(t, [a]), scope = await create(f), command = revoke(scope);
+  const receipt = (await f.client.conversation(scope).submit(command)).receipt;
+  assert.equal(receipt.state.kind, 'uncertain'); const saved = stored(f, 'chat');
+  const b = extension(), calls = permissions(b, { read: () => ({ kind: 'available', permissions: [] }) });
+  await f.restart([b]);
+  assert.deepEqual(await f.client.conversation(scope).submit(command), { kind: 'receipt', receipt });
+  assert.deepEqual((await f.client.conversationPermissions(scope)).permissions, []);
+  assert.deepEqual(await f.client.reconcile(scope, 'revoke'), receipt);
+  assert.equal(calls.revokes.length, 0);
+  const operation = JSON.parse(saved.target).operation;
+  const { kind: _kind, ...bound } = operation;
+  assert.deepEqual(calls.reconciles, [bound]);
+  assert.deepEqual(stored(f, 'chat'), saved);
+});
+
+test('original permission binding refuses replaced credentials or generation and unsupported/native providers before dispatch', async t => {
+  const a = extension(); permissions(a, { revoke() { throw new Error('Reply lost'); } });
+  const f = await fixture(t, [a]), scope = await create(f);
+  const receipt = (await f.client.conversation(scope).submit(revoke(scope))).receipt;
+  const target = stored(f, 'chat').target;
+  for (const changed of [{ revision: '2' }, { generation: '2' }]) {
+    const b = extension(changed), calls = permissions(b); await f.restart([b]);
+    assert.equal((await f.client.conversationPermissions(scope)).kind, 'unavailable');
+    assert.deepEqual(await f.client.reconcile(scope, 'revoke'), receipt);
+    assert.equal((await f.client.conversation(scope).submit(revoke(scope, 'new'))).kind, 'rejected');
+    assert.deepEqual(calls, { reads: [], revokes: [], reconciles: [] });
+    assert.equal(stored(f, 'chat').target, target);
+  }
+  const b = extension(); await f.restart([b]);
+  assert.equal((await f.client.conversationPermissions(scope)).kind, 'unsupported');
+  assert.equal((await f.client.conversation(scope).submit(revoke(scope, 'unsupported'))).kind, 'rejected');
+  assert.equal(b.calls.submits.length, 0);
+  const native = f.scope('native'); await f.client.create(native, (await f.client.metadata()).defaultAgentId);
+  assert.equal((await f.client.conversationPermissions(native)).kind, 'unsupported');
+  assert.equal((await f.client.conversation(native).submit(revoke(native))).reason, 'permission-management-unsupported');
+  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM commands WHERE conversation='native'").get().n), 0);
+  f.inspect(db => db.exec("DELETE FROM provider_creations WHERE conversation='chat'"));
+  assert.equal((await f.client.conversationPermissions(scope)).kind, 'unavailable');
+});
+
+test('foreign permission references and authority revoked during a read never become an available listing', async t => {
+  const a = extension(); let changed = false;
+  permissions(a, { read(binding, listing) {
+    const result = listing(binding);
+    if (changed) f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1'));
+    else result.permissions[0].ref.ref.instance = { ...a.connected.instance, protocolVersion: 'foreign' };
+    return result;
+  } });
+  const f = await fixture(t, [a]), scope = await create(f);
+  assert.equal((await f.client.conversationPermissions(scope)).kind, 'unavailable');
+  changed = true;
+  assert.equal((await f.client.conversationPermissions(scope)).kind, 'unavailable');
+  await assert.rejects(f.client.conversationPermissions({ ...scope, hostId: 'foreign' }), error => error.kind === 'forbidden');
+});

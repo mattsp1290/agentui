@@ -34,3 +34,6 @@ export { parseOptionalIosArtifact, iosArtifactIdentityText, assertIosArtifactId,
 export type { IosRuntimeIdentity, IosArtifact, OptionalIosArtifact } from './native-customization.js';
 
 export * from './observation.js';
+
+export { parseConversationPermissions, parsePermissionScope } from './permissions.js';
+export type { ConversationPermission, ConversationPermissions, PermissionScope } from './permissions.js';

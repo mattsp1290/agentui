@@ -1,5 +1,5 @@
 import type { ComponentType } from 'react';
-import type { ConversationDocument, ConversationScope, SubmitResult } from '@agentui/contracts';
+import type { ConversationDocument, ConversationPermissions, ConversationScope, PermissionScope, SubmitResult } from '@agentui/contracts';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
 import type { UiExtensionContext } from './tool-contracts.js';
@@ -10,12 +10,14 @@ import type { EXTENSION_SDK_VERSION, ExtensionLifetime, FrontendPlatform } from 
 export interface ConversationCommands {
   send(text: string): Promise<SubmitResult>;
   approve(pendingId: string, choiceId: string): Promise<SubmitResult>;
+  revokePermission(permissionId: string, scope: PermissionScope): Promise<SubmitResult>;
   cancel(runId: string): Promise<SubmitResult>;
 }
 export interface ConversationModuleProps {
   readonly conversation: ConversationScope;
   readonly activity: ConversationDocument<Transcript>;
   readonly commands: ConversationCommands;
+  readonly permissions: { read(): Promise<ConversationPermissions> };
 }
 export interface ModuleAction {
   readonly id: string;

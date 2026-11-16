@@ -7,7 +7,7 @@ import type { ConversationScope, SubmitResult, ProviderObservationStatus } from 
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
-import type { ConversationCommands } from '@agentui/sdk/react';
+import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
@@ -41,6 +41,7 @@ export interface ApplicationSnapshot {
 }
 export interface ConversationActions {
   readonly commands: ConversationCommands;
+  readonly permissions: ConversationModuleProps['permissions'];
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
   retryObservation(): Promise<void>;
@@ -457,7 +458,15 @@ export function createApplicationController(deps: {
         async retryObservation() {
           if (owner && session === owner && state.active === target) await observationPoll?.retry();
         },
+        permissions: { async read() {
+          if (!owner) throw new Error('Connect the conversation before continuing.');
+          requireTarget(owner, target);
+          const result = await current(owner, owner.connection.conversationPermissions(target.scope));
+          requireTarget(owner, target);
+          return result;
+        } },
         commands: {
+          revokePermission: (permissionId, scope) => submitCommand(owner, target, () => target.store.revokePermission(permissionId, scope)),
           send: text => invoke('send', () => {
             if (typeof text !== 'string') throw new Error('An explicit message is required.');
             return target.store.send(text);
