@@ -126,7 +126,7 @@ export function createServerExtensions() {
   const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
   const assertFrontendTarget: ProviderConversationOperations['assertFrontendTarget'] = target => current().assertFrontendTarget(target);
-  const frontendInput: ProviderConversationOperations['frontendInput'] = target => current().frontendInput(target);
+  const assertFrontendInput: ProviderConversationOperations['assertFrontendInput'] = target => current().assertFrontendInput(target);
   const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
   const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
   const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
@@ -163,5 +163,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, assertFrontendTarget, frontendInput, readPermissions, observe, status, close };
+  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, assertFrontendTarget, assertFrontendInput, readPermissions, observe, status, close };
 }

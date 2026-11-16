@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import test from 'node:test';
 import { createProviderRegistry } from '@agentui/host';
+import { frontendToolsFor } from '@agentui/host/frontend-tools';
 import { fixture as hostFixture, scope as hostScope } from '../host/fixture.mjs';
 import { fixture, create, send, unavailable, offered, aguiExtension } from './provider-send-fixture.mjs';
 
@@ -219,4 +220,21 @@ test('offered settled blocker cannot admit a new plain send whose decoder revoke
   assert.equal((await host.conversation(hostScope, owner).receipt('offered')).state.kind, 'completed');
   assert.equal(await host.conversation(hostScope, owner).receipt('next'), null);
   assert.equal(a.calls.submits.length, 1);
+});
+
+
+test('released recovery repairs a crash between registration and cancellation after offline reopen', async t => {
+  const { host, f } = await localOfferedHost(t, aguiExtension());
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => true };
+  await host.conversation(hostScope, actor).submit(offered(hostScope));
+  const producer = frontendToolsFor(host).producer(hostScope), key = { threadId: 'actual-thread', runId: 'actual-run' };
+  await assert.rejects(host.frontendBinding({ scope: hostScope, id: 'offered', action: 'unavailable' }, actor, () => ({
+    register: value => producer.register(value), cancel() { throw new Error('Stopped before cancellation'); },
+  })), /Stopped before cancellation/);
+  assert.equal(producer.inspect(key).status, 'collecting');
+  host.close(); await host.drained;
+  const offline = f.open(), repair = frontendToolsFor(offline).producer(hostScope);
+  const binding = await offline.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor, () => repair);
+  assert.deepEqual(binding, { kind: 'unavailable', id: 'offered', reason: 'closures-unavailable' });
+  assert.equal(repair.inspect(key).status, 'blocked');
 });

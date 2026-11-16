@@ -542,7 +542,8 @@ test('offered send binds the actual HTTP input to its authenticated original own
   assert.deepEqual(await f.client.frontendBinding({ scope, id: 'original', action: 'recover' }), bound);
   assert.equal((await f.client.frontendBinding({ scope, id: 'original', action: 'unavailable' })).kind, 'unavailable');
   assert.equal((await f.client.frontendBinding({ scope, id: 'original', action: 'recover' })).kind, 'unavailable');
-  assert.equal((await f.client.conversation(scope).submit(command)).kind, 'rejected');
+  assert.deepEqual((await f.client.conversation(scope).submit(command)).receipt, result.receipt);
+  assert.equal(a.calls.translations, 1);
   assert.equal(a.calls.submits.length, 1);
 });
 

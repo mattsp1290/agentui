@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { canonicalJson } from '@agentui/contracts';
-import { providerTarget, providerObservation } from '../../packages/host/dist/provider-commands.js';
+import { parseProviderCapture, providerObservation } from '../../packages/host/dist/provider-commands.js';
 import { fixture, create, stored, send, offered, unavailable, aguiExtension } from './provider-send-fixture.mjs';
 
 for (const commandFor of [send, offered]) test(`AG-UI ${commandFor.name} rejects forged restored run evidence`, async t => {
@@ -32,7 +32,7 @@ for (const commandFor of [send, offered]) test(`AG-UI ${commandFor.name} retains
   const expected = command.version === 2 ? { ...raw, tools: command.body.frontend.tools.map(tool => tool.definition) } : raw;
   assert.equal(target.operation.protocol, 'ag-ui');
   assert.equal(canonicalJson(target.operation.request), canonicalJson(expected));
-  assert.equal(canonicalJson(providerTarget(target, scope)), original.target);
+  assert.equal(canonicalJson(parseProviderCapture(target, scope).target), original.target);
   assert.equal(JSON.parse(original.observation).evidence.correlation, original.target);
   assert.deepEqual(a.calls.submits[0].request, expected);
   assert.equal(Object.hasOwn(a.calls.submits[0], 'protocol'), false);
@@ -54,28 +54,14 @@ function forgeRun(observation) {
   observation.evidence.operation.id = canonicalJson(observation.evidence.source.run.reference);
   return observation;
 }
-for (const commandFor of [send, offered]) test(`untagged historical ${commandFor.name} keeps saved correlation and its original run policy`, async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = commandFor(scope);
-  await f.client.conversation(scope).submit(command);
-  const original = untagHistory(f), target = JSON.parse(original.target);
-  assert.equal(canonicalJson(providerTarget(target, scope)), original.target);
-  await f.restart([a]);
-  assert.equal((await f.client.conversation(scope).receipt(command.clientCommandId)).state.kind, 'completed');
-  assert.deepEqual(stored(f, 'chat'), original);
-  if (command.version === 2) assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'bound');
-  f.inspect(db => db.prepare('UPDATE commands SET observation=?').run(canonicalJson(forgeRun(JSON.parse(original.observation)))));
-  if (command.version === 2) await unavailable(f.client.conversation(scope).receipt(command.clientCommandId));
-  else assert.equal((await f.client.conversation(scope).receipt(command.clientCommandId)).state.kind, 'completed');
-});
-
-test('untagged historical offered targets still require the exact authored offer', async t => {
+test('untagged offered targets are rejected on restore', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
   await f.client.conversation(scope).submit(command);
-  const original = untagHistory(f), target = JSON.parse(original.target), observation = JSON.parse(original.observation);
-  target.operation.request.tools[0].description = 'Changed';
-  observation.evidence.correlation = canonicalJson(target);
-  f.inspect(db => db.prepare('UPDATE commands SET target=?,observation=?').run(canonicalJson(target), canonicalJson(observation)));
+  untagHistory(f);
+  await f.restart([a]);
   await unavailable(f.client.conversation(scope).receipt(command.clientCommandId));
+  await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
+  assert.equal(a.calls.submits.length, 1);
 });
 
 for (const commandFor of [send, offered]) test(`tagged ${commandFor.name} refuses a generic live replacement before lookup`, async t => {
@@ -112,34 +98,22 @@ test('generic v1 remains generic with AG-UI-shaped raw input on fresh and restor
   assert.equal(stored(f, 'chat').target, original.target);
 });
 
-test('untagged v1 live AG-UI lookup preserves its legacy run check', async t => {
-  const a = aguiExtension({ submit: (operation, { effect }) => effect(operation, 'accepted', operation.request.runId),
-    reconcile: (operation, { effect }) => effect(operation, 'completed', 'foreign-run') });
-  const f = await fixture(t, [a]), scope = await create(f), command = send(scope);
-  await f.client.conversation(scope).submit(command);
-  const original = untagHistory(f);
-  await f.restart([a]);
-  assert.equal((await f.client.reconcile(scope, command.clientCommandId)).state.kind, 'accepted');
-  assert.deepEqual(stored(f, 'chat'), original);
-  assert.equal(a.calls.reconciles.length, 1);
-});
-
 test('durable AG-UI target grammar validates the literal and raw schema without changing bytes', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
   await f.client.conversation(scope).submit(send(scope));
   const original = JSON.parse(stored(f, 'chat').target);
   for (const protocol of [undefined, null, '', 'generic', true]) {
     const target = structuredClone(original); target.operation.protocol = protocol;
-    assert.throws(() => providerTarget(target, scope));
+    assert.throws(() => parseProviderCapture(target, scope));
   }
   for (const change of [target => { target.operation.extra = true; }, target => { target.operation.request.runId = ''; },
     target => { target.operation.request.tools = [{ name: 'duplicate', description: 'One' }, { name: 'duplicate', description: 'Two' }]; },
     target => { target.operation = { kind: 'cancel', operationId: target.operation.operationId, binding: target.operation.binding,
       run: JSON.parse(stored(f, 'chat').observation).evidence.source.run.reference, protocol: 'ag-ui' }; }]) {
-    const target = structuredClone(original); change(target); assert.throws(() => providerTarget(target, scope));
+    const target = structuredClone(original); change(target); assert.throws(() => parseProviderCapture(target, scope));
   }
   const forged = forgeRun(JSON.parse(stored(f, 'chat').observation));
-  assert.throws(() => providerObservation(forged, original, 'foreign-run'), /run identity/u);
+  assert.throws(() => providerObservation(forged, parseProviderCapture(original, scope)), /run identity/u);
 });
 
 for (const commandFor of [send, offered]) test(`AG-UI ${commandFor.name} capture rechecks provider authority after its decoder`, async t => {
@@ -173,4 +147,15 @@ test('AG-UI lookup and bound recovery each decode once without rebuilding the re
   assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'bound');
   assert.equal(decodes, 4);
   assert.equal(a.calls.translations, 1);
+});
+
+test('tagged offered restore rejects changed raw offer suffix even with matching evidence correlation', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  await f.client.conversation(scope).submit(command);
+  const row = stored(f, 'chat'), target = JSON.parse(row.target), observation = JSON.parse(row.observation);
+  target.operation.request.tools[0].description = 'Changed';
+  observation.evidence.correlation = canonicalJson(target);
+  f.inspect(db => db.prepare('UPDATE commands SET target=?,observation=?').run(canonicalJson(target), canonicalJson(observation)));
+  await unavailable(f.client.conversation(scope).receipt(command.clientCommandId));
+  assert.equal(a.calls.submits.length, 1);
 });
