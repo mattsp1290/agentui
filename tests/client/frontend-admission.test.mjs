@@ -136,3 +136,29 @@ test('journal can recover after an ordinary save error once hydration succeeded'
     assert.equal(drafts.writes.length, 1);
   } finally { await store.dispose(); }
 });
+
+
+for (const [kind, action] of [['generic', 'dispose'], ['offered', 'dispose'], ['offered', 'release']]) {
+  test(`${kind} ${action} during submitting publication prevents transport and retains the original command`, async t => {
+    const drafts = storage(), port = fakePort();
+    let retained = true, invalidated = false;
+    const frontend = kind === 'offered' ? {
+      capture: () => ({ ownerId: 'principal', offer, release() {}, commit: () => true }),
+      canRetry: () => retained, async rejected() {},
+    } : undefined;
+    const store = createConversationStore({ scope, port, projection, drafts, frontend, createCommandId: () => 'command' });
+    t.after(() => store.dispose());
+    store.subscribe(() => {
+      if (invalidated || !store.getSnapshot().submitting.length) return;
+      invalidated = true;
+      if (action === 'dispose') void store.dispose(); else retained = false;
+    });
+    await assert.rejects(store.send('Original'), action === 'dispose' ? /closed/ : /unavailable/);
+    assert.equal(invalidated, true);
+    assert.equal(port.submitted.length, 0);
+    assert.equal(drafts.value.outbox[0].command.clientCommandId, 'command');
+    assert.equal(drafts.value.outbox[0].command.body.text, 'Original');
+    assert.deepEqual(store.getSnapshot().submitting, []);
+    if (kind === 'offered') assert.deepEqual(drafts.value.frontendSends[0].command, drafts.value.outbox[0].command);
+  });
+}

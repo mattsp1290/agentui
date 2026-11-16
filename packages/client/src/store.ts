@@ -103,6 +103,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     inFlight.add(id);
     try {
       publish();
+      requireOpen();
+      if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
       const result = await port.submit(entry.command);
       requireOpen();
       if (result.kind === 'rejected') {

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createFrontendToolGeneration } from '@agentui/sdk/tools';
-import { scope, empty, fixture } from './controller-fixture.mjs';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import { scope, empty, deferred, fixture } from './controller-fixture.mjs';
 
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function captured(t, count = 1) {
@@ -70,4 +71,70 @@ test('synchronous disposal listeners cannot dispatch a stale captured send', asy
   assert.equal(f.submitted.length, dispatches);
   assert.equal(f.drafts.size, writes);
   assert.equal(f.leases.length, physical);
+});
+
+
+for (const failure of ['load', 'restore']) test(`obsolete recovery ${failure} failure cannot poison a replacement while a live capture retains its old view`, async t => {
+  const f = await captured(t), gate = deferred(), entered = deferred();
+  t.after(gate.resolve);
+  const selected = { ...scope, conversationId: 'z-corrupt' }, corrupt = { version: 99, scope: selected };
+  f.drafts.set('original-view/host/z-corrupt', corrupt);
+  f.behavior.load = async (loading, viewId) => {
+    if (viewId === 'original-view' && loading.conversationId === selected.conversationId) { entered.resolve(); await gate.promise; }
+  };
+  await f.app.reconnect(); await entered.promise;
+  const row = f.app.getSnapshot().capturedSends[0];
+  f.views.set('other-view/host', { ...empty(), route: scope });
+  await f.app.reopenView('other-view');
+  const active = f.app.getSnapshot().active, feed = f.feeds.at(-1);
+  await feed.receive({ kind: 'snapshot', snapshot: { scope, projectionVersion: transcriptProjection.version, cursor: 0,
+    document: { domain: transcriptProjection.initial(), receipts: {}, decisions: {} } } });
+  assert.equal(active.store.getSnapshot().connection.kind, 'connected');
+  assert.equal(f.leases[0].closed, false);
+  if (failure === 'load') gate.reject(new Error('Obsolete corrupt load')); else gate.resolve();
+  for (let i = 0; i < 10; i++) await flush();
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+  assert.equal(f.app.getSnapshot().error, '');
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.equal(f.app.getSnapshot().active, active);
+  assert.equal(active.store.getSnapshot().connection.kind, 'connected');
+  assert.equal(f.app.getSnapshot().capturedSends[0], row);
+  assert.equal(row.status, 'waiting');
+  assert.equal(f.leases[0].closed, false);
+  assert.equal(f.drafts.get('original-view/host/z-corrupt'), corrupt);
+  await active.store.setDraft('Healthy replacement');
+  assert.equal(f.drafts.get('other-view/host/conversation').draft, 'Healthy replacement');
+});
+
+for (const operation of ['send', 'retry']) test(`a synchronous captured ${operation} release during submitting prevents transport and drains its admitted unavailable write`, async t => {
+  const gate = deferred(), entered = deferred();
+  t.after(gate.resolve);
+  const f = await captured(t), store = f.app.getSnapshot().active.store;
+  const original = structuredClone(f.submitted[0]), before = f.submitted.length;
+  f.behavior.write = async () => {
+    if (f.app.getSnapshot().capturedSends.some(row => row.status === 'unavailable')) { entered.resolve(); await gate.promise; }
+  };
+  let releasing;
+  const unsubscribe = store.subscribe(() => {
+    if (releasing || !store.getSnapshot().submitting.length) return;
+    const id = store.getSnapshot().submitting[0];
+    const row = f.app.getSnapshot().capturedSends.find(value => value.command.clientCommandId === id);
+    releasing = f.app.releaseCapturedSend(row.key);
+  });
+  t.after(unsubscribe);
+  const sending = operation === 'send' ? store.send('Second original') : store.retry(original.clientCommandId);
+  await assert.rejects(sending, /unavailable/);
+  await entered.promise;
+  assert.equal(f.submitted.length, before);
+  const records = f.drafts.get('original-view/host/conversation');
+  assert.deepEqual(records.outbox[0].command, original);
+  if (operation === 'retry') assert.deepEqual(records.frontendSends[0].command, original);
+  let disposed = false;
+  const closing = f.app.dispose().then(() => { disposed = true; });
+  await flush(); assert.equal(disposed, false); assert.equal(f.leases[0].closed, false);
+  gate.resolve(); await Promise.all([releasing, closing]);
+  assert.equal(f.leases[0].closed, true);
+  const saved = f.drafts.get('original-view/host/conversation');
+  assert.ok(saved.frontendSends.every(row => row.state === 'unavailable-pending'));
+  assert.equal(saved.outbox.length, operation === 'retry' ? 1 : 2);
 });

@@ -74,7 +74,7 @@ export function createViewLeasePool(deps: {
       if (agentId !== null) slot.agentId = agentId;
       const borrow = storeBorrow(lease, key, slot, interested);
       try { await slot.store.ready; return borrow; }
-      catch (error) { borrow.failed(error); borrow.release(); throw error; }
+      catch (error) { if (interested) borrow.failed(error); borrow.release(); throw error; }
     } finally { pending.release(); }
   }
   return {
