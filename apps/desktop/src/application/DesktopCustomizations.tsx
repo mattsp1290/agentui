@@ -9,7 +9,8 @@ export interface DesktopCustomization {
 export type NamespaceActivation = { readonly namespace: string } & (
   | { readonly kind: 'loading' }
   | { readonly kind: 'failed'; readonly message: string }
-  | { readonly kind: 'ready'; readonly lifetime: number; readonly value: UiExtensionContributions; readonly fail: (error: unknown) => void }
+  | { readonly kind: 'ready'; readonly lifetime: number; readonly value: UiExtensionContributions;
+      readonly transcript: ComponentType<ConversationModuleProps> | undefined; readonly fail: (error: unknown) => void }
 );
 export type TranscriptSelection =
   | { readonly kind: 'default' }
@@ -31,8 +32,8 @@ export class CustomizationBoundary extends Component<{
 
 function selectTranscript(owners: readonly NamespaceActivation[]): TranscriptSelection {
   if (owners.some(owner => owner.kind === 'loading')) return DEFAULT_TRANSCRIPT;
-  const claims = owners.flatMap(owner => owner.kind === 'ready' && owner.value.overrides?.transcript
-    ? [{ kind: 'override', namespace: owner.namespace, lifetime: owner.lifetime, component: owner.value.overrides.transcript, fail: owner.fail } satisfies TranscriptSelection] : []);
+  const claims = owners.flatMap(owner => owner.kind === 'ready' && owner.transcript
+    ? [{ kind: 'override', namespace: owner.namespace, lifetime: owner.lifetime, component: owner.transcript, fail: owner.fail } satisfies TranscriptSelection] : []);
   if (claims.length > 1) return { kind: 'conflict', namespaces: claims.map(owner => owner.namespace).sort() };
   return claims[0] ?? DEFAULT_TRANSCRIPT;
 }
@@ -81,7 +82,8 @@ export function useDesktopCustomizations({ customizations, enabled }: {
           dispose = () => release.call(value);
           if (removed) { cleanup(); return; }
           validateUiExtensionContributions(value);
-          update({ kind: 'ready', namespace, lifetime: identity, value, fail });
+          const transcript = value.overrides?.transcript;
+          update({ kind: 'ready', namespace, lifetime: identity, value, transcript, fail });
         } catch (error) { fail(error); }
       })();
     });

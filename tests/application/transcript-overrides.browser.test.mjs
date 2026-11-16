@@ -76,6 +76,64 @@ test('delayed override preserves draft and DOM through activation, descendant fa
   assert.equal(await page.evaluate(() => window.disposals), 1); assert.equal(await page.evaluate(() => window.siblingDisposals), 1);
 });
 
+test('override getter failure during capture releases only its namespace and preserves default transcript and composer', { timeout: 45_000 }, async t => {
+  const { host, page } = await open(t), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await customRuntime(page, host, entry(`return new Promise(resolve => { window.finishGetter = () => resolve({ modules: [],
+    get overrides() { window.overrideReads = (window.overrideReads || 0) + 1;
+      if (window.overrideReads > 2) throw new Error('Override capture failed');
+      return { transcript() { return <p>Uncaptured transcript</p>; } }; },
+    dispose() { window.disposals = (window.disposals || 0) + 1; } }); });`), false, sibling);
+  await wait(() => page.evaluate(() => typeof window.finishGetter === 'function'), 'pending getter activation');
+  await draft(page, 'Getter failure draft'); const previous = await editor(page).elementHandle();
+  await page.evaluate(() => window.finishGetter());
+  await page.getByRole('alert').filter({ hasText: 'Override capture failed' }).waitFor();
+  await wait(() => page.evaluate(() => window.disposals === 1), 'getter failure disposal');
+  await page.getByLabel('Messages', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Uncaptured transcript', { exact: true }).count(), 0);
+  await page.getByText('Healthy namespace', { exact: true }).waitFor(); await unchanged(page, previous, 'Getter failure draft');
+  await page.getByRole('button', { name: 'Send sibling', exact: true }).click();
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+  await unchanged(page, previous, 'Getter failure draft');
+  assert.equal((await host.entries()).length, 1);
+  await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await page.getByLabel('Messages', { exact: true }).waitFor(); await unchanged(page, previous, 'Getter failure draft');
+  assert.equal(await page.evaluate(() => window.disposals), 1);
+  assert.equal(await page.evaluate(() => window.siblingDisposals), 1); assert.deepEqual(errors, []);
+});
+
+test('captured override never rereads extension getters through shell changes, sibling actions and restore', { timeout: 45_000 }, async t => {
+  const { host, page } = await open(t), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await customRuntime(page, host, entry(`const overrides = { get transcript() {
+    window.transcriptReads = (window.transcriptReads || 0) + 1;
+    if (window.rejectGetterReads) throw new Error('Transcript getter reread');
+    return Transcript; } };
+    function Transcript() { return <p>Captured getter transcript</p>; }
+    return { modules: [], get overrides() { window.overrideReads = (window.overrideReads || 0) + 1;
+      if (window.rejectGetterReads) throw new Error('Overrides getter reread'); return overrides; },
+      dispose() { window.disposals = (window.disposals || 0) + 1; } };`), false, sibling);
+  await page.getByText('Captured getter transcript', { exact: true }).waitFor();
+  await draft(page, 'Captured getter draft'); const previous = await editor(page).elementHandle();
+  const reads = await page.evaluate(() => { window.rejectGetterReads = true; return [window.overrideReads, window.transcriptReads]; });
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('heading', { name: 'Settings', exact: true, level: 1 }).waitFor();
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await page.getByText('Captured getter transcript', { exact: true }).waitFor();
+  await unchanged(page, previous, 'Captured getter draft');
+  await page.getByText('Healthy namespace', { exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Send sibling', exact: true }).click();
+  await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
+  await page.getByText('Captured getter transcript', { exact: true }).waitFor();
+  await unchanged(page, previous, 'Captured getter draft'); assert.equal((await host.entries()).length, 1);
+  assert.deepEqual(await page.evaluate(() => [window.overrideReads, window.transcriptReads]), reads);
+  assert.equal(await page.evaluate(() => window.disposals || 0), 0);
+  await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await page.getByLabel('Messages', { exact: true }).waitFor(); await unchanged(page, previous, 'Captured getter draft');
+  await wait(() => page.evaluate(() => window.disposals === 1 && window.siblingDisposals === 1), 'captured override restore disposal');
+  assert.deepEqual(await page.evaluate(() => [window.overrideReads, window.transcriptReads]), reads); assert.deepEqual(errors, []);
+});
+
 for (const order of [[0, 1], [1, 0]]) test(`conflicts wait for every selected lifetime with completion order ${order}`, { timeout: 45_000 }, async t => {
   const { host, page } = await open(t);
   const pending = index => entry(`return new Promise(resolve => { (window.finish ??= [])[${index}] = () => resolve({ modules: [{ id: 'alive', label: 'Alive ${index}', component() { return <p>Alive ${index}</p>; } }],
