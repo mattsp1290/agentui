@@ -52,6 +52,15 @@ createInterface({ input: process.stdin }).on('line', line => {
       const turn = { id: `fixture-turn-${process.pid}-${++sequence}`, itemId: `message-${process.pid}-${sequence}` };
       active = turn;
       reply({ turn: { id: turn.id, status: 'inProgress', error: null, items: [] } });
+      if (mode === 'before-text') {
+        turn.timer = setInterval(() => {
+          if (!existsSync(`${logPath}.release-start`)) return;
+          clearInterval(turn.timer);
+          notify('turn/started', { threadId, turn: { id: turn.id, status: 'inProgress', error: null, items: [] } });
+          notify('item/agentMessage/delta', { threadId, turnId: turn.id, itemId: turn.itemId, delta: 'Hello' });
+        }, 5);
+        break;
+      }
       notify('turn/started', { threadId, turn: { id: turn.id, status: 'inProgress', error: null, items: [] } });
       if (previous) {
         notify('turn/started', { threadId, turn: { id: previous.id } });
@@ -80,7 +89,7 @@ createInterface({ input: process.stdin }).on('line', line => {
           }
           if (existsSync(`${logPath}.complete-${turn.id}`)) finish(turn);
         }, 5);
-      }, mode === 'before-text' ? 500 : 10);
+      }, 10);
       break;
     }
     case 'turn/interrupt': {
