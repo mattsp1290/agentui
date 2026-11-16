@@ -58,6 +58,7 @@
     "ajv": "8.20.0",
     "axe-core": "4.14.0",
     "esbuild": "0.28.2",
+    "magic-string": "1.4.5",
     "oxlint": "1.93.0",
     "playwright": "1.65.1",
     "postcss-value-parser": "4.2.0",

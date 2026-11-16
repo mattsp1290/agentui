@@ -1,0 +1,70 @@
+{
+  "schema_version": "bead-swarm-history-v1",
+  "iteration": 3,
+  "branch": "bead-swarm/iteration-3-customization-inputs-and-urls",
+  "slug": "customization-inputs-and-urls",
+  "main_branch": "main",
+  "main_branch_source": "default",
+  "execution_mode": "orchestrator-subagent",
+  "degraded_reason": null,
+  "selected_beans": [
+    "agentui-xnbd",
+    "agentui-qkmq"
+  ],
+  "beans_done": [
+    "agentui-xnbd",
+    "agentui-qkmq"
+  ],
+  "beans_blocked": [],
+  "beans_partial": [],
+  "merge_target": "main",
+  "validation": [
+    "Pinned Node24.22.3/npm11.19.1 toolchain:PASS",
+    "CSS real Chromium/emitted customization artifact/source-map tests:15PASS",
+    "Source/repository real Git tests:171PASS,0skip;small-buffer actual maxBuffer overflow and real denied cleanup included",
+    "npm run verify:PASS;2104passed,4skipped",
+    "node scripts/verify-agui-fork.mjs:PASS",
+    "Independent compiler reviewer:8additional emitted-code semantic probesPASS",
+    "git diff --check main...HEAD:PASS"
+  ],
+  "review_mode": "reviewer-subagents",
+  "review_assurance": "normal",
+  "findings_fixed_re_reviewed": true,
+  "review_artifacts_local_only": true,
+  "review_blocker_summary": [],
+  "reviews": [
+    {
+      "reviewer": "compiler-semantics",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/customization-inputs-and-urls/standard/compiler-semantics"
+    },
+    {
+      "reviewer": "source-boundaries",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/customization-inputs-and-urls/standard/source-boundaries"
+    },
+    {
+      "reviewer": "thermo-nuclear-code-quality-review",
+      "verdict": "APPROVE",
+      "findings": 0,
+      "artifact": ".audit/customization-inputs-and-urls/strict/thermo-nuclear-code-quality-review",
+      "rubric_sha": "bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7",
+      "rubric_url": "https://raw.githubusercontent.com/cursor/plugins/bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md"
+    }
+  ],
+  "validated_and_reviewed_source_revision": "f72db9581bd0c596daf270a7062f9f141c75483d",
+  "post_review_changes": "Immutable history replaces active metadata; all implementation, test, documentation and lock bytes unchanged.",
+  "declined_optional_items": [
+    {
+      "item": "Corepack npm hash spelling expansion",
+      "reason": "Current exact adjacent npm11.19.1 policy has no concrete expansion requirement."
+    },
+    {
+      "item": "Depth-limited Git fetch optimization",
+      "reason": "No measured retrieval issue; transport and SHA256 behavior require evidence before changing fetch policy."
+    }
+  ],
+  "status": "complete"
+}

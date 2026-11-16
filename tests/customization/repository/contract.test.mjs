@@ -31,7 +31,8 @@ test('backslash repository URLs fail safely before Git or external reference ret
     return true;
   };
   assert.throws(() => repositoryLocation(repository), safeError);
-  assert.throws(() => parse({ extensions: [{ repository, commit: oid }] }), safeError);
+  assert.throws(() => parse({ extensions: [{ repository, commit: oid }] }),
+    { code: 'invalid-package', message: 'Invalid committed external customization reference.' });
 });
 
 test('one desktop source selects only desktop without requiring built output', () => {

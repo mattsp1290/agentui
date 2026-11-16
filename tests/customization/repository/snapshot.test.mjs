@@ -9,7 +9,9 @@ import { test } from 'node:test';
 import { CustomizationError, readCustomizationSnapshot } from '@agentui/host/customization';
 
 function git(cwd, ...args) {
-  return execFileSync('git', args, { cwd, encoding: 'utf8', env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1' }, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
+  const env = { ...Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.startsWith('GIT_'))),
+    GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' };
+  return execFileSync('git', ['-c', 'commit.gpgsign=false', ...args], { cwd, encoding: 'utf8', env, stdio: ['ignore', 'pipe', 'pipe'] }).trim();
 }
 async function fixture(t) {
   const root = await mkdtemp(join(tmpdir(), 'agentui-snapshot-test-'));

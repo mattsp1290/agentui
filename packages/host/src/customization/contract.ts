@@ -72,8 +72,9 @@ function hasControl(value: string): boolean {
 
 export function repositoryLocation(value: unknown): string {
   const invalid = () => new CustomizationError('invalid-input', 'Expected a local path or file, SSH, or HTTPS repository without embedded credentials.');
-  if (typeof value !== 'string' || !value || value.startsWith('-') || value.includes('\\') || (/\s/u.test(value) || hasControl(value))) throw invalid();
+  if (typeof value !== 'string' || !value.trim() || value.startsWith('-') || value.includes('\\') || hasControl(value)) throw invalid();
   if (value.includes('://')) {
+    if (/\s/u.test(value)) throw invalid();
     let url: URL;
     try { url = new URL(value); } catch { throw invalid(); }
     if (!['file:', 'ssh:', 'https:'].includes(url.protocol) || url.password || url.search || url.hash ||
@@ -125,6 +126,16 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
   const object = record(value);
   if (Object.keys(object).some(key => !allowed.includes(key))) throw new Error('Unexpected customization field');
   return object;
+}
+
+function externalReference(value: unknown): GitExtensionReference {
+  try {
+    const reference = fields(value, ['repository', 'commit', 'subdirectory']);
+    return { repository: repositoryLocation(reference.repository), commit: commitId(reference.commit),
+      ...(reference.subdirectory === undefined ? {} : { subdirectory: containedPath(reference.subdirectory) }) };
+  } catch {
+    throw new CustomizationError('invalid-package', 'Invalid committed external customization reference.');
+  }
 }
 
 export const dependencyGroups = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const;
@@ -183,10 +194,7 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       if (!Array.isArray(metadata.extensions)) throw new Error('Expected external reference array');
       if (metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       for (const value of metadata.extensions) {
-        const reference = fields(value, ['repository', 'commit', 'subdirectory']);
-        const repository = repositoryLocation(reference.repository);
-        const commit = commitId(reference.commit);
-        extensions.push({ repository, commit, ...(reference.subdirectory === undefined ? {} : { subdirectory: containedPath(reference.subdirectory) }) });
+        extensions.push(externalReference(value));
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
