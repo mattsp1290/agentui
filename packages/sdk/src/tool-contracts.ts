@@ -59,3 +59,12 @@ export interface FrontendToolPinOptions {
   readonly run: RunIdentity;
   readonly capabilities: AgentCapabilities | undefined;
 }
+export type FrontendToolRetentionOptions = Pick<FrontendToolPinOptions, 'generations' | 'platform'>;
+export interface RetainedFrontendTools {
+  readonly definitions: FrontendToolPin['definitions'];
+  readonly bindings: FrontendToolPin['bindings'];
+  /** Validate and copy the actual run. Rebinding the same identity returns the same pin. */
+  bind(run: RunIdentity): FrontendToolPin;
+  /** Release this owner before or after binding. In-flight calls still drain. */
+  release(): void;
+}
