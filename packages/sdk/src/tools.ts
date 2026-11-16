@@ -1,8 +1,8 @@
-import { copyJson, parseRunIdentity, type ConversationScope } from '@agentui/contracts';
+import { canonicalJson, copyJson, parseRunIdentity, type ConversationScope, type RunIdentity } from '@agentui/contracts';
 import { record } from '@agentui/contracts/decode';
 import { behaviour, extensionNamespace, frontendPlatform } from './extensions.js';
 import { compileParameters } from './schema.js';
-import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions } from './tool-contracts.js';
+import type { FrontendTool, FrontendToolContribution, FrontendToolGeneration, FrontendToolGenerationOptions, FrontendToolActivation, FrontendToolOutcome, FrontendToolPin, FrontendToolPinOptions, FrontendToolRetentionOptions, RetainedFrontendTools } from './tool-contracts.js';
 export type * from './tool-contracts.js';
 
 type Registered = { readonly definition: FrontendTool; call(args: unknown, conversation: ConversationScope): Promise<FrontendToolOutcome> };
@@ -132,8 +132,7 @@ function readPinOptions(options: FrontendToolPinOptions) {
   const agentNames = new Set(capabilityTools?.items?.map(tool => tool.name));
   return { platform, candidates, run, agentNames, enabled: clientProvided === true && supported !== false };
 }
-export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
-  const { platform, candidates, run, agentNames, enabled } = readPinOptions(options);
+function selectGenerations(platform: FrontendToolGeneration['platform'], candidates: readonly FrontendToolGeneration[]): Lifetime[] {
   const selected: Lifetime[] = []; const namespaces = new Set<string>();
   for (const generation of candidates) {
     const state = live(generation);
@@ -141,10 +140,15 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
     if (namespaces.has(state.identity.namespace)) throw new Error('Duplicate tool namespace');
     namespaces.add(state.identity.namespace); selected.push(state);
   }
-  if (enabled) for (const state of selected) for (const tool of state.tools) {
-    if (agentNames.has(tool.definition.name)) throw new Error('Tool name collides with an agent-provided tool');
-  }
-  let held: Lifetime[] | undefined = enabled ? selected.filter(state => state.tools.length > 0) : [];
+  return selected;
+}
+type RetentionState =
+  | { kind: 'unbound'; held: readonly Lifetime[] }
+  | { kind: 'bound'; held: readonly Lifetime[]; run: RunIdentity; pin: FrontendToolPin }
+  | { kind: 'released' };
+function retainSelected(selected: readonly Lifetime[]): RetainedFrontendTools {
+  const held = selected.filter(state => state.tools.length > 0);
+  let owner: RetentionState = { kind: 'unbound', held };
   const entries = new Map<string, { tool: Registered; state: Lifetime }>();
   for (const state of held) {
     hold(state);
@@ -152,21 +156,53 @@ export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolP
   }
   const definitions = Object.freeze([...entries.values()].map(entry => entry.tool.definition));
   const bindings = Object.freeze([...entries].map(([name, entry]) => Object.freeze({ name, activationId: entry.state.identity.activationId })));
-  return { run, definitions, bindings,
-    async invoke(name, args, activationId): Promise<FrontendToolOutcome> {
-      if (!held) return refused('released');
-      const entry = entries.get(name);
-      if (!entry) return refused('unknown-tool');
-      if (activationId !== entry.state.identity.activationId) return refused('activation-mismatch');
-      hold(entry.state);
-      try { return await entry.tool.call(args, run.conversation); }
-      finally { drop(entry.state); }
+  function release(): void {
+    const current = owner;
+    owner = { kind: 'released' };
+    entries.clear();
+    if (current.kind !== 'released') for (const state of current.held) drop(state);
+  }
+  function bindParsed(run: RunIdentity): FrontendToolPin {
+    if (owner.kind === 'released') throw new Error('Frontend tool retention is released');
+    if (owner.kind === 'bound') {
+      if (canonicalJson(owner.run) !== canonicalJson(run)) throw new Error('Frontend tools are already bound to another run');
+      return owner.pin;
+    }
+    const pin: FrontendToolPin = { run, definitions, bindings,
+      async invoke(name, args, activationId): Promise<FrontendToolOutcome> {
+        if (owner.kind === 'released') return refused('released');
+        const entry = entries.get(name);
+        if (!entry) return refused('unknown-tool');
+        if (activationId !== entry.state.identity.activationId) return refused('activation-mismatch');
+        hold(entry.state);
+        try { return await entry.tool.call(args, run.conversation); }
+        finally { drop(entry.state); }
+      },
+      release,
+    };
+    owner = { kind: 'bound', held: owner.held, run, pin };
+    return pin;
+  }
+  return { definitions, bindings,
+    bind(run) {
+      if (owner.kind === 'released') throw new Error('Frontend tool retention is released');
+      return bindParsed(freeze(parseRunIdentity(copyJson(run))));
     },
-    release() {
-      const generations = held;
-      held = undefined;
-      entries.clear();
-      for (const state of generations ?? []) drop(state);
-    },
+    release,
   };
+}
+export function retainFrontendTools(options: FrontendToolRetentionOptions): RetainedFrontendTools {
+  const platform = frontendPlatform(options.platform);
+  const candidates = [...options.generations];
+  return retainSelected(selectGenerations(platform, candidates));
+}
+export function pinFrontendTools(options: FrontendToolPinOptions): FrontendToolPin {
+  const { platform, candidates, run, agentNames, enabled } = readPinOptions(options);
+  const selected = selectGenerations(platform, candidates);
+  if (enabled) for (const state of selected) for (const tool of state.tools) {
+    if (agentNames.has(tool.definition.name)) throw new Error('Tool name collides with an agent-provided tool');
+  }
+  const retained = retainSelected(enabled ? selected : []);
+  try { return retained.bind(run); }
+  catch (error) { retained.release(); throw error; }
 }

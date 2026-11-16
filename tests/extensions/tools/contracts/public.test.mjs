@@ -55,7 +55,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
     await assertCompileCases({
       config: join(dir, 'tsconfig.json'),
       prefix:
-        "import { createFrontendToolGeneration, pinFrontendTools, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\nexport { createFrontendToolGeneration, pinFrontendTools }; export type { FrontendToolContribution, FrontendToolOutcome };\n",
+        "import { createFrontendToolGeneration, pinFrontendTools, retainFrontendTools, type RetainedFrontendTools, type FrontendToolRetentionOptions, type FrontendToolContribution, type FrontendToolOutcome } from '@agentui/sdk/tools';\nexport { createFrontendToolGeneration, pinFrontendTools, retainFrontendTools }; export type { RetainedFrontendTools, FrontendToolRetentionOptions, FrontendToolContribution, FrontendToolOutcome };\n",
       cases: [
         [
           "const t: FrontendToolContribution<string> = { definition: { name: 'x', description: 'x' }, decodeInput() { return 'x'; }, async execute(x) { return x; } }; void createFrontendToolGeneration; void t; declare const g: import('@agentui/sdk/tools').FrontendToolGeneration; declare const run: import('@agentui/contracts').RunIdentity; const p = pinFrontendTools({ generations: [g], platform: 'ios', run, capabilities: { tools: { clientProvided: true } } }); const o: Promise<FrontendToolOutcome> = p.invoke('a__b', {}, 'activation'); void o;",
@@ -101,6 +101,12 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
           "void createFrontendToolGeneration({ namespace: 'demo', generation: '1', platform: 'desktop', capture: false, activate() { return {}; } });",
           /not assignable/u,
         ],
+        ["declare const options: FrontendToolRetentionOptions; declare const run: import('@agentui/contracts').RunIdentity; const retained: RetainedFrontendTools = retainFrontendTools(options); const pin: import('@agentui/sdk/tools').FrontendToolPin = retained.bind(run); void pin;", null],
+        ["declare const retained: RetainedFrontendTools; retained.invoke('demo__x', {}, 'activation');", /Property 'invoke' does not exist/u],
+        ["declare const retained: RetainedFrontendTools; retained.definitions.push({ name: 'x', description: '' });", /Property 'push' does not exist/u],
+        ["declare const retained: RetainedFrontendTools; retained.definitions[0].name = 'changed';", /read-only property/u],
+        ["declare const retained: RetainedFrontendTools; retained.bindings[0].activationId = 'changed';", /read-only property/u],
+        ["declare const retained: RetainedFrontendTools; retained.bindings.push({ name: 'x', activationId: 'changed' });", /Property 'push' does not exist/u],
         ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.definitions[0].name = 'changed';", /read-only property/u],
         ["declare const p: import('@agentui/sdk/tools').FrontendToolPin; p.invoke('demo__x', {});", /Expected 3 arguments/u],
         ['void document;', /Cannot find name 'document'/u],
@@ -114,7 +120,7 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
         '-e',
         `
           import assert from 'node:assert/strict';
-          import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
+          import { createFrontendToolGeneration, pinFrontendTools, retainFrontendTools } from '@agentui/sdk/tools';
           const { generation } = await createFrontendToolGeneration({
             namespace: 'demo', generation: '1', platform: 'ios', capture() { return undefined; },
             activate({ frontendTools: tools }) {
@@ -126,17 +132,24 @@ test('packed tools consumer resolves its dependency and types without DOM', asyn
               return { dispose() {} };
             },
           });
+          const retained = retainFrontendTools({ generations: [generation], platform: 'ios' });
+          const retired = generation.retire();
           let pin;
           try {
-            pin = pinFrontendTools({ generations: [generation], platform: 'ios',
+            const actualRun = { conversation: { hostId: 'h', conversationId: 'c' }, runId: 'r',
+              authority: { kind: 'remote-provider', binding: { namespace: 'n', installationId: 'i', opaqueSessionId: 's' } } };
+            pin = retained.bind(actualRun);
+            assert.equal(retained.bind(structuredClone(actualRun)), pin);
+            assert.equal(pin.definitions, retained.definitions);
+            assert.throws(() => pinFrontendTools({ generations: [generation], platform: 'ios',
               run: { conversation: { hostId: 'h', conversationId: 'c' }, runId: 'r',
                 authority: { kind: 'remote-provider', binding: { namespace: 'n', installationId: 'i', opaqueSessionId: 's' } } },
-              capabilities: { tools: { clientProvided: true } } });
+              capabilities: { tools: { clientProvided: true } } }));
             assert.deepEqual(await pin.invoke('demo__x', { email: 'a@example.com' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'completed', output: 'a@example.com' });
             assert.deepEqual(await pin.invoke('demo__x', { email: 'invalid' }, pin.bindings.find(binding => binding.name === 'demo__x')?.activationId ?? ''), { kind: 'refused', code: 'invalid-arguments' });
           } finally {
-            pin?.release();
-            await generation.retire();
+            pin?.release(); retained.release();
+            await retired;
           }
         `,
       ],
