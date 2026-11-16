@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import test from 'node:test';
 import { createServerSelection } from '../../apps/host/build/tsc/server-selection.js';
 const empty = { version: 1, artifacts: [] };
@@ -116,11 +119,11 @@ test('a failed v1 schema migration rolls back every copied row and old namespace
   assert.deepEqual(snapshot(database), before);
 });
 
-test('malformed later v2 request leaves earlier unresolved rows completely untouched', async t => {
+for (const kind of ['pending', 'applying']) test(`later v2 retry cannot authorize original ${kind} history before normalization`, async t => {
   const { owner, database } = await fixture(t); await owner.close();
   database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES
-    ('unresolved','startup','{"kind":"boot"}','{"kind":"pending"}'),
-    ('bad','startup','{"afterAttemptId":"missing","expectedRevision":0,"kind":"retry","requestId":"bad","selectionId":"startup"}','{"kind":"interrupted"}')`);
+    ('unresolved','startup','{"kind":"boot"}','{"kind":"${kind}"}'),
+    ('bad','startup','{"afterAttemptId":"unresolved","expectedRevision":0,"kind":"retry","requestId":"bad","selectionId":"startup"}','{"kind":"interrupted"}')`);
   const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS n').get().n;
   const reopened = await createServerSelection({ database: { database, hostId: 'attempt-test' }, entries: [], runtime: () => ({ kind: 'empty' }),
     isClosing: () => false, replace: async () => assert.fail('Invalid journal activated'), stopRuntime() {} });
@@ -165,24 +168,156 @@ test('out-of-prefix nonunique indexes and fault triggers remain permitted', asyn
   assert.equal((await owner.live({ kind: 'apply', requestId: 'allowed', selectionId: 'startup', expectedRevision: 0 })).outcome.kind, 'applied-empty');
 });
 
-for (const changed of ['applied-empty', 'applying', 'unknown', 'new-predecessor']) test(`transaction admission decodes persisted predecessor after cached precheck: ${changed}`, async t => {
-  const database = new DatabaseSync(':memory:'); t.after(() => database.close());
-  let alter = false, effects = 0, stops = 0;
-  const owner = await createServerSelection({ database: { database, hostId: 'admission-test' }, entries: [], isClosing: () => false,
-    runtime() {
-      if (alter) {
-        alter = false;
-        if (changed === 'new-predecessor') database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome)
-          VALUES('external','startup','{"kind":"boot"}','{"kind":"interrupted"}')`);
-        else database.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(JSON.stringify({ kind: changed }), 'first');
-      }
-      return { kind: 'empty' };
-    }, replace: async () => { effects++; return { kind: 'deferred', reason: 'active-work' }; }, stopRuntime() { stops++; } });
-  t.after(() => owner.close());
+async function diskFixture(t, replace = async () => ({ kind: 'replaced', generation: null })) {
+  const directory = await mkdtemp(join(tmpdir(), 'selection-admission-'));
+  const database = new DatabaseSync(join(directory, 'journal.sqlite'));
+  const external = new DatabaseSync(join(directory, 'journal.sqlite'));
+  const owners = [];
+  let effects = 0, stops = 0;
+  t.after(async () => {
+    for (const owner of owners) await owner.close();
+    external.close(); database.close(); await rm(directory, { recursive: true, force: true });
+  });
+  const open = async (entries = []) => {
+    const owner = await createServerSelection({ database: { database, hostId: 'admission-test' }, entries,
+      runtime: () => ({ kind: 'empty' }), isClosing: () => false,
+      replace: async () => { effects++; return replace(); }, stopRuntime() { stops++; } });
+    owners.push(owner); return owner;
+  };
+  return { database, external, open, effects: () => effects, stops: () => stops };
+}
+
+for (const changed of ['applied-empty', 'applying', 'unknown', 'new-predecessor']) test(`transaction admission decodes persisted predecessor after load: ${changed}`, async t => {
+  const f = await diskFixture(t, async () => ({ kind: 'deferred', reason: 'active-work' }));
+  const owner = await f.open();
   await owner.live({ kind: 'apply', requestId: 'first', selectionId: 'startup', expectedRevision: 0 });
-  alter = true;
+  if (changed === 'new-predecessor') f.external.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome)
+    VALUES('external','startup','{"kind":"boot"}','{"kind":"interrupted"}')`);
+  else f.external.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(JSON.stringify({ kind: changed }), 'first');
   await assert.rejects(owner.live({ kind: 'retry', requestId: 'second', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'first' }),
     changed === 'unknown' ? /unavailable/ : /attempt-conflict/);
-  assert.equal(database.prepare("SELECT count(*) AS n FROM service_extension_attempts WHERE id='second'").get().n, 0);
-  assert.equal(effects, 1); assert.equal(stops, Number(changed === 'unknown'));
+  assert.equal(f.database.prepare("SELECT count(*) AS n FROM service_extension_attempts WHERE id='second'").get().n, 0);
+  assert.equal(f.effects(), 1); assert.equal(f.stops(), Number(changed === 'unknown'));
+});
+
+for (const outcome of [
+  { kind: 'pending' }, { kind: 'applying' }, { kind: 'interrupted' }, { kind: 'deferred', reason: 'active-work' },
+  { kind: 'grant-mismatch' }, { kind: 'failed', failure: 'cleanup', recovery: 'restart' }, { kind: 'unknown' },
+]) test(`boot admission rereads a settled predecessor changed after load to ${outcome.kind}`, async t => {
+  const f = await diskFixture(t), original = await f.open();
+  await original.activate(); await original.close();
+  const owner = await f.open();
+  f.external.prepare('UPDATE service_extension_attempts SET outcome=?').run(JSON.stringify(outcome));
+  const before = snapshot(f.database);
+  if (outcome.kind === 'unknown') await assert.rejects(owner.activate(), /unavailable/);
+  else await owner.activate();
+  assert.equal(f.effects(), 1); assert.equal(f.stops(), Number(outcome.kind === 'unknown'));
+  assert.deepEqual(snapshot(f.database), before);
+  assert.equal(owner.status().runtime.kind, 'withheld');
+});
+
+test('boot admission withholds a newer persisted unsettled predecessor after load', async t => {
+  const f = await diskFixture(t), original = await f.open();
+  await original.activate(); await original.close();
+  const owner = await f.open();
+  f.external.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome)
+    VALUES('external','startup','{"kind":"boot"}','{"kind":"interrupted"}')`);
+  const before = snapshot(f.database);
+  await owner.activate();
+  assert.equal(f.effects(), 1); assert.equal(f.stops(), 0);
+  assert.deepEqual(snapshot(f.database), before);
+});
+
+test('retry admission uses persisted grant mismatch and restored binding after restart', async t => {
+  let deferred = true;
+  const f = await diskFixture(t, async () => deferred ? { kind: 'deferred', reason: 'active-work' } : { kind: 'replaced', generation: null });
+  const original = await f.open();
+  const first = { kind: 'apply', requestId: 'first', selectionId: 'startup', expectedRevision: 0 };
+  await original.live(first); await original.close();
+  const owner = await f.open(golden.entries);
+  f.external.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run('{"kind":"grant-mismatch"}', 'first');
+  const retry = { kind: 'retry', requestId: 'second', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'first' };
+  const before = snapshot(f.database);
+  await assert.rejects(owner.live(retry), /attempt-conflict/);
+  assert.deepEqual(snapshot(f.database), before);
+  assert.equal(f.effects(), 1); assert.equal(f.stops(), 0);
+  await owner.close();
+  const restored = await f.open(); deferred = false;
+  await restored.activate(); assert.equal(f.effects(), 1);
+  assert.equal((await restored.live(retry)).outcome.kind, 'applied-empty');
+  assert.equal((await restored.live(first)).outcome.kind, 'grant-mismatch');
+  assert.equal(f.effects(), 2);
+});
+
+for (const [phase, error, persisted, effects] of [
+  ['insert', 'unavailable', undefined, 0],
+  ['applying', 'unavailable', 'pending', 0],
+  ['grant-mismatch', 'unavailable', 'pending', 0],
+  ['authority', 'unavailable', 'applying', 0],
+  ['observation', 'uncertain', 'failed', 1],
+  ['observation-record', 'uncertain', 'applying', 1],
+  ['final', 'uncertain', 'applying', 1],
+]) test(`execution failure at ${phase} preserves its durable phase and stops once`, async t => {
+  const database = new DatabaseSync(':memory:'); t.after(() => database.close());
+  let calls = 0, stops = 0, closing = false;
+  const open = entries => createServerSelection({ database: { database, hostId: 'phase-test' }, entries,
+    runtime: () => ({ kind: 'empty' }), isClosing: () => closing,
+    replace: async () => {
+      calls++;
+      if (phase.startsWith('observation')) throw new Error('PRIVATE_OBSERVATION');
+      return { kind: 'replaced', generation: null };
+    }, stopRuntime() { stops++; closing = true; } });
+  let owner = await open([]);
+  if (phase === 'grant-mismatch') { await owner.close(); owner = await open(golden.entries); }
+  t.after(() => owner.close());
+  if (phase === 'authority') database.exec(`CREATE TRIGGER authority_damage AFTER UPDATE ON service_extension_attempts
+    WHEN json_extract(NEW.outcome,'$.kind')='applying' BEGIN UPDATE service_extension_selections SET revision=revision+1; END`);
+  else if (phase !== 'observation') {
+    const outcome = phase === 'final' ? 'applied-empty' : phase === 'observation-record' ? 'failed' : phase;
+    database.exec(`CREATE TRIGGER fail_write BEFORE ${phase === 'insert' ? 'INSERT' : 'UPDATE'} ON service_extension_attempts
+      ${phase === 'insert' ? '' : `WHEN json_extract(NEW.outcome,'$.kind')='${outcome}'`} BEGIN SELECT RAISE(ABORT,'PRIVATE_WRITE'); END`);
+  }
+  await assert.rejects(owner.live({ kind: 'apply', requestId: 'failed', selectionId: 'startup', expectedRevision: 0 }),
+    caught => caught.message === `Selection ${error}`);
+  assert.equal(calls, effects); assert.equal(stops, 1);
+  const row = database.prepare("SELECT outcome FROM service_extension_attempts WHERE id='failed'").get();
+  assert.equal(row && JSON.parse(row.outcome).kind, persisted);
+  if (phase === 'observation') assert.deepEqual(JSON.parse(row.outcome), { kind: 'failed', failure: 'discovery', recovery: 'replace' });
+  assert.equal(owner.status().runtime.kind, error === 'uncertain' ? 'uncertain' : 'closed');
+});
+
+test('first apply records changed grants, exact replay precedes fresh retry refusal', async t => {
+  const f = await diskFixture(t), original = await f.open();
+  await original.close();
+  const owner = await f.open(golden.entries);
+  const request = { kind: 'apply', requestId: 'first', selectionId: 'startup', expectedRevision: 0 };
+  const mismatch = await owner.live(request);
+  assert.equal(mismatch.outcome.kind, 'grant-mismatch');
+  assert.deepEqual(await owner.live(request), mismatch);
+  const before = snapshot(f.database);
+  await assert.rejects(owner.live({ ...request, kind: 'retry', requestId: 'retry', afterAttemptId: 'first' }), /attempt-conflict/);
+  assert.deepEqual(snapshot(f.database), before);
+  assert.equal(f.effects(), 0); assert.equal(f.stops(), 0);
+});
+
+test('historical replay precedes current cleanup refusal and restart enables explicit retry', async t => {
+  const database = new DatabaseSync(':memory:'); t.after(() => database.close());
+  let state = { kind: 'empty' }, effects = 0, stops = 0;
+  const failure = { kind: 'failed', failure: 'cleanup', recovery: 'restart' };
+  const open = () => createServerSelection({ database: { database, hostId: 'cleanup-test' }, entries: [],
+    runtime: () => state, isClosing: () => false, replace: async () => { effects++; state = failure; return failure; }, stopRuntime() { stops++; } });
+  const owner = await open(); t.after(() => owner.close());
+  const first = { kind: 'apply', requestId: 'first', selectionId: 'startup', expectedRevision: 0 };
+  const failed = await owner.live(first);
+  assert.deepEqual(await owner.live(first), failed);
+  const retry = { kind: 'retry', requestId: 'retry', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'first' };
+  const before = snapshot(database);
+  await assert.rejects(owner.live(retry), /attempt-conflict/);
+  assert.deepEqual(snapshot(database), before); assert.equal(stops, 0); assert.equal(effects, 1);
+  await owner.close(); state = { kind: 'empty' };
+  const restarted = await open(); t.after(() => restarted.close());
+  await restarted.activate(); assert.equal(effects, 1);
+  assert.deepEqual(await restarted.live(first), failed);
+  assert.deepEqual((await restarted.live(retry)).outcome, failure);
+  assert.equal(effects, 2);
 });

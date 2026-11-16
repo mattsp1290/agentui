@@ -121,20 +121,25 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     if (migrating) throw new Error('Selection migration failed');
     invalid = true;
   }
-  function retryable(outcome: AttemptOutcome): boolean {
-    return outcome.kind === 'deferred' || outcome.kind === 'interrupted' || outcome.kind === 'grant-mismatch' || outcome.kind === 'failed';
+  function allowsPredecessor(origin: Attempt['origin'], previous: Pick<Attempt, 'id' | 'outcome'> | undefined): boolean {
+    switch (origin.kind) {
+      case 'boot': return previous === undefined || previous.outcome.kind === 'applied' || previous.outcome.kind === 'applied-empty';
+      case 'apply': return previous === undefined;
+      case 'retry': return previous?.id === origin.afterAttemptId && (previous.outcome.kind === 'deferred' || previous.outcome.kind === 'interrupted' ||
+        previous.outcome.kind === 'grant-mismatch' || previous.outcome.kind === 'failed');
+    }
   }
-  function allowsPredecessor(request: LiveRequest, previous: Pick<Attempt, 'id' | 'outcome'> | undefined): boolean {
-    return request.kind === 'apply' ? previous === undefined : previous?.id === request.afterAttemptId && retryable(previous.outcome);
+  function matchesGeneration(generation: number | null, state: ServerExtensionStatus): boolean {
+    return generation === null ? state.kind === 'empty' : state.kind === 'active' && state.generation === generation;
   }
   function available(): void {
     if (invalid || poisoned || closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
   }
-  function fatal(effect: boolean): never {
+  function fatal(reason: 'unavailable' | 'uncertain'): never {
     poisoned = true;
-    if (effect) running = { kind: 'uncertain' };
+    if (reason === 'uncertain') running = { kind: 'uncertain' };
     deps.stopRuntime();
-    throw new SelectionRefusal(effect ? 'uncertain' : 'unavailable');
+    throw new SelectionRefusal(reason);
   }
   function authority(selection: Selection): void {
     if (inspectNamespace() !== 2) throw new Error('Invalid selection journal');
@@ -197,7 +202,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       if (command.expectedRevision !== desired?.revision) throw new SelectionRefusal('revision-conflict');
       const selection = await prepareSelection(command, command.expectedRevision);
       try { insertSelection(selection, command.expectedRevision); }
-      catch (error) { if (error instanceof SelectionRefusal) throw error; fatal(false); }
+      catch (error) { if (error instanceof SelectionRefusal) throw error; fatal('unavailable'); }
       return summary(selection);
     });
   }
@@ -210,42 +215,59 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       artifacts: deps.entries.map(({ directory, artifactId }) => ({ directory: resolve(directory), artifactId })) } }, -1);
     insertSelection(selection, -1);
   }
-  async function execute(selection: Selection, attempt: Attempt): Promise<OperationSummary> {
-    let effect = false;
+  async function execute(selection: Selection, attempt: Attempt): Promise<void> {
+    let admission: 'admitted' | 'withheld';
     try {
-      transaction(() => {
+      admission = transaction(() => {
         available(); authority(selection);
+        const state = attempt.origin.kind === 'boot' ? undefined : deps.runtime();
         const latest = db.prepare('SELECT id,outcome FROM service_extension_attempts WHERE selection=? ORDER BY sequence DESC LIMIT 1').get(selection.id);
         const previous = latest && { id: identifier(latest.id), outcome: parseAttemptOutcome(JSON.parse(identifier(latest.outcome))) };
-        if (attempt.origin.kind !== 'boot' && !allowsPredecessor(attempt.origin, previous)) throw new SelectionRefusal('attempt-conflict');
+        if (!allowsPredecessor(attempt.origin, previous)) {
+          if (attempt.origin.kind === 'boot') return 'withheld';
+          throw new SelectionRefusal('attempt-conflict');
+        }
+        if (state?.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
+        if (attempt.origin.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
         if (db.prepare('SELECT 1 FROM service_extension_selections WHERE id=?').get(attempt.id)) throw new SelectionRefusal('id-conflict');
         db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, canonicalJson(attempt.outcome));
+        return 'admitted';
       });
+    } catch (error) {
+      if (error instanceof SelectionRefusal) throw error;
+      fatal('unavailable');
+    }
+    if (admission === 'withheld') return;
+    try {
       attempts.push(attempt); byId.set(attempt.id, attempt);
-      if (selection.grantsDigest !== grantsDigest) { persist(attempt, selection, { kind: 'grant-mismatch' }); return summary(selection, attempt); }
+      if (selection.grantsDigest !== grantsDigest) { persist(attempt, selection, { kind: 'grant-mismatch' }); return; }
       persist(attempt, selection, { kind: 'applying' });
       available(); authority(selection);
-      effect = true;
+    } catch { fatal('unavailable'); }
+    try {
       let result: ServerExtensionReplacement;
       try { result = await deps.replace({ kind: 'artifacts', pins: selection.target.artifacts, grants }); }
-      catch {
+      catch (error) {
         persist(attempt, selection, { kind: 'failed', failure: 'discovery', recovery: 'replace' });
-        throw new Error('Selection observation failed');
+        throw error;
       }
-      const status = deps.runtime();
-      const outcome: AttemptOutcome = result.kind === 'failed' || result.kind === 'deferred' ? result : result.kind === 'replaced' && !deps.isClosing() && !closed &&
-        (result.generation === null ? status.kind === 'empty' : status.kind === 'active' && status.generation === result.generation)
-        ? { kind: result.generation === null ? 'applied-empty' : 'applied' } : { kind: 'interrupted' };
+      let outcome: AttemptOutcome, nextRunning: Running;
+      switch (result.kind) {
+        case 'deferred': outcome = result; nextRunning = running; break;
+        case 'failed': outcome = result; nextRunning = { kind: 'withheld' }; break;
+        case 'unavailable': outcome = { kind: 'interrupted' }; nextRunning = { kind: 'withheld' }; break;
+        case 'replaced':
+          if (!deps.isClosing() && !closed && matchesGeneration(result.generation, deps.runtime())) {
+            outcome = { kind: result.generation === null ? 'applied-empty' : 'applied' };
+            nextRunning = { kind: 'acknowledged', generation: result.generation,
+              identity: { kind: outcome.kind === 'applied' ? 'active' : 'applied-empty', id: selection.id, revision: selection.revision, attemptId: attempt.id } };
+          } else {
+            outcome = { kind: 'interrupted' }; nextRunning = { kind: 'withheld' };
+          }
+      }
       persist(attempt, selection, outcome);
-      if (outcome.kind !== 'deferred') running = { kind: 'withheld' };
-      if (result.kind === 'replaced' && (outcome.kind === 'applied' || outcome.kind === 'applied-empty')) running = {
-        kind: 'acknowledged', generation: result.generation,
-        identity: { kind: outcome.kind === 'applied' ? 'active' : 'applied-empty', id: selection.id, revision: selection.revision, attemptId: attempt.id } };
-      return summary(selection, attempt);
-    } catch (error) {
-      if (!effect && error instanceof SelectionRefusal && !byId.has(attempt.id)) throw error;
-      return fatal(effect);
-    }
+      running = nextRunning;
+    } catch { fatal('uncertain'); }
   }
   async function live(request: LiveRequest): Promise<OperationSummary> {
     available();
@@ -260,18 +282,15 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     return reserve(async () => {
       const selection = desired;
       if (!selection || selection.id !== request.selectionId || selection.revision !== request.expectedRevision) throw new SelectionRefusal('revision-conflict');
-      const previous = attempts.findLast(value => value.selection === selection.id), state = deps.runtime();
-      if (!allowsPredecessor(request, previous)) throw new SelectionRefusal('attempt-conflict');
-      if (state.kind === 'failed' && state.recovery === 'restart') throw new SelectionRefusal('attempt-conflict');
-      if (request.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
-      return execute(selection, { id: request.requestId, selection: selection.id, intent, origin: request, outcome: { kind: 'pending' } });
+      const attempt: Attempt = { id: request.requestId, selection: selection.id, intent, origin: request, outcome: { kind: 'pending' } };
+      await execute(selection, attempt);
+      return summary(selection, attempt);
     });
   }
   async function activate(): Promise<void> {
     if (invalid || !desired || booted) return;
     booted = true;
-    const selection = desired, previous = attempts.findLast(value => value.selection === selection.id);
-    if (previous && previous.outcome.kind !== 'applied' && previous.outcome.kind !== 'applied-empty') return;
+    const selection = desired;
     let id: string;
     do { id = randomUUID(); } while (selections.has(id) || byId.has(id));
     await reserve(() => execute(selection, { id, selection: selection.id, intent: '{"kind":"boot"}', origin: { kind: 'boot' }, outcome: { kind: 'pending' } }));
@@ -287,7 +306,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       const lastSelection = last && selections.get(last.selection);
       const state = deps.runtime();
       const runtime: SelectionRuntime = running.kind === 'uncertain' ? running : closed || deps.isClosing() ? { kind: 'closed' }
-        : running.kind === 'acknowledged' && (running.generation === null ? state.kind === 'empty' : state.kind === 'active' && state.generation === running.generation)
+        : running.kind === 'acknowledged' && matchesGeneration(running.generation, state)
           ? running.identity : { kind: 'withheld' };
       return { kind: 'ready', desiredRevision: desired.revision, desired: summary(desired), operation: summary(selected, exact),
         lastApplied: lastSelection && last ? summary(lastSelection, last) : null, runtime };
