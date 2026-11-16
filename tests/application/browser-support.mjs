@@ -97,7 +97,7 @@ export async function customRuntime(page, host, selection, breakDefault = false,
           (await readFile(join(root, 'apps/desktop/src/application/ConversationView.tsx'), 'utf8')).replace('export function ConversationView(', 'function HealthyConversationView(') +
           `\nexport function ConversationView(props) { if (window.failDefault) throw new Error('Default view failed'); return createElement(HealthyConversationView, props); }`, loader: 'tsx' }));
       plugin.onLoad({ filter: /customization-selection\.ts$/ }, () => ({ contents: `import * as React from 'react';
-        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.2.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
+        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.3.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
         export default [{ manifest, ${selection} }${extra}];`, loader: 'tsx' }));
     } }] });
   await page.route('**/custom.html', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script src="/custom.js"></script>' }));

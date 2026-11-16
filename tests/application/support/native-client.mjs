@@ -39,7 +39,7 @@ await connection.create(scope, metadata.defaultAgentId);
 const port = connection.conversation(scope);
 let feed;
 const snapshot = new Promise(resolve => {
-  feed = port.watch({ after: null, projectionVersion: 2 }, item => { if (item.kind === 'snapshot') resolve(item.snapshot); });
+  feed = port.watch({ after: null, projectionVersion: 3 }, item => { if (item.kind === 'snapshot') resolve(item.snapshot); });
 });
 const before = await snapshot;
 const command = { version: 1, scope, clientCommandId: 'same-original-id', body: { kind: 'send', text: 'A separate host owns this command.' } };

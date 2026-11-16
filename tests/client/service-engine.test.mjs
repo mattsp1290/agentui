@@ -8,7 +8,7 @@ import { createServiceConnection } from '../../packages/client/dist/service-engi
 import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
-const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 2, cursor: 0,
+const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 3, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const reply = value => Response.json({ ok: true, value });
 const unauthorized = () => Response.json({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }, { status: 401 });
@@ -79,7 +79,7 @@ test('shared feed applies before ACK, deduplicates pages, and refuses a sequence
     acks.push(request.ack);
     return reply({ kind: 'page', page: pages.shift(), item: snapshot });
   }, transcriptProjection);
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => {
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => {
     received.push(item); await applying.promise;
   });
   await until(() => received.length === 1);
@@ -102,7 +102,7 @@ test('shared feed close cancels an uncooperative pull and never ACKs after close
       pulls++; signal = context.signal;
       return duringApply ? reply({ kind: 'page', page: 1, item: snapshot }) : gate.promise;
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => {
+    const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 3 }, async () => {
       applying = true; await gate.promise;
     });
     await until(() => duringApply ? applying : pulls === 1);
@@ -149,7 +149,7 @@ for (const [name, mutate, kind] of [
       acks.push(request.ack);
       return reply({ kind: 'page', page: 1, item });
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 3 }, async () => assert.fail('Invalid item delivered'));
     assert.equal((await feed.ended).kind, kind);
     assert.deepEqual(acks, [null]);
     assert.equal(closed, 1);
@@ -185,7 +185,7 @@ for (const [name, body, headers] of [
       acks.push(request.ack);
       return new Response(body, { headers });
     }, transcriptProjection);
-    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 2 }, async () => assert.fail('Invalid item delivered'));
+    const feed = connection.conversation(scope).watch({ after: 8, projectionVersion: 3 }, async () => assert.fail('Invalid item delivered'));
     assert.equal((await feed.ended).kind, 'resync');
     assert.deepEqual(acks, [null]);
   });

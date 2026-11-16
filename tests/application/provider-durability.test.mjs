@@ -1,3 +1,4 @@
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { providerService, fixture, saved, send } from './provider-stream-fixture.mjs';
@@ -138,7 +139,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
   remote.emit(event, false); await until(() => acknowledged(b, event));
   assert.deepEqual(fullState(f), state); assert.equal(applications, 2);
   assert.deepEqual(fullState(f, 'other'), sibling);
-  assert.deepEqual((await readSnapshot(f.client.conversation(scope), 2)).document, document(state));
+  assert.deepEqual((await readSnapshot(f.client.conversation(scope), transcriptProjection.version)).document, document(state));
   assert.deepEqual(await f.client.conversation(scope).receipt('send'), document(state).receipts.send);
   assert.equal(effects(remote, '/create').length, 2); assert.equal(effects(remote, '/submit').length, 2);
   assert.equal(effects(remote, '/lookup').length, 0); assert.equal(effects(remote, '/snapshot').length, 2);
@@ -209,7 +210,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     }
     assert.equal((await port.submit(approve(scope, record.reserved, 'competing'))).reason, 'decision-unavailable');
     record.before = fullState(f, id); record.items = [];
-    record.feed = port.watch({ after: record.before.conversation.head, projectionVersion: 2 }, async item => { record.items.push(item); });
+    record.feed = port.watch({ after: record.before.conversation.head, projectionVersion: 3 }, async item => { record.items.push(item); });
     t.after(() => record.feed.close());
     await until(() => record.items.length === 1);
     assert.deepEqual(record.items[0], { kind: 'events', events: [] });
@@ -243,7 +244,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     assert.deepEqual(fullState(f, record.id), record.replaced);
     assert.deepEqual(b.calls.observe.find(value => value.binding.creation.scope.conversationId === record.id),
       { binding: record.binding, after: JSON.parse(record.replaced.checkpoint.data).cursor });
-    const items = [], feed = record.port.watch({ after: record.before.conversation.head, projectionVersion: 2 }, async item => { items.push(item); });
+    const items = [], feed = record.port.watch({ after: record.before.conversation.head, projectionVersion: 3 }, async item => { items.push(item); });
     t.after(() => feed.close()); await until(() => items.length > 0); feed.close();
     assert.equal(items[0].kind, 'snapshot'); assert.deepEqual(items[0].snapshot.document, document(record.replaced));
     const snapshot = structuredClone(remote.conversations.get(record.id).snapshot);
@@ -279,7 +280,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
   assert.equal(b.calls.feedClosed, 2); await until(() => remote.clients.size === 0);
   for (const record of records) {
     assert.equal((await record.port.submit(send(record.scope, 'disabled-send'))).kind, 'rejected');
-    assert.deepEqual((await readSnapshot(record.port, 2)).document, document(record.final));
+    assert.deepEqual((await readSnapshot(record.port, transcriptProjection.version)).document, document(record.final));
     await assert.rejects(resumed.get(record.id)(remote.makeEvent(record.binding, 'Retired callback', 3)));
     await assert.rejects(retained.get(record.id)(remote.makeEvent(record.binding, 'Original retired callback', 3)));
     assert.deepEqual(fullState(f, record.id), record.final);

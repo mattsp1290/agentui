@@ -162,7 +162,7 @@ test('real host pairs independent devices and protects metadata, scope and expli
   const scope = { hostId: f.hostId, conversationId: 'stable-explicit-conversation' };
   const foreign = { ...scope, hostId: 'another-host' };
   for (const request of [{ op: 'create', agentId: recordedAgentId, scope: foreign },
-    { op: 'watch', scope: foreign, after: null, projectionVersion: 2 },
+    { op: 'watch', scope: foreign, after: null, projectionVersion: 3 },
     { op: 'submit', command: command(foreign) }, { op: 'receipt', scope: foreign, id: 'send-once' }]) {
     denied(await f.call(request, alice.cookie), 403, 'forbidden');
   }
@@ -189,7 +189,7 @@ test('real client applies a feed page before ACK and the host retains lost repli
     return response;
   } });
   let deliveries = 0;
-  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 2 }, async item => {
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => {
     deliveries++;
     if (deliveries === 1) { first.resolve(item); await releaseFirst.promise; }
     if (deliveries === 2) { second.resolve(item); await releaseSecond.promise; }
@@ -225,7 +225,7 @@ test('revoking a device wakes its open HTTP pull and denies later operations whi
   const f = await fixture(t), alice = await f.pair(), bob = await f.pair();
   const scope = { hostId: f.hostId, conversationId: 'revoke-open-pull' };
   await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
-  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 2 }, alice.cookie);
+  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 3 }, alice.cookie);
   const first = await f.ok({ op: 'pull', feedId, ack: null }, alice.cookie);
   let settled = false;
   const pending = f.begin({ op: 'pull', feedId, ack: first.page }, alice.cookie);
@@ -236,7 +236,7 @@ test('revoking a device wakes its open HTTP pull and denies later operations whi
   await f.control('revoke', alice.metadata.principalId);
   denied(await pending.response, 401, 'unauthorized');
   for (const request of [{ op: 'metadata' }, { op: 'catalog', after: null, limit: 100 },
-    { op: 'watch', scope, after: null, projectionVersion: 2 }, { op: 'submit', command: command(scope) },
+    { op: 'watch', scope, after: null, projectionVersion: 3 }, { op: 'submit', command: command(scope) },
     { op: 'create', agentId: recordedAgentId, scope }, { op: 'receipt', scope, id: 'send-once' }]) {
     denied(await f.call(request, alice.cookie), 401, 'unauthorized');
   }
@@ -265,7 +265,7 @@ test('fixed-port process restart preserves device identity, catalog and evidence
   const receipt = await f.ok({ op: 'receipt', scope, id: intent.clientCommandId }, alice.cookie);
   assert.equal(receipt.state.kind, 'completed');
   const snapshot = async () => {
-    const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 2 }, alice.cookie);
+    const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 3 }, alice.cookie);
     const page = await f.ok({ op: 'pull', feedId, ack: null }, alice.cookie);
     await f.ok({ op: 'close', feedId }, alice.cookie);
     assert.equal(page.item.kind, 'snapshot');

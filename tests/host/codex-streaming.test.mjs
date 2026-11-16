@@ -369,3 +369,38 @@ for (const rejectLate of [false, true]) {
     assert.ok(f.messages().every(message => !message.text.includes('Old assistant text')));
   });
 }
+
+for (const rejectLate of [false, true]) {
+  test(`file patches and late terminal ${rejectLate ? 'capacity failure' : 'completion'} preserve the newer run and reopen`, async t => {
+    let attempted = 0;
+    const f = fixture(t, 'file-activity', (_scope, output) => {
+      if (output.events.some(event => event.kind === 'file-change-updated' && event.activity.status.kind === 'completed')) {
+        attempted++;
+        return rejectLate;
+      }
+      return false;
+    });
+    await f.port.submit(command('old'));
+    await until(() => f.document().domain.activities?.some(item => item.kind === 'file-change'));
+    const first = f.document().domain.activities.find(item => item.kind === 'file-change');
+    assert.equal(first.status.kind, 'unknown');
+    assert.equal(first.changes[0].movedTo, '/workspace/moved.ts');
+    f.trigger('finish');
+    await until(() => f.document().domain.currentRun?.kind === 'ended');
+    await f.port.submit(command('new'));
+    await until(() => f.messages().some(message => message.text === 'Current turn remains live'));
+    const current = f.document().domain.currentRun;
+    f.trigger('late');
+    await until(() => attempted > 0);
+    await new Promise(resolve => setTimeout(resolve, 30));
+    const domain = f.document().domain, retained = domain.activities.find(item => item.activityId === first.activityId);
+    assert.deepEqual(domain.currentRun, current);
+    assert.equal(current.kind, 'running');
+    assert.equal(retained.status.kind, rejectLate ? 'unknown' : 'completed');
+    assert.equal(domain.activities.filter(item => item.kind === 'file-change').length, 2);
+    assert.equal(domain.activities.find(item => item.kind === 'command').output, 'command retained');
+    assert.deepEqual(retained.changes, rejectLate ? [] : first.changes);
+    await f.reopen();
+    assert.deepEqual(f.document().domain, domain);
+  });
+}

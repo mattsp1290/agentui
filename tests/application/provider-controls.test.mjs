@@ -1,3 +1,4 @@
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { chromium } from 'playwright';
@@ -289,7 +290,7 @@ test('existing provider decisions publish labels and reservations from private r
     db.prepare('UPDATE conversations SET document=?, bytes=?').run(encoded, Buffer.byteLength(encoded));
   });
   const b = remote.extension({ controls: true }); await f.restart([b]); await until(() => b.calls.ready === 1);
-  const value = await readSnapshot(f.client.conversation(scope), 2);
+  const value = await readSnapshot(f.client.conversation(scope), transcriptProjection.version);
   assert.deepEqual(value.document.decisions.__proto__.choiceLabels, { 'opaque/choice-1': 'Allow once', 'opaque/choice-2': 'Allow once' });
   assert.equal(value.document.decisions.__proto__.reserved, true);
   assert.equal(saved(f).decisions[0].data, mapping);

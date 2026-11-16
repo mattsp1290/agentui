@@ -230,7 +230,7 @@ test('restart accepts an existing message-only SQLite snapshot at projection ver
   const reopened = f.open();
   recoverProviderConversations(reopened, scope.hostId, installation, PROVIDER_RECOVERY.codex);
   const recovered = reopened.inspect(scope).snapshot;
-  assert.equal(recovered.projectionVersion, 2);
+  assert.equal(recovered.projectionVersion, transcriptProjection.version);
   assert.equal(recovered.document.domain.currentRun, null);
   assert.deepEqual(recovered.document.domain.messages[0], {
     messageId: 'legacy', revision: 2, role: 'assistant', text: 'Old partial', complete: true,
