@@ -1,6 +1,6 @@
 import { Component, Suspense, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { checkExtensionEntrypoint, type ExtensionManifest } from '@agentui/sdk';
-import type { ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
+import type { ConversationContentLayoutProps, ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
 import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';
 import type { FrontendToolGeneration } from '@agentui/sdk/tools';
 
@@ -19,6 +19,21 @@ export type TranscriptSelection =
   | { readonly kind: 'default' }
   | { readonly kind: 'conflict'; readonly namespaces: readonly string[] }
   | { readonly kind: 'override'; readonly owner: TranscriptOwner };
+type ContentLayoutOwner = ReadyActivation & { readonly presentation: UiExtensionPresentation & { readonly contentLayout: ComponentType<ConversationContentLayoutProps> } };
+export type ContentLayoutSelection =
+  | { readonly kind: 'default' }
+  | { readonly kind: 'conflict'; readonly namespaces: readonly string[] }
+  | { readonly kind: 'layout'; readonly owner: ContentLayoutOwner };
+function hasContentLayout(owner: NamespaceActivation): owner is ContentLayoutOwner {
+  return owner.kind === 'ready' && owner.presentation.contentLayout !== undefined;
+}
+function selectContentLayout(owners: readonly NamespaceActivation[]): ContentLayoutSelection {
+  if (owners.some(owner => owner.kind === 'loading')) return { kind: 'default' };
+  const claims = owners.filter(hasContentLayout);
+  if (claims.length > 1) return { kind: 'conflict', namespaces: claims.map(owner => owner.namespace).sort() };
+  const owner = claims[0];
+  return owner ? { kind: 'layout', owner } : { kind: 'default' };
+}
 const DEFAULT_TRANSCRIPT: TranscriptSelection = { kind: 'default' };
 export function customizationMessage(error: unknown): string {
   const limit = 10;
@@ -102,7 +117,7 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
 
 export function useDesktopCustomizations({ customizations, enabled }: {
   readonly customizations: readonly DesktopCustomization[]; readonly enabled: boolean;
-}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly generations: readonly FrontendToolGeneration[] } {
+}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly contentLayout: ContentLayoutSelection; readonly generations: readonly FrontendToolGeneration[] } {
   const [request, setRequest] = useState({ customizations, enabled });
   const [snapshot, setSnapshot] = useState<{ readonly request: typeof request; readonly namespaces: readonly NamespaceActivation[] }>(() => ({ request, namespaces: [] }));
   const nextLifetime = useRef(0);
@@ -122,7 +137,7 @@ export function useDesktopCustomizations({ customizations, enabled }: {
   }, [request]);
   const namespaces = current && enabled && snapshot.request === request ? snapshot.namespaces : [];
   const ready = namespaces.filter((owner): owner is ReadyActivation => owner.kind === 'ready');
-  return { namespaces, transcript: selectTranscript(namespaces), generations: ready.map(owner => owner.generation) };
+  return { namespaces, transcript: selectTranscript(namespaces), contentLayout: selectContentLayout(namespaces), generations: ready.map(owner => owner.generation) };
 }
 
 export function CustomizationTranscript({ selection, context, fallback, conversationKey }: {

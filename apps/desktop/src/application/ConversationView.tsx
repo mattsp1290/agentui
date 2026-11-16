@@ -10,7 +10,9 @@ import { conversationResponding } from './responding.js';
 import { FileActivity } from './FileActivity.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
-import { CustomizationTranscript, type TranscriptSelection } from './DesktopCustomizations.js';
+import { CustomizationTranscript, type ContentLayoutSelection, type TranscriptSelection } from './DesktopCustomizations.js';
+
+import { CustomizationContent } from './CustomizationContent.js';
 
 const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
   'unsupported': 'This provider does not support live updates.',
@@ -34,11 +36,13 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' } }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' }, contentLayout = { kind: 'default' }, modules = null }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly permissionState?: PermissionState;
   readonly observation?: ConversationObservation | null;
   readonly transcript?: TranscriptSelection;
+  readonly contentLayout?: ContentLayoutSelection;
+  readonly modules?: ReactNode;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
   const presentation = 'kind' in active.agent ? agentPresentation(active.agent).presentation : AGENT_PRESENTATION[agent];
@@ -99,6 +103,17 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     });
   }
   const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
+  const conversationKey = `${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`;
+  const nativeTranscript = <div className="transcript" aria-label="Messages" aria-live="polite">
+      {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
+      {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
+        <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
+        {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
+        {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
+      </article>)}
+      <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
+      <FileActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
+    </div>;
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
     {active.agent.availability.kind === 'unavailable' && <p role="status">{active.agent.availability.reason} Saved history remains available.</p>}
@@ -113,19 +128,10 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
       </>}
     </div>}
     {permissionState && <ConversationPermissions outbox={view.outbox} state={permissionState} actions={actions} enabled={connected} />}
-    <CustomizationTranscript selection={transcript}
-      conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
-      context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
-      fallback={<div className="transcript" aria-label="Messages" aria-live="polite">
-      {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
-      {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
-        <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
-        {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
-        {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
-      </article>)}
-      <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
-      <FileActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
-    </div>} />
+    <CustomizationContent selection={contentLayout} conversationKey={conversationKey} modules={modules} nativeTranscript={nativeTranscript}
+      transcript={<CustomizationTranscript selection={transcript} conversationKey={conversationKey}
+        context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
+        fallback={nativeTranscript} />} />
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
         {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve') || decision.reserved || approving.has(decision.pendingId)} onClick={() => approve(decision.pendingId, choice)}>{decision.choiceLabels?.[choice] ?? (agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice)}</button>)}

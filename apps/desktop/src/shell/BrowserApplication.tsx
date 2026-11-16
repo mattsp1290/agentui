@@ -56,10 +56,13 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const displayedAgent = app.active?.agent ?? selected;
   const runtime = displayedAgent ? ('runtime' in displayedAgent ? displayedAgent.runtime : displayedAgent) : metadata?.compatibility.nativeRuntime ?? null;
   const { agent, presentation } = agentPresentation(runtime);
-  const conversation = app.active
+  const activeActions = app.active ? controller.conversationActions(app.active) : null;
+  const modules = custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
+    active={app.active} actions={activeActions} enabled={enabled} agent={agent} />);
+  const conversation = app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        transcript={custom.transcript} permissionState={app.permissionState} observation={app.observation} actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        transcript={custom.transcript} contentLayout={custom.contentLayout} modules={modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
         composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
     : <section className="conversation-panel empty-workspace">
@@ -111,8 +114,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </div>;
   const views = <>
     <div className="chat-view" hidden={selectedView !== 'chats'} inert={suspended}>{conversation}
-      {custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
-        active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />)}
+      {!app.active && modules}
     </div>
     <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>

@@ -1,4 +1,4 @@
-import type { ComponentType } from 'react';
+import type { ComponentType, ReactNode } from 'react';
 import type { ConversationDocument, ConversationPermissions, ConversationScope, PermissionScope, SubmitResult } from '@agentui/contracts';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
@@ -32,8 +32,14 @@ export interface ConversationModule {
   readonly actions?: readonly ModuleAction[];
 }
 
+export interface ConversationContentLayoutProps {
+  readonly transcript: ReactNode;
+  readonly modules: ReactNode;
+}
+
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
+  readonly contentLayout?: ComponentType<ConversationContentLayoutProps>;
   readonly overrides?: { readonly transcript?: ComponentType<ConversationModuleProps> };
 }
 export interface UiExtensionEntry<K extends FrontendPlatform> {
@@ -45,13 +51,14 @@ export interface UiExtensionEntry<K extends FrontendPlatform> {
 export interface UiExtensionPresentation {
   readonly modules: readonly ConversationModule[];
   readonly transcript: ComponentType<ConversationModuleProps> | undefined;
+  readonly contentLayout: ComponentType<ConversationContentLayoutProps> | undefined;
 }
 export type UiExtensionCapture =
   | { readonly kind: 'invalid-lifetime'; readonly error: unknown }
   | { readonly kind: 'invalid-presentation'; readonly error: unknown; readonly dispose: () => Promise<void> }
   | { readonly kind: 'ready'; readonly presentation: UiExtensionPresentation; readonly dispose: () => Promise<void> };
 
-function validateComponent(component: unknown): asserts component is ComponentType<ConversationModuleProps> {
+function validateComponent<Props>(component: unknown): asserts component is ComponentType<Props> {
   if (typeof component === 'function') return;
   const tag = typeof component === 'object' && component !== null && '$$typeof' in component ? component.$$typeof : undefined;
   if (tag !== Symbol.for('react.memo') && tag !== Symbol.for('react.forward_ref') && tag !== Symbol.for('react.lazy')) {
@@ -87,7 +94,7 @@ export function parseConversationModules(value: unknown): readonly ConversationM
       const module = behaviour(moduleValue);
       const named = name(module, ids);
       const component = module.component, actions = module.actions, children = module.children;
-      validateComponent(component);
+      validateComponent<ConversationModuleProps>(component);
       const actionIds = new Set<string>();
       const capturedActions = actions === undefined ? undefined : captureArray(actions, 'Expected action array', value => {
         const action = behaviour(value), named = name(action, actionIds), run = action.run;
@@ -118,15 +125,16 @@ function parseTranscript(value: unknown): UiExtensionPresentation['transcript'] 
     }
   }
   const transcript = overrides.transcript;
-  if (transcript !== undefined) validateComponent(transcript);
+  if (transcript !== undefined) validateComponent<ConversationModuleProps>(transcript);
   return transcript;
 }
 
 /** Captures presentation without acquiring or inspecting disposal. */
 export function parseUiExtensionPresentation(value: unknown): UiExtensionPresentation {
   const contributions = behaviour(value);
-  const modules = contributions.modules, overrides = contributions.overrides;
-  return { modules: parseConversationModules(modules), transcript: parseTranscript(overrides) };
+  const modules = contributions.modules, overrides = contributions.overrides, contentLayout = contributions.contentLayout;
+  if (contentLayout !== undefined) validateComponent<ConversationContentLayoutProps>(contentLayout);
+  return { modules: parseConversationModules(modules), transcript: parseTranscript(overrides), contentLayout };
 }
 
 export function parseUiExtensionContributions(value: unknown): UiExtensionCapture {

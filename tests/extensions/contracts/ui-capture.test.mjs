@@ -19,7 +19,7 @@ test('capture validates the first observation and copies every nested presentati
   const child = onceFields({ ...module, actions: [action], children: undefined });
   const root = onceFields({ ...module, actions: undefined, children: [child] });
   const overrides = onceFields({ transcript: View });
-  const source = onceFields({ modules: [root], overrides, dispose() { disposals++; } });
+  const source = onceFields({ modules: [root], overrides, contentLayout: View, dispose() { disposals++; } });
   const result = parseUiExtensionContributions(source);
   assert.equal(result.kind, 'ready');
   const captured = result.presentation.modules[0];
@@ -146,11 +146,39 @@ test('successful assertion wrappers never invoke disposal', () => {
 
 for (const callable of [false, true]) test(`presentation-only parser never inspects disposal (callable ${callable})`, () => {
   const reads = {};
-  const fields = onceFields({ modules: [module], overrides: { transcript: View } });
+  const fields = onceFields({ modules: [module], overrides: { transcript: View }, contentLayout: View });
   const source = callable ? Object.setPrototypeOf(function contribution() {}, fields) : Object.create(fields);
   Object.defineProperty(source, 'dispose', { get() { reads.dispose = (reads.dispose ?? 0) + 1; throw new Error('Unexpected disposal lookup'); } });
   const presentation = parseUiExtensionPresentation(source);
-  assert.deepEqual(Object.keys(presentation).sort(), ['modules', 'transcript']);
+  assert.deepEqual(Object.keys(presentation).sort(), ['contentLayout', 'modules', 'transcript']);
   assert.equal(presentation.modules[0].component, View); assert.equal(presentation.transcript, View);
   assert.deepEqual(reads, {});
+});
+
+test('content layout capture observes the first getter once, retains wrappers and resists author replacement', async () => {
+  for (const component of [View, memo(View), forwardRef(View), lazy(async () => ({ default: View }))]) {
+    const fields = onceFields({ modules: [], contentLayout: component });
+    const source = Object.assign(Object.create(fields), { dispose() {} });
+    const captured = parseUiExtensionContributions(source);
+    assert.equal(captured.kind, 'ready'); assert.equal(captured.presentation.contentLayout, component);
+    assert.equal(captured.presentation.contentLayout, component); await captured.dispose();
+  }
+  const mutable = { modules: [], contentLayout: View };
+  const presentation = parseUiExtensionPresentation(mutable); mutable.contentLayout = () => 'changed';
+  assert.equal(presentation.contentLayout, View);
+  assert.equal(parseUiExtensionPresentation({ modules: [] }).contentLayout, undefined);
+  for (const contentLayout of [null, {}, 'layout', 1]) {
+    let disposed = 0;
+    const captured = parseUiExtensionContributions({ modules: [], contentLayout, dispose() { disposed++; } });
+    assert.equal(captured.kind, 'invalid-presentation'); await captured.dispose(); await captured.dispose(); assert.equal(disposed, 1);
+  }
+  let disposed = 0;
+  const malformed = parseUiExtensionContributions({ modules: [], get contentLayout() {
+    Object.defineProperty(this, 'contentLayout', { value: View }); return {};
+  }, dispose() { disposed++; } });
+  assert.equal(malformed.kind, 'invalid-presentation'); await malformed.dispose(); assert.equal(disposed, 1);
+  const failure = new Error('Layout getter failed');
+  const throwing = parseUiExtensionContributions({ modules: [], get contentLayout() { throw failure; }, dispose() { disposed++; } });
+  assert.equal(throwing.kind, 'invalid-presentation'); assert.equal(throwing.error, failure); await throwing.dispose(); assert.equal(disposed, 2);
+  assert.equal(parseUiExtensionContributions({ modules: [], overrides: { contentLayout: View }, dispose() {} }).kind, 'invalid-presentation');
 });

@@ -30,7 +30,9 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.3.0`. Authors supply a presentation and hosts supply the credential capability.
+SDK compatibility is `0.5.0`. Both the manifest and loaded entry must match this version exactly.
+Rebuild extensions for this version. Version ranges and older `0.4.0` entries are not accepted.
+Authors supply a presentation and hosts supply the credential capability.
 Workspace package versions are `0.0.0`, service wire version is 7, and transcript projection version is 3.
 
 A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`.
@@ -205,7 +207,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.3.0",
+			"sdkVersion": "0.5.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -258,7 +260,8 @@ Every command and contributed action returns `Promise<SubmitResult>`.
 Preserve rejected admission and uncertain receipt states for the caller.
 Resolving an action does not establish native execution success.
 
-The desktop customization host renders nested modules as labeled sections beside the default conversation.
+The desktop customization host renders nested modules as labeled sections after the transcript, before approvals and the composer.
+Transcript and modules share one content scrollbar by default.
 It renders declarative actions as labeled buttons, suppresses duplicate clicks while an action is pending, and reports the returned submission state.
 The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, and thrown errors.
 An accepted or pending receipt does not mean the agent has finished.
@@ -288,7 +291,7 @@ function MyTranscript({ conversation, activity }: ConversationModuleProps) {
 return { modules: [], overrides: { transcript: MyTranscript }, dispose() {} };
 ```
 
-The desktop activates each namespace once for both contributions.
+The desktop activates each namespace once for its contributions.
 The override changes only transcript presentation. The ordinary composer, approvals, Stop, and command recovery keep their owners.
 The default transcript stays visible while any selected activation is pending or a lazy override is loading.
 If multiple ready namespaces claim the transcript after all activations settle, the host reports their sorted names and keeps the default transcript.
@@ -304,6 +307,38 @@ Captured commands still validate the active conversation and availability at inv
 The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.
+
+## Arrange conversation content
+
+The optional top-level `contentLayout` contribution arranges the selected conversation's transcript and modules.
+`ConversationContentLayoutProps` has exactly two readonly `ReactNode` properties, `transcript` and `modules`.
+The transcript already reflects independent transcript override selection. The modules include nested views, actions, and namespace diagnostics.
+Render each supplied node once. The layout receives no commands, draft editor, conversation selector, or lifetime handle.
+
+```tsx
+import type { ConversationContentLayoutProps } from '@agentui/sdk/react';
+
+function ReviewLayout({ transcript, modules }: ConversationContentLayoutProps) {
+	return <div className="review-layout"><div>{transcript}</div><aside>{modules}</aside></div>;
+}
+return { contentLayout: ReviewLayout, modules, dispose() {} };
+```
+
+The [Plan review template](../../templates/customization/desktop/index.tsx) includes responsive CSS for this arrangement.
+The host supplies one scroll viewport and an inline-size container. The template stacks its columns below 640px of available content width.
+Permissions, approvals, the composer, Stop, command recovery, and navigation remain outside the layout.
+Activation, failure, suspension, and restore preserve those controls for the same selected conversation.
+Navigation retains the existing conversation identity and command checks. Layouts do not create independently active conversations.
+
+The host captures `contentLayout` once with the same function, memo, forwardRef, and lazy rules as transcript components.
+Layout selection waits for every selected namespace to settle. Multiple ready claims produce sorted diagnostics and the default transcript-then-modules arrangement.
+An omitted layout uses that same default arrangement. Without an active conversation, namespace diagnostics remain visible in catalog order and layouts do not render.
+
+While a layout suspends, the host shows native messages, command and file activity, and a loading notice.
+Custom transcript components and module actions are withheld until the layout is ready, so a retained hidden layout cannot duplicate extension trees.
+Suspension does not retire a namespace. A render failure retires the failing namespace once and restores the default arrangement.
+A nearer module or transcript boundary owns its failure. A layout in another namespace remains selected.
+Restore default view disables the contributions without replacing the composer or its persisted draft.
 
 ## Register a typed frontend tool
 
@@ -335,7 +370,7 @@ try {
 await generation.retire();
 ```
 
-Render `presentation.modules` and `presentation.transcript`, which contain captured presentation values.
+Render `presentation.modules`, `presentation.transcript`, and `presentation.contentLayout`, which contain captured presentation values.
 The core generation factory captures raw disposal once. The UI adapter uses `parseUiExtensionPresentation` to capture presentation without inspecting disposal.
 The standalone `parseUiExtensionContributions` parser shares that presentation parser and retains its own once-only disposal contract.
 The returned presentation contains no disposal method.

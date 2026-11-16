@@ -9,7 +9,7 @@ body { margin: 0; }
 .platform-label { color: var(--aui-color-muted); font-size: .8rem; padding-left: .75rem; border-left: 1px solid var(--aui-color-border); }
 .shell-header nav { display: flex; flex-wrap: wrap; gap: .5rem; }
 .shell-header button { font-size: .8rem; }
-main { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
+#main-content { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
 .landing-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 5rem; max-width: 65rem; width: 100%; margin: 0 auto; }
 .introduction > [data-variant="label"] { letter-spacing: .12em; font-size: .7rem; color: var(--aui-color-accent); }
 .introduction h1 { overflow-wrap: anywhere; max-width: 12ch; font-size: clamp(2.5rem, 5vw, 4rem); line-height: 1.12; margin: 1.5rem 0; }
@@ -32,7 +32,7 @@ main { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
 .landing { max-width: 40rem; padding: 2rem; margin: auto; }
 @media (max-width: 760px) {
   .shell-header { align-items: flex-start; flex-direction: column; padding: 1.25rem; }
-  main { padding: 3rem 1.25rem; }
+  #main-content { padding: 3rem 1.25rem; }
   .landing-grid { grid-template-columns: minmax(0, 1fr); gap: 3rem; }
   .workspace-notes { padding-left: 0; border-left: 0; border-top: 1px solid var(--aui-color-border); padding-top: 2rem; }
   .shell-footer { padding: 1rem 1.25rem; }
