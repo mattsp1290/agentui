@@ -11,7 +11,7 @@ import { takeServerExtensionConfiguration } from './server-extension-config.js';
 import { parseControlRequest, formatControlResponse, requestControl } from './control.js';
 import { readObservabilityConfiguration } from './observability.js';
 
-const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred', 'trusted'], serve: ['port', 'assets', 'config', 'extensions', 'trusted'], 'browser-dev': ['port', 'assets', 'trusted'], codex: ['port', 'workspace', 'assets', 'executable', 'trusted'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable', 'trusted'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable', 'trusted'], pi: ['port', 'workspace', 'assets', 'trusted'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-status': ['operation', 'receipt'] };
+const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred', 'trusted'], serve: ['port', 'assets', 'config', 'extensions', 'trusted'], 'browser-dev': ['port', 'assets', 'trusted'], codex: ['port', 'workspace', 'assets', 'executable', 'trusted'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable', 'trusted'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable', 'trusted'], pi: ['port', 'workspace', 'assets', 'trusted'], invite: [], 'invite-native': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
 function selectionFile(path: string | undefined): unknown {
   try { return JSON.parse(readFileSync(path ?? '', 'utf8')); }
   catch { throw new Error('Invalid artifact selection file'); }
@@ -20,13 +20,13 @@ async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     'data-dir': { type: 'string' }, port: { type: 'string' }, id: { type: 'string' }, after: { type: 'string' },
     config: { type: 'string' }, extensions: { type: 'string' }, executable: { type: 'string' }, model: { type: 'string' }, workspace: { type: 'string' }, assets: { type: 'string' },
-    operation: { type: 'string' }, 'expected-revision': { type: 'string' }, selection: { type: 'string' }, receipt: { type: 'string' },
+    request: { type: 'string' }, attempt: { type: 'string' }, 'after-attempt': { type: 'string' }, operation: { type: 'string' }, 'expected-revision': { type: 'string' }, selection: { type: 'string' }, receipt: { type: 'string' },
     trusted: { type: 'boolean' }, preferred: { type: 'string' },
   } });
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
   const allowed = command && Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
-  if (extra.length || !command || !allowed) throw new Error('Use serve, codex, pi, browser-dev, invite, invite-native, devices, revoke, codex-sdk, claude-sdk, extensions-select or extensions-status');
+  if (extra.length || !command || !allowed) throw new Error('Use serve, codex, pi, browser-dev, invite, invite-native, devices, revoke, codex-sdk, claude-sdk, extensions-select, extensions-apply, extensions-retry or extensions-status');
   for (const flag of Object.keys(values)) {
     if (flag !== 'data-dir' && !allowed.includes(flag)) throw new Error(`--${flag} is not valid for ${command}`);
   }
@@ -69,11 +69,18 @@ async function main(): Promise<void> {
     process.stdout.write(`${JSON.stringify({ mode: command === 'browser-dev' ? 'browser-development' : command, origin: host.origin, hostId: host.hostId })}\n`);
     return;
   }
+  if (values.operation !== undefined && values.attempt !== undefined) throw new Error('Use --operation or --attempt');
   const request = parseControlRequest(command === 'extensions-select' ? { op: command, command: { id: values.operation,
     expectedRevision: values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']),
     selection: selectionFile(values.selection) } }
-    : command === 'extensions-status' ? { op: command, id: values.operation ?? null } : { op: command, ...(values.id ? { id: values.id } : {}), ...(values.after ? { after: values.after } : {}) });
-  const response = await requestControl(join(directory, 'control.sock'), request);
+    : command === 'extensions-apply' || command === 'extensions-retry' ? { op: command, request: { kind: command === 'extensions-apply' ? 'apply' : 'retry', requestId: values.request, selectionId: values.operation,
+      expectedRevision: values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']),
+      ...(command === 'extensions-retry' ? { afterAttemptId: values['after-attempt'] } : {}) } }
+    : command === 'extensions-status' ? { op: command, query: values.attempt !== undefined ? { kind: 'attempt', id: values.attempt } : values.operation !== undefined ? { kind: 'selection', id: values.operation } : null } : { op: command, ...(values.id ? { id: values.id } : {}), ...(values.after ? { after: values.after } : {}) });
+  const response = await requestControl(join(directory, 'control.sock'), request).catch(error => {
+    if (command === 'extensions-apply' || command === 'extensions-retry') throw new Error('Selection reply unavailable; inspect --attempt or resend the identical --request');
+    throw error;
+  });
   if (!response.ok) throw new Error(response.error);
   if (command === 'extensions-status' && values.receipt) {
     const status = parseSelectionStatus(response.value);

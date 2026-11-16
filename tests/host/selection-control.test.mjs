@@ -13,7 +13,7 @@ import { parseReceiptChunk, RECEIPT_LIMIT } from '../../apps/host/build/tsc/sele
 
 const main = fileURLToPath(new URL('../../apps/host/dist/main.js', import.meta.url));
 const hash = 'a'.repeat(64);
-const operation = { id: 'first', revision: 1, receiptDigest: hash, artifacts: 0, bootId: null, outcome: { kind: 'staged' } };
+const operation = { id: 'first', revision: 1, receiptDigest: hash, artifacts: 0, attemptId: null, outcome: { kind: 'staged' } };
 const status = { kind: 'ready', desiredRevision: 1, desired: operation, operation, lastApplied: null, runtime: { kind: 'withheld' } };
 
 test('control codecs enforce raw chunk, total receipt and framed UTF-8 byte limits', async () => {
@@ -29,7 +29,7 @@ test('control codecs enforce raw chunk, total receipt and framed UTF-8 byte limi
   assert.throws(() => formatControlResponse({ ok: true, value: { code: '雪'.repeat(6000) } }), /too large/);
   await assert.rejects(requestControl('/missing-control', { op: 'revoke', id: '雪'.repeat(1400) }), /too large/);
   assert.throws(() => parseControlRequest({ op: 'extensions-select', command: { id: 'x', expectedRevision: 0, selection: { version: 1, artifacts: [], secret: 'PRIVATE' } } }));
-  assert.throws(() => parseControlRequest({ op: 'extensions-status', id: 'non-ascii-雪' }));
+  assert.throws(() => parseControlRequest({ op: 'extensions-status', query: { kind: 'selection', id: 'non-ascii-雪' } }));
 });
 
 for (const [name, change] of [
@@ -55,4 +55,16 @@ for (const [name, change] of [
   const output = join(directory, 'receipt.json');
   await assert.rejects(promisify(execFile)(process.execPath, [main, 'extensions-status', '--data-dir', directory, '--receipt', output]));
   await assert.rejects(readFile(output), { code: 'ENOENT' });
+});
+
+for (const command of ['extensions-apply', 'extensions-retry']) test(`${command} uses strict request fields and rejects unrelated packaged flags`, async () => {
+  const kind = command === 'extensions-apply' ? 'apply' : 'retry';
+  const request = { kind, requestId: 'request', selectionId: 'selection', expectedRevision: 1, ...(kind === 'retry' ? { afterAttemptId: 'previous' } : {}) };
+  assert.deepEqual(parseControlRequest({ op: command, request }), { op: command, request });
+  for (const changed of [{ ...request, selection: { version: 1, artifacts: [] } }, { ...request, requestId: '雪' }, { ...request, expectedRevision: -1 }, { ...request, grants: [] }]) {
+    assert.throws(() => parseControlRequest({ op: command, request: changed }));
+  }
+  assert.throws(() => parseControlRequest({ op: command === 'extensions-apply' ? 'extensions-retry' : 'extensions-apply', request }));
+  for (const flag of ['--selection', '--receipt', '--attempt']) await assert.rejects(promisify(execFile)(process.execPath, [main, command, '--data-dir', '/missing', flag, 'value']), /not valid/);
+  await assert.rejects(promisify(execFile)(process.execPath, [main, 'extensions-status', '--data-dir', '/missing', '--operation', 'selection', '--attempt', 'request']), /Use --operation or --attempt/);
 });

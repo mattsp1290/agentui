@@ -44,7 +44,7 @@ test('pre-correction version 1 journal restarts with the exact original grant di
   const host = await runtime.startBrowserHost({ directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
     hostArtifactDirectory: join(root, 'apps/host/dist'), agentStartup: { kind: 'recorded' }, extensions });
   try {
-    const status = await requestControl(join(directory, 'control.sock'), { op: 'extensions-status', id: null });
+    const status = await requestControl(join(directory, 'control.sock'), { op: 'extensions-status', query: null });
     assert.equal(status.value.runtime.kind, 'applied-empty');
     assert.equal(status.value.desired.id, 'disable');
     assert.deepEqual(host.extensionStatus(), { kind: 'empty' });
@@ -53,7 +53,7 @@ test('pre-correction version 1 journal restarts with the exact original grant di
   try {
     assert.deepEqual(reopened.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all().map(row => ({ ...row })),
       golden.tables.find(table => table.name === 'service_extension_selections').rows);
-    assert.equal(reopened.prepare('SELECT version FROM service_extension_selection_schema').get().version, 1);
+    assert.equal(reopened.prepare('SELECT version FROM service_extension_selection_schema').get().version, 2);
   } finally { reopened.close(); }
 });
 
@@ -65,14 +65,14 @@ test('packaged durable host with missing boot history refuses selection without 
   const database = new DatabaseSync(join(options.directory, 'host.sqlite'));
   let selections;
   try {
-    database.prepare('UPDATE service_extension_boots SET outcome=?').run('{"kind":"applying"}');
-    database.exec('DROP TABLE service_extension_boots');
+    database.prepare('UPDATE service_extension_attempts SET outcome=?').run('{"kind":"applying"}');
+    database.exec('DROP TABLE service_extension_attempts');
     selections = database.prepare('SELECT * FROM service_extension_selections').all();
   } finally { database.close(); }
   const imports = f.state.modules.length;
   host = await runtime.startBrowserHost(options);
   try {
-    const status = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', id: null });
+    const status = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', query: null });
     assert.deepEqual(status, { ok: true, value: { kind: 'journal-invalid' } });
     const selected = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-select', command: {
       id: 'retry', expectedRevision: 0, selection: { version: 1, artifacts: [] },
@@ -83,7 +83,7 @@ test('packaged durable host with missing boot history refuses selection without 
   } finally { await host.close(); }
   const reopened = new DatabaseSync(join(options.directory, 'host.sqlite'));
   try {
-    assert.equal(reopened.prepare("SELECT 1 FROM sqlite_schema WHERE name='service_extension_boots'").get(), undefined);
+    assert.equal(reopened.prepare("SELECT 1 FROM sqlite_schema WHERE name='service_extension_attempts'").get(), undefined);
     assert.deepEqual(reopened.prepare('SELECT * FROM service_extension_selections').all(), selections);
   } finally { reopened.close(); }
 });
@@ -117,7 +117,7 @@ for (const kind of ['transient', 'durable-artifacts']) test(`${kind} startup obs
       const entries = options.extensions.entries.map(entry => ({ ...entry, installations: entry.installations.map(grant => ({ ...grant,
         authentication: { ...grant.authentication, revision: 'changed' } })) }));
       host = await runtime.startBrowserHost({ ...options, extensions: { kind, entries } });
-      const status = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', id: null });
+      const status = await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', query: null });
       assert.equal(status.value.desired.outcome.kind, 'grant-mismatch');
       assert.deepEqual(reads, []); assert.equal(f.state.modules.length, imports);
       assert.equal(f.state.events.filter(value => value.endsWith(':observe')).length, observations);
@@ -128,7 +128,7 @@ for (const kind of ['transient', 'durable-artifacts']) test(`${kind} startup obs
       host = await runtime.startBrowserHost({ ...options, extensions: { kind, entries } });
       assert.deepEqual(reads, []); assert.equal(f.state.modules.length, imports);
       assert.equal(f.state.events.filter(value => value.endsWith(':observe')).length, observations);
-      assert.equal((await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', id: null })).value.runtime.kind, 'applied-empty');
+      assert.equal((await requestControl(join(options.directory, 'control.sock'), { op: 'extensions-status', query: null })).value.runtime.kind, 'applied-empty');
     }
   } finally { mock.mock.restore(); syncBuiltinESMExports(); await host.close(); }
 });
@@ -181,4 +181,17 @@ test('durable extensions preserve native model discovery, default choice and sto
     assert.ok(messages.some(message => message.method === 'model/list'));
     assert.ok(messages.some(message => message.method === 'turn/start'));
   } finally { await host.close(); }
+});
+
+test('transient configured-native startup rejects existing durable ownership before native executable use', async t => {
+  const runtime = await packagedHost(t), f = await fixture(t, runtime);
+  const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'durable-artifacts', entries: [f.selected(f.first, 'artifact-a')] } });
+  await host.close();
+  const executable = join(f.root, 'native-sentinel'), marker = join(f.root, 'native-imported');
+  await fs.writeFile(executable, `#!${process.execPath}\nimport {writeFileSync} from 'node:fs';writeFileSync(${JSON.stringify(marker)},'ran');process.exit(1);`, { mode: 0o700 });
+  await assert.rejects(runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [] }, agentStartup: { kind: 'configured', configuration: { default: 'native', agents: [
+    { name: 'native', kind: 'codex', cwd: f.root, executable },
+  ] } } }), /requires durable artifact ownership/);
+  await assert.rejects(fs.readFile(marker), { code: 'ENOENT' });
+  assert.equal(f.state.modules.length, 1);
 });

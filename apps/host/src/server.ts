@@ -164,10 +164,15 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     switch (extensions.kind) {
       case 'durable-artifacts': {
         const durable = await createServerSelection({ database: accessDatabase, entries: extensions.entries,
-          runtime: providers.status, isClosing: () => closing });
+          runtime: providers.status, isClosing: () => closing,
+          replace: selected => {
+            if (!host) throw new Error('Selection host unavailable');
+            return replaceExtensions(host, selected);
+          },
+          stopRuntime: () => { void close().catch(() => { process.exitCode = 1; }); } });
         selection = durable;
-        boot = readyHost => durable.activate(selected => replaceExtensions(readyHost, selected));
-        directReplace = async () => { throw new Error('Durable extensions require extensions-select and restart'); };
+        boot = () => durable.activate();
+        directReplace = async () => { throw new Error('Durable extensions require selection commands'); };
         selectionControl = durable;
         break;
       }
