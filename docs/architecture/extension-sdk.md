@@ -30,12 +30,12 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.4.0 makes this activation-context method required. Existing 0.3.0 extensions must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 makes this activation-context method required. Existing 0.4.0 extensions must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.4.0`. Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 8, and transcript projection version is 3.
+SDK compatibility is `0.5.0`. Authors supply a presentation and hosts supply the credential capability.
+Workspace package versions are `0.0.0`, service wire version is 9, and transcript projection version is 4.
 
 A UI entry implements `UiExtensionEntry<'desktop'>` or `UiExtensionEntry<'ios'>`.
 Its activation returns modules and a required `dispose` function, either directly or through a promise.
@@ -209,7 +209,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.4.0",
+			"sdkVersion": "0.5.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}

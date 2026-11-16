@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { png } from '../host/image-fixtures.mjs';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
 import { createProviderRegistry } from '@agentui/host';
@@ -168,4 +169,19 @@ for (const version of [1, 2]) test(`SQL projection refuses mismatched parsed ver
   assert.deepEqual(await start(), { kind: 'rejected', reason: 'provider-command-unavailable' });
   assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 1);
+});
+
+
+test('provider image and combined offered image sends preserve the uploaded image without partial capture', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
+  const attachment = await f.client.uploadImage({ scope, uploadId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Screen.png', bytes: png() });
+  const before = durable(f), plain = { ...send(scope), body: { kind: 'send', text: '', imageId: attachment.imageId } };
+  assert.deepEqual(await f.client.conversation(scope).submit(plain), { kind: 'rejected', reason: 'This model cannot read images.' });
+  const combined = offered(scope);
+  combined.body.imageId = attachment.imageId;
+  assert.equal((await f.client.conversation(scope).submit(combined)).kind, 'rejected');
+  assert.deepEqual(durable(f), before);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM command_images').get().n), 0);
+  assert.deepEqual(Buffer.from((await f.client.readImage(scope, attachment.imageId)).bytes), png());
+  assert.equal(a.calls.submits.length, 0);
 });

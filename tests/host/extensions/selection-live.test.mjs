@@ -355,7 +355,7 @@ test('current host migrates saved projection 2 conversations to 3 before live pr
     return db.prepare('SELECT * FROM conversations ORDER BY conversation').all();
   });
   await f.restart();
-  assert.deepEqual(f.database(db => db.prepare('SELECT * FROM conversations ORDER BY conversation').all().map(row => ({ ...row }))), before.map(row => ({ ...row, version: 3 })));
+  assert.deepEqual(f.database(db => db.prepare('SELECT * FROM conversations ORDER BY conversation').all().map(row => ({ ...row }))), before.map(row => ({ ...row, version: 4 })));
   assert.equal(f.count(f.state.modules.at(-1), 'observe'), 2);
   await f.select();
   assert.equal((await f.send(f.apply())).value.outcome.kind, 'applied');

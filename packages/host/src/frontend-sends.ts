@@ -17,11 +17,18 @@ type Identity = { readonly scope: ConversationScope; readonly id: string };
 type Owned = Identity & { readonly actor: FrontendSendActor };
 type AdmittedOwner = { readonly actorId: string; readonly state: 'available' | 'unavailable'; readonly run: AguiRunKey };
 type OwnerRows = { readonly admitted: AdmittedOwner | null; readonly tombstoneActors: ReadonlySet<string> };
-type AuthorityRequest = {
+type OwnerState = 'absent' | 'available' | 'unavailable';
+type OwnerStateRequest = {
+  readonly intent: 'owner-state';
+  readonly target: Identity | OfferedStoredCommand;
+  readonly actor: FrontendSendActor | undefined;
+};
+type CommandAuthorityRequest = {
+  readonly intent: 'dispatch' | 'private-settler';
   readonly stored: StoredCommand;
   readonly actor: FrontendSendActor | undefined;
-  readonly intent: 'dispatch' | 'owner-evidence' | 'private-settler';
 };
+type AuthorityRequest = OwnerStateRequest | CommandAuthorityRequest;
 export class FrontendSends {
   constructor(private readonly db: DatabaseSync) {}
   assertActor(actor: FrontendSendActor | undefined): FrontendSendActor {
@@ -50,34 +57,40 @@ export class FrontendSends {
     if (owner.run.threadId !== stored.agui.threadId || owner.run.runId !== stored.agui.runId) throw new FrontendAccessError('frontend-owner-corrupt');
     return owner;
   }
-  assertAuthority({ stored, actor, intent }: AuthorityRequest): void {
-    if (!isOffered(stored)) {
-      if (intent === 'dispatch' && actor) this.assertActor(actor);
-      else if (intent === 'private-settler' && actor && !actor.authorized()) throw new Error('Unauthorized actor');
-      return;
+  assertAuthority(input: OwnerStateRequest): OwnerState;
+  assertAuthority(input: CommandAuthorityRequest): void;
+  assertAuthority(input: AuthorityRequest): OwnerState | void {
+    let target: Identity | OfferedStoredCommand;
+    if (input.intent === 'owner-state') {
+      target = input.target;
+    } else {
+      if (!isOffered(input.stored)) {
+        if (input.intent === 'dispatch' && input.actor) this.assertActor(input.actor);
+        else if (input.intent === 'private-settler' && input.actor && !input.actor.authorized()) throw new Error('Unauthorized actor');
+        return;
+      }
+      target = input.stored;
     }
-    const identity = { scope: stored.command.scope, id: stored.command.clientCommandId };
-    if (intent === 'private-settler') {
-      this.assertActor(actor);
-      this.admittedOwner(this.ownerRows(identity), stored);
-      return;
-    }
-    const state = this.check({ ...identity, actor, stored });
-    if (intent === 'dispatch' && state !== 'available') throw new Error('Frontend owner unavailable');
-  }
-  check(input: Identity & { readonly actor: FrontendSendActor | undefined; readonly stored?: OfferedStoredCommand }): 'absent' | 'available' | 'unavailable' {
-    const actor = this.assertActor(input.actor), rows = this.ownerRows(input);
-    const owner = input.stored ? this.admittedOwner(rows, input.stored) : rows.admitted;
+    const identity = 'command' in target
+      ? { scope: target.command.scope, id: target.command.clientCommandId }
+      : target;
+    const actor = this.assertActor(input.actor);
+    const rows = this.ownerRows(identity);
+    const owner = 'command' in target ? this.admittedOwner(rows, target) : rows.admitted;
+    if (input.intent === 'private-settler') return;
     if (owner && owner.actorId !== actor.id) throw new FrontendAccessError('frontend-owner-mismatch');
-    return owner?.state ?? (rows.tombstoneActors.has(actor.id) ? 'unavailable' : 'absent');
+    const state = owner?.state ?? (rows.tombstoneActors.has(actor.id) ? 'unavailable' : 'absent');
+    if (input.intent === 'dispatch' && state !== 'available') throw new Error('Frontend owner unavailable');
+    if (input.intent === 'owner-state') return state;
   }
+
   admission(command: ClientCommand, existing: StoredCommand | null, actor?: FrontendSendActor): void {
     if (existing) {
-      if (isOffered(existing)) this.check({ scope: command.scope, id: command.clientCommandId, actor, stored: existing });
+      if (isOffered(existing)) this.assertAuthority({ intent: 'owner-state', target: existing, actor });
       return;
     }
     if (command.version !== 2) return;
-    if (this.check({ scope: command.scope, id: command.clientCommandId, actor }) === 'unavailable') throw new FrontendAccessError('frontend-closures-unavailable');
+    if (this.assertAuthority({ intent: 'owner-state', target: { scope: command.scope, id: command.clientCommandId }, actor }) === 'unavailable') throw new FrontendAccessError('frontend-closures-unavailable');
   }
   admitCapture(capture: MatchedProviderCommand, actor?: FrontendSendActor): void {
     const { command, agui: run } = capture;
@@ -89,7 +102,7 @@ export class FrontendSends {
       .run(scope.hostId, scope.conversationId, command.clientCommandId, owner.id, owner.platform, run.threadId, run.runId);
   }
   unavailable(input: Owned & { readonly stored?: OfferedStoredCommand }): void {
-    this.check(input);
+    this.assertAuthority({ intent: 'owner-state', target: input.stored ?? input, actor: input.actor });
     if (input.stored) {
       this.db.prepare("UPDATE frontend_sends SET state='unavailable' WHERE host=? AND conversation=? AND command_id=? AND actor_id=? AND state<>'tombstone'")
         .run(input.scope.hostId, input.scope.conversationId, input.id, input.actor.id);
@@ -113,7 +126,7 @@ export async function recoverFrontendBinding(input: {
   const { request, actor, owners } = input;
   const identity = { scope: request.scope, id: identifier(request.id), actor };
   const initial = input.command();
-  const ownerFence = (stored: OfferedStoredCommand | null) => owners.check({ ...identity, ...(stored ? { stored } : {}) });
+  const ownerFence = (stored: OfferedStoredCommand | null) => owners.assertAuthority({ intent: 'owner-state', target: stored ?? identity, actor });
   ownerFence(initial);
   if (request.action === 'unavailable') {
     input.transaction(() => {

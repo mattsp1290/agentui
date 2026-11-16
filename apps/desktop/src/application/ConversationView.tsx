@@ -1,5 +1,6 @@
 import { canRetryObservation } from '@agentui/contracts';
 import type { ObservationStopReason } from '@agentui/contracts';
+import { IMAGE_MAX_BYTES } from '@agentui/contracts/image';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation, ConversationObservation, PermissionState } from './application-controller.js';
@@ -11,6 +12,7 @@ import { FileActivity } from './FileActivity.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
 import { CustomizationTranscript, type TranscriptSelection } from './DesktopCustomizations.js';
+import { ImageAttachmentCard, imageSize } from './ImageAttachmentCard.js';
 
 const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
   'unsupported': 'This provider does not support live updates.',
@@ -49,6 +51,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
   const approvalGuards = useRef(new Map<OpenConversation['store'], Set<string>>());
   const [approving, setApproving] = useState<ReadonlySet<string>>(new Set());
   const [stopPending, setStopPending] = useState<typeof stopGuard.current>(null);
+  const imageInput = useRef<HTMLInputElement>(null);
+  const [imageError, setImageError] = useState<{ readonly store: OpenConversation['store']; readonly message: string } | null>(null);
   useEffect(() => {
     setEditor(previous => previous.kind === 'saved' && previous.text !== view.draft ? { kind: 'saved', text: view.draft } : previous);
   }, [view.draft]);
@@ -98,7 +102,16 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
       setApproving(new Set(guards));
     });
   }
-  const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' && Boolean(editor.text.trim());
+  const image = view.image;
+  const acceptsImages = 'model' in active.agent && Boolean(active.agent.model?.inputModalities?.includes('image')) && active.agent.commands.includes('send');
+  const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' &&
+    (image ? image.status === 'ready' && acceptsImages : Boolean(editor.text.trim()));
+  const sentImages = view.document.domain.messages.flatMap(message => message.image ? [{ messageId: message.messageId, image: message.image }] : []);
+  function imageAction(operation: () => Promise<void>): void {
+    const store = active.store;
+    setImageError(null);
+    void operation().catch((error: unknown) => setImageError({ store, message: error instanceof Error ? error.message : 'The image could not be changed.' }));
+  }
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
     {active.agent.availability.kind === 'unavailable' && <p role="status">{active.agent.availability.reason} Saved history remains available.</p>}
@@ -120,12 +133,16 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
         <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
-        {message.role === 'assistant' ? <AssistantReply text={message.text} /> : <p>{message.text}</p>}
+        {message.role === 'assistant' ? <AssistantReply text={message.text} /> : message.text && <p>{message.text}</p>}
+        {message.image && <ImageAttachmentCard attachment={message.image} read={actions.readImage} />}
         {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
       <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
       <FileActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
     </div>} />
+    {transcript.kind === 'override' && sentImages.length > 0 && <section className="sent-images" aria-label="Sent images">
+      <h2>Sent images</h2>{sentImages.map(sent => <ImageAttachmentCard key={sent.messageId} attachment={sent.image} read={actions.readImage} />)}
+    </section>}
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
         {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve') || decision.reserved || approving.has(decision.pendingId)} onClick={() => approve(decision.pendingId, choice)}>{decision.choiceLabels?.[choice] ?? (agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice)}</button>)}
@@ -135,6 +152,29 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
       <label htmlFor="message">Message</label>
       <textarea id="message" value={editor.text} onChange={event => void edit(event.target.value)} readOnly={Boolean(storageFailure)} placeholder={presentation.placeholder} rows={3} />
       {editor.kind === 'failed' && <p role={storageFailure ? 'note' : 'alert'}>Draft not saved. {storageFailure ? 'Copy your text before reloading.' : editor.message}</p>}
+      {(image || acceptsImages) && <div className="composer-attachments">
+        {image && <div className="composer-image" aria-label="Attached image">
+          <span>{image.name} · {imageSize(image.byteLength)}</span>
+          <span role="status">{image.status === 'uploading' ? 'Uploading…' : image.status === 'ready' ? 'Ready' : image.status === 'interrupted' ? 'Upload interrupted' : image.reason}</span>
+          {(image.status === 'failed' || image.status === 'interrupted') && <button type="button" disabled={!enabled}
+            onClick={() => imageAction(() => active.store.retryImage())}>Retry</button>}
+          <button type="button" disabled={Boolean(storageFailure)} onClick={() => imageAction(() => active.store.removeImage())}>Remove</button>
+        </div>}
+        {image && !acceptsImages && <span>This agent cannot receive images. Remove the image to send.</span>}
+        {acceptsImages && <>
+          <input ref={imageInput} type="file" accept="image/png,image/jpeg" aria-label="Image file" hidden onChange={event => {
+            const file = event.target.files?.[0];
+            event.target.value = '';
+            if (file) imageAction(async () => {
+              if (file.size > IMAGE_MAX_BYTES) throw new Error('Choose an image of at most 4 MB.');
+              await active.store.selectImage({ name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) });
+            });
+          }} />
+          <button type="button" disabled={!enabled || Boolean(storageFailure) || image?.status === 'uploading'}
+            onClick={() => imageInput.current?.click()}>{image ? 'Replace image' : 'Add image'}</button>
+        </>}
+        {imageError?.store === active.store && <p role="alert">{imageError.message}</p>}
+      </div>}
       <div className="composer-footer">{composerControls?.(enabled && editor.kind === 'saved' && !responding)}<div className="composer-send-actions"><button disabled={!canSend}>Send</button>
         {run && run.kind !== 'ended' && <button type="button" disabled={!connected || !active.agent.commands.includes('cancel') || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
       <p className="composer-disclosure">{presentation.footer}</p>

@@ -1,6 +1,8 @@
 import { canonicalJson, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationScope } from '@agentui/contracts';
-import type { LocalRecords, OutboxEntry } from './types.js';
+import { identifier, record } from '@agentui/contracts/decode';
+import { IMAGE_MAX_BYTES, parseImageAttachment, parseImageName, parseUploadId } from '@agentui/contracts/image';
+import type { ComposerImageRecord, LocalRecords, OutboxEntry } from './types.js';
 
 export function immutable<T>(value: T, visited = new WeakSet<object>()): T {
   if (value && typeof value === 'object' && !visited.has(value)) {
@@ -25,10 +27,19 @@ export function string(value: unknown): string {
 export function copyCanonicalJson<T>(value: T): T {
   return JSON.parse(canonicalJson(value)) as T;
 }
+function composerImage(value: unknown): ComposerImageRecord | null {
+  if (value === null) return null;
+  const input = record(value, ['selectionId', 'uploadId', 'name', 'byteLength', 'attachment']);
+  const name = parseImageName(input.name), byteLength = integer(input.byteLength);
+  if (!byteLength || byteLength > IMAGE_MAX_BYTES) throw new Error('Invalid saved image size');
+  const attachment = input.attachment === null ? null : parseImageAttachment(input.attachment);
+  if (attachment && (attachment.name !== name || attachment.byteLength !== byteLength)) throw new Error('Saved image attachment mismatch');
+  return { selectionId: identifier(input.selectionId), uploadId: parseUploadId(input.uploadId), name, byteLength, attachment };
+}
 export function restore(value: unknown, scope: ConversationScope): LocalRecords {
-  if (value === null) return immutable({ version: 1, scope, draft: '', draftRevision: 0, outbox: [] });
+  if (value === null) return immutable({ version: 2, scope, draft: '', draftRevision: 0, outbox: [], image: null });
   const input = object(copyCanonicalJson(value));
-  if (input.version !== 1) throw new Error('Unsupported local storage version');
+  if (input.version !== 1 && input.version !== 2) throw new Error('Unsupported local storage version');
   if (!sameScope(parseScope(input.scope), scope)) throw new Error('Local storage scope mismatch');
   if (!Array.isArray(input.outbox)) throw new Error('Invalid outbox');
   const ids = new Set<string>();
@@ -43,5 +54,6 @@ export function restore(value: unknown, scope: ConversationScope): LocalRecords 
     if (revision !== null && (revision > draftRevision || command.body.kind !== 'send')) throw new Error('Invalid captured draft revision');
     return { command, draftRevision: revision };
   });
-  return immutable({ version: 1, scope, draft: string(input.draft), draftRevision, outbox });
+  const image = input.version === 1 ? null : composerImage(input.image);
+  return immutable({ version: 2, scope, draft: string(input.draft), draftRevision, outbox, image });
 }

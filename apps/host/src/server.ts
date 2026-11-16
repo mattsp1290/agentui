@@ -204,6 +204,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         if (!host) throw new Error('Host not ready');
         return host.inspect(scope).snapshot.document.domain.currentRun?.runId ?? null;
       };
+      const readImage: NonNullable<Parameters<typeof createCodexDriver>[0]['readImage']> = (scope, imageId) => {
+        if (!host) throw new Error('Host not ready');
+        return host.readImage(scope, imageId);
+      };
       for (const provider of configured.agents) {
         const append = appendFor(provider.kind);
         if (!(await stat(provider.cwd).catch(() => null))?.isDirectory()) throw new Error(`Provide --workspace pointing to an existing directory for ${provider.kind}.`);
@@ -244,7 +248,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
               if (version !== `codex-cli ${CODEX_RUNTIME.version}`) throw new Error(`Unsupported Codex version ${version}. This app requires Codex ${CODEX_RUNTIME.version}. Install that version and restart this host.`);
               if (startup.kind === 'desktop') await promisify(execFile)(provider.executable ?? 'codex', ['login', 'status'], { timeout: 5000, maxBuffer: 4096, env });
               const codex = createCodexDriver({ cwd: provider.cwd, version: CODEX_RUNTIME.version,
-                ...(provider.executable ? { executable: provider.executable } : {}), env, append });
+                ...(provider.executable ? { executable: provider.executable } : {}), env, append, readImage });
               driver = codex;
               break;
             }

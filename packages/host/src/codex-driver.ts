@@ -4,6 +4,7 @@ import type { ClientCommand, ConversationScope } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { canonicalJson } from '@agentui/contracts';
 import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversation';
+import type { ImageAttachment, ImageId } from '@agentui/contracts/image';
 import { nonempty, object } from './codec.js';
 import type { CapturedTarget, CommandResult, HostOutput, Installation, NativeRun, ProviderDriver } from './durable-model.js';
 import { CodexRpc, CodexRpcError } from './codex-rpc.js';
@@ -23,6 +24,7 @@ export interface CodexDriverOptions {
   readonly executable?: string;
   readonly args?: readonly string[];
   readonly env?: NodeJS.ProcessEnv;
+  readonly readImage?: (scope: ConversationScope, imageId: ImageId) => { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
 }
 interface ActiveTurn {
   readonly installation: Installation;
@@ -312,9 +314,18 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
     }, result: { kind: 'completed', output } };
     return result;
   }
-  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string } }, target: CapturedTarget, model?: string): Promise<Observation> {
+  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string; readonly imageId?: ImageId } }, target: CapturedTarget, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
     const modelSelection = model === undefined ? {} : { model };
     const key = scopeKey(command.scope);
+    let image: { readonly attachment: ImageAttachment; readonly item: { readonly type: 'image'; readonly url: string } } | undefined;
+    if (command.body.imageId !== undefined) {
+      if (!options.readImage) return { kind: 'not-dispatched', reason: 'This model cannot read images.' };
+      try {
+        const { attachment, bytes } = options.readImage(command.scope, command.body.imageId);
+        image = { attachment, item: { type: 'image', url: `data:${attachment.mediaType};base64,${Buffer.from(bytes).toString('base64')}` } };
+      } catch { return { kind: 'not-dispatched', reason: 'This image could not be read. Attach it again.' }; }
+    }
+    const input = [...(command.body.text ? [{ type: 'text', text: command.body.text, text_elements: [] }] : []), ...(image ? [image.item] : [])];
     busy.add(key);
     let turn: ActiveTurn | null = null;
     let method = 'initialize';
@@ -325,7 +336,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
         threadId = target.run.reference.opaque;
         if (!loaded.has(threadId)) {
           method = 'thread/resume';
-          await rpc.request('thread/resume', { threadId, cwd, ...modelSelection, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only' });
+          await rpc.request('thread/resume', { threadId, cwd, ...modelSelection, approvalPolicy: 'on-request', approvalsReviewer: 'user', sandbox: 'read-only', excludeTurns: true });
           loaded.add(threadId);
         }
       } else {
@@ -337,10 +348,9 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       turn = { installation: target.installation, scope: command.scope, threadId, previousRunId: target.run?.identity.runId ?? null, messages: new Map(), approvalDetails: new Map(), rendered: [], timer: undefined, run: null, commands: null, files: null, revision: 0, complete: false, stopCommandId: null };
       active.set(threadId, turn);
       publish(turn, [{ kind: 'message-updated', messageId: `${target.identity.hostOperationId}:user`,
-        revision: 1, role: 'user', text: command.body.text, complete: true }]);
+        revision: 1, role: 'user', text: command.body.text, complete: true, ...(image ? { image: image.attachment } : {}) }]);
       method = 'turn/start';
-      const result = object(await rpc.request('turn/start', { threadId, ...modelSelection,
-        input: [{ type: 'text', text: command.body.text, text_elements: [] }], clientUserMessageId: command.clientCommandId }));
+      const result = object(await rpc.request('turn/start', { threadId, ...modelSelection, input, clientUserMessageId: command.clientCommandId }));
       const nativeRun = run(turn, nonempty(object(result.turn).id));
       return acknowledged(command, target, { events: [], runs: [nativeRun], decisions: [] }, nativeRun.identity.runId);
     } catch (error) {
@@ -431,6 +441,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       modelDrivers ??= initialize().then(() => discoverCodexModels(params => rpc.request('model/list', params))).then(models => models.map(({ model, isDefault, selectable }) => {
         const selected = codexInstallation(cwd, options.version, model.id);
         return { model, isDefault, selectable, driver: { source: driver.source, installation: selected, capability: driver.capability,
+          ...(model.inputModalities?.includes('image') && options.readImage ? { imageInput: true as const } : {}),
           dispatch: (command, target) => dispatch(command, target, selected, model.id) } };
       }));
       return modelDrivers;

@@ -1,5 +1,7 @@
 import { parseFrontendBinding } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest, FrontendEligibility } from './frontend-sends.js';
+import { IMAGE_FAILURE_KINDS, parseImageAttachment, parseImageBase64, parseImageId, parseImageName, parseUploadId } from './image.js';
+import type { ImageAttachment, ImageId, UploadId } from './image.js';
 import { parseConversationPermissions } from './permissions.js';
 import type { ConversationPermissions } from './permissions.js';
 import { parseProviderObservationStatus } from './observation.js';
@@ -24,7 +26,7 @@ export const SERVICE_SEARCH_EXCERPT_LENGTH = 160;
 export const SERVICE_EVENT_PAGE = Object.freeze({ events: HOST_DEFAULT_PAGE_EVENTS, bytes: HOST_DEFAULT_PAGE_BYTES });
 export const SERVICE_SNAPSHOT_BYTES = HOST_DEFAULT_SNAPSHOT_BYTES;
 export const SERVICE_MAX_RESPONSE_BYTES = SERVICE_SNAPSHOT_BYTES + SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES;
-export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable', 'create-rejected'] as const;
+export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable', 'create-rejected', ...IMAGE_FAILURE_KINDS] as const;
 export type ServiceFailureKind = typeof SERVICE_FAILURE_KINDS[number];
 export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
@@ -32,6 +34,8 @@ export class ServiceError extends Error {
 export type ServiceRequest =
   | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest)
   | { readonly op: 'pair'; readonly code: string }
+  | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
+  | { readonly op: 'image-read'; readonly scope: ConversationScope; readonly imageId: ImageId }
   | { readonly op: 'metadata' }
   | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
@@ -53,8 +57,9 @@ interface AgentDescription {
 }
 export type NativeAgentDescriptor = AgentDescription & {
   readonly runtime: NativeRuntimeIdentity;
-  readonly model?: { readonly id: string; readonly label: string };
+  readonly model?: { readonly id: string; readonly label: string; readonly inputModalities?: readonly InputModality[] };
 };
+export type InputModality = 'text' | 'image';
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
 });
@@ -82,6 +87,8 @@ export interface ConversationSearchPage {
 }
 export interface ServiceValueMap {
   readonly 'frontend-binding': FrontendBinding;
+  readonly 'image-upload': { readonly scope: ConversationScope; readonly attachment: ImageAttachment };
+  readonly 'image-read': { readonly scope: ConversationScope; readonly attachment: ImageAttachment; readonly base64: string };
   readonly pair: null;
   readonly metadata: ServiceMetadata;
   readonly catalog: readonly ConversationCatalogEntry[];
@@ -105,6 +112,8 @@ export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
  * Preserve previously uncertain commands until authoritative receipt settlement. */
 export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   frontendBinding(input: FrontendBindingRequest): Promise<FrontendBinding>;
+  uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
+  readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
   pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
@@ -129,6 +138,13 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       exact(input, ['op', 'scope', 'id', 'action']);
       if (input.action !== 'recover' && input.action !== 'unavailable') throw new Error('Invalid binding action');
       return { op: 'frontend-binding', scope: parseScope(input.scope), id: identifier(input.id), action: input.action };
+    case 'image-upload': {
+      exact(input, ['op', 'scope', 'uploadId', 'name', 'byteLength', 'base64']);
+      const byteLength = count(input.byteLength);
+      return { op: 'image-upload', scope: parseScope(input.scope), uploadId: parseUploadId(input.uploadId), name: parseImageName(input.name),
+        byteLength, base64: parseImageBase64(input.base64, byteLength) };
+    }
+    case 'image-read': exact(input, ['op', 'scope', 'imageId']); return { op: 'image-read', scope: parseScope(input.scope), imageId: parseImageId(input.imageId) };
     case 'pair': exact(input, ['op', 'code']); return { op: 'pair', code: identifier(input.code) };
     case 'metadata': exact(input, ['op']); return { op: 'metadata' };
     case 'search': {
@@ -193,9 +209,16 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   const common: AgentDescription = { frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
-  const model = Object.hasOwn(input, 'model') ? record(input.model, ['id', 'label']) : null;
+  const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
+  if (model) exact(model, ['id', 'label', ...(Object.hasOwn(model, 'inputModalities') ? ['inputModalities'] : [])]);
   return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
-    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label) } } : {}) };
+    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label),
+      ...(Object.hasOwn(model, 'inputModalities') ? { inputModalities: inputModalities(model.inputModalities) } : {}) } } : {}) };
+}
+function inputModalities(value: unknown): readonly InputModality[] {
+  if (!Array.isArray(value) || !value.length || new Set(value).size !== value.length ||
+    value.some(item => item !== 'text' && item !== 'image')) throw new Error('Invalid model input modalities');
+  return value as InputModality[];
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);
@@ -246,6 +269,14 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
     const binding = parseFrontendBinding(value);
     if (binding.kind === 'bound' ? binding.command.clientCommandId !== request.id || !sameScope(binding.command.scope, request.scope) : binding.id !== request.id) throw new Error('Foreign frontend binding');
     return binding;
+  },
+  'image-upload'(value) {
+    const input = record(value, ['scope', 'attachment']);
+    return { scope: parseScope(input.scope), attachment: parseImageAttachment(input.attachment) };
+  },
+  'image-read'(value) {
+    const input = record(value, ['scope', 'attachment', 'base64']), attachment = parseImageAttachment(input.attachment);
+    return { scope: parseScope(input.scope), attachment, base64: parseImageBase64(input.base64, attachment.byteLength) };
   },
   pair: nil, close: nil,
   metadata(value) {
@@ -307,6 +338,8 @@ export function parseServiceResponse<K extends keyof ServiceValueMap>(request: R
   const kind = SERVICE_FAILURE_KINDS.find(kind => kind === error.kind);
   if (input.ok !== false || kind === undefined ||
     typeof error.message !== 'string' || !error.message) throw new Error('Invalid service error');
+  if (IMAGE_FAILURE_KINDS.some(imageKind => imageKind === kind) &&
+    (request.op !== 'image-upload' && request.op !== 'image-read' || error.message.length > 256)) throw new Error('Invalid image failure');
   if (kind === 'create-rejected' && request.op !== 'create') throw new Error('Invalid creation refusal');
   return { ok: false, error: { kind, message: error.message } };
 }
