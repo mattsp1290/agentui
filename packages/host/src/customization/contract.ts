@@ -4,8 +4,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { record } from '@agentui/contracts/decode';
 import { parseExtensionManifest, type ExtensionManifest } from '@agentui/sdk';
 
-export const supportedNodeMinimum = [24, 22, 3] as const;
-export const supportedNodeRange = `>=${supportedNodeMinimum.join('.')} <${supportedNodeMinimum[0] + 1}`;
+const supportedNodeMinimum = [24, 22, 3] as const;
+const supportedNodeRange = `>=${supportedNodeMinimum.join('.')} <${supportedNodeMinimum[0] + 1}`;
 export const supportedNpmVersion = '11.19.1';
 export const supportedPackageManager = `npm@${supportedNpmVersion}` as const;
 export const serverCatalogFile = 'entries.mjs';
