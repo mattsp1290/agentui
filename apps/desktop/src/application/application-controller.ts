@@ -129,7 +129,10 @@ export function createApplicationController(deps: {
       if (capturedSends.length || state.capturedSends.length) publish({ capturedSends });
       if (session) { evictUnused(session); wakeRecovery(); }
     },
-    failed(viewId, cause) { if (session) failStorage(session, session.views.get(viewId)?.storage ?? null, cause); },
+    failed(viewId, cause) {
+      const owner = session, lease = owner?.views.get(viewId);
+      if (owner && lease) failStorage(owner, lease.storage, cause);
+    },
     unauthorized() { if (session) fail(session, { kind: 'access-revoked' }); },
   });
   function closeLease(owner: Session, id: string, lease: ViewLease): Promise<void> {

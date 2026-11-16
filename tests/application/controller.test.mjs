@@ -1533,3 +1533,27 @@ test('a fresh rejected selection retains its failed physical close for disposal 
   assert.deepEqual(closes, ['candidate-view', 'original-view']);
   assert.equal(f.app.dispose(), closing);
 });
+
+test('old capture disposal save failure does not poison a restarted owner', async t => {
+  const f=fixture(); f.behavior.frontendOffers='ag-ui-capture-and-bind';
+  f.views.set('original-view/host',{...empty(),route:scope});
+  const source=await createFrontendToolGeneration({namespace:'fixture',generation:'A',platform:'desktop',capture:()=>undefined,
+    activate({frontendTools}){frontendTools.add({definition:{name:'echo',description:'Original'},decodeInput:x=>x,async execute(){throw Error('No execution');}});return{dispose(){}};}});
+  const token={}; f.app.frontendGenerations.begin(token);f.app.frontendGenerations.publish(token,{kind:'ready',generations:[source.generation]});
+  const gate=deferred(),entered=deferred();
+  t.after(async()=>{gate.reject(new Error('Cleanup'));await f.app.dispose();await source.generation.retire();});
+  await f.app.start();
+  f.behavior.submit=async command=>({kind:'receipt',receipt:{scope,clientCommandId:command.clientCommandId,hostOperationId:'operation',sequence:1,state:{kind:'completed'}}});
+  await f.app.getSnapshot().active.store.send('Original');
+  const original=f.drafts.get('original-view/host/conversation').frontendSends[0];
+  let held=true;
+  f.behavior.write=async()=>{if(held){held=false;entered.resolve();await gate.promise;}};
+  const closing=f.app.dispose();await entered.promise;
+  const restarted=f.app.start();gate.reject(new Error('Only old capture save failed'));
+  await Promise.all([closing,restarted]);
+  const state=f.app.getSnapshot();
+  assert.equal(state.storageFailure,'');assert.equal(state.host.kind,'ready');
+  await state.active.store.setDraft('Healthy restarted draft');
+  const saved=f.drafts.get('original-view/host/conversation');
+  assert.equal(saved.draft,'Healthy restarted draft');assert.deepEqual(saved.frontendSends[0].command,original.command);assert.equal(saved.frontendSends[0].ownerId,original.ownerId);
+});
