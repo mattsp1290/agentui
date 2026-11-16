@@ -1,3 +1,5 @@
+import { parsePermissionScope } from './permissions.js';
+import type { PermissionScope } from './permissions.js';
 import { record, nonempty, count, identifier, exact } from './decode.js';
 import type { ConversationScope, ProviderBinding, RunAuthority, RunIdentity } from './index.js';
 
@@ -8,7 +10,8 @@ export const JSON_MAX_DEPTH = 64;
 export type CommandBody =
   | { readonly kind: 'send'; readonly text: string }
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }
-  | { readonly kind: 'cancel'; readonly runId: string };
+  | { readonly kind: 'cancel'; readonly runId: string }
+  | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope };
 export interface ClientCommand {
   readonly version: 1;
   readonly scope: ConversationScope;
@@ -176,6 +179,10 @@ export function parseCommand(value: unknown): ClientCommand {
     case 'approve':
       exact(body, ['kind', 'pendingId', 'choiceId']);
       parsed = { kind: 'approve', pendingId: nonempty(body.pendingId), choiceId: nonempty(body.choiceId) };
+      break;
+    case 'revoke-permission':
+      exact(body, ['kind', 'permissionId', 'scope']);
+      parsed = { kind: 'revoke-permission', permissionId: identifier(body.permissionId), scope: parsePermissionScope(body.scope) };
       break;
     case 'cancel':
       exact(body, ['kind', 'runId']);

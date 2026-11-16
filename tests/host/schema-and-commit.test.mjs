@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { openDatabase as openVersionTwoDatabase } from './fixtures/sqlite-format2.ts';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { budgets } from '../../packages/host/dist/durable-model.js';
-import { fixture, scope, installed, projection, note } from './fixture.mjs';
+import { fixture, scope, installed, projection, note, command, run, question } from './fixture.mjs';
 
 test('opening incomplete version one refuses without guessing a migration or changing file bytes', t => {
   const f = fixture(t);
@@ -54,7 +55,7 @@ test('store notifies only successful write commits after other connections can o
 
 test('opening incomplete version two refuses before adding provider creation metadata', t => {
   const f = fixture(t), host = f.open(); host.close();
-  const db = new DatabaseSync(f.path); db.exec('DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
   assert.deepEqual(readFileSync(f.path), before);
@@ -67,7 +68,7 @@ for (const [failure, mutate, options, message] of [
 ]) {
   test(`pre-feature version two ${failure} refuses without adding provider metadata or changing file bytes`, t => {
     const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
-    const db = new DatabaseSync(f.path); db.exec(`DROP TABLE provider_creations; ${mutate}`); db.close();
+    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP TABLE provider_creations; ${mutate}`); db.close();
     const before = readFileSync(f.path);
     assert.throws(() => f.open(options), message);
     const reader = new DatabaseSync(f.path);
@@ -85,4 +86,26 @@ test('corrupt existing provider metadata refuses before migrating a legacy trans
   const before = readFileSync(f.path);
   assert.throws(() => f.open({ projection: transcriptProjection }), /Corrupt creation metadata/);
   assert.deepEqual(readFileSync(f.path), before);
+});
+
+test('version two upgrades preserve pending decisions and uncertain commands and the older opener refuses format three', async t => {
+  const f = fixture(t, { async afterAcceptance() { throw new Error('Reply lost'); } }), host = f.open();
+  host.createConversation(scope, installed);
+  host.append(scope, { ...note('saved'), runs: [run()], decisions: [question()] });
+  await host.conversation(scope).submit(command('uncertain'));
+  host.close(); await host.drained;
+  const db = new DatabaseSync(f.path);
+  db.exec('PRAGMA user_version=2');
+  const saved = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits']
+    .map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]);
+  assert.equal(JSON.parse(saved.find(([name]) => name === 'commands')[1][0].receipt).state.kind, 'uncertain');
+  db.close();
+  const reopened = f.open();
+  const reader = new DatabaseSync(f.path);
+  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 3);
+  for (const [table, rows] of saved) assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), rows);
+  reader.close(); reopened.close(); await reopened.drained;
+  const bytes = readFileSync(f.path);
+  assert.throws(() => openVersionTwoDatabase(f.path), /Unsupported database version/);
+  assert.deepEqual(readFileSync(f.path), bytes);
 });

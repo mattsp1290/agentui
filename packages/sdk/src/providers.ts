@@ -1,4 +1,4 @@
-import type { ConversationScope, Json, RunAuthority } from '@agentui/contracts';
+import type { ConversationPermission, PermissionScope, ConversationScope, Json, RunAuthority } from '@agentui/contracts';
 
 export const backendProviderContractVersion = 1;
 
@@ -45,7 +45,8 @@ export interface ProviderConversation<I extends string> {
   readonly authority: RunAuthority & { readonly binding: { readonly installationId: I } };
 }
 
-export interface ConversationRef<I extends string, K extends 'run' | 'decision' | 'choice'> {
+export type ConversationRefKind = 'run' | 'decision' | 'choice' | 'permission';
+export interface ConversationRef<I extends string, K extends ConversationRefKind> {
   readonly binding: ProviderConversation<I>;
   readonly ref: ProviderRef<I, K>;
 }
@@ -114,8 +115,31 @@ export interface ProviderFeed<M extends ProviderModel, I extends string> {
   }>;
 }
 
+export type ProviderPermission<I extends string> = Omit<ConversationPermission, 'permissionId'> & {
+  readonly ref: ConversationRef<I, 'permission'>;
+};
+export type PermissionListing<I extends string> =
+  | { readonly kind: 'available'; readonly permissions: readonly ProviderPermission<I>[] }
+  | ProviderUnsupported | ProviderFailure;
+export interface RevokePermission<I extends string> {
+  readonly operationId: string;
+  readonly binding: ProviderConversation<I>;
+  readonly permission: ConversationRef<I, 'permission'>;
+  readonly scope: PermissionScope;
+}
+export type PermissionRevokeEffect = { readonly kind: 'revoke-permission'; readonly state: 'completed' };
+export interface ProviderPermissions<I extends string> {
+  /** Return every effective permission in the supported domain. Incomplete reads must fail. */
+  read(binding: ProviderConversation<I>): Promise<PermissionListing<I>>;
+  /** Validate the permission and confirmed scope against a fresh authenticated listing before dispatch. */
+  revoke(operation: RevokePermission<I>): Promise<ProviderOutcome<PermissionRevokeEffect>>;
+  /** Reconcile the original acknowledgement. Current permission state alone cannot establish it. */
+  reconcileRevoke(operation: RevokePermission<I>): Promise<ProviderOutcome<PermissionRevokeEffect>>;
+}
+
 export interface ConnectedProvider<M extends ProviderModel, I extends string> extends Invariant<M> {
   readonly instance: ProviderInstance<I>;
+  readonly permissions?: ProviderPermissions<I>;
   readonly capabilities: {
     readonly create: ProviderCapability;
     readonly send: ProviderCapability;

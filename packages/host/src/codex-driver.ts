@@ -355,6 +355,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
   async function dispatch(command: ClientCommand, target: CapturedTarget, expected: Installation, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
     if (canonicalJson(target.installation) !== canonicalJson(expected)) throw new Error('Wrong Codex installation');
     switch (command.body.kind) {
+      case 'revoke-permission': return { kind: 'not-dispatched', reason: 'permission-management-unsupported' };
       case 'send': return send({ ...command, body: command.body }, target, model);
       case 'approve': {
         if (!target.decision || !target.run) throw new Error('Approval target is missing');

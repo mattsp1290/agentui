@@ -35,6 +35,7 @@ function userEvents(command: ClientCommand, operation: string): readonly Transcr
 function finalResult(command: ClientCommand, target: CapturedTarget): CommandResult<TranscriptEvent> {
   const operation = target.identity.hostOperationId;
   switch (command.body.kind) {
+      case 'revoke-permission': return { kind: 'rejected', reason: 'permission-management-unsupported' };
     case 'send': {
       const runId = `${operation}:run`, opaque = `${operation}:session`;
       const run: NativeRun = {

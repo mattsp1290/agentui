@@ -12,7 +12,7 @@ export { backendProviderContractVersion } from './providers.js';
 export type { ProviderPresentation, PresentationRefs, ServerProviderCredentials } from './provider-presentation.js';
 export type {
   ProviderModel, ProviderInstance, ProviderRef, CredentialHandle, CreationIntent, ProviderConversation,
-  ConversationRef, ProviderCursor, ProviderCommand, ProviderOperation, ProviderUnsupported, ProviderCapability,
+  ConversationRef, ConversationRefKind, ProviderCursor, ProviderCommand, ProviderOperation, ProviderUnsupported, ProviderCapability,
   ProviderFailure, ProviderOutcome, ProviderCommandEffect, ProviderSnapshot, ProviderItem, ProviderFeed,
-  ConnectedProvider, BackendProvider,
+  ConnectedProvider, BackendProvider, ProviderPermission, PermissionListing, RevokePermission, PermissionRevokeEffect, ProviderPermissions,
 } from './providers.js';
