@@ -214,7 +214,8 @@ Package metadata outside `agentui.extension` is ignored.
 Selection objects, grants, authentication objects, identities, and manifests reject extra or missing fields.
 Empty `extensions` and `installations` arrays are valid.
 Selected namespaces, grant IDs within a package, and complete provider identities must be unique.
-Each grant's namespace must match a manifest in its selected package or artifact catalog.
+Under transient ownership, each grant's namespace must match a manifest in its selected package or artifact catalog.
+[Durable selection](#durable-selection-for-the-next-startup) retains unused startup grants when an artifact is disabled.
 `expectedAuthority` accepts `agentui-host` or `remote-provider`.
 `service` must be an HTTP or HTTPS origin without credentials, a query, a fragment, or a non-root path.
 
@@ -228,14 +229,16 @@ Changing the process environment after configuration decoding does not change th
 Use a new explicit `revision` and restart to rotate a credential. Literal secrets are not accepted in the document.
 
 The host validates the complete selection, all manifests, grants, and environment references before importing selected code. It also verifies each artifact against its pinned ID and the host SDK, Node, and ABI identities before importing any selected entry.
-Configuration failures report `Invalid server extension configuration` without paths, secret names, values, or underlying exception text.
+Configuration decoding failures report `Invalid server extension configuration` without paths, secret names, values, or underlying exception text.
+Durable artifact verification occurs in selection preflight and activation, which report sanitized lifecycle failures.
 The installed package loader then checks each entry's filesystem path and imported export. An earlier entry can execute import effects before a later entry fails its import or export checks.
 
 Removing referenced variables reduces explicit inheritance by native child processes.
 It does not isolate credentials from full-trust extensions, same-user processes, existing environment snapshots, or the same secret under another variable name.
 Installed entries are trusted ordinary filesystem modules with host process privileges. Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
-Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. The programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
+Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Under transient ownership, the programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner.
+Artifact-only CLI hosts require [durable selection](#durable-selection-for-the-next-startup) and restart instead. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
 
 ## Contribute conversation views and actions
 
