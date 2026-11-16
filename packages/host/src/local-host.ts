@@ -1,3 +1,4 @@
+import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
 import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
@@ -24,6 +25,8 @@ export interface LocalHostOptions<E, P> {
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
+  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array): ImageAttachment;
+  readImage(scope: ConversationScope, imageId: ImageId): { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
@@ -117,6 +120,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     await task;
   };
   const host: LocalHost<E, P> = {
+    uploadImage: (scope, uploader, uploadId, name, bytes) => store.uploadImage(authorized(scope), uploader, uploadId, name, bytes),
+    readImage: (scope, imageId) => store.readImage(authorized(scope), imageId),
     drained,
     observeProvider,
     observationStatus,

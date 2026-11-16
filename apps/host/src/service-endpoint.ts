@@ -1,3 +1,4 @@
+import { IMAGE_BODY_TIMEOUT_MS, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
 import type { IncomingMessage, OutgoingHttpHeaders, ServerResponse } from 'node:http';
 import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES, ServiceError } from '@agentui/contracts/service';
 import type { ServiceFailureKind } from '@agentui/contracts/service';
@@ -28,7 +29,24 @@ type Admission =
 function browserCookieName(hostId: string): string { return `agentui_device_${hostId}`; }
 type RequestResult = Pick<RequestObservation, 'operation' | 'outcome'>;
 
+const imageIngress = new WeakSet<Access>();
+
 export function serviceEndpoint(options: EndpointOptions) {
+  async function imageRequest(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
+    const principal = options.credentialClass === 'native' ? nativePrincipal(request, options.access) : browserPrincipal(request, options.access);
+    if (imageIngress.has(options.access)) throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.');
+    imageIngress.add(options.access);
+    let operation: RequestResult['operation'] = 'admission';
+    try {
+      const message = parseServiceRequest(await readJson(request, IMAGE_TRANSFER_MAX_BYTES, IMAGE_BODY_TIMEOUT_MS));
+      if (message.op !== 'image-upload' && message.op !== 'image-read') throw new Error('Invalid image operation');
+      operation = message.op;
+      await writeServiceResult(response, async () => ({ value: await options.api(principal, message), headers: {} }), IMAGE_TRANSFER_MAX_BYTES);
+      return { operation, outcome: 'ok' };
+    } catch (error) {
+      return { operation, outcome: writeServiceFailure(response, error) };
+    } finally { imageIngress.delete(options.access); }
+  }
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
     if (options.credentialClass === 'browser-development') {
       const origin = browserOrigin(request);
@@ -41,6 +59,7 @@ export function serviceEndpoint(options: EndpointOptions) {
         headers.origin !== undefined || headers.cookie !== undefined) throw new Error('Invalid native request headers');
     }
     if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
+    if (request.url === (options.credentialClass === 'native' ? '/native/v1/images' : '/api/v1/images')) return imageRequest(request, response);
     const admission = options.credentialClass === 'browser-development'
       ? await admitBrowser(request, options.access) : await admitNative(request, options.access);
     const operation = admission.kind === 'pair' ? 'pair' : admission.message.op;
@@ -62,7 +81,7 @@ export function serviceEndpoint(options: EndpointOptions) {
     }
   }
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-    if (options.credentialClass === 'browser-development' && request.url !== '/api/v1') {
+    if (options.credentialClass === 'browser-development' && request.url !== '/api/v1' && request.url !== '/api/v1/images') {
       serveBrowserAsset(options.files, request, response);
       return;
     }
@@ -87,13 +106,18 @@ function serveBrowserAsset(files: ReadonlyMap<string, Buffer>, request: Incoming
 async function admitBrowser(request: IncomingMessage, access: Access): Promise<Admission> {
   const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
   if (message.op === 'pair') return { kind: 'pair', code: message.code };
+  if (message.op === 'image-upload' || message.op === 'image-read') throw new Error('Images require the image route');
+  return { kind: 'service', principal: browserPrincipal(request, access), message };
+}
+
+function browserPrincipal(request: IncomingMessage, access: Access): Principal {
   const cookieName = browserCookieName(access.hostId);
   const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith(`${cookieName}=`)) ?? [];
   const [cookie] = cookies;
   const secret = cookies.length === 1 && cookie !== undefined ? cookie.slice(cookieName.length + 1) : undefined;
   const principal = access.authenticate(secret, 'browser-development');
   if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
-  return { kind: 'service', principal, message };
+  return principal;
 }
 
 async function admitNative(request: IncomingMessage, access: Access): Promise<Admission> {
@@ -105,19 +129,25 @@ async function admitNative(request: IncomingMessage, access: Access): Promise<Ad
     return { kind: 'pair', code };
   }
   if (request.url !== '/native/v1') throw new Error('Invalid native path');
-  const authorization = headers.authorization;
+  const principal = nativePrincipal(request, access);
+  const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
+  if (message.op === 'pair') throw new Error('Pairing requires the native pairing route');
+  if (message.op === 'image-upload' || message.op === 'image-read') throw new Error('Images require the image route');
+  return { kind: 'service', principal, message };
+}
+
+function nativePrincipal(request: IncomingMessage, access: Access): Principal {
+  const authorization = request.headersDistinct.authorization;
   const [header] = authorization ?? [];
   const secret = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
   if (authorization?.length !== 1 || secret === undefined || !DEVICE_SECRET.test(secret)) throw new ServiceError('unauthorized', 'Pair this device with the host');
   const principal = access.authenticate(secret, 'native');
   if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
-  const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
-  if (message.op === 'pair') throw new Error('Pairing requires the native pairing route');
-  return { kind: 'service', principal, message };
+  return principal;
 }
 
-async function writeServiceResult(response: ServerResponse, run: () => Promise<Reply>): Promise<void> {
-  try { const { value, headers } = await run(); json(response, 200, { ok: true, value }, headers); }
+async function writeServiceResult(response: ServerResponse, run: () => Promise<Reply>, limit?: number): Promise<void> {
+  try { const { value, headers } = await run(); json(response, 200, { ok: true, value }, headers, limit); }
   catch (error) {
     if (error instanceof ServiceError) throw error;
     throw new ServiceError('unavailable', 'Host request did not complete');

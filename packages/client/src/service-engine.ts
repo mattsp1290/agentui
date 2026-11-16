@@ -1,14 +1,15 @@
-import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope } from '@agentui/contracts';
+import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope, sameScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
 import { ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
+import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
 
 export class ServiceProtocolError extends Error {}
 class ServiceRequestRejected extends Error {}
-export async function readServiceResponseBody(response: Response): Promise<unknown> {
+export async function readServiceResponseBody(response: Response, limit = SERVICE_MAX_RESPONSE_BYTES): Promise<unknown> {
   const announced = response.headers.get('content-length');
-  if (announced !== null && Number(announced) > SERVICE_MAX_RESPONSE_BYTES) {
+  if (announced !== null && Number(announced) > limit) {
     await response.body?.cancel();
     throw new ServiceProtocolError('Service response exceeds byte limit');
   }
@@ -24,7 +25,7 @@ export async function readServiceResponseBody(response: Response): Promise<unkno
       const chunk = await reader.read();
       if (chunk.done) break;
       bytes += chunk.value.byteLength;
-      if (bytes > SERVICE_MAX_RESPONSE_BYTES) throw new ServiceProtocolError('Service response exceeds byte limit');
+      if (bytes > limit) throw new ServiceProtocolError('Service response exceeds byte limit');
       try { body += decoder.decode(chunk.value, { stream: true }); }
       catch { throw new ServiceProtocolError('Invalid UTF-8 service response'); }
     }
@@ -53,10 +54,11 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
   async function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
     timeoutMs = requestTimeoutMs): Promise<ServiceValueMap[K]> {
+    const imageOperation = value.op === 'image-upload' || value.op === 'image-read';
     let body: string;
     try {
       body = canonicalJson(parseServiceRequest(value));
-      if (utf8Bytes(body) > SERVICE_MAX_REQUEST_BYTES) throw new Error('Service request exceeds byte limit');
+      if (utf8Bytes(body) > (imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_REQUEST_BYTES)) throw new Error('Service request exceeds byte limit');
     } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
     if (signal?.aborted) throw new ServiceError('unavailable', 'Service request interrupted');
     const controller = new AbortController();
@@ -72,7 +74,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       const response = await execute(body, { op: value.op, signal: controller.signal });
       let result: ServiceResponse<ServiceValueMap[K]>;
       try {
-        const raw = await readServiceResponseBody(response);
+        const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
         try { result = parseServiceResponse<K>(value, raw); }
         catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
       } catch (error) {
@@ -156,6 +158,18 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     return { ended, close: () => finish({ kind: 'closed', cursor, reason: 'Client closed the feed' }) };
   }
   return {
+    async uploadImage({ scope, uploadId, name, bytes }) {
+      const result = await request({ op: 'image-upload', scope, uploadId, name, byteLength: bytes.byteLength, base64: encodeImageBytes(bytes) });
+      if (!sameScope(result.scope, scope) || result.attachment.name !== name || result.attachment.byteLength !== bytes.byteLength) {
+        throw new ServiceProtocolError('Image upload response mismatch');
+      }
+      return result.attachment;
+    },
+    async readImage(scope, imageId) {
+      const result = await request({ op: 'image-read', scope, imageId });
+      if (!sameScope(result.scope, scope) || result.attachment.imageId !== imageId) throw new ServiceProtocolError('Image read response mismatch');
+      return { attachment: result.attachment, bytes: Uint8Array.from(atob(result.base64), character => character.charCodeAt(0)) };
+    },
     async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
     catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
@@ -179,4 +193,13 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
         watch: (input, receive) => watch(scope, input, receive) };
     },
   };
+}
+
+function encodeImageBytes(bytes: Uint8Array): string {
+  if (!bytes.byteLength || bytes.byteLength > IMAGE_MAX_BYTES) throw new Error('Image must contain at most 4 MiB');
+  const parts: string[] = [];
+  for (let offset = 0; offset < bytes.byteLength; offset += 12_288) {
+    parts.push(btoa(Array.from(bytes.subarray(offset, offset + 12_288), byte => String.fromCharCode(byte)).join('')));
+  }
+  return parts.join('');
 }

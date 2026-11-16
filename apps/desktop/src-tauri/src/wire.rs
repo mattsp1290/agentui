@@ -1,6 +1,9 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+pub const IMAGE_TRANSFER_MAX_BYTES: usize = 6 * 1024 * 1024;
+const IMAGE_MAX_BYTES: usize = 4 * 1024 * 1024;
+
 const INVALID: &str = "Invalid native service request";
 const MAX_COMMAND_BYTES: usize = 64_000;
 const MAX_REQUEST_BYTES: usize = MAX_COMMAND_BYTES * 6 + 26_000;
@@ -93,6 +96,17 @@ enum ObservationAction {
     deny_unknown_fields
 )]
 enum Request {
+    ImageUpload {
+        scope: Scope,
+        upload_id: String,
+        name: String,
+        byte_length: Count,
+        base64: String,
+    },
+    ImageRead {
+        scope: Scope,
+        image_id: String,
+    },
     Metadata {},
     Catalog {
         #[serde(deserialize_with = "nullable")]
@@ -153,12 +167,89 @@ fn encoded_bytes(value: &impl Serialize) -> Result<usize, &'static str> {
         .map(|bytes| bytes.len())
         .map_err(|_| INVALID)
 }
+pub fn image_operation(value: &Value) -> bool {
+    matches!(value["op"].as_str(), Some("image-upload" | "image-read"))
+}
+fn image_id(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 36
+        && bytes[14] == b'4'
+        && matches!(bytes[19], b'8' | b'9' | b'a' | b'b')
+        && bytes.iter().enumerate().all(|(index, byte)| {
+            if matches!(index, 8 | 13 | 18 | 23) {
+                *byte == b'-'
+            } else {
+                byte.is_ascii_digit() || matches!(byte, b'a'..=b'f')
+            }
+        })
+}
+fn image_name(value: &str) -> bool {
+    value.len() <= 160
+        && !value.trim_matches(js_space).is_empty()
+        && !value.chars().any(char::is_control)
+}
+fn image_base64(value: &str, length: u64) -> bool {
+    if length == 0
+        || length > IMAGE_MAX_BYTES as u64
+        || value.is_empty()
+        || value.len() > 5_592_408
+        || value.len() % 4 != 0
+    {
+        return false;
+    }
+    let padding = if value.ends_with("==") {
+        2
+    } else if value.ends_with('=') {
+        1
+    } else {
+        0
+    };
+    let content = &value.as_bytes()[..value.len() - padding];
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    if value.len() / 4 * 3 - padding != length as usize
+        || !content.iter().all(|byte| alphabet.contains(byte))
+    {
+        return false;
+    }
+    let last = content
+        .last()
+        .and_then(|byte| alphabet.iter().position(|candidate| candidate == byte))
+        .unwrap_or(0);
+    (padding != 2 || last % 16 == 0) && (padding != 1 || last % 4 == 0)
+}
 pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
-    if encoded_bytes(&value)? > MAX_REQUEST_BYTES {
+    if encoded_bytes(&value)?
+        > if image_operation(&value) {
+            IMAGE_TRANSFER_MAX_BYTES
+        } else {
+            MAX_REQUEST_BYTES
+        }
+    {
         return Err(INVALID);
     }
     let mut request: Request = serde_json::from_value(value).map_err(|_| INVALID)?;
     let scope = match &mut request {
+        Request::ImageUpload {
+            scope,
+            upload_id,
+            name,
+            byte_length,
+            base64,
+        } => {
+            if !image_id(upload_id) || !image_name(name) || !image_base64(base64, byte_length.0) {
+                return Err(INVALID);
+            }
+            Some(scope)
+        }
+        Request::ImageRead {
+            scope,
+            image_id: id,
+        } => {
+            if !image_id(id) {
+                return Err(INVALID);
+            }
+            Some(scope)
+        }
         Request::Create { scope, .. }
         | Request::ConversationPermissions { scope }
         | Request::ConversationAgent { scope }
@@ -242,6 +333,51 @@ pub fn invitation(value: Value) -> Result<Invitation, &'static str> {
     Ok(invitation)
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ImageAttachment {
+    image_id: String,
+    name: String,
+    media_type: String,
+    byte_length: Count,
+    width: Count,
+    height: Count,
+}
+pub fn image_response(request: &Value, response: &Value) -> bool {
+    if response["ok"] != true {
+        return true;
+    }
+    let value = &response["value"];
+    let Ok(attachment) = serde_json::from_value::<ImageAttachment>(value["attachment"].clone())
+    else {
+        return false;
+    };
+    let w = attachment.width.0;
+    let h = attachment.height.0;
+    if value["scope"] != request["scope"]
+        || !image_id(&attachment.image_id)
+        || !image_name(&attachment.name)
+        || !matches!(attachment.media_type.as_str(), "image/png" | "image/jpeg")
+        || attachment.byte_length.0 == 0
+        || attachment.byte_length.0 > IMAGE_MAX_BYTES as u64
+        || w == 0
+        || h == 0
+        || w > 8192
+        || h > 8192
+        || w * h > 16_000_000
+    {
+        return false;
+    }
+    if request["op"] == "image-read" {
+        attachment.image_id == request["imageId"]
+            && value["base64"]
+                .as_str()
+                .is_some_and(|body| image_base64(body, attachment.byte_length.0))
+    } else {
+        attachment.name == request["name"] && attachment.byte_length.0 == request["byteLength"]
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -273,7 +409,9 @@ mod tests {
             json!({"op":"search", "query":"find text", "after":"cursor"}),
             json!({"op":"create", "scope":scope(), "agentId":"agent"}),
             json!({"op":"conversation-permissions", "scope":scope()}),
-            command(json!({"kind":"revoke-permission", "permissionId":"p", "scope":"conversation"})),
+            command(
+                json!({"kind":"revoke-permission", "permissionId":"p", "scope":"conversation"}),
+            ),
             command(json!({"kind":"revoke-permission", "permissionId":"p", "scope":"agent"})),
             json!({"op":"conversation-agent", "scope":scope()}),
             json!({"op":"provider-observation", "scope":scope(), "action":"read"}),
@@ -499,8 +637,84 @@ mod tests {
             invalid(json!({"op":"provider-observation", "scope":scope(), "action":action}));
         }
         invalid(json!({"op":"provider-observation", "scope":scope()}));
-        invalid(json!({"op":"provider-observation", "scope":scope(), "action":"retry", "binding":{}}));
-        assert!(request(json!({"op":"provider-observation", "scope":scope(), "action":"read"}), "foreign").is_err());
+        invalid(
+            json!({"op":"provider-observation", "scope":scope(), "action":"retry", "binding":{}}),
+        );
+        assert!(request(
+            json!({"op":"provider-observation", "scope":scope(), "action":"read"}),
+            "foreign"
+        )
+        .is_err());
+    }
+
+    #[test]
+    fn images_have_scoped_bounded_canonical_transport() {
+        let upload = json!({"op":"image-upload", "scope":scope(), "uploadId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "name":"Screenshot.png", "byteLength":1, "base64":"AA=="});
+        valid(upload.clone());
+        valid(
+            json!({"op":"image-read", "scope":scope(), "imageId":"aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"}),
+        );
+        for (field, value) in [
+            ("uploadId", json!("../file")),
+            ("uploadId", json!("AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA")),
+            ("name", json!("x".repeat(161))),
+            ("name", json!("x\n")),
+            ("name", json!(" ")),
+            ("base64", json!("AB==")),
+            ("base64", json!("AA==\n")),
+            ("base64", json!("-A==")),
+            ("base64", json!("A".repeat(5_592_412))),
+            ("byteLength", json!(2)),
+            ("byteLength", json!(IMAGE_MAX_BYTES + 1)),
+            ("uploader", json!("forged")),
+        ] {
+            let mut value_to_check = upload.clone();
+            value_to_check[field] = value;
+            invalid(value_to_check);
+        }
+        assert!(request(upload.clone(), "other-host").is_err());
+        let mut large = upload;
+        large["byteLength"] = json!(IMAGE_MAX_BYTES);
+        large["base64"] = json!("A".repeat(5_592_406) + "==");
+        assert!(request(large, "host").is_ok());
+        invalid(command(json!({"kind":"send", "text":"x", "image":{}})));
+    }
+
+    #[test]
+    fn image_responses_match_identity_and_metadata_before_crossing_the_broker() {
+        let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let request = json!({"op":"image-read", "scope":scope(), "imageId":id});
+        let response = json!({"ok":true, "value":{"scope":scope(), "attachment":{"imageId":id, "name":"Screen", "mediaType":"image/png", "byteLength":1, "width":1, "height":1}, "base64":"AA=="}});
+        assert!(image_response(&request, &response));
+        for (field, value) in [
+            ("imageId", json!("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")),
+            ("name", json!("x".repeat(161))),
+            ("width", json!(8193)),
+            ("height", json!(0)),
+            ("mediaType", json!("image/gif")),
+            ("byteLength", json!(2)),
+        ] {
+            let mut invalid = response.clone();
+            invalid["value"]["attachment"][field] = value;
+            assert!(!image_response(&request, &invalid));
+        }
+        for (field, value) in [
+            (
+                "scope",
+                json!({"hostId":"other", "conversationId":"conversation"}),
+            ),
+            ("base64", json!("AB==")),
+        ] {
+            let mut invalid = response.clone();
+            invalid["value"][field] = value;
+            assert!(!image_response(&request, &invalid));
+        }
+        let upload = json!({"op":"image-upload", "scope":scope(), "name":"Screen", "byteLength":1});
+        assert!(image_response(&upload, &response));
+        assert!(!image_response(
+            &json!({"op":"image-upload", "scope":scope(), "name":"Different", "byteLength":1}),
+            &response
+        ));
     }
 
     #[test]

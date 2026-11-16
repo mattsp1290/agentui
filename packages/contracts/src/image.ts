@@ -54,3 +54,21 @@ export function parseImageAttachment(value: unknown): ImageAttachment {
   return { imageId: parseImageId(input.imageId), name: parseImageName(input.name), mediaType: input.mediaType, byteLength,
     ...parseImageDimensions(input.width, input.height) };
 }
+
+export const IMAGE_MAX_BASE64_CHARS = 5_592_408;
+export const IMAGE_TRANSFER_MAX_BYTES = 6 * 1024 * 1024;
+export const IMAGE_BODY_TIMEOUT_MS = 30_000;
+export const IMAGE_FAILURE_KINDS = ['invalid-image', 'image-scope', 'image-upload-conflict', 'image-capacity', 'image-integrity'] as const;
+export type ImageFailureKind = typeof IMAGE_FAILURE_KINDS[number];
+
+export function parseImageBase64(value: unknown, byteLength: unknown): string {
+  const length = count(byteLength);
+  if (!length || length > IMAGE_MAX_BYTES || typeof value !== 'string' || !value.length ||
+    value.length > IMAGE_MAX_BASE64_CHARS || value.length % 4 !== 0) throw new Error('Invalid image bytes');
+  const padding = value.endsWith('==') ? 2 : value.endsWith('=') ? 1 : 0;
+  const content = value.slice(0, value.length - padding);
+  if (!/^[A-Za-z0-9+/]+$/.test(content) || value.length / 4 * 3 - padding !== length) throw new Error('Invalid image bytes');
+  const last = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/'.indexOf(content.at(-1) ?? '');
+  if ((padding === 2 && last % 16 !== 0) || (padding === 1 && last % 4 !== 0)) throw new Error('Invalid image bytes');
+  return value;
+}

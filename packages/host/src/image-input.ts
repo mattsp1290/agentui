@@ -3,13 +3,16 @@ import { crc32, inflateSync } from 'node:zlib';
 import { PNG } from 'pngjs';
 import { decode } from 'jpeg-js';
 import { IMAGE_MAX_BYTES, parseImageDimensions, parseImageName } from '@agentui/contracts/image';
-import type { ImageAttachment } from '@agentui/contracts/image';
+import type { ImageAttachment, ImageFailureKind } from '@agentui/contracts/image';
 
 export class ImageInputError extends Error {
-  constructor(readonly code: 'invalid-image' | 'image-scope' | 'image-upload-conflict' | 'image-capacity' | 'image-integrity', message: string) {
+  constructor(readonly code: ImageFailureKind, message: string) {
     super(message);
     this.name = 'ImageInputError';
   }
+}
+export function imageFailure(error: unknown): { readonly code: ImageInputError['code']; readonly message: string } | null {
+  return error instanceof ImageInputError ? { code: error.code, message: error.message } : null;
 }
 interface VerifiedImageUpload {
   readonly metadata: Omit<ImageAttachment, 'imageId'>;

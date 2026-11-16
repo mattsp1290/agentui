@@ -298,13 +298,22 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
                     request,
                 )
             };
+            let image = wire::image_operation(&request);
             let (status, body) = http(
                 client,
                 &endpoint,
-                "/native/v1",
+                if image {
+                    "/native/v1/images"
+                } else {
+                    "/native/v1"
+                },
                 &request,
                 Some(&credential.secret),
-                4_100_000,
+                if image {
+                    wire::IMAGE_TRANSFER_MAX_BYTES
+                } else {
+                    4_100_000
+                },
             )?;
             let value: Value = serde_json::from_str(&body).map_err(|_| "network-failed")?;
             let body = value.to_string();
@@ -317,6 +326,12 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
                     || value["value"]["principalId"] != credential.principal_id)
             {
                 return Err("network-failed");
+            }
+            if image {
+                locked(owner)?.guard(&observation)?;
+                if !wire::image_response(&request, &value) {
+                    return Err("network-failed");
+                }
             }
             if status == 401 {
                 let mut state = locked(owner)?;
@@ -654,6 +669,77 @@ mod tests {
             child.join().unwrap();
         }
     }
+    #[test]
+    fn image_execution_uses_the_fixed_route_and_keeps_credentials_private() {
+        use std::io::{BufRead, BufReader, Write};
+        for mode in ["maximum", "wrong-scope", "secret"] {
+            let fixture = Fixture::new();
+            let server = TcpListener::bind("127.0.0.1:0").unwrap();
+            locked(&fixture.owner).unwrap().endpoint =
+                format!("http://{}", server.local_addr().unwrap());
+            let ready = fixture.ready();
+            let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+            let request = json!({"op":"image-read", "scope":{"hostId":"host", "conversationId":"chat"}, "imageId":id});
+            let expected_request = request.clone();
+            let mut response = json!({"ok":true, "value":{"scope":request["scope"], "attachment":{"imageId":id, "name":"Screen", "mediaType":"image/png", "byteLength":1, "width":1, "height":1}, "base64":"AA=="}});
+            match mode {
+                "maximum" => {
+                    response["value"]["base64"] = json!("A".repeat(5_592_406) + "==");
+                    response["value"]["attachment"]["byteLength"] = json!(4 * 1024 * 1024);
+                }
+                "wrong-scope" => response["value"]["scope"]["conversationId"] = json!("foreign"),
+                _ => response["value"]["attachment"]["name"] = json!("S".repeat(43)),
+            }
+            let response = response.to_string();
+            let child = std::thread::spawn(move || {
+                let (mut socket, _) = server.accept().unwrap();
+                let mut reader = BufReader::new(socket.try_clone().unwrap());
+                let mut first = String::new();
+                reader.read_line(&mut first).unwrap();
+                assert_eq!(first, "POST /native/v1/images HTTP/1.1\r\n");
+                let mut headers = Vec::new();
+                let mut length = 0;
+                loop {
+                    let mut line = String::new();
+                    reader.read_line(&mut line).unwrap();
+                    if line == "\r\n" {
+                        break;
+                    }
+                    if let Some(value) = line.to_lowercase().strip_prefix("content-length:") {
+                        length = value.trim().parse().unwrap();
+                    }
+                    headers.push(line.to_lowercase());
+                }
+                assert!(headers.contains(&format!("authorization: bearer {}\r\n", "s".repeat(43))));
+                assert!(!headers
+                    .iter()
+                    .any(|line| line.starts_with("cookie:") || line.starts_with("origin:")));
+                let mut bytes = vec![0; length];
+                reader.read_exact(&mut bytes).unwrap();
+                assert_eq!(
+                    serde_json::from_slice::<Value>(&bytes).unwrap(),
+                    expected_request
+                );
+                write!(socket, "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}", response.len(), response).unwrap();
+            });
+            let result = run(
+                &fixture.owner,
+                Command::Execute {
+                    observation: ready["observation"].as_str().unwrap().into(),
+                    request,
+                },
+            );
+            child.join().unwrap();
+            if mode == "maximum" {
+                let result = result.unwrap();
+                assert!(result["body"].as_str().unwrap().len() > 4_100_000);
+                assert!(!result.to_string().contains(&"S".repeat(43)));
+            } else {
+                assert_eq!(result, Err("network-failed"));
+            }
+        }
+    }
+
     fn delayed_reply(
         body: String,
         status: u16,
@@ -690,6 +776,32 @@ mod tests {
         });
         (format!("http://{address}"), admitted, release, thread)
     }
+    #[test]
+    fn image_read_cannot_return_after_its_credential_observation_changes() {
+        let fixture = Fixture::new();
+        let id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+        let request = json!({"op":"image-read", "scope":{"hostId":"host", "conversationId":"chat"}, "imageId":id});
+        let reply = json!({"ok":true, "value":{"scope":request["scope"], "attachment":{"imageId":id, "name":"Screen", "mediaType":"image/png", "byteLength":1, "width":1, "height":1}, "base64":"AA=="}}).to_string();
+        let (endpoint, admitted, release, server) = delayed_reply(reply, 200);
+        locked(&fixture.owner).unwrap().endpoint = endpoint;
+        let observation = fixture.ready()["observation"].as_str().unwrap().to_string();
+        let owner = fixture.owner.clone();
+        let execution = std::thread::spawn(move || {
+            run(
+                &owner,
+                Command::Execute {
+                    observation,
+                    request,
+                },
+            )
+        });
+        admitted.recv_timeout(Duration::from_secs(5)).unwrap();
+        fixture.ready();
+        release.send(()).unwrap();
+        assert_eq!(execution.join().unwrap(), Err("stale"));
+        server.join().unwrap();
+    }
+
     #[test]
     fn a_delayed_pair_cannot_install_after_forgetting_absence() {
         let fixture = Fixture::new();
