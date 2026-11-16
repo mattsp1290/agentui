@@ -12,6 +12,7 @@ import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-sta
 import { agentPresentation } from './agent-presentation.js';
 import { createFrontendSends, createGenerationSource } from './frontend-sends.js';
 import type { CapturedSend, FrontendSends, GenerationSink } from './frontend-sends.js';
+import { createFrontendRecovery } from './frontend-recovery.js';
 import { createViewLeasePool } from './view-leases.js';
 import type { StoreBorrow, ViewBorrow } from './view-leases.js';
 import { conversationResponding } from './responding.js';
@@ -75,17 +76,21 @@ export interface ApplicationController {
   open(scope: ConversationScope): Promise<void>;
   conversationActions(target: OpenConversation): ConversationActions;
 }
-interface LoadedView { readonly storage: OwnedViewStorage; readonly saved: SavedView; readonly hostId: string }
-type OwnedView = { readonly storage: OwnedViewStorage; readonly saved: null } | LoadedView;
+interface LoadedView { readonly borrow: ViewBorrow; readonly saved: SavedView; readonly hostId: string }
+type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedView;
 type ApplicationFailure =
   | { readonly kind: 'access-revoked' }
   | { readonly kind: 'operation-failed'; readonly error: string };
-interface RecoveryKey { readonly owner: Session; readonly lease: ViewBorrow; readonly metadata: ServiceMetadata }
-interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; selectedViewBorrow: ViewBorrow | null; activeStoreBorrow: StoreBorrow | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends }
+type ActiveStoreOwner =
+  | { readonly kind: 'handover'; readonly borrow: StoreBorrow }
+  | { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: OpenConversation };
+type VisibleTransition = { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: Omit<OpenConversation, 'store'> };
+type ActiveTransition = VisibleTransition | Extract<ActiveStoreOwner, { kind: 'handover' }> | null;
+interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  active: null, observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'active' | 'observation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+  observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -93,7 +98,7 @@ function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
     : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
 }
 function initialSnapshot(): ApplicationSnapshot {
-  return { ...DETACHED_VIEW, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
+  return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : 'The operation failed.'; }
 function classifyFailure(cause: unknown): ApplicationFailure {
@@ -113,65 +118,31 @@ export function createApplicationController(deps: {
   let session: Session | null = null;
   let disposal: Promise<void> | null = null;
   const listeners = new Set<() => void>();
-  let recovery: { readonly key: RecoveryKey; readonly lifetime: AbortController } | null = null;
-  let recoveryTimer: ReturnType<typeof setTimeout> | undefined;
+  const recovery = createFrontendRecovery();
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
   let unsubscribeActive: (() => void) | null = null;
-  function publish(update: Partial<Omit<ApplicationSnapshot, 'saved'>>): void {
-    state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW });
-    retireRecovery();
+  function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
+    const active = session?.activeOwner;
+    state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW,
+      active: active?.kind === 'visible' ? active.target : null });
     for (const listener of listeners) listener();
   }
+  function setActive(owner: Session, next: VisibleTransition): OpenConversation;
+  function setActive(owner: Session, next: ActiveTransition): OpenConversation | null;
+  function setActive(owner: Session, next: ActiveTransition): OpenConversation | null {
+    const previous = owner.activeOwner;
+    const active: ActiveStoreOwner | null = next?.kind === 'visible'
+      ? { kind: 'visible', borrow: next.borrow, target: { ...next.target, store: next.borrow.store } } : next;
+    owner.activeOwner = active;
+    if (previous?.borrow !== next?.borrow) previous?.borrow.release();
+    return active?.kind === 'visible' ? active.target : null;
+  }
   const generations = createGenerationSource();
-  function recoveryKey(): RecoveryKey | null {
-    const owner = session;
-    if (!owner || state.host.kind !== 'ready' || state.storageFailure || !owner.view || owner.view.saved === null || owner.view.hostId !== state.host.metadata.hostId) return null;
-    const lease = owner.selectedViewBorrow;
-    return lease ? { owner, lease, metadata: state.host.metadata } : null;
-  }
-  function sameRecoveryKey(a: RecoveryKey | null, b: RecoveryKey): boolean {
-    return a?.owner === b.owner && a.lease === b.lease && a.metadata === b.metadata;
-  }
-  function retireRecovery(): void {
-    if (recovery && !sameRecoveryKey(recoveryKey(), recovery.key)) recovery.lifetime.abort();
-  }
-  function wakeRecovery(): void {
-    const key = recoveryKey();
-    if (recovery || !key) return;
-    const { owner, lease, metadata } = key, storage = lease.storage;
-    const retainedView = owner.pool.retainRecovery(lease);
-    const lifetime = new AbortController();
-    recovery = { key, lifetime };
-    clearTimeout(recoveryTimer);
-    const valid = () => !lifetime.signal.aborted && sameRecoveryKey(recoveryKey(), key);
-    void (async () => {
-      let after: string | null = null;
-      do {
-        const page = await storage.draftScopes(metadata.hostId, after);
-        if (!valid()) return;
-        for (const scope of page.scopes) {
-          if (!valid()) return;
-          const borrow = await owner.pool.recovery(lease, scope);
-          try {
-            const journal = borrow.store.frontendJournal;
-            for (let index = 0; index < journal.read().length && valid(); index += 32) {
-              for (const reference of journal.read().slice(index, index + 32)) {
-                if (!valid()) return;
-                await owner.frontend.recover({ viewId: storage.viewId, journal, reference, current: valid, signal: lifetime.signal, failed: error => owner.pool.failed(storage, error) });
-              }
-              await new Promise(resolve => setTimeout(resolve, 0));
-            }
-          } finally { borrow.release(); }
-        }
-        after = page.after;
-        if (after !== null && valid()) await new Promise(resolve => setTimeout(resolve, 0));
-      } while (after !== null && valid());
-    })().catch(error => { if (valid()) failStorage(owner, storage, error); }).finally(() => {
-      retainedView.release();
-      recovery = null;
-      if (lifetime.signal.aborted) wakeRecovery();
-      else if (session) recoveryTimer = setTimeout(() => wakeRecovery(), 2_000);
-    });
+  function syncRecovery(): void {
+    const owner = session, view = owner?.view, host = state.host;
+    recovery.retarget(owner && view && view.saved !== null && host.kind === 'ready'
+      && !state.storageFailure && view.hostId === host.metadata.hostId
+      ? { pool: owner.pool, frontend: owner.frontend, lease: view.borrow, metadata: host.metadata } : null);
   }
   let permissionRead = 0;
   function stalePermissions(reason: string): void {
@@ -203,20 +174,22 @@ export function createApplicationController(deps: {
   }
   function stopObservation(): void { observationPoll?.stop(); observationPoll = null; }
   function disconnectActive(): void {
+    const target = state.active;
     stalePermissions('Reconnect to refresh permissions.');
     stopObservation();
     unsubscribeActive?.();
     unsubscribeActive = null;
-    state.active?.store.disconnect();
+    target?.store.disconnect();
   }
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
     if (failure.kind === 'access-revoked') {
+      recovery.retarget(null);
       publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
       void owner.frontend.session(null, owner.connection);
       disconnectActive();
     } else {
-      if (phase === 'handshake') publish({ host: { kind: 'unavailable' }, error: failure.error });
+      if (phase === 'handshake') { recovery.retarget(null); publish({ host: { kind: 'unavailable' }, error: failure.error }); }
       else publish({ error: failure.error });
     }
   }
@@ -227,13 +200,14 @@ export function createApplicationController(deps: {
   }
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
     if (session !== owner || (storage !== null && !owner.pool.owns(storage))) return;
+    recovery.retarget(null);
     publish({ storageFailure: message(cause) });
     if (storage) owner.frontend.storageFailed(storage.viewId);
     disconnectActive();
   }
   function local(owner: Session): OwnedViewStorage {
     if (session !== owner || !owner.view || state.storageFailure) throw new Error(state.storageFailure || 'Local storage is not ready.');
-    return owner.view.storage;
+    return owner.view.borrow.storage;
   }
   function requireHost(owner: Session): ServiceMetadata {
     local(owner);
@@ -258,22 +232,21 @@ export function createApplicationController(deps: {
       if (session !== owner) throw new Error('This application has closed.');
       if (viewId !== null) borrow.storage.select();
       if (session !== owner) throw new Error('This application has closed.');
-      const previous = owner.selectedViewBorrow;
-      owner.selectedViewBorrow = borrow;
-      owner.view = { storage: borrow.storage, saved: null };
-      retireRecovery();
-      previous?.release();
+      const previous = owner.view;
+      owner.view = { borrow, saved: null };
+      syncRecovery();
+      previous?.borrow.release();
       return borrow.storage;
     } catch (cause) { borrow.release(); throw cause; }
   }
   async function save(owner: Session, next: SavedView): Promise<void> {
     const view = requireSaved(owner);
     try {
-      await current(owner, view.storage.saveView(view.hostId, next));
-      if (owner.view?.storage !== view.storage) throw new Error('The saved view changed.');
+      await current(owner, view.borrow.storage.saveView(view.hostId, next));
+      if (owner.view?.borrow.storage !== view.borrow.storage) throw new Error('The saved view changed.');
       owner.view = { ...view, saved: next };
       publish({});
-    } catch (cause) { failStorage(owner, view.storage, cause); throw cause; }
+    } catch (cause) { failStorage(owner, view.borrow.storage, cause); throw cause; }
   }
   function observeActive(owner: Session, target: OpenConversation): void {
     stopObservation();
@@ -320,24 +293,26 @@ export function createApplicationController(deps: {
     const found = await current(owner, owner.connection.conversationAgent(scope));
     if (!found) throw new Error('Conversation does not exist.');
     const agent = compatibleAgent(found);
-    const lease = owner.selectedViewBorrow;
+    const lease = owner.view?.borrow;
     if (!lease) throw new Error('The original view lease is unavailable.');
     const borrow = await owner.pool.active(lease, scope, agent.id);
     try {
       local(owner);
       const store = borrow.store;
-      if (state.active?.store === store) {
-        publish({ active: { ...state.active, agent } });
-        observeActive(owner, state.active);
+      const previous = owner.activeOwner;
+      if (previous?.kind === 'visible' && previous.target.store === store) {
+        const active = setActive(owner, { kind: 'visible', borrow: previous.borrow, target: { ...previous.target, agent } });
+        publish({});
+        local(owner);
+        observeActive(owner, active);
         await current(owner, store.connect());
-        refreshPermissions(owner, state.active); return;
+        refreshPermissions(owner, active); return;
       }
       disconnectActive();
-      const previous = owner.activeStoreBorrow;
-      owner.activeStoreBorrow = borrow;
-      previous?.release();
-      const active = { scope, store, agent, viewId: storage.viewId };
-      publish({ active, permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
+      local(owner);
+      const active = setActive(owner, { kind: 'visible', borrow, target: { scope, agent, viewId: storage.viewId } });
+      publish({ permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
+      local(owner);
       observeActive(owner, active);
       let connected = false;
       unsubscribeActive = store.subscribe(() => {
@@ -357,7 +332,7 @@ export function createApplicationController(deps: {
       });
       await current(owner, store.connect());
       refreshPermissions(owner, active);
-    } finally { if (owner.activeStoreBorrow !== borrow) borrow.release(); }
+    } finally { if (owner.activeOwner?.borrow !== borrow) borrow.release(); }
   }
   async function readCatalog(owner: Session, hostId: string, after: string | null = null): Promise<void> {
     const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE));
@@ -380,6 +355,7 @@ export function createApplicationController(deps: {
   async function refresh(owner: Session): Promise<void> {
     const storage = local(owner);
     const previousHost = state.host;
+    recovery.retarget(null);
     publish({ host: { kind: 'loading' } });
     stopObservation();
     stalePermissions('Reconnecting to refresh permissions.');
@@ -387,12 +363,16 @@ export function createApplicationController(deps: {
       const received = await current(owner, owner.connection.metadata());
       const metadata = { ...received, agents: received.agents.map(compatibleAgent) };
       await current(owner, owner.frontend.session(metadata, owner.connection));
-      if ('metadata' in previousHost && previousHost.metadata.principalId !== metadata.principalId) { disconnectActive(); publish({ active: null }); }
+      if ('metadata' in previousHost && previousHost.metadata.principalId !== metadata.principalId) {
+        disconnectActive();
+        if (owner.activeOwner) setActive(owner, { kind: 'handover', borrow: owner.activeOwner.borrow });
+        publish({});
+      }
       const previous = owner.view;
       if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
         disconnectActive();
-        owner.activeStoreBorrow?.release(); owner.activeStoreBorrow = null;
-        owner.view = { storage, saved: null };
+        setActive(owner, null);
+        owner.view = { borrow: previous.borrow, saved: null };
         publish(DETACHED_VIEW);
       }
       const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
@@ -406,16 +386,18 @@ export function createApplicationController(deps: {
         failStorage(owner, storage, cause);
         throw cause;
       });
-      owner.view = { storage, saved, hostId: metadata.hostId };
+      const borrow = owner.view?.borrow;
+      if (!borrow) throw new Error('The original view lease is unavailable.');
+      owner.view = { borrow, saved, hostId: metadata.hostId };
       publish({ host: { kind: 'ready', metadata } });
       const { hostId } = metadata;
-      wakeRecovery();
+      syncRecovery();
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
         saved.route ? install(owner, saved.route) : Promise.resolve()]);
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') fail(owner, classifyFailure(failed.reason));
     } catch (cause) { fail(owner, classifyFailure(cause), 'handshake'); }
-    finally { if (session === owner && !state.active) { owner.activeStoreBorrow?.release(); owner.activeStoreBorrow = null; } }
+    finally { if (session === owner && owner.activeOwner?.kind === 'handover') { setActive(owner, null); publish({}); } }
   }
   async function run(operation: (owner: Session) => Promise<void>): Promise<void> {
     const owner = session;
@@ -443,7 +425,7 @@ export function createApplicationController(deps: {
   }
   async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
     const view = requireSaved(owner), host = requireHost(owner);
-    const matches = () => session === owner && state.host.kind === 'ready' && state.host.metadata.principalId === host.principalId && state.host.metadata.hostId === host.hostId && owner.view?.storage === view.storage && owner.view.saved !== null && owner.view.hostId === scope.hostId &&
+    const matches = () => session === owner && state.host.kind === 'ready' && state.host.metadata.principalId === host.principalId && state.host.metadata.hostId === host.hostId && owner.view?.borrow.storage === view.borrow.storage && owner.view.saved !== null && owner.view.hostId === scope.hostId &&
       owner.view.saved?.pendingCreation?.agentId === agentId && sameScope(owner.view.saved.pendingCreation.scope, scope);
     try { await current(owner, owner.connection.create(scope, agentId)); }
     catch (error) {
@@ -475,7 +457,7 @@ export function createApplicationController(deps: {
       if (session) return Promise.resolve();
       const closing = disposal;
       const next: Session = {
-        selectedViewBorrow: null, activeStoreBorrow: null, view: null,
+        activeOwner: null, view: null,
         pool: createViewLeasePool({
           createStore: (storage, scope, agentId, capture) => createConversationStore({ scope,
             port: next.connection.conversation(scope), projection: transcriptProjection,
@@ -510,9 +492,9 @@ export function createApplicationController(deps: {
       if (!session && disposal) return disposal;
       const owner = session;
       session = null;
-      clearTimeout(recoveryTimer);
-      retireRecovery();
+      recovery.retarget(null);
       disconnectActive();
+      if (owner) setActive(owner, null);
       const previousDisposal = disposal, capturedClosing = owner?.frontend.dispose();
       const poolClosing = owner?.pool.dispose();
       return disposal = (async () => {
@@ -533,10 +515,10 @@ export function createApplicationController(deps: {
       requireHost(owner);
       const previous = owner.view;
       const next = await current(owner, acquire(owner, viewId));
-      if (previous?.storage === next) { await refresh(owner); return; }
+      if (previous?.borrow.storage === next) { await refresh(owner); return; }
       disconnectActive();
+      setActive(owner, null);
       publish({ ...DETACHED_VIEW, host: { kind: 'loading' } });
-      owner.activeStoreBorrow?.release(); owner.activeStoreBorrow = null;
       await refresh(owner);
     }),
     moreConversations: () => run(async owner => {
