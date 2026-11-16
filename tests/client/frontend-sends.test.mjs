@@ -54,7 +54,8 @@ test('public response parsing requires binding context while preserving generic 
     export type { ServiceRequest, ServiceValueMap, ServiceResponse, FrontendBinding };
     export const scope = { hostId: 'host', conversationId: 'conversation' };`,
   cases: [
-    ["parseServiceResponse({ op: 'metadata' }, null);", null],
+    ["const response: ServiceResponse<ServiceValueMap['metadata']> = parseServiceResponse({ op: 'metadata' }, null); void response;", null],
+    ["function transport<K extends Exclude<ServiceRequest['op'], 'frontend-binding'>>(request: { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
     ["const response: ServiceResponse<FrontendBinding> = parseServiceResponse({ op: 'frontend-binding', scope, id: 'command', action: 'recover' }, null); void response;", null],
     ["function transport<K extends ServiceRequest['op']>(request: ServiceRequest & { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
     ["parseServiceResponse({ op: 'frontend-binding' }, null);", /not assignable|missing/u],

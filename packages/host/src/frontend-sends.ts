@@ -72,29 +72,24 @@ export async function recoverFrontendBinding(input: {
 }): Promise<FrontendBinding> {
   const { request, actor, owners } = input;
   const identity = { scope: request.scope, id: identifier(request.id), actor };
-  let stored = input.command();
-  const check = () => owners.check({ ...identity, ...(stored ? { command: stored.command } : {}) });
-  let state = check();
+  const initial = input.command();
+  const check = (stored: StoredCommand | null) => owners.check({ ...identity, ...(stored ? { command: stored.command } : {}) });
+  check(initial);
   if (request.action === 'unavailable') {
     input.transaction(() => {
-      stored = input.command();
+      const stored = input.command();
       owners.unavailable({ ...identity, ...(stored ? { command: stored.command } : {}) });
     });
-    state = 'unavailable';
-  } else if (stored && stored.observation?.kind !== 'conclusive' && stored.observation?.kind !== 'not-dispatched') {
+  } else if (initial && initial.observation?.kind !== 'conclusive' && initial.observation?.kind !== 'not-dispatched') {
     await input.reconcile();
-    stored = input.command();
-    state = check();
   }
-  let bound: Extract<FrontendBinding, { kind: 'bound' }> | undefined;
-  if (stored?.command.version === 2 && 'kind' in stored && stored.target.operation.kind === 'send') {
+  const stored = input.command(), state = check(stored);
+  if (stored?.command.version === 2) {
+    if (!('kind' in stored) || stored.target.operation.kind !== 'send') throw new Error('Invalid offered command target');
     const actual = matchOfferInput(stored.target.operation.request, stored.command.body.frontend);
     const observation = stored.observation;
     const run = observation && 'evidence' in observation ? observation.evidence.source.run : null;
-    if (run) {
-      if (run.identity.runId !== actual.runId) throw new Error('Frontend run mismatch');
-      bound = { kind: 'bound', command: stored.command, hostOperationId: stored.receipt.hostOperationId, run: run.identity, threadId: actual.threadId };
-    }
+    if (run && run.identity.runId !== actual.runId) throw new Error('Frontend run mismatch');
     if (!run && state !== 'unavailable') {
       if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: request.id, reason: 'not-dispatched' };
       if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: request.id, reason: 'provider-rejected' };
@@ -102,18 +97,19 @@ export async function recoverFrontendBinding(input: {
     if (state !== 'unavailable') {
       if (!input.providers) throw new Error('Original AG-UI provider unavailable');
       input.providers.frontendInput(stored.target);
-      state = check();
+      check(stored);
+    }
+    if (run) {
+      const bound = { kind: 'bound', command: stored.command, hostOperationId: stored.receipt.hostOperationId,
+        run: run.identity, threadId: actual.threadId } satisfies FrontendBinding;
+      check(stored);
+      const producer = input.producer();
+      producer.register({ identity: bound.run, threadId: bound.threadId, platform: bound.command.body.frontend.platform,
+        bindings: bound.command.body.frontend.tools.map(tool => ({ ...tool, name: tool.definition.name })) });
+      if (check(stored) === 'unavailable') producer.cancel({ threadId: bound.threadId, runId: bound.run.runId });
+      else return bound;
     }
   }
-  if (bound) {
-    check();
-    const producer = input.producer();
-    producer.register({ identity: bound.run, threadId: bound.threadId, platform: bound.command.body.frontend.platform,
-      bindings: bound.command.body.frontend.tools.map(tool => ({ ...tool, name: tool.definition.name })) });
-    state = check();
-    if (state === 'unavailable') producer.cancel({ threadId: bound.threadId, runId: bound.run.runId });
-    else return bound;
-  }
-  if (check() === 'unavailable') return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  if (check(stored) === 'unavailable') return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
   return { kind: 'pending', id: request.id };
 }

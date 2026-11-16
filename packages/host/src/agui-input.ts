@@ -30,8 +30,8 @@ export function matchOfferInput(value: unknown, offer: FrontendOffer): ReturnTyp
   return input;
 }
 
-export function offeredRunId(command: ClientCommand, target: ProviderTarget): string | undefined {
+export function legacyOfferedRunId(command: ClientCommand, target: ProviderTarget): string | undefined {
   if (command.version !== 2) return undefined;
   if (target.operation.kind !== 'send') throw new Error('Invalid offered command target');
-  return matchOfferInput(target.operation.request, command.body.frontend).runId;
+  return target.operation.protocol === 'ag-ui' ? undefined : matchOfferInput(target.operation.request, command.body.frontend).runId;
 }

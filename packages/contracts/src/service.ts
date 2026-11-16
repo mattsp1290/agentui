@@ -239,7 +239,14 @@ export function parseServicePull(value: unknown): ServicePull {
     default: throw new Error('Invalid service pull');
   }
 }
-const valueParsers: { readonly [K in Exclude<keyof ServiceValueMap, 'frontend-binding'>]: (value: unknown) => ServiceValueMap[K] } = {
+type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, 'frontend-binding'> } | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest);
+type RequestFor<K extends keyof ServiceValueMap> = ResponseRequest & { readonly op: K };
+const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, request: RequestFor<K>) => ServiceValueMap[K] } = {
+  'frontend-binding'(value, request) {
+    const binding = parseFrontendBinding(value);
+    if (binding.kind === 'bound' ? binding.command.clientCommandId !== request.id || !sameScope(binding.command.scope, request.scope) : binding.id !== request.id) throw new Error('Foreign frontend binding');
+    return binding;
+  },
   pair: nil, close: nil,
   metadata(value) {
     const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
@@ -264,7 +271,7 @@ const valueParsers: { readonly [K in Exclude<keyof ServiceValueMap, 'frontend-bi
     if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
     const entries = input.items.map(value => {
       const entry = record(value, ['scope', 'preview', 'excerpt']);
-      const [catalog] = valueParsers.catalog([{ scope: entry.scope, preview: entry.preview }]);
+      const [catalog] = valueParsers.catalog([{ scope: entry.scope, preview: entry.preview }], { op: 'catalog' });
       if (!catalog) throw new Error('Missing search entry');
       if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
         entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');
@@ -288,19 +295,12 @@ const valueParsers: { readonly [K in Exclude<keyof ServiceValueMap, 'frontend-bi
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
 };
-type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, 'frontend-binding'> } | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest);
-export function parseServiceResponse<K extends keyof ServiceValueMap>(request: ResponseRequest & { readonly op: K }, value: unknown): ServiceResponse<ServiceValueMap[K]>;
-export function parseServiceResponse(request: ResponseRequest, value: unknown): ServiceResponse {
+export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);
   const input = record(value);
   if (input.ok === true) {
     exact(input, ['ok', 'value']);
-    if (request.op === 'frontend-binding') {
-      const binding = parseFrontendBinding(input.value);
-      if (binding.kind === 'bound' ? binding.command.clientCommandId !== request.id || !sameScope(binding.command.scope, request.scope) : binding.id !== request.id) throw new Error('Foreign frontend binding');
-      return { ok: true, value: binding };
-    }
-    return { ok: true, value: valueParsers[request.op](input.value) };
+    return { ok: true, value: valueParsers[request.op](input.value, request) };
   }
   exact(input, ['ok', 'error']);
   const error = record(input.error, ['kind', 'message']);

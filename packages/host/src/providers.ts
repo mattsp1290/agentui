@@ -54,6 +54,7 @@ function capability(value: unknown): boolean {
   throw new Error('Invalid provider capability');
 }
 interface BoundProvider {
+  assertFrontendTarget(target: ProviderTarget): void;
   frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput>;
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
@@ -135,16 +136,20 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     }
     return granted;
   }
-  function frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput> {
+  function assertFrontendTarget(target: ProviderTarget) {
     const granted = validate(target.installation);
     if (mode !== 'ag-ui' || target.operation.kind !== 'send' || canonicalJson(target.credential) !== canonicalJson(granted.credential)) throw new Error('Original AG-UI provider unavailable');
-    const input = aguiInput(target.operation.request);
-    if (canonicalJson(presentation.decodeRequest(copyJson(target.operation.request))) !== canonicalJson(target.operation.request)) throw new Error('Provider request changed');
-    validate(target.installation);
+    return target.operation;
+  }
+  function frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput> {
+    const operation = assertFrontendTarget(target);
+    const input = aguiInput(operation.request);
+    if (canonicalJson(presentation.decodeRequest(copyJson(operation.request))) !== canonicalJson(operation.request)) throw new Error('Provider request changed');
+    assertFrontendTarget(target);
     return input;
   }
   return {
-    frontendInput,
+    assertFrontendTarget, frontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
       const granted = validate(selected);
@@ -218,8 +223,8 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
         const decoded = presentation.decodeRequest(copyJson(request));
         if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-        const captured = target({ kind: 'send', operationId, binding, request });
-        if (action.frontend) frontendInput(captured);
+        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui' } : {}) });
+        if (canonicalJson(original.credential) !== canonicalJson(validate(original.installation).credential)) throw new Error('Original credentials unavailable');
         return captured;
       } else {
         const run = providerReference(action.run, binding, original.installation, 'run');
@@ -255,8 +260,11 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
           return providerOutcome(result, original, fresh, undefined);
         }
         let operation: ProviderCommand<M, I>;
+        const legacyExpectedRunId = captured.kind === 'send' && captured.protocol === undefined && mode === 'ag-ui'
+          ? aguiInput(captured.request).runId : undefined;
         const operationId = captured.operationId;
         if (captured.kind === 'send') {
+          if (captured.protocol === 'ag-ui') assertFrontendTarget(original);
           const request = presentation.decodeRequest(copyJson(captured.request));
           if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
           operation = { kind: 'send', operationId, binding, request };
@@ -274,7 +282,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         entered = true;
         const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
         authorize();
-        return providerOutcome(result, original, fresh, mode === 'ag-ui' && original.operation.kind === 'send' ? aguiInput(original.operation.request).runId : undefined);
+        return providerOutcome(result, original, fresh, legacyExpectedRunId);
       } catch {
         return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
       }
@@ -435,6 +443,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
     },
+    assertFrontendTarget(target: ProviderTarget): void {
+      const binding = bindings.find(binding => binding.matches(target.installation));
+      if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
+      binding.assertFrontendTarget(target);
+    },
     frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput> {
       const binding = bindings.find(binding => binding.matches(target.installation));
       if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
@@ -487,4 +500,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'frontendInput'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'frontendInput' | 'assertFrontendTarget'>;
