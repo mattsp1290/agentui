@@ -11,7 +11,7 @@ import { createBrowserConnection } from '@agentui/client/service';
 import { entry, listenerLog, options, secret, service, startBrowserHost, turn } from './fixtures.mjs';
 
 async function paired(t, extensions) {
-  const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: extensions.map(value => value.value) });
+  const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: extensions.map(value => value.value) } });
   t.after(() => host.close());
   let cookie;
   const client = createBrowserConnection({ fetch: async (url, init) => {
@@ -148,7 +148,7 @@ test('owner catalog copies cannot alter creation choices and inactive operations
       assert.deepEqual(await owner.execute(null, fresh, () => assert.fail('inactive effect')),
         { kind: fresh ? 'not-dispatched' : 'uncertain', source: fresh ? 'create' : 'lookup', evidence: null });
     }
-    await owner.replace(providerExtensionSource(database, [fixture.value]));
+    await owner.replace(providerExtensionSource(database, { kind: 'entries', entries: [fixture.value] }));
     const [provider] = owner.catalog(), pristine = structuredClone(provider);
     provider.agents[0].name = 'mutated'; provider.agents[0].opaqueId = 'foreign';
     provider.instance.generation = 'foreign'; provider.capabilities.create = false;

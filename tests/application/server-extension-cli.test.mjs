@@ -28,7 +28,7 @@ async function fixture(t, service = 'https://example.com') {
     { name: 'native', kind: 'codex-sdk', workspace: directory, executable: join(directory, 'not-installed') },
   ] }));
   const manifest = { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.mjs' }] };
-  const input = { version: 1, extensions: [{ directory: './crew-v1', installations: [
+  const input = { version: 2, ownership: 'transient', extensions: [{ directory: './crew-v1', installations: [
     { id: 'service', instance: { ...instance }, service, expectedAuthority: 'remote-provider', authentication: { kind: 'environment', variable: 'AGENTUI_EXTENSION_CREW_TOKEN', revision: 'first' } },
   ] }] };
   const module = `import { appendFileSync, writeFileSync } from 'node:fs';
@@ -447,3 +447,77 @@ test('later selected import failure releases an earlier artifact hook before pro
   assert.equal(await readFile(cleanup, 'utf8'), 'released');
   privateDiagnostics(running); assert.doesNotMatch(running.stderr, /PRIVATE_LATER_IMPORT_FAILURE/);
 });
+
+async function nativeMarker(f) {
+  const marker = join(f.directory, 'native-started'), executable = join(f.directory, 'native-marker');
+  await writeFile(executable, `#!${process.execPath}
+    import {writeFileSync} from 'node:fs';
+    writeFileSync(${JSON.stringify(marker)}, 'started');
+    process.exit(1);
+  `, { mode: 0o700 });
+  await writeFile(f.config, JSON.stringify({ version: 1, default: 'native', agents: [
+    { name: 'native', kind: 'codex', workspace: f.directory, executable },
+  ] }));
+  return marker;
+}
+
+test('durable journal refuses mixed, empty and omitted transient startup before native drivers or extension imports', { timeout: 30000 }, async t => {
+  const f = await artifactFixture(t);
+  f.input.ownership = 'durable-artifacts';
+  await writeFile(f.selection, JSON.stringify(f.input));
+  const durable = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
+  await ready(durable); await stop(durable);
+  const artifact = structuredClone(f.input.extensions[0]);
+  const marker = await nativeMarker(f);
+  await writeFile(join(f.installed, 'package.json'), JSON.stringify({ agentui: { extension: { ...f.manifest, namespace: 'extra' } } }));
+  await writeFile(join(f.installed, 'server.mjs'), `throw new Error('Must not import');`);
+  for (const selection of [[artifact, { directory: f.installed, installations: [] }], [], null]) {
+    await rm(f.marker, { force: true });
+    f.input.ownership = 'transient'; f.input.extensions = selection ?? [];
+    await writeFile(f.selection, JSON.stringify(f.input));
+    const failed = selection === null ? f.launch(['serve', '--config', f.config, '--port', '0']) : f.start();
+    assert.equal(await failed.exited, 1); assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, /Existing selection journal requires durable artifact ownership/);
+    assert.equal(existsSync(marker), false); assert.equal(existsSync(f.marker), false);
+    assert.equal(existsSync(join(f.directory, 'data', 'control.sock')), false);
+    privateDiagnostics(failed);
+  }
+});
+
+for (const [name, sql] of [
+  ['partial', 'CREATE TABLE service_extension_boots (id TEXT)'],
+  ['unknown version', 'CREATE TABLE service_extension_selection_schema (version INTEGER); INSERT INTO service_extension_selection_schema VALUES(99)'],
+  ['unknown table', 'CREATE TABLE service_extension_future (payload TEXT)'],
+  ['unknown view', 'CREATE VIEW SERVICE_EXTENSION_future AS SELECT 1'],
+  ['unknown index', 'CREATE TABLE unrelated (value TEXT); CREATE INDEX service_extension_future ON unrelated(value)'],
+  ['unknown trigger', 'CREATE TABLE unrelated (value TEXT); CREATE TRIGGER service_extension_future AFTER INSERT ON unrelated BEGIN SELECT 1; END'],
+]) test(`${name} journal object refuses transient and omitted startup before native initialization`, { timeout: 15000 }, async t => {
+  const f = await fixture(t), marker = await nativeMarker(f);
+  await mkdir(join(f.directory, 'data'), { mode: 0o700 });
+  const database = new DatabaseSync(join(f.directory, 'data', 'host.sqlite'));
+  database.exec(sql); database.close();
+  for (const explicit of [true, false]) {
+    const failed = explicit ? f.start() : f.launch(['serve', '--config', f.config, '--port', '0']);
+    assert.equal(await failed.exited, 1); assert.equal(failed.stdout, '');
+    assert.match(failed.stderr, /Existing selection journal requires durable artifact ownership/);
+    assert.equal(existsSync(marker), false); assert.equal(existsSync(f.marker), false);
+  }
+});
+
+test('literal journal prefix leaves unrelated schema names and omitted native startup available', { timeout: 15000 }, async t => {
+  const f = await fixture(t), marker = await nativeMarker(f);
+  await mkdir(join(f.directory, 'data'), { mode: 0o700 });
+  const database = new DatabaseSync(join(f.directory, 'data', 'host.sqlite'));
+  database.exec('CREATE TABLE serviceXextensionYfuture (value TEXT)'); database.close();
+  const native = f.launch(['serve', '--config', f.config, '--port', '0']);
+  await ready(native); assert.equal(existsSync(marker), true); await stop(native);
+});
+
+for (const change of [input => { input.version = 1; }, input => { delete input.ownership; }]) {
+  test('packaged CLI refuses legacy or implicit ownership before imports', { timeout: 10000 }, async t => {
+    const f = await fixture(t); change(f.input); await f.save();
+    const failed = f.start();
+    assert.equal(await failed.exited, 1); assert.match(failed.stderr, /Invalid server extension configuration/);
+    assert.equal(failed.stdout, ''); assert.equal(existsSync(f.marker), false);
+  });
+}

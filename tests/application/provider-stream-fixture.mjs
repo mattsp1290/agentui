@@ -174,7 +174,7 @@ export async function fixture(t, extensions, { shutdownFailure = false } = {}) {
     return response;
   } });
   const start = async values => {
-    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: port ?? 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
+    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: port ?? 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), extensions: { kind: 'transient', entries: values.map(item => item.value) } });
     port = Number(new URL(running.origin).port);
     if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
