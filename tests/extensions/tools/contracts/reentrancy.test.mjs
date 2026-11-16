@@ -1,7 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { parseRunIdentity } from '@agentui/contracts';
-import { validateExtensionLifetime } from '@agentui/sdk';
 import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
 
 const run = {
@@ -14,7 +13,7 @@ const pin = (generations, overrides = {}) =>
   pinFrontendTools({ generations, platform: 'desktop', run, capabilities, ...overrides });
 async function make(dispose, overrides = {}) {
   return (await createFrontendToolGeneration({
-    namespace: 'demo', generation: '1', platform: 'desktop', accept: value => { validateExtensionLifetime(value); return value; },
+    namespace: 'demo', generation: '1', platform: 'desktop', capture: () => undefined,
     activate({ frontendTools: tools }) {
       tools.add({ definition: { name: 'x', description: 'x' }, decodeInput: value => value,
         async execute() { return 'ok'; }, ...overrides });

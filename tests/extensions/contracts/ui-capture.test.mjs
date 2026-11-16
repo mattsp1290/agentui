@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { forwardRef, lazy, memo } from 'react';
-import { parseConversationModules, parseUiExtensionContributions, validateConversationModules, validateUiExtensionContributions } from '@agentui/sdk/react';
+import { parseConversationModules, parseUiExtensionContributions, parseUiExtensionPresentation, validateConversationModules, validateUiExtensionContributions } from '@agentui/sdk/react';
 
 const View = () => null;
 const module = { id: 'notes', label: 'Notes', component: View };
@@ -142,4 +142,15 @@ test('successful assertion wrappers never invoke disposal', () => {
   let disposals = 0;
   const source = { modules: [module], dispose() { disposals++; } };
   validateConversationModules(source.modules); validateUiExtensionContributions(source); assert.equal(disposals, 0);
+});
+
+for (const callable of [false, true]) test(`presentation-only parser never inspects disposal (callable ${callable})`, () => {
+  const reads = {};
+  const fields = onceFields({ modules: [module], overrides: { transcript: View } });
+  const source = callable ? Object.setPrototypeOf(function contribution() {}, fields) : Object.create(fields);
+  Object.defineProperty(source, 'dispose', { get() { reads.dispose = (reads.dispose ?? 0) + 1; throw new Error('Unexpected disposal lookup'); } });
+  const presentation = parseUiExtensionPresentation(source);
+  assert.deepEqual(Object.keys(presentation).sort(), ['modules', 'transcript']);
+  assert.equal(presentation.modules[0].component, View); assert.equal(presentation.transcript, View);
+  assert.deepEqual(reads, {});
 });

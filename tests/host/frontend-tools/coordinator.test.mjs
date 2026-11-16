@@ -18,7 +18,7 @@ async function setup(t, effect = () => {}) {
   const f = fixture(t), host = f.open(); host.createConversation(scope, installed);
   const { generation } = await createFrontendToolGeneration({ namespace: 'demo', generation: 'same', platform: 'desktop',
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'work', description: 'work' }, decodeInput: value => value,
-      async execute(value) { const output = effect(value); return typeof output === 'string' ? output : 'done'; } }); return { dispose() {} }; }, accept: value => value });
+      async execute(value) { const output = effect(value); return typeof output === 'string' ? output : 'done'; } }); return { dispose() {} }; }, capture: () => undefined });
   const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run: run().identity, capabilities: { tools: { clientProvided: true } } });
   t.after(async () => { pin.release(); await generation.retire(); });
   const producer = frontendToolsFor(host).producer(scope);

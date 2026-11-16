@@ -1,6 +1,8 @@
 import { Component, Suspense, useEffect, useRef, useState, type ComponentType, type ReactNode } from 'react';
 import { checkExtensionEntrypoint, type ExtensionManifest } from '@agentui/sdk';
-import { parseUiExtensionContributions, type ConversationModuleProps, type UiExtensionPresentation, type UiExtensionEntry } from '@agentui/sdk/react';
+import type { ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
+import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';
+import type { FrontendToolGeneration } from '@agentui/sdk/tools';
 
 export interface DesktopCustomization {
   readonly manifest: ExtensionManifest;
@@ -9,7 +11,7 @@ export interface DesktopCustomization {
 export type NamespaceActivation = { readonly namespace: string } & (
   | { readonly kind: 'loading' }
   | { readonly kind: 'failed'; readonly message: string }
-  | { readonly kind: 'ready'; readonly lifetime: number; readonly presentation: UiExtensionPresentation; readonly fail: (error: unknown) => void }
+  | { readonly kind: 'ready'; readonly lifetime: number; readonly generation: FrontendToolGeneration; readonly presentation: UiExtensionPresentation; readonly fail: (error: unknown) => void }
 );
 type ReadyActivation = Extract<NamespaceActivation, { readonly kind: 'ready' }>;
 type TranscriptOwner = ReadyActivation & { readonly presentation: UiExtensionPresentation & { readonly transcript: ComponentType<ConversationModuleProps> } };
@@ -18,7 +20,32 @@ export type TranscriptSelection =
   | { readonly kind: 'conflict'; readonly namespaces: readonly string[] }
   | { readonly kind: 'override'; readonly owner: TranscriptOwner };
 const DEFAULT_TRANSCRIPT: TranscriptSelection = { kind: 'default' };
-export const customizationMessage = (error: unknown): string => error instanceof Error ? error.message : 'Customization failed.';
+export function customizationMessage(error: unknown): string {
+  const limit = 10;
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  const messages: string[] = [];
+  for (let index = 0; index < pending.length; index++) {
+    const cause = pending[index];
+    if (seen.has(cause)) continue;
+    seen.add(cause);
+    try {
+      if (!(cause instanceof Error)) {
+        messages.push('Customization failed.');
+        continue;
+      }
+      const message: unknown = cause.message;
+      messages.push(typeof message === 'string' ? message : 'Customization failed.');
+      if (cause instanceof AggregateError) {
+        const causes: unknown = cause.errors;
+        if (Array.isArray(causes)) {
+          for (let index = 0; index < causes.length && pending.length < limit; index++) pending.push(causes[index]);
+        }
+      }
+    } catch { messages.push('Customization failed.'); }
+  }
+  return messages.join(' ');
+}
 
 export class CustomizationBoundary extends Component<{
   readonly children: ReactNode; readonly fallback: ReactNode; readonly fail: (error: unknown) => void;
@@ -43,18 +70,16 @@ function selectTranscript(owners: readonly NamespaceActivation[]): TranscriptSel
 
 function activateNamespace(customization: DesktopCustomization, lifetime: number, publish: (owner: NamespaceActivation) => void): () => void {
   const namespace = customization.manifest.namespace;
-  let removed = false, failed = false;
-  let dispose: (() => Promise<void>) | undefined;
+  let removed = false;
+  let generation: FrontendToolGeneration | undefined;
   const cleanup = () => {
-    const release = dispose;
-    dispose = undefined;
-    if (release) void release().catch(error => {
+    const retiring = generation;
+    generation = undefined;
+    if (retiring) void retiring.retire().catch(error => {
       if (!removed) publish({ kind: 'failed', namespace, message: `Customization cleanup failed. ${customizationMessage(error)}` });
     });
   };
   const fail = (error: unknown) => {
-    if (failed) return;
-    failed = true;
     if (!removed) publish({ kind: 'failed', namespace, message: customizationMessage(error) });
     cleanup();
   };
@@ -65,13 +90,11 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
       const compatibility = checkExtensionEntrypoint(customization.manifest, 'desktop', imported.default);
       if (compatibility.kind !== 'compatible') throw new Error(compatibility.reason);
       const entry = imported.default as UiExtensionEntry<'desktop'>;
-      const captured = parseUiExtensionContributions(await entry.activate({ namespace,
-        frontendTools: { add() { throw new Error('Frontend tools are not supported by this local build.'); } } }));
-      if (captured.kind === 'invalid-lifetime') { fail(captured.error); return; }
-      dispose = captured.dispose;
+      const active = await createUiExtensionGeneration({ namespace, generation: String(lifetime), platform: 'desktop',
+        activate: context => entry.activate(context), onFailure: fail });
+      generation = active.generation;
       if (removed) { cleanup(); return; }
-      if (captured.kind === 'invalid-presentation') { fail(captured.error); return; }
-      publish({ kind: 'ready', namespace, lifetime, presentation: captured.presentation, fail });
+      publish({ kind: 'ready', namespace, lifetime, generation, presentation: active.presentation, fail });
     } catch (error) { fail(error); }
   })();
   return () => { removed = true; cleanup(); };
@@ -79,7 +102,7 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
 
 export function useDesktopCustomizations({ customizations, enabled }: {
   readonly customizations: readonly DesktopCustomization[]; readonly enabled: boolean;
-}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection } {
+}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly generations: readonly FrontendToolGeneration[] } {
   const [request, setRequest] = useState({ customizations, enabled });
   const [snapshot, setSnapshot] = useState<{ readonly request: typeof request; readonly namespaces: readonly NamespaceActivation[] }>(() => ({ request, namespaces: [] }));
   const nextLifetime = useRef(0);
@@ -98,7 +121,8 @@ export function useDesktopCustomizations({ customizations, enabled }: {
     return () => { removed = true; cleanups.forEach(cleanup => cleanup()); };
   }, [request]);
   const namespaces = current && enabled && snapshot.request === request ? snapshot.namespaces : [];
-  return { namespaces, transcript: selectTranscript(namespaces) };
+  const ready = namespaces.filter((owner): owner is ReadyActivation => owner.kind === 'ready');
+  return { namespaces, transcript: selectTranscript(namespaces), generations: ready.map(owner => owner.generation) };
 }
 
 export function CustomizationTranscript({ selection, context, fallback, conversationKey }: {

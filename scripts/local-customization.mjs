@@ -10,7 +10,7 @@ const selection = fileURLToPath(new URL('../apps/desktop/src/application/customi
 const tsconfig = fileURLToPath(new URL('../apps/desktop/tsconfig.json', import.meta.url));
 const SHARED = Object.freeze({
   react: ['', '/jsx-runtime', '/jsx-dev-runtime'], 'react-dom': ['', '/client'],
-  '@agentui/sdk': ['', '/react', '/tools'], '@agentui/contracts': ['*'], '@agentui/protocol': [''],
+  '@agentui/sdk': ['', '/react', '/tools', '/react-tools'], '@agentui/contracts': ['*'], '@agentui/protocol': [''],
   '@agentui/ui-primitives': ['/desktop'], '@agentui/theme': ['', '/react'],
 });
 const sharedPackage = specifier => Object.keys(SHARED).find(name => specifier === name || specifier.startsWith(`${name}/`));

@@ -1,8 +1,7 @@
-import { validateExtensionLifetime } from '@agentui/sdk';
 import { createFrontendToolGeneration, pinFrontendTools } from '@agentui/sdk/tools';
 
 const { generation } = await createFrontendToolGeneration({
-  accept: value => { validateExtensionLifetime(value); return value; },
+  capture: () => undefined,
   namespace: 'demo',
   generation: '1',
   platform: 'desktop',
