@@ -67,6 +67,7 @@ async function setup(t) {
   await wait(() => page.getByRole('button', { name: 'New recorded conversation', exact: true }).isEnabled(), 'pairing');
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
   const create = async () => {
+    const previous = (await records(page)).find(row => row.route)?.route.conversationId;
     await page.getByRole('button', { name: 'Chats', exact: true }).click();
     if (await page.getByRole('button', { name: 'New conversation', exact: true }).count()) await page.getByRole('button', { name: 'New conversation', exact: true }).click();
     else {
@@ -74,6 +75,7 @@ async function setup(t) {
       await page.getByRole('button', { name: 'Provider', exact: true }).click();
       await page.getByRole('button', { name: 'Start new chat with Crew researcher', exact: true }).click();
     }
+    await wait(async () => (await records(page)).some(row => row.route && row.route.conversationId !== previous), 'new conversation route');
     await connected(page);
   };
   return { page, context, browser, host, control, inputs, operations, confirmed, inspect, create, translations: () => translations };
@@ -148,7 +150,7 @@ test('committed production browser captures both actual send paths and retains o
   await page.getByRole('button', { name: new RegExp(`Open conversation ${extension.command.scope.conversationId}$`) }).click(); await connected(page);
   await wait(async () => (await records(page)).some(row => row.route?.conversationId === extension.command.scope.conversationId), 'saved extension route');
   await page.reload(); await connected(page);
-  await page.getByRole('status').filter({ hasText: 'Captured tools unavailable' }).waitFor();
+  await page.locator(`[data-captured-command="${extension.command.clientCommandId}"]`).getByRole('status').filter({ hasText: 'Captured tools unavailable' }).waitFor();
   await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).find(entry => entry.command.clientCommandId === extension.command.clientCommandId)?.state === 'unavailable-confirmed', 'reload acknowledges lost closure');
   assert.equal(f.operations.length, 2); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0); assert.deepEqual(errors, []);
 });
@@ -176,12 +178,15 @@ test('actual browser release precedes a delayed submission and repeats lost unav
   assert.equal(f.operations.length, 0); assert.equal(f.translations(), 0); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
 });
 
-test('observed revocation releases original browser closures and a replacement principal cannot adopt or notify their journal', { timeout: 60_000 }, async t => {
+test('32 actual A captures release on revocation and B can send before and after reload without adopting A', { timeout: 120_000 }, async t => {
   const f = await setup(t), { page } = f, unavailable = [];
   await page.route('**/api/v1', async route => { const request = route.request().postDataJSON(); if (request.op === 'frontend-binding' && request.action === 'unavailable') unavailable.push(request); await route.continue(); });
-  await f.create(); await draft(page, 'Original principal'); await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await wait(() => f.inputs.length === 1, 'original dispatch');
-  const reference = (await records(page)).flatMap(row => row.frontendSends ?? [])[0];
+  for (let index = 0; index < 32; index++) {
+    await f.create(); await draft(page, `Original principal ${index}`); await page.getByRole('button', { name: 'Send', exact: true }).click();
+    await wait(() => f.inputs.length === index + 1, 'original dispatch');
+  }
+  const originals = (await records(page)).flatMap(row => row.frontendSends ?? []), reference = originals[0];
+  assert.equal(originals.length, 32);
   await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByLabel('Enable customizations', { exact: true }).uncheck();
   assert.deepEqual(await page.evaluate(() => window.captureFixture.disposed), []);
   f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(reference.ownerId));
@@ -197,7 +202,18 @@ test('observed revocation releases original browser closures and a replacement p
   assert.equal(unavailable.length, 1, 'only the explicit forbidden probe attempts an old-owner tombstone');
   assert.equal((await records(page)).flatMap(row => row.frontendSends ?? [])[0].ownerId, reference.ownerId);
   assert.equal((await records(page)).flatMap(row => row.frontendSends ?? [])[0].state, 'unavailable-pending');
-  assert.equal(f.operations.length, 1); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
+  await page.getByLabel('Enable customizations', { exact: true }).check();
+  await f.create(); await draft(page, 'B after pairing'); await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 33, 'B captures after pairing');
+  await page.reload(); await connected(page);
+  await f.create(); await draft(page, 'B after reload'); await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 34, 'B captures after reload');
+  const retained = (await records(page)).flatMap(row => row.frontendSends ?? []), ids = new Set(originals.map(row => row.command.clientCommandId));
+  assert.deepEqual(retained.filter(row => ids.has(row.command.clientCommandId)).map(({ command, ownerId }) => ({ command, ownerId })), originals.map(({ command, ownerId }) => ({ command, ownerId })));
+  assert.equal(unavailable.filter(request => ids.has(request.id)).length, 1, 'A notifications are limited to the deliberate forbidden probe');
+  assert.ok(retained.filter(row => !ids.has(row.command.clientCommandId)).every(row => row.ownerId !== reference.ownerId));
+  assert.equal(f.operations.length, 34); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
+  for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
 });
 
 for (const phase of ['admission', 'release']) test(`production browser ${phase} storage failure releases captures and blocks effects`, { timeout: 60_000 }, async t => {
@@ -213,4 +229,30 @@ for (const phase of ['admission', 'release']) test(`production browser ${phase} 
   await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByLabel('Enable customizations', { exact: true }).uncheck();
   await wait(() => page.evaluate(() => window.captureFixture.disposed.length === 1), 'failed storage releases closure');
   assert.equal(f.operations.length, phase === 'release' ? 1 : 0); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
+});
+
+for (const loss of ['pagehide', 'crash-retained']) test(`production reload in B recovers both A and B after ${loss}`, { timeout: 90_000 }, async t => {
+  const f = await setup(t), { page } = f;
+  await f.create(); await draft(page, 'Conversation A'); await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 1, 'A capture');
+  await f.create(); await draft(page, 'Conversation B'); await page.getByRole('button', { name: 'Send', exact: true }).click();
+  await wait(() => f.inputs.length === 2, 'B capture');
+  const original = (await records(page)).flatMap(row => row.frontendSends ?? []);
+  assert.equal(original.length, 2);
+  if (loss === 'crash-retained') await page.evaluate(() => {
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      if (Array.isArray(key) && key[0] === 'draft') value = { ...value, frontendSends: value.frontendSends.map(entry => ({ ...entry, state: 'retained' })) };
+      return put.call(this, value, key);
+    };
+  });
+  await page.reload(); await connected(page);
+  await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).filter(entry => entry.state === 'unavailable-confirmed').length === 2, 'both original journals confirmed without reopening A');
+  for (const reference of original) assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_sends WHERE command_id=?').get(reference.command.clientCommandId).state), 'unavailable');
+  const recovered = (await records(page)).flatMap(row => row.frontendSends ?? []);
+  assert.deepEqual(recovered.map(({ command, ownerId }) => ({ command, ownerId })), original.map(({ command, ownerId }) => ({ command, ownerId })));
+  for (const reference of original) await page.locator(`[data-captured-command="${reference.command.clientCommandId}"]`).getByRole('status').filter({ hasText: 'Captured tools unavailable' }).waitFor();
+  assert.equal(f.operations.length, 2); assert.equal(f.translations(), 2);
+  assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
+  for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
 });

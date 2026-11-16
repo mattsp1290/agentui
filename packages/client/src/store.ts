@@ -38,7 +38,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
   let feed: Feed | null = null;
-  let generation = 0;
+  let generation = 0, closed = false;
+  let disposal: Promise<void> | null = null;
   function makeView(): ClientView<P> {
     const applied = replay.delivery;
     return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection), submitting: Object.freeze([...inFlight]) });
@@ -47,17 +48,19 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     view = makeView();
     for (const listener of listeners) listener();
   }
-  const ready = drafts.load(scope).then(value => { local = restore(value, scope); options.frontend?.restore(journal); publish(); });
+  const ready = drafts.load(scope).then(value => { local = restore(value, scope); publish(); });
   void ready.catch(error => {
     connection = { kind: 'failed', reason: error instanceof Error ? error.message : 'Local storage load failed' };
     publish();
   }).catch(() => undefined);
   let saves: Promise<void> = ready;
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
+    if (closed) return Promise.reject(new Error('This conversation store has closed.'));
     const result = saves.then(operation);
     saves = result.then(() => undefined, () => undefined);
     return result;
   }
+  function requireOpen(): void { if (closed) throw new Error('This conversation store has closed.'); }
   async function persist(next: LocalRecords): Promise<void> {
     await drafts.save(next);
     local = next;
@@ -90,7 +93,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     publish();
   }
   async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
-    requireCompatible();
+    requireOpen(); requireCompatible();
     const id = entry.command.clientCommandId;
     if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
@@ -98,6 +101,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     try {
       publish();
       const result = await port.submit(entry.command);
+      requireOpen();
       if (result.kind === 'rejected') {
         if (admission === 'known-absent') await enqueue(async () => {
           await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
@@ -141,6 +145,11 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   }
   return {
     ready,
+    frontendJournal: journal,
+    dispose() {
+      if (!disposal) { closed = true; disposal = saves; stop({ kind: 'disconnected' }); }
+      return disposal;
+    },
     drained: () => saves,
     getSnapshot: () => view,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -169,7 +178,9 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     },
     async refreshReceipt(clientCommandId) {
       await ready;
+      requireOpen();
       const value = await port.receipt(clientCommandId);
+      requireOpen();
       if (value === null) return null;
       const receipt = immutable(decodeReceipt(copyCanonicalJson(value), scope));
       if (receipt.clientCommandId !== clientCommandId) throw new Error('Lookup receipt command ID mismatch');
@@ -180,6 +191,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       return receipt;
     },
     async connect() {
+      requireOpen();
       stop({ kind: 'connecting' });
       const current = generation;
       let receiving = false;

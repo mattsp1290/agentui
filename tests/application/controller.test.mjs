@@ -9,7 +9,7 @@ const scope = { hostId: 'host', conversationId: 'conversation' };
 const empty = () => ({ version: 2, route: null, pendingCreation: null });
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 function fixture() {
-  const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
+  const loads = [], selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
   const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
@@ -19,8 +19,12 @@ function fixture() {
       async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
       async saveView(host, value) { if (owner.closed) throw new Error('Closed owner'); views.set(`${viewId}/${host}`, value); },
       savedViews: (...args) => behavior.listing(...args),
+      async draftScopes(hostId, after) {
+        const scopes = [...drafts.values()].filter(row => drafts.get(`${viewId}/${hostId}/${row.scope.conversationId}`) === row && row.scope.hostId === hostId && (after === null || row.scope.conversationId > after)).map(row => row.scope).sort((a, b) => a.conversationId < b.conversationId ? -1 : 1).slice(0, 100);
+        return { scopes, after: scopes.length === 100 ? scopes.at(-1).conversationId : null };
+      },
       drafts(onFailure) {
-        return { load: async selected => drafts.get(`${viewId}/${selected.hostId}/${selected.conversationId}`) ?? null,
+        return { load: async selected => { loads.push(`${viewId}/${selected.hostId}/${selected.conversationId}`); return drafts.get(`${viewId}/${selected.hostId}/${selected.conversationId}`) ?? null; },
           async save(value) {
             try { await behavior.write(); if (owner.closed) throw new Error('Closed owner'); drafts.set(`${viewId}/${value.scope.hostId}/${value.scope.conversationId}`, value); }
             catch (error) { onFailure(error); throw error; }
@@ -51,7 +55,7 @@ function fixture() {
   };
   const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
     ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => `id-${++nextId}` });
-  return { app, views, drafts, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
+  return { app, views, drafts, loads, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
 
@@ -1119,4 +1123,108 @@ test('a newly acquired view already owns its selected lease when another capture
   assert.equal(f.leases.find(lease => lease.viewId === 'new-view').closed, false);
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
   await source.generation.retire();
+});
+
+const journalRecord = (selected, count = 1) => ({ version: 2, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [],
+  frontendSends: Array.from({ length: count }, (_, index) => ({ ownerId: 'principal', state: 'retained', command: { version: 2, scope: selected,
+    clientCommandId: `${selected.conversationId}-${index}`, body: { kind: 'send', text: 'Original', frontend: { platform: 'desktop', tools: [{ activationId: 'old', definition: { name: 'fixture__echo', description: 'Original' } }] } } } })) });
+const eventually = async predicate => { for (let attempt = 0; attempt < 500; attempt++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('Recovery did not reach its durable state'); };
+
+for (const route of [null, scope]) test(`owned-view sweep reaches more than 100 scopes and 32 references with route ${route?.conversationId ?? 'null'}`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route });
+  for (let index = 0; index < 105; index++) {
+    const selected = { ...scope, conversationId: `a-${String(index).padStart(3, '0')}` };
+    f.drafts.set(`original-view/host/${selected.conversationId}`, { ...journalRecord(selected, 0), version: 1 });
+  }
+  const last = { ...scope, conversationId: 'z-last' }, record = journalRecord(last, 70), requests = [], lookedUp = [];
+  for (let index = 0; index < 35; index++) record.frontendSends[index].ownerId = 'foreign';
+  record.frontendSends[35].state = 'unavailable-confirmed';
+  f.drafts.set('original-view/host/z-last', record);
+  f.behavior.agentLookup = selected => { lookedUp.push(selected); return selected.conversationId === scope.conversationId ? f.descriptor() : null; };
+  f.behavior.binding = async request => { requests.push(request); if (request.id === 'z-last-36') throw new Error('Lost reply'); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start();
+  await eventually(() => f.drafts.get('original-view/host/z-last').frontendSends[69].state === 'unavailable-confirmed');
+  assert.deepEqual(lookedUp, route ? [scope] : []);
+  assert.deepEqual(f.feeds.map(feed => feed.scope), route ? [scope] : []); assert.deepEqual(f.submitted, []);
+  assert.equal(f.drafts.get('original-view/host/z-last').frontendSends[36].state, 'unavailable-pending');
+  assert.ok(requests.every(request => request.action === 'unavailable' && Number(request.id.split('-').at(-1)) >= 36));
+  assert.equal(f.app.getSnapshot().capturedSends.length, 32);
+  assert.deepEqual(f.drafts.get('original-view/host/z-last').frontendSends.map(row => row.command), record.frontendSends.map(row => row.command));
+});
+
+test('recovery and visible install share one writer and gain eligibility from the actual conversation agent', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const held = deferred(), entered = deferred();
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  const actual = { ...f.descriptor('actual'), frontendOffers: 'ag-ui-capture-and-bind' };
+  f.behavior.agents = [f.descriptor(), actual]; f.behavior.agentLookup = () => actual;
+  f.behavior.binding = async request => { entered.resolve(); await held.promise; return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'new', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'New' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  t.after(() => source.generation.retire());
+  await f.app.start(); await entered.promise;
+  await f.app.open(scope);
+  const store = f.app.getSnapshot().active.store;
+  const writing = deferred(), writingEntered = deferred();
+  f.behavior.write = async () => { writingEntered.resolve(); await writing.promise; };
+  const draft = store.setDraft('Concurrent draft'); await writingEntered.promise;
+  f.behavior.submit = async command => ({ kind: 'receipt', receipt: { scope, clientCommandId: command.clientCommandId, hostOperationId: 'operation', sequence: 1, state: { kind: 'completed' } } });
+  const sending = store.send('Explicit send'); held.resolve();
+  await Promise.resolve(); writing.resolve(); await Promise.all([draft, sending]);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(f.loads.filter(key => key === 'original-view/host/conversation').length, 1);
+  assert.equal(f.submitted[0].version, 2); assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Concurrent draft');
+  assert.equal(f.drafts.get('original-view/host/conversation').outbox.length, 0);
+});
+
+for (const failed of [false, true]) test(`inactive view release ${failed ? 'reports its pinned save failure' : 'drains then defers notification until reopening'}`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope }); f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'A' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); await assert.rejects(f.app.getSnapshot().active.store.send('Original'), /Reply lost/);
+  const key = f.app.getSnapshot().capturedSends[0].key;
+  await f.app.reopenView('other-view'); assert.equal(f.leases[0].closed, false);
+  const entered = deferred(), write = deferred(), requests = [];
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  f.behavior.write = async () => { entered.resolve(); await write.promise; };
+  const release = f.app.releaseCapturedSend(key); await entered.promise;
+  assert.equal(f.leases[0].closed, false);
+  if (failed) write.reject(new Error('Inactive release save failed')); else write.resolve();
+  await release; await source.generation.retire();
+  await eventually(() => f.leases[0].closed);
+  if (failed) assert.match(f.app.getSnapshot().storageFailure, /Inactive release save failed/);
+  else {
+    assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending'); assert.deepEqual(requests, []);
+    f.behavior.write = async () => {};
+    await f.app.reopenView('original-view');
+    await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+    assert.equal(f.leases.filter(lease => lease.viewId === 'original-view').length, 2);
+    assert.equal(f.submitted.length, 1);
+  }
+});
+
+test('owned-view discovery preserves corrupt journal bytes and blocks admission without agent lookup', async t => {
+  const f = fixture(); t.after(() => f.app.dispose().catch(() => {}));
+  const corrupt = { ...journalRecord(scope), version: 99 }; f.drafts.set('original-view/host/conversation', corrupt);
+  f.behavior.agentLookup = () => { assert.fail('Recovery must not resolve an agent'); };
+  await f.app.start(); await eventually(() => Boolean(f.app.getSnapshot().storageFailure));
+  assert.match(f.app.getSnapshot().storageFailure, /Unsupported local storage version/);
+  assert.equal(f.drafts.get('original-view/host/conversation'), corrupt);
+  assert.deepEqual(f.submitted, []); assert.deepEqual(f.feeds, []);
+});
+
+test('navigating inactive scopes closes their handles while retaining the selected store', async t => {
+  const f = fixture(); t.after(() => f.app.dispose()); await f.app.start();
+  const stores = [];
+  for (let index = 0; index < 40; index++) {
+    await f.app.open({ ...scope, conversationId: `visited-${index}` }); stores.push(f.app.getSnapshot().active.store);
+  }
+  for (const old of stores.slice(0, -1)) await assert.rejects(old.setDraft('Stale handle'), /closed/);
+  await stores.at(-1).setDraft('Current draft');
+  assert.equal(f.drafts.get('original-view/host/visited-39').draft, 'Current draft');
+  assert.equal(f.app.getSnapshot().storageFailure, '');
 });

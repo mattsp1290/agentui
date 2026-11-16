@@ -229,7 +229,7 @@ test('close holds the view lock until admitted writes and saved-view scans finis
     };
     const scope = { hostId: 'host', conversationId: 'draining' };
     const admitted = owner.drafts(() => {}).save({ scope, draft: 'Admitted before close' });
-    const listing = owner.savedViews('host');
+    const listing = owner.savedViews('host'), scopes = owner.draftScopes('host', null);
     const closing = owner.close();
     const samePromise = closing === owner.close();
     let settled = false;
@@ -240,7 +240,7 @@ test('close holds the view lock until admitted writes and saved-view scans finis
     try { await owner.readView('host'); } catch (error) { rejected = error.message; }
     holding = false;
     IDBDatabase.prototype.transaction = original;
-    await Promise.all([admitted, listing, closing]);
+    await Promise.all([admitted, listing, scopes, closing]);
     const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
     const retained = await successor.drafts(() => {}).load(scope);
     await successor.close();
@@ -314,4 +314,30 @@ test('late whole-record settlement from an old store cannot overwrite successor 
   assert.equal(result.retained.outbox.length, 1);
   assert.deepEqual(result.retained.outbox[0].command, result.submitted[0]);
   assert.equal(result.submitted.length, 1);
+});
+
+test('draft key discovery pages only the acquired view and host and drains scans before closing', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const opening = indexedDB.open('agentui-browser-views', 1), db = await new Promise(resolve => { opening.onsuccess = () => resolve(opening.result); });
+    const transaction = db.transaction('records', 'readwrite'), rows = transaction.objectStore('records');
+    for (let index = 0; index < 105; index++) rows.put({ untouched: index }, ['draft', owner.viewId, 'host', `scope-${String(index).padStart(3, '0')}`]);
+    rows.put({ untouched: 'foreign host' }, ['draft', owner.viewId, 'elsewhere', 'scope']);
+    rows.put({ untouched: 'foreign view' }, ['draft', 'another-view', 'host', 'scope']);
+    await new Promise(resolve => { transaction.oncomplete = resolve; });
+    const first = await owner.draftScopes('host', null);
+    let malformed;
+    try { await owner.draftScopes('host', []); } catch (error) { malformed = error.message; }
+    const pending = owner.draftScopes('host', first.after), closing = owner.close();
+    const second = await pending; await closing;
+    const acquired = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => Boolean(lock));
+    const read = db.transaction('records').objectStore('records').getAll(), retained = await new Promise(resolve => { read.onsuccess = () => resolve(read.result); });
+    db.close(); return { first, second, malformed, acquired, retained };
+  });
+  assert.equal(result.first.scopes.length, 100); assert.equal(result.first.after, 'scope-099');
+  assert.equal(result.second.scopes.length, 5); assert.equal(result.second.after, null);
+  assert.equal(result.second.scopes.at(-1).conversationId, 'scope-104'); assert.equal(result.acquired, true);
+  assert.ok(result.malformed); assert.equal(result.retained.length, 107);
+  assert.ok(result.retained.every(row => Object.hasOwn(row, 'untouched')));
 });

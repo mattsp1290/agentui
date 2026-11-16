@@ -19,78 +19,106 @@ export type CapturedSend = CapturedState & {
   readonly command: OfferedCommand;
   readonly viewId: string;
 };
-type Notification = { readonly kind: 'needed' | 'saved' | 'confirmed' | 'failed' } | { readonly kind: 'saving'; readonly task: Promise<void> };
 type Entry = { readonly key: string; readonly viewId: string; readonly reference: FrontendRecoveryReference; readonly journal: FrontendJournal;
-  readonly retained: RetainedFrontendTools | null; state: CapturedState;
-  notification: Notification; pending: boolean };
+  readonly retained: RetainedFrontendTools; state: { readonly status: 'waiting'; readonly binding: null } | Extract<CapturedState, { status: 'bound' }>; pending: boolean };
+type ScopeHold = { readonly viewId: string; readonly scope: ConversationScope };
 type Session = { readonly hostId: string; readonly principalId: string; readonly connection: ServiceConnection };
 export function createFrontendSends(deps: { changed(): void; failed(viewId: string, error: unknown): void; unauthorized(): void }) {
   let token: object | null = null, generations: GenerationSnapshot = { kind: 'transitioning' };
   let session: Session | null = null, epoch = 0, closed = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let authorityLifetime = new AbortController();
+  function advanceEpoch(): number {
+    authorityLifetime.abort(); authorityLifetime = new AbortController();
+    return ++epoch;
+  }
   const failedViews = new Set<string>();
-  const entries = new Map<string, Entry>(), provisional = new Map<object, { viewId: string; retained: RetainedFrontendTools }>();
+  const entries = new Map<string, Entry>(), provisional = new Map<object, ScopeHold & { retained: RetainedFrontendTools }>();
+  const transitions = new Map<object, ScopeHold>();
+  const recent = new Map<string, CapturedSend & { ownerId: string }>();
   const keyFor = (viewId: string, command: OfferedCommand) => canonicalJson([viewId, command.scope, command.clientCommandId]);
   const matches = (reference: FrontendRecoveryReference) => session !== null && reference.ownerId === session.principalId && reference.command.scope.hostId === session.hostId;
-  const outstanding = (entry: Entry) => entry.notification.kind !== 'confirmed';
-  function changed(): void {
-    for (const [key, entry] of entries) if (entries.size > 32 && !outstanding(entry)) entries.delete(key);
+  const held = (viewId: string, scope: ConversationScope | undefined, item: ScopeHold) => item.viewId === viewId && (!scope || sameScope(scope, item.scope));
+  const acquiring = (viewId: string, scope: ConversationScope) => [...provisional.values()].some(item => held(viewId, scope, item));
+  function remember(viewId: string, reference: FrontendRecoveryReference): void {
+    if (!matches(reference)) return;
+    const key = keyFor(viewId, reference.command);
+    recent.delete(key);
+    recent.set(key, { key, viewId, command: reference.command, ownerId: reference.ownerId, status: 'unavailable', binding: null });
+    const oldest = recent.keys().next();
+    if (recent.size > 32 && !oldest.done) recent.delete(oldest.value);
     deps.changed();
   }
   function schedule(): void {
     clearTimeout(timer);
-    if (!closed && session && [...entries.values()].some(entry => outstanding(entry) && entry.state.status !== 'bound' && entry.notification.kind !== 'failed' && matches(entry.reference))) {
+    if (!closed && session && [...entries.values()].some(entry => entry.state.status === 'waiting' && matches(entry.reference))) {
       timer = setTimeout(() => { void poll(); }, 2_000);
     }
   }
-  async function unavailable(entry: Entry): Promise<void> {
-    if (entry.state.status !== 'unavailable') {
-      entry.state = { status: 'unavailable', binding: null }; entry.retained?.release(); changed();
-    }
-    if (entry.notification.kind === 'saving') return entry.notification.task;
-    if (entry.notification.kind !== 'needed') return;
-    const task = entry.journal.unavailable(entry.reference.command.clientCommandId).then(() => {
-      if (!failed(entry)) entry.notification = { kind: 'saved' };
-    }, error => {
-      entry.notification = { kind: 'failed' }; deps.failed(entry.viewId, error); throw error;
-    }).finally(() => { changed(); schedule(); });
-    entry.notification = { kind: 'saving', task };
-    return task;
+  function unavailable(entry: Entry): Promise<void> {
+    const transition = {};
+    transitions.set(transition, { viewId: entry.viewId, scope: entry.reference.command.scope });
+    const task = entry.journal.unavailable(entry.reference.command.clientCommandId);
+    entries.delete(entry.key);
+    entry.retained.release();
+    remember(entry.viewId, entry.reference);
+    deps.changed();
+    return task.catch(error => { deps.failed(entry.viewId, error); throw error; }).finally(() => {
+      transitions.delete(transition); deps.changed(); schedule();
+    });
   }
-  function failed(entry: Entry): boolean { return entry.notification.kind === 'failed'; }
-
+  async function recover({ viewId, journal, reference, current = () => true }: {
+    viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current?: () => boolean;
+  }): Promise<void> {
+    const key = keyFor(viewId, reference.command), authority = session, version = epoch;
+    const valid = () => !closed && !failedViews.has(viewId) && current() && authority === session && version === epoch;
+    if (!valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
+    if (reference.state === 'retained') {
+      try { await journal.unavailable(reference.command.clientCommandId); }
+      catch (error) { if (valid()) deps.failed(viewId, error); return; }
+    }
+    if (!valid()) return;
+    remember(viewId, reference);
+    if (!valid() || !authority || !matches(reference) || reference.state === 'unavailable-confirmed' || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
+    const signal = authorityLifetime.signal;
+    let cancel = () => {};
+    const cancelled = new Promise<null>(resolve => { cancel = () => resolve(null); signal.addEventListener('abort', cancel, { once: true }); });
+    try {
+      const result = await Promise.race([authority.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), cancelled]);
+      if (result === null) return;
+      const response = parseFrontendBinding(result);
+      if (!valid() || !matches(reference) || entries.has(key)) return;
+      if (response.kind !== 'unavailable' || response.id !== reference.command.clientCommandId) return;
+      await journal.acknowledged(response.id);
+    } catch (error) {
+      if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
+    } finally { signal.removeEventListener('abort', cancel); }
+  }
   async function read(entry: Entry): Promise<void> {
-    if (entry.pending || !session || !matches(entry.reference) || entry.notification.kind === 'confirmed' || entry.notification.kind === 'failed' || entry.state.status === 'bound') return;
+    if (entry.pending || !session || !matches(entry.reference) || entry.state.status !== 'waiting' || failedViews.has(entry.viewId)) return;
     entry.pending = true;
     const current = session, version = epoch;
+    const valid = () => current === session && version === epoch && entries.get(entry.key) === entry && !failedViews.has(entry.viewId);
     try {
-      if (entry.state.status === 'unavailable') await unavailable(entry);
-      if (current !== session || version !== epoch || failed(entry)) return;
       const command = entry.reference.command;
-      const response = parseFrontendBinding(await current.connection.frontendBinding({ scope: command.scope, id: command.clientCommandId,
-        action: entry.state.status === 'unavailable' ? 'unavailable' : 'recover' }));
-      if (current !== session || version !== epoch || failed(entry) || !matches(entry.reference)) return;
+      const response = parseFrontendBinding(await current.connection.frontendBinding({ scope: command.scope, id: command.clientCommandId, action: 'recover' }));
+      if (!valid()) return;
       if (response.kind === 'bound') {
-        if (entry.state.status !== 'waiting') return;
-        if (!sameScope(response.run.conversation, command.scope) || canonicalJson(response.command) !== canonicalJson(command) || !entry.retained) throw new Error('Captured command binding does not match its original owner.');
+        if (!sameScope(response.run.conversation, command.scope) || canonicalJson(response.command) !== canonicalJson(command)) throw new Error('Captured command binding does not match its original owner.');
         entry.retained.bind(response.run);
         entry.state = { status: 'bound', binding: response };
       } else {
         if (response.id !== command.clientCommandId) throw new Error('Captured command response has the wrong identity.');
-        if (response.kind === 'unavailable') {
-          await unavailable(entry);
-          if (current !== session || version !== epoch || failed(entry)) return;
-          await entry.journal.acknowledged(command.clientCommandId);
-          if (!failed(entry)) entry.notification = { kind: 'confirmed' };
-        }
+        if (response.kind === 'unavailable') await unavailable(entry);
       }
-      changed();
+      deps.changed();
     } catch (error) {
       if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && current === session) deps.unauthorized();
     } finally { entry.pending = false; }
   }
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
   return {
+    recover,
     start(): void { closed = false; failedViews.clear(); },
     source: {
       begin(owner) { token = owner; generations = { kind: 'transitioning' }; },
@@ -98,24 +126,24 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       clear(owner) { if (token === owner) { token = null; generations = { kind: 'transitioning' }; } },
     } satisfies GenerationSink,
     snapshot(): readonly CapturedSend[] {
-      return [...entries.values()].filter(entry => matches(entry.reference)).map(entry => ({ key: entry.key, command: entry.reference.command,
-        viewId: entry.viewId, ...entry.state }));
+      return [...entries.values()].filter(entry => matches(entry.reference)).map<CapturedSend>(entry => ({ key: entry.key, command: entry.reference.command,
+        viewId: entry.viewId, ...entry.state })).concat([...recent.values()].filter(row => session?.principalId === row.ownerId && session.hostId === row.command.scope.hostId));
     },
-    forgetView(viewId: string): void {
-      for (const [key, entry] of entries) if (entry.viewId === viewId && !outstanding(entry)) entries.delete(key);
-      changed();
+    forgetView(viewId: string): void { failedViews.delete(viewId); },
+    holds(viewId: string, scope?: ConversationScope): boolean {
+      return [...entries.values()].some(entry => held(viewId, scope, { viewId: entry.viewId, scope: entry.reference.command.scope })) ||
+        [...provisional.values(), ...transitions.values()].some(entry => held(viewId, scope, entry));
     },
-    holds(viewId: string): boolean { return [...entries.values()].some(entry => entry.viewId === viewId && outstanding(entry)) || [...provisional.values()].some(entry => entry.viewId === viewId); },
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
       const same = metadata && session && metadata.hostId === session.hostId && metadata.principalId === session.principalId && session.connection === connection;
       if (same) { schedule(); return; }
-      const transition = ++epoch; session = null; clearTimeout(timer);
+      const transition = advanceEpoch(); session = null; recent.clear(); clearTimeout(timer);
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
-      await Promise.allSettled([...entries.values()].filter(outstanding).map(unavailable));
+      await Promise.allSettled([...entries.values()].map(unavailable));
       if (closed || transition !== epoch) return;
       session = metadata ? { ...metadata, connection } : null;
-      changed(); schedule();
+      deps.changed(); schedule();
     },
     forStore({ viewId, scope, eligibility }: { readonly viewId: string; readonly scope: ConversationScope; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
       return {
@@ -127,12 +155,12 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
           if (generations.kind !== 'ready') throw new Error('Custom tools are changing. Wait for them to load, then send again.');
           const retained = retainFrontendTools({ generations: generations.generations, platform: 'desktop' });
           if (!retained.definitions.length) { retained.release(); return null; }
-          if (provisional.size + [...entries.values()].filter(outstanding).length >= 32) {
+          if (provisional.size + entries.size >= 32) {
             retained.release();
             throw new Error('32 captured sends are still retained. Release captured tools or reconnect before sending.');
           }
           const captureToken = {}, current = session, version = epoch, ownerId = session.principalId;
-          provisional.set(captureToken, { viewId, retained });
+          provisional.set(captureToken, { viewId, scope, retained });
           try {
             if (retained.definitions.length !== retained.bindings.length) throw new Error('Captured definitions and bindings differ.');
             const tools = retained.definitions.map(definition => {
@@ -145,54 +173,39 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
               offer: { platform: 'desktop', tools },
               commit(command, journal) {
                 const acquired = provisional.delete(captureToken);
-                if (closed) { retained.release(); return false; }
-                const valid = acquired && current === session && version === epoch;
+                const valid = !closed && acquired && current === session && version === epoch && !failedViews.has(viewId);
+                if (!valid) { retained.release(); deps.changed(); return false; }
                 const reference: FrontendRecoveryReference = { command, ownerId, state: 'retained' };
                 const key = keyFor(viewId, command);
-                entries.set(key, { key, viewId, reference, journal, retained, state: { status: valid ? 'waiting' : 'unavailable', binding: null }, notification: { kind: failedViews.has(viewId) ? 'failed' : 'needed' }, pending: false });
-                if (!valid) retained.release();
-                changed(); schedule(); return valid;
+                entries.set(key, { key, viewId, reference, journal, retained, state: { status: 'waiting', binding: null }, pending: false });
+                deps.changed(); schedule(); return valid;
               },
-              release() { provisional.delete(captureToken); retained.release(); changed(); },
+              release() { provisional.delete(captureToken); retained.release(); deps.changed(); },
             };
           } catch (error) { provisional.delete(captureToken); retained.release(); throw error; }
         },
-        restore(journal) {
-          const references = journal.read();
-          const incoming = references.filter(reference => reference.state !== 'unavailable-confirmed' && !entries.has(keyFor(viewId, reference.command))).length;
-          if (incoming + provisional.size + [...entries.values()].filter(outstanding).length > 32) throw new Error('This saved view exceeds the 32 captured-send limit. Release captured tools, then reload to open it.');
-          for (const reference of references) {
-            const key = keyFor(viewId, reference.command);
-            if (entries.has(key)) continue;
-            const entry: Entry = { key, viewId, reference, journal, retained: null, state: { status: 'unavailable', binding: null },
-              notification: { kind: reference.state === 'unavailable-confirmed' ? 'confirmed' : reference.state === 'unavailable-pending' ? 'saved' : 'needed' }, pending: false };
-            entries.set(key, entry);
-            if (entry.notification.kind === 'needed') void unavailable(entry).catch(() => {});
-          }
-          changed(); schedule();
-        },
         canRetry(command) {
           const entry = entries.get(keyFor(viewId, command));
-          return Boolean(!closed && entry && entry.state.status !== 'unavailable' && matches(entry.reference) && canonicalJson(command) === canonicalJson(entry.reference.command));
+          return Boolean(!closed && entry && matches(entry.reference) && canonicalJson(command) === canonicalJson(entry.reference.command));
         },
         async rejected(id) {
           const entry = [...entries.values()].find(entry => entry.viewId === viewId && sameScope(entry.reference.command.scope, scope) && entry.reference.command.clientCommandId === id);
-          if (entry) { await unavailable(entry); void read(entry).finally(schedule); }
+          if (entry) await unavailable(entry);
         },
       };
     },
-    async release(key: string): Promise<void> { const entry = entries.get(key); if (entry) { await unavailable(entry); void read(entry).finally(schedule); } },
+    async release(key: string): Promise<void> { const entry = entries.get(key); if (entry) await unavailable(entry); },
     storageFailed(viewId: string): void {
       failedViews.add(viewId);
-      for (const entry of entries.values()) if (entry.viewId === viewId) { entry.state = { status: 'unavailable', binding: null }; entry.notification = { kind: 'failed' }; entry.retained?.release(); }
+      for (const [key, entry] of entries) if (entry.viewId === viewId) { entries.delete(key); entry.retained.release(); remember(viewId, entry.reference); }
       for (const [key, item] of provisional) if (item.viewId === viewId) { item.retained.release(); provisional.delete(key); }
-      changed(); schedule();
+      deps.changed(); schedule();
     },
     async dispose(): Promise<void> {
-      closed = true; epoch++; session = null; clearTimeout(timer);
+      closed = true; advanceEpoch(); session = null; recent.clear(); clearTimeout(timer);
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
-      await Promise.allSettled([...entries.values()].filter(outstanding).map(unavailable));
+      await Promise.allSettled([...entries.values()].map(unavailable));
       entries.clear();
     },
   };

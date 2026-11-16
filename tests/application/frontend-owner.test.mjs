@@ -20,8 +20,9 @@ async function fixture(t, { drafts = storage(), reply } = {}) {
   const frontend = owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' });
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), frontend });
   t.after(async () => { await owner.dispose(); await a.retire(); });
-  const tick = async () => { t.mock.timers.tick(2000); await flush(); };
-  return { owner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick };
+  const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ viewId: 'view', journal: store.frontendJournal, reference }); };
+  const tick = async () => { t.mock.timers.tick(2000); await flush(); await recover(); };
+  return { owner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover };
 }
 const bound = command => ({ kind: 'bound', command, hostOperationId: 'operation', threadId: 'actual-thread', run: { conversation: scope, runId: 'actual-run', authority: { kind: 'remote-provider', binding: { namespace: 'provider', installationId: 'installation', opaqueSessionId: 'session' } } } });
 
@@ -41,7 +42,7 @@ test('completed outbox settlement retains A, exact delayed binding rejects drift
   assert.equal(f.owner.snapshot()[0].status, 'waiting');
   response = bound(command); await f.tick();
   assert.equal(f.owner.snapshot()[0].status, 'bound'); assert.deepEqual(f.disposed, []);
-  const key = f.owner.snapshot()[0].key; await f.owner.release(key); await retiring; await flush();
+  const key = f.owner.snapshot()[0].key; await f.owner.release(key); await retiring; await flush(); await f.recover();
   assert.deepEqual(f.disposed, ['A']); assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-pending');
   await f.tick(); assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-confirmed');
   await f.owner.release(key); assert.equal(f.owner.holds('view'), false); assert.deepEqual(f.calls, []);
@@ -129,7 +130,7 @@ test('reload has no original closure and preserves original bytes while notifyin
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready; await store.drained();
   await assert.rejects(store.retry('1'), /Original captured tools/);
-  t.mock.timers.tick(2000); await flush();
+  for (const reference of store.frontendJournal.read()) await second.recover({ viewId: 'view', journal: store.frontendJournal, reference });
   assert.equal(drafts.value.frontendSends[0].state, 'unavailable-confirmed');
   assert.deepEqual(drafts.value.frontendSends[0].command, saved.frontendSends[0].command); assert.deepEqual(port.submitted, []);
 });
@@ -152,4 +153,73 @@ test('storage failure invalidates a provisional capture even if its outstanding 
   f.owner.storageFailed('view'); gate.resolve(); await assert.rejects(send, /capture session changed/);
   await f.tick(); assert.deepEqual(f.requests, []); await assert.rejects(f.store.send('Still failed'), /storage failed/);
   assert.deepEqual(f.port.submitted, []); await f.a.retire(); assert.deepEqual(f.disposed, ['A']);
+});
+
+test('32 released A captures leave all 32 slots available to B without notifying A', async t => {
+  const f = await fixture(t);
+  for (let index = 0; index < 32; index++) await f.store.send(`A ${index}`);
+  const originals = structuredClone(f.drafts.value.frontendSends);
+  await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  for (let index = 0; index < 32; index++) await f.store.send(`B ${index}`);
+  await assert.rejects(f.store.send('B overflow'), /32 captured sends/);
+  assert.deepEqual(f.drafts.value.frontendSends.slice(0, 32).map(({ command, ownerId }) => ({ command, ownerId })), originals.map(({ command, ownerId }) => ({ command, ownerId })));
+  assert.deepEqual(f.requests, []);
+});
+
+test('sweeping during admission skips the provisional scope and the persisted-before-commit window', async t => {
+  const f = await fixture(t), gate = deferred(), entered = deferred(), save = f.drafts.save.bind(f.drafts);
+  let pending, windowRecovery;
+  const capture = f.frontend.capture.bind(f.frontend);
+  f.frontend.capture = id => {
+    const retained = capture(id);
+    return { ...retained, commit(command, journal) {
+      windowRecovery = f.owner.recover({ viewId: 'view', journal, reference: journal.read().at(-1) });
+      return retained.commit(command, journal);
+    } };
+  };
+  f.drafts.save = async records => { pending = records; entered.resolve(); await gate.promise; await save(records); };
+  const sending = f.store.send('Gated admission'); await entered.promise;
+  await f.owner.recover({ viewId: 'view', journal: f.store.frontendJournal, reference: pending.frontendSends[0] });
+  gate.resolve(); await sending; await windowRecovery; await f.recover();
+  assert.equal(f.owner.snapshot()[0].status, 'waiting'); assert.equal(f.drafts.value.frontendSends[0].state, 'retained');
+  assert.deepEqual(f.requests, []); assert.equal(f.drafts.writes.length, 1);
+});
+
+test('more than 32 restored references occupy only bounded presentation rows and no live quota', async t => {
+  const f = await fixture(t); await f.store.send('Template');
+  const original = f.drafts.value.frontendSends[0]; await f.owner.dispose();
+  const saved = { ...f.drafts.value, outbox: [], frontendSends: Array.from({ length: 70 }, (_, index) => ({ ...original, command: { ...original.command, clientCommandId: `old-${index}` } })) };
+  f.owner.start(); await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: f.owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
+  await store.ready;
+  for (const reference of store.frontendJournal.read()) await f.owner.recover({ viewId: 'view', journal: store.frontendJournal, reference });
+  assert.equal(f.owner.holds('view'), false); assert.deepEqual(f.owner.snapshot(), []); assert.deepEqual(f.requests, []);
+  await store.send('B still has capacity');
+  await f.owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
+  for (const reference of store.frontendJournal.read()) await f.owner.recover({ viewId: 'view', journal: store.frontendJournal, reference });
+  assert.equal(f.owner.snapshot().length, 32); assert.equal(f.owner.holds('view'), false);
+  assert.ok(drafts.value.frontendSends.slice(0, 70).every(row => row.state === 'unavailable-confirmed'));
+  assert.deepEqual(drafts.value.frontendSends.slice(0, 70).map(row => row.command), saved.frontendSends.map(row => row.command));
+});
+
+test('session invalidation releases a stalled recovery and its late reply cannot acknowledge a successor epoch', async t => {
+  const gate = deferred(), entered = deferred(), f = await fixture(t, { reply: () => { entered.resolve(); return gate.promise; } });
+  await f.store.send('Original'); await f.owner.release(f.owner.snapshot()[0].key);
+  const recovering = f.recover(); await entered.promise;
+  await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  await recovering;
+  const before = structuredClone(f.drafts.value);
+  gate.resolve({ kind: 'unavailable', id: '1', reason: 'closures-unavailable' }); await flush();
+  assert.deepEqual(f.drafts.value, before); assert.equal(before.frontendSends[0].state, 'unavailable-pending');
+  await f.store.send('B'); assert.equal(f.drafts.value.frontendSends[1].ownerId, 'B');
+});
+
+test('the final provisional admission consumes the 32nd slot until committed or released', async t => {
+  const f = await fixture(t);
+  for (let index = 0; index < 31; index++) await f.store.send(`Live ${index}`);
+  const gate = deferred(), entered = deferred(), save = f.drafts.save.bind(f.drafts);
+  f.drafts.save = async records => { entered.resolve(); await gate.promise; await save(records); };
+  const pending = f.store.send('Provisional 32'); await entered.promise;
+  assert.throws(() => f.frontend.capture('overflow'), /32 captured sends/);
+  gate.resolve(); await pending; assert.equal(f.owner.snapshot().length, 32);
 });

@@ -150,7 +150,25 @@ Unavailable recovery also repairs local coordinator blocking, even if the origin
 
 Database format 4 adds frontend ownership without rewriting existing commands, targets, observations or receipts.
 Wire 8 and SDK 0.4.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 3.
-This service increment executes no frontend handlers. Desktop captured-closure admission, retention across views and recovery are the next increment.
+Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
+The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
+There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
+The application shows at most 32 recent unavailable rows in addition to live captures.
+
+On reload, the desktop scans draft keys for the physical view whose exclusive lock it owns, independently of the selected conversation or agent catalog.
+Each page contains at most 100 keys. One worker borrows the conversation's canonical store and examines at most 32 journal references per slice.
+Lost closures become unavailable locally. Only the original matching principal can send their unavailable notifications.
+The worker never submits a saved command, binds replacement tools, or opens another tab's view.
+It advances past foreign owners and failed requests, then retries completed passes every two seconds.
+
+Live captures retain their original store and view lock through navigation. Release keeps that writer until the admitted unavailable save finishes.
+After leaving a physical view, pending notifications alone do not retain its lock. Remaining retries resume when that physical view is reopened.
+Conversation navigation within the selected physical view continues background recovery.
+Inactive stores close new writes synchronously and drain admitted saves before eviction. Delayed transport replies cannot overwrite a successor store.
+
+Local v1 records remain readable and upgrade to v2 when saved. Full journal commands and original owner IDs remain durable, including confirmed history needed to reject reused command IDs.
+The bounds above apply to live resources and recovery work, not to one whole record's byte size or total disk history.
+This integration executes no frontend handlers.
 Consent, claiming, durable execution receipts and continuation remain separate work.
 
 ## Durable response streams

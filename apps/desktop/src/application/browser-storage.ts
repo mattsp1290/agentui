@@ -1,3 +1,4 @@
+import type { ConversationScope } from '@agentui/contracts';
 import { parseScope } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { DraftStoragePort } from '@agentui/client';
@@ -124,6 +125,34 @@ export class BrowserViewStorage implements OwnedViewStorage {
       transaction.oncomplete = () => resolve({ ids, unreadable, after: next });
       transaction.onerror = () => reject(transaction.error ?? new Error('Could not list saved views.'));
       transaction.onabort = () => reject(transaction.error ?? new Error('Saved view listing was interrupted.'));
+    });
+  }
+
+  async draftScopes(hostId: string, after: string | null): ReturnType<OwnedViewStorage['draftScopes']> {
+    identifier(hostId);
+    if (after !== null) identifier(after);
+    return new Promise((resolve, reject) => {
+      const prefix = ['draft', this.viewId, hostId];
+      const range = IDBKeyRange.bound(after === null ? prefix : [...prefix, after], [...prefix, AFTER_ALL_STRINGS], after !== null, true);
+      const transaction = this.begin('readonly');
+      const request = transaction.objectStore('records').openKeyCursor(range);
+      const scopes: ConversationScope[] = [];
+      let next: string | null = null;
+      request.onsuccess = () => {
+        const cursor = request.result;
+        if (!cursor) return;
+        try {
+          const key = cursor.key;
+          if (!Array.isArray(key) || key.length !== 4 || key[0] !== 'draft' || key[1] !== this.viewId || key[2] !== hostId) throw new Error('Unsupported draft key. Local records were preserved.');
+          const scope = parseScope({ hostId, conversationId: key[3] });
+          scopes.push(scope);
+          if (scopes.length === 100) { next = scope.conversationId; return; }
+          cursor.continue();
+        } catch (error) { transaction.abort(); reject(error); }
+      };
+      transaction.oncomplete = () => resolve({ scopes, after: next });
+      transaction.onerror = () => reject(transaction.error ?? new Error('Could not list draft scopes.'));
+      transaction.onabort = () => reject(transaction.error ?? new Error('Draft scope listing was interrupted.'));
     });
   }
 

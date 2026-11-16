@@ -17,7 +17,6 @@ export interface FrontendJournal {
 export interface FrontendAdmission {
   readonly ownerId: string;
   capture(id: string): { readonly offer: FrontendOffer; commit(command: OfferedCommand, journal: FrontendJournal): boolean; release(): void } | null;
-  restore(journal: FrontendJournal): void;
   canRetry(command: OfferedCommand): boolean;
   rejected(id: string): Promise<void>;
 }
@@ -46,6 +45,8 @@ export interface ClientView<P> {
 }
 export interface ConversationStore<P> {
   readonly ready: Promise<void>;
+  readonly frontendJournal: FrontendJournal;
+  dispose(): Promise<void>;
   getSnapshot(): ClientView<P>;
   subscribe(listener: () => void): () => void;
   setDraft(text: string): Promise<void>;

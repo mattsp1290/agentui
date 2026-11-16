@@ -14,6 +14,7 @@ export interface OwnedViewStorage {
   savedViews(hostId: string, after: string | null): Promise<{
     readonly ids: readonly string[]; readonly unreadable: number; readonly after: string | null;
   }>;
+  draftScopes(hostId: string, after: string | null): Promise<{ readonly scopes: readonly ConversationScope[]; readonly after: string | null }>;
   drafts(onFailure: (error: unknown) => void): DraftStoragePort;
   close(): void | Promise<void>;
 }

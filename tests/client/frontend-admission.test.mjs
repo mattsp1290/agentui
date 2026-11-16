@@ -5,9 +5,9 @@ import { fakePort, storage, scope, projection, receipt } from './support.mjs';
 
 const offer = { platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] };
 test('both send callers atomically journal the exact original offer before dispatch and never recapture on retry', async () => {
-  const drafts = storage(), port = fakePort(); let captures = 0, journal;
+  const drafts = storage(), port = fakePort(); let captures = 0;
   const frontend = { ownerId: 'principal', capture() { captures++; return { offer, release() {}, commit() { return true; } }; },
-    restore(value) { journal = value; }, canRetry() { return true; }, async rejected() {} };
+    canRetry() { return true; }, async rejected() {} };
   port.submit = async command => {
     assert.equal(command.version, 2);
     assert.deepEqual(drafts.value.frontendSends.at(-1).command, command);
@@ -18,7 +18,7 @@ test('both send callers atomically journal the exact original offer before dispa
   const store = createConversationStore({ scope, port, projection, drafts, frontend, createCommandId: () => String(++id) });
   await store.setDraft('Composer'); await store.send(); await store.retry('1'); await store.send('Extension');
   assert.equal(captures, 2);
-  await journal.unavailable('1'); await journal.acknowledged('1');
+  await store.frontendJournal.unavailable('1'); await store.frontendJournal.acknowledged('1');
   assert.equal(drafts.value.frontendSends[0].state, 'unavailable-confirmed');
 });
 
@@ -39,4 +39,45 @@ test('version one local records upgrade without changing canonical commands and 
     await assert.rejects(restored.ready); await assert.rejects(restored.send('Unsafe'));
     assert.deepEqual(storagePort.writes, []);
   }
+});
+
+for (const result of ['receipt', 'rejected', 'lookup']) test(`terminal disposal fences late ${result} without waiting for transport or overwriting a successor`, async () => {
+  const { deferred } = await import('./support.mjs');
+  const drafts = storage(), port = fakePort(), gate = deferred(), entered = deferred();
+  const old = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'original' });
+  await old.setDraft('Original');
+  if (result !== 'lookup') port.submit = command => { entered.resolve(command); return gate.promise; };
+  if (result === 'lookup') { await old.send(); port.receipt = () => { entered.resolve(port.submitted[0]); return gate.promise; }; }
+  const sending = result === 'lookup' ? old.refreshReceipt('original') : old.send();
+  const rejected = assert.rejects(sending, /closed/), command = await entered.promise;
+  const closing = old.dispose(); assert.equal(old.dispose(), closing); await closing;
+  const nextPort = fakePort(), successor = createConversationStore({ scope, projection, drafts, port: nextPort, createCommandId: () => 'next' });
+  await successor.setDraft('Successor draft'); const before = structuredClone(drafts.value);
+  gate.resolve(result === 'lookup' ? receipt(command, 'completed') : result === 'rejected' ? { kind: 'rejected', reason: 'absent' } : { kind: 'receipt', receipt: receipt(command, 'completed') });
+  await rejected;
+  assert.deepEqual(drafts.value, before); assert.equal(drafts.value.outbox.length, 1);
+  await assert.rejects(old.setDraft('Closed edit'), /closed/);
+  await assert.rejects(old.connect(), /closed/);
+  assert.deepEqual(drafts.value, before);
+  nextPort.receipt = async () => receipt(command, 'completed');
+  await successor.refreshReceipt('original');
+  assert.equal(drafts.value.outbox.length, 0); assert.equal(drafts.value.draft, 'Successor draft');
+  await successor.dispose();
+});
+
+test('terminal disposal drains admitted journal saves and retains duplicate IDs after final settlement and reload', async () => {
+  const { deferred } = await import('./support.mjs');
+  const drafts = storage(), port = fakePort();
+  const frontend = { ownerId: 'principal', capture: () => ({ offer, release() {}, commit: () => true }), canRetry: () => true, async rejected() {} };
+  port.submit = async command => ({ kind: 'receipt', receipt: receipt(command, 'completed') });
+  const store = createConversationStore({ scope, projection, drafts, port, frontend, createCommandId: () => 'same' });
+  await store.send('Original');
+  const gate = deferred(), entered = deferred(), save = drafts.save.bind(drafts);
+  drafts.save = async records => { entered.resolve(); await gate.promise; await save(records); };
+  const writing = store.frontendJournal.acknowledged('same'); await entered.promise;
+  let disposed = false; const closing = store.dispose().then(() => { disposed = true; });
+  await Promise.resolve(); assert.equal(disposed, false); gate.resolve(); await Promise.all([writing, closing]);
+  assert.equal(drafts.value.frontendSends[0].state, 'unavailable-confirmed'); assert.equal(drafts.value.outbox.length, 0);
+  const next = createConversationStore({ scope, projection, drafts, port, frontend, createCommandId: () => 'same' });
+  await assert.rejects(next.send('Reuse'), /reused/); await next.dispose();
 });
