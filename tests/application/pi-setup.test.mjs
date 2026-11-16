@@ -13,10 +13,10 @@ async function fixture(t, preferred = 'pi') {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-pi-setup-'));
   const children = [];
   const f = { directory, origin: '', stderr: '' };
-  f.start = async () => {
+  f.start = async (environmentKey = '') => {
     const child = spawn(process.execPath, ['apps/host/dist/main.js', 'desktop', '--trusted', '--preferred', preferred,
       '--workspace', directory, '--data-dir', join(directory, 'data'), '--port', '0', ...(preferred === 'codex' ? ['--executable', '/nonexistent/codex'] : [])], {
-      env: { ...process.env, OPENCODE_GO_API_KEY: '', AGENTUI_SETUP_CAPABILITY: capability }, stdio: ['ignore', 'pipe', 'pipe'],
+      env: { ...process.env, OPENCODE_GO_API_KEY: environmentKey, AGENTUI_SETUP_CAPABILITY: capability }, stdio: ['ignore', 'pipe', 'pipe'],
     });
     child.stderr.on('data', data => { f.stderr += data; });
     const exited = new Promise(resolve => child.once('exit', code => resolve(code)));
@@ -126,6 +126,22 @@ test('default managed host advertises Pi even when Codex is unavailable', { time
   assert.match(metadata.agents.find(agent => agent.runtime.engine === 'codex').availability.reason, /codex login/);
   assert.equal((await f.call({ op: 'configure', apiKey: marker })).body.value.kind, 'ready');
   assert.equal((await f.metadata()).agents.find(agent => agent.runtime.engine === 'pi').availability.kind, 'ready');
+});
+
+test('environment key replacement explains precedence and recovers after removing the old environment key', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  await f.stop();
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await f.start('synthetic-environment-key');
+    assert.deepEqual((await f.call({ op: 'status' })).body.value, { kind: 'ready', source: 'environment' });
+    const replacement = await f.call({ op: 'configure', apiKey: marker });
+    assert.equal(replacement.status, 409);
+    assert.match(replacement.body.error.message, /Remove or update OPENCODE_GO_API_KEY/);
+    assert.doesNotMatch(replacement.text, /synthetic-environment-key|NEVER-PERSIST/);
+    await f.stop();
+  }
+  await f.start();
+  assert.equal((await f.call({ op: 'configure', apiKey: marker })).body.value.kind, 'ready');
 });
 
 

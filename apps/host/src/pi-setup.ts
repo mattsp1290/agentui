@@ -94,7 +94,7 @@ export function piSetupEndpoint(setup: PiSetup, capability: string, isClosing: (
         if (isClosing()) { failure(503, 'unavailable', 'Host is shutting down.'); return; }
         json(response, 200, { ok: true, value });
       } catch {
-        failure(409, 'unavailable', 'Pi is already configured. Restart AgentUI before replacing its API key.');
+        failure(409, 'unavailable', 'Pi is already configured. Remove or update OPENCODE_GO_API_KEY in the launcher terminal and SSH host environment, then restart AgentUI to replace its API key.');
       }
     } catch {
       failure(400, 'invalid', 'Enter a valid OpenCode Go API key.');

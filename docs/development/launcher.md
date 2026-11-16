@@ -95,6 +95,8 @@ The key stays out of the chat page, browser storage, conversation database, URLs
 
 Setup readiness means the host has a configured key. It does not validate your subscription with a paid request. The provider can still reject a chat request because the key is invalid, its limits are exhausted, or the service is unavailable.
 
+An exported `OPENCODE_GO_API_KEY` takes precedence at host startup. To replace it with a saved Keychain key, remove or update the variable in the launcher terminal and, for SSH, on the selected host. Close AgentUI, launch it again, open protected setup, and select **Connect saved key**. Saving a different key while Pi is active keeps the new key in Keychain and asks you to restart. It does not interrupt active conversations.
+
 Protected setup requires the launcher-managed Mac app. Browser-only users can set `OPENCODE_GO_API_KEY` through their shell or secret manager. Keep its value out of command arguments and repository files. The manually managed `main.js pi` command still requires this variable before startup.
 
 For SSH launches, the remote host uses its exported `OPENCODE_GO_API_KEY` when present. Otherwise, the launcher forwards the local variable through the SSH session in memory. It does not save the key on the remote machine.
