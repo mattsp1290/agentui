@@ -16,3 +16,5 @@ assert.ok(urls.includes(resolveHostDependency('@mattsp1290/switchboard')), 'hook
 assert.ok(urls.includes(schemas), 'host validates offered input with the pinned AG-UI schemas');
 const forbidden = ['@mattsp1290/switchboard/agui', '@agentui/host/agui'].map(specifier => resolveHostDependency(specifier));
 assert.ok(urls.every(url => !forbidden.includes(url) && (!url.includes('/@ag-ui/') || schemaModules.has(url))), urls.join('\n'));
+
+assert.ok(urls.every(url => !url.includes('/host/dist/frontend-tools/')), urls.join('\n'));

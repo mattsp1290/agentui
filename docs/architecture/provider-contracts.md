@@ -136,7 +136,14 @@ Both fresh and restored confirmation evidence must name the saved actual run ID.
 
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
 A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
-Current actor and provider authority are required. Another principal cannot submit, reconcile, recover or release that association.
+Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
+The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
+It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.
+Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive evidence keep the blocker.
+An authorized original owner can still reconcile its receipt after releasing closures.
+A terminal rejection without a retained run returns `unavailable` with `provider-rejected`; not-dispatched returns `not-dispatched`.
+Both final no-run results work offline and need no coordinator. Explicit closure release takes precedence as `closures-unavailable`.
+A prior confirmed run retained through later rejection remains a binding. Command settlement does not finish the run.
 `action: 'unavailable'` irreversibly releases host availability. Before admission it records an owner-specific tombstone that cannot reserve another principal's command ID.
 After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
 Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.

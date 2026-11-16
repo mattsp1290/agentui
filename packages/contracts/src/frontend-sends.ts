@@ -23,7 +23,7 @@ export interface FrontendBindingRequest {
 export type FrontendBinding =
   | { readonly kind: 'pending'; readonly id: string }
   | { readonly kind: 'bound'; readonly command: OfferedCommand; readonly hostOperationId: string; readonly run: RunIdentity; readonly threadId: string }
-  | { readonly kind: 'unavailable'; readonly id: string; readonly reason: 'closures-unavailable' | 'not-dispatched' };
+  | { readonly kind: 'unavailable'; readonly id: string; readonly reason: 'closures-unavailable' | 'not-dispatched' | 'provider-rejected' };
 
 export function parseFrontendOffer(value: unknown): FrontendOffer {
   const input = record(copyJson(value), ['platform', 'tools']);
@@ -48,7 +48,7 @@ export function parseFrontendBinding(value: unknown): FrontendBinding {
   if (input.kind === 'pending') { record(input, ['kind', 'id']); return { kind: 'pending', id: identifier(input.id) }; }
   if (input.kind === 'unavailable') {
     record(input, ['kind', 'id', 'reason']);
-    if (input.reason !== 'closures-unavailable' && input.reason !== 'not-dispatched') throw new Error('Invalid frontend unavailability');
+    if (input.reason !== 'closures-unavailable' && input.reason !== 'not-dispatched' && input.reason !== 'provider-rejected') throw new Error('Invalid frontend unavailability');
     return { kind: 'unavailable', id: identifier(input.id), reason: input.reason };
   }
   record(input, ['kind', 'command', 'hostOperationId', 'run', 'threadId']);
