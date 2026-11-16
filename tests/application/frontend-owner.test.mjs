@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createFrontendToolGeneration } from '@agentui/sdk/tools';
 import { createConversationStore } from '@agentui/client';
-import { createFrontendSends } from '../../apps/desktop/dist/application/frontend-sends.js';
+import { createFrontendSends, createGenerationSource } from '../../apps/desktop/dist/application/frontend-sends.js';
 import { scope, projection, storage, fakePort, deferred, receipt } from '../client/support.mjs';
 
 const recoveryPass = () => ({ current: () => true, signal: new AbortController().signal });
@@ -11,22 +11,65 @@ async function fixture(t, { drafts = storage(), reply } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const disposed = [], calls = [], failures = [], requests = [];
   let changes = 0;
-  const owner = createFrontendSends({ changed() { changes++; }, failed(view, error) { failures.push([view, error.message]); owner.storageFailed(view); }, unauthorized() { void owner.session(null, connection); } });
+  const source = createGenerationSource(), owners = [];
+  function createOwner() {
+    const owner = createFrontendSends({
+      generations: source,
+      changed() { changes++; },
+      failed(view, error) { failures.push([view, error.message]); owner.storageFailed(view); },
+      unauthorized() { void owner.session(null, connection); },
+    });
+    owners.push(owner);
+    return owner;
+  }
+  const owner = createOwner();
   const connection = { async frontendBinding(request) { requests.push(structuredClone(request)); return reply ? reply(request) : request.action === 'unavailable' ? { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' } : { kind: 'pending', id: request.id }; } };
   await owner.session({ hostId: scope.hostId, principalId: 'A' }, connection);
   const generation = async id => (await createFrontendToolGeneration({ namespace: 'fixture', generation: id, platform: 'desktop', capture: () => undefined,
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: id }, decodeInput: x => x, async execute() { calls.push(id); return id; } }); return { dispose() { disposed.push(id); } }; } })).generation;
   const a = await generation('A'), token = {};
-  owner.source.begin(token); owner.source.publish(token, { kind: 'ready', generations: [a] });
+  source.begin(token); source.publish(token, { kind: 'ready', generations: [a] });
   const port = fakePort(); let id = 0;
   const frontend = owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' });
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), frontend });
-  t.after(async () => { await owner.dispose(); await a.retire(); });
+  t.after(async () => { await Promise.all(owners.map(item => item.dispose())); await a.retire(); });
   const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
   const tick = async () => { t.mock.timers.tick(2000); await flush(); await recover(); };
-  return { owner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover, changes: () => changes };
+  return { owner, source, createOwner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover, changes: () => changes };
 }
 const bound = command => ({ kind: 'bound', command, hostOperationId: 'operation', threadId: 'actual-thread', run: { conversation: scope, runId: 'actual-run', authority: { kind: 'remote-provider', binding: { namespace: 'provider', installationId: 'installation', opaqueSessionId: 'session' } } } });
+
+test('a disposed registry cannot revive old admission or authority when a new registry shares its source', async t => {
+  const f = await fixture(t);
+  await f.store.send('Original');
+  const original = structuredClone(f.drafts.value.frontendSends[0]);
+  const entered = deferred(), gate = deferred(), save = f.drafts.save.bind(f.drafts);
+  f.drafts.save = async records => { entered.resolve(); await gate.promise; return save(records); };
+  const transitioning = f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  await entered.promise;
+  const closing = f.owner.dispose();
+  const second = f.createOwner();
+  await second.session({ hostId: scope.hostId, principalId: 'C' }, f.connection);
+  const replacement = await f.generation('B');
+  t.after(() => replacement.retire());
+  const snapshot = { kind: 'ready', generations: [replacement] };
+  f.source.publish(f.token, snapshot);
+  assert.equal(f.source.snapshot(), snapshot);
+  assert.throws(() => f.frontend.capture(), /Reconnect/);
+  gate.resolve();
+  await Promise.all([transitioning, closing]);
+  await f.owner.session({ hostId: scope.hostId, principalId: 'C' }, f.connection);
+  assert.throws(() => f.frontend.capture(), /Reconnect/);
+  assert.deepEqual(f.owner.snapshot(), []);
+  const admission = second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' });
+  const captured = admission.capture();
+  assert.equal(captured.ownerId, 'C');
+  assert.equal(captured.offer.tools[0].definition.description, 'B');
+  captured.release();
+  assert.deepEqual(f.drafts.value.frontendSends[0].command, original.command);
+  assert.equal(f.drafts.value.frontendSends[0].ownerId, original.ownerId);
+  assert.deepEqual(f.calls, []);
+});
 
 test('completed outbox settlement retains A, exact delayed binding rejects drift, and release retries a lost acknowledgment', async t => {
   let response, lost = true;
@@ -39,7 +82,7 @@ test('completed outbox settlement retains A, exact delayed binding rejects drift
   await f.store.send('Original'); const command = f.drafts.value.frontendSends[0].command;
   assert.equal(f.store.getSnapshot().outbox.length, 0);
   const retiring = f.a.retire(); const b = await f.generation('B'); t.after(() => b.retire());
-  f.owner.source.publish(f.token, { kind: 'ready', generations: [b] });
+  f.source.publish(f.token, { kind: 'ready', generations: [b] });
   response = bound({ ...command, body: { ...command.body, text: 'Changed' } }); await f.tick();
   assert.equal(f.owner.snapshot()[0].status, 'waiting');
   response = bound(command); await f.tick();
@@ -93,13 +136,13 @@ for (const fault of ['save', 'parse', 'release-save']) test(`${fault} failure re
 
 test('source tokens distinguish transition and ready-empty and refuse a retired generation without B fallback', async t => {
   const f = await fixture(t), next = {};
-  f.owner.source.begin(next);
+  f.source.begin(next);
   await assert.rejects(f.store.send('Transition'), /changing/);
-  f.owner.source.publish(next, { kind: 'ready', generations: [f.a] }); f.owner.source.clear(f.token);
+  f.source.publish(next, { kind: 'ready', generations: [f.a] }); f.source.clear(f.token);
   await f.store.send('New source'); assert.equal(f.port.submitted[0].version, 2);
   await f.owner.release(f.owner.snapshot()[0].key); await flush(); await f.a.retire();
   await assert.rejects(f.store.send('Retired'), /retired/);
-  f.owner.source.publish(next, { kind: 'ready', generations: [] });
+  f.source.publish(next, { kind: 'ready', generations: [] });
   await f.store.send('Empty source'); assert.equal(f.port.submitted.at(-1).version, 1);
 });
 
@@ -126,7 +169,7 @@ test('session closure during durable admission preserves an unavailable referenc
 test('reload has no original closure and preserves original bytes while notifying unavailability', async t => {
   const f = await fixture(t); await f.store.send('Old capture'); const saved = structuredClone(f.drafts.value);
   await f.owner.dispose();
-  const second = createFrontendSends({ changed() {}, failed() {}, unauthorized() {} }); t.after(() => second.dispose());
+  const second = f.createOwner(); t.after(() => second.dispose());
   await second.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   const drafts = storage(saved), port = fakePort();
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
@@ -190,21 +233,21 @@ test('more than 32 restored references occupy only bounded presentation rows and
   const f = await fixture(t); await f.store.send('Template');
   const original = f.drafts.value.frontendSends[0]; await f.owner.dispose();
   const saved = { ...f.drafts.value, outbox: [], frontendSends: Array.from({ length: 70 }, (_, index) => ({ ...original, command: { ...original.command, clientCommandId: `old-${index}` } })) };
-  f.owner.start(); await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
-  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: f.owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
+  const owner = f.createOwner(); await owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: owner.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready;
-  for (const reference of store.frontendJournal.read()) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
-  assert.equal(f.owner.holds('view'), false); assert.deepEqual(f.owner.snapshot(), []); assert.deepEqual(f.requests, []);
+  for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
+  assert.equal(owner.holds('view'), false); assert.deepEqual(owner.snapshot(), []); assert.deepEqual(f.requests, []);
   await store.send('B still has capacity');
-  await f.owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
-  for (const reference of store.frontendJournal.read()) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
-  assert.equal(f.owner.snapshot().length, 32); assert.equal(f.owner.holds('view'), false);
+  await owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
+  for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
+  assert.equal(owner.snapshot().length, 32); assert.equal(owner.holds('view'), false);
   assert.ok(drafts.value.frontendSends.slice(0, 70).every(row => row.state === 'unavailable-confirmed'));
   assert.deepEqual(drafts.value.frontendSends.slice(0, 70).map(row => row.command), saved.frontendSends.map(row => row.command));
-  const rows = f.owner.snapshot(), changes = f.changes(), requests = f.requests.length, writes = drafts.writes.length;
-  for (const reference of store.frontendJournal.read().slice(0, 70)) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
+  const rows = owner.snapshot(), changes = f.changes(), requests = f.requests.length, writes = drafts.writes.length;
+  for (const reference of store.frontendJournal.read().slice(0, 70)) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
   assert.equal(f.changes(), changes);
-  assert.deepEqual(f.owner.snapshot(), rows);
+  assert.deepEqual(owner.snapshot(), rows);
   assert.equal(f.requests.length, requests); assert.equal(drafts.writes.length, writes);
 });
 
@@ -323,19 +366,19 @@ test('reload remembers local repairs and later acknowledgments but leaves unchan
     { ...original, state: 'unavailable-pending', command: { ...original.command, clientCommandId: 'pending' } },
     { ...original, ownerId: 'foreign', state: 'retained', command: { ...original.command, clientCommandId: 'foreign' } },
   ] };
-  f.owner.start(); await f.owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
+  const owner = f.createOwner(); await owner.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'new' });
   t.after(() => store.dispose()); await store.ready;
-  const recover = async () => { for (const reference of store.frontendJournal.read()) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
+  const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
   await recover();
-  assert.deepEqual(f.owner.snapshot().map(row => row.command.clientCommandId), ['repair']);
+  assert.deepEqual(owner.snapshot().map(row => row.command.clientCommandId), ['repair']);
   assert.ok(drafts.value.frontendSends.every(row => row.state === 'unavailable-pending'));
-  const row = f.owner.snapshot()[0], changes = f.changes(), writes = drafts.writes.length;
+  const row = owner.snapshot()[0], changes = f.changes(), writes = drafts.writes.length;
   await recover();
   assert.equal(f.changes(), changes); assert.equal(drafts.writes.length, writes);
-  assert.equal(f.owner.snapshot()[0], row);
+  assert.equal(owner.snapshot()[0], row);
   online = true; await recover();
-  assert.deepEqual(f.owner.snapshot().map(row => row.command.clientCommandId), ['repair', 'pending']);
+  assert.deepEqual(owner.snapshot().map(row => row.command.clientCommandId), ['repair', 'pending']);
   assert.deepEqual(drafts.value.frontendSends.map(row => row.state), ['unavailable-confirmed', 'unavailable-confirmed', 'unavailable-pending']);
   assert.deepEqual(drafts.value.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })), saved.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })));
   assert.ok(f.requests.every(request => request.id !== 'foreign' && request.action === 'unavailable'));

@@ -18,9 +18,10 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
   const bundle = await build({ stdin: { resolveDir: root, loader: 'jsx', contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client';
     import {useDesktopCustomizations} from './apps/desktop/src/application/DesktopCustomizations.tsx';
-    import {createFrontendSends} from './apps/desktop/src/application/frontend-sends.ts';
+    import {createFrontendSends,createGenerationSource} from './apps/desktop/src/application/frontend-sends.ts';
     const scope={hostId:'host',conversationId:'conversation'};
-    const owner=createFrontendSends({changed(){},failed(){throw Error('Unexpected storage failure');},unauthorized(){throw Error('Unexpected authorization failure');}});
+    const source=createGenerationSource();
+    const owner=createFrontendSends({generations:source,changed(){},failed(){throw Error('Unexpected storage failure');},unauthorized(){throw Error('Unexpected authorization failure');}});
     window.ready=owner.session({hostId:'host',principalId:'principal'},{frontendBinding(){throw Error('No network before commit');}});
     const manifest={namespace:'healthy',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]};
     const customizations=[{manifest,${entry(`frontendTools.add(${tool});return {modules:[],dispose(){}};`)}},
@@ -28,7 +29,7 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
         if('${failure}'==='load')reject(Error('Expected load failure'));
         else resolve({default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){frontendTools.add(${tool});return {modules:[],dispose(){}};}}});
       };})}];
-    function App(){window.custom=useDesktopCustomizations({customizations,enabled:true,sink:owner.source});return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;}
+    function App(){window.custom=useDesktopCustomizations({customizations,enabled:true,sink:source});return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;}
     window.capture=()=>{try{const capture=owner.forStore({viewId:'view',scope,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
       const names=capture?.offer.tools.map(tool=>tool.definition.name);capture?.release();return {kind:'captured',names};
     }catch(error){return {kind:'error',message:error.message};}};
