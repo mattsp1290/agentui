@@ -137,11 +137,11 @@ test('late tool activation after disable is never published and rejected retirem
   assert.equal(await page.getByText('Late tool module').count(), 0); await unchanged(page, previous); assert.deepEqual(errors, []);
 });
 
-test('in-process only: actual hook retirement retains original A pin and slow call across disable and fresh B activation', { timeout: 45_000 }, async t => {
+test('in-process only: actual hook retains A before a run exists and binds after disable and fresh B activation', { timeout: 45_000 }, async t => {
   const bundle = await build({ stdin: { resolveDir: root, loader: 'jsx', contents: `
     import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom';
     import {useDesktopCustomizations} from './apps/desktop/src/application/DesktopCustomizations.tsx';
-    import {pinFrontendTools} from '@agentui/sdk/tools';
+    import {pinFrontendTools,retainFrontendTools} from '@agentui/sdk/tools';
     window.activations=0; window.disposals=[];
     const customizations=[{manifest:{namespace:'fixture',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]},
       async load(){return {default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){
@@ -151,10 +151,12 @@ test('in-process only: actual hook retirement retains original A pin and slow ca
         }});
         return {modules:[],dispose(){window.disposals.push(id);if(id===2)return Promise.reject(new Error('B cleanup rejected'))}};
       }}}} }];
-    const run={conversation:{hostId:'host',conversationId:'conversation'},runId:'run',authority:{kind:'remote-provider',binding:{namespace:'provider',installationId:'i',opaqueSessionId:'s'}}};
-    const pin=generations=>pinFrontendTools({generations,platform:'desktop',run,capabilities:{tools:{clientProvided:true}}});
+    window.supplyRun=()=>window.run={conversation:{hostId:'host',conversationId:'conversation'},runId:'run',authority:{kind:'remote-provider',binding:{namespace:'provider',installationId:'i',opaqueSessionId:'s'}}};
+    const pin=generations=>pinFrontendTools({generations,platform:'desktop',run:window.run,capabilities:{tools:{clientProvided:true}}});
     function App(){const [enabled,setEnabled]=React.useState(true); const custom=useDesktopCustomizations({customizations,enabled});
       window.custom=custom; const owner=custom.namespaces.find(owner=>owner.kind==='ready'); if(owner)window.failOwner=owner.fail; window.disable=()=>flushSync(()=>setEnabled(false)); window.enable=()=>flushSync(()=>setEnabled(true));
+      window.retainCurrent=()=>retainFrontendTools({generations:custom.generations,platform:'desktop'});
+      window.retainStale=()=>retainFrontendTools({generations:[window.oldGeneration],platform:'desktop'});
       window.pinCurrent=()=>pin(custom.generations); window.pinStale=()=>pin([window.oldGeneration]);
       return <><input aria-label="Persistent draft" defaultValue="Keep tool draft"/><p>In-process activation and pin fixture</p><p>Eligible {custom.generations.length}</p></>;
     }
@@ -166,19 +168,26 @@ test('in-process only: actual hook retirement retains original A pin and slow ca
   await page.getByText('Eligible 1', { exact: true }).waitFor();
   const previous = await page.getByRole('textbox', { name: 'Persistent draft' }).elementHandle();
   const a = await page.evaluate(() => {
-    window.oldGeneration=window.custom.generations[0]; window.a=window.pinCurrent(); const binding=window.a.bindings[0];
-    window.slow=window.a.invoke(binding.name,{slow:true},binding.activationId); return binding.activationId;
+    if(window.run!==undefined)throw Error('Run must not exist before retention');
+    window.oldGeneration=window.custom.generations[0]; window.retainedA=window.retainCurrent(); return window.retainedA.bindings[0].activationId;
   });
-  await wait(() => page.evaluate(() => typeof window.finishSlow === 'function'), 'original slow handler');
   await page.evaluate(() => window.disable()); await page.getByText('Eligible 0', { exact: true }).waitFor();
   assert.deepEqual(await page.evaluate(() => window.disposals), []);
-  assert.equal(await page.evaluate(() => {try {window.pinStale(); return false;} catch(error) {return /retired/.test(error.message);}}), true);
-  assert.deepEqual(await page.evaluate(async () => {const b=window.a.bindings[0]; return window.a.invoke(b.name,{},b.activationId);}), {kind:'completed',output:'activation 1'});
+  assert.equal(await page.evaluate(() => {try {window.retainStale();return false;}catch(error){return /retired/.test(error.message);}}),true);
   await page.evaluate(() => window.enable()); await page.getByText('Eligible 1', { exact: true }).waitFor();
-  const b = await page.evaluate(() => {window.b=window.pinCurrent(); return window.b.bindings[0].activationId;}); assert.notEqual(b,a);
+  const b = await page.evaluate(() => {
+    if(window.run!==undefined)throw Error('Replacement must activate before the actual run is supplied');
+    window.supplyRun();window.a=window.retainedA.bind(window.run);window.b=window.pinCurrent();return window.b.bindings[0].activationId;
+  }); assert.notEqual(b,a);
+  assert.equal(await page.evaluate(() => {try {window.pinStale();return false;}catch(error){return /retired/.test(error.message);}}),true);
+  assert.deepEqual(await page.evaluate(async () => {const b=window.a.bindings[0];return window.a.invoke(b.name,{},b.activationId);}),{kind:'completed',output:'activation 1'});
+  await page.evaluate(() => {const b=window.a.bindings[0];window.slow=window.a.invoke(b.name,{slow:true},b.activationId);});
+  await wait(() => page.evaluate(() => typeof window.finishSlow === 'function'), 'original slow handler');
   assert.equal(await page.evaluate(() => window.custom.generations.some(g=>g===window.oldGeneration)), false);
   assert.deepEqual(await page.evaluate(async () => {const binding=window.b.bindings[0];return window.b.invoke(binding.name,{},binding.activationId);}), {kind:'completed',output:'activation 2'});
-  await page.evaluate(() => window.a.release()); assert.deepEqual(await page.evaluate(() => window.disposals), []);
+  await page.evaluate(() => {window.retainedA.release();window.a.release();window.retainedA.release();});
+  assert.deepEqual(await page.evaluate(async () => {const b=window.a.bindings[0];return window.a.invoke(b.name,{},b.activationId);}),{kind:'refused',code:'released'});
+  assert.deepEqual(await page.evaluate(() => window.disposals), []);
   assert.deepEqual(await page.evaluate(async () => {window.finishSlow();return window.slow;}), {kind:'completed',output:'activation 1'});
   await wait(() => page.evaluate(() => window.disposals.length === 1), 'A drains after slow call and pin');
   await page.evaluate(() => {window.failedGeneration=window.custom.generations[0];window.failOwner(new Error('B render failed'));window.failOwner(new Error('Repeated failure'));});
