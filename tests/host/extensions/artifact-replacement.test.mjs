@@ -53,7 +53,7 @@ test('packaged server replaces verified artifact generations through its existin
   const runtime = await packagedHost(t);
   await t.test('installed, artifact, same artifact, different artifact, installed and empty selections', async t => {
     const f = await fixture(t, runtime);
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.installed] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.installed] } });
     try {
       const old = f.state.modules[0];
       f.state.emitter.emit('update');
@@ -99,7 +99,7 @@ test('packaged server replaces verified artifact generations through its existin
 
   await t.test('admitted artifact discovery defers before candidate access and preserves its outcome', async t => {
     const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.selected(f.first, 'artifact-a')] } });
     f.state.hooks['artifact-a'] = { async discover() { entered.resolve(); await finish.promise; } };
     const discovery = host.discoverProviders();
     try {
@@ -120,7 +120,7 @@ test('packaged server replaces verified artifact generations through its existin
 
   await t.test('admitted artifact command keeps its receipt and identity across explicit retry', async t => {
     const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.selected(f.first, 'artifact-a')] } });
     const call = api(host);
     try {
       const metadata = (await call({ op: 'metadata' })).value;
@@ -148,7 +148,7 @@ test('packaged server replaces verified artifact generations through its existin
 
   await t.test('admitted artifact observation acquisition defers candidate preparation', async t => {
     const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.selected(f.first, 'artifact-a')] } });
     const call = api(host);
     const metadata = (await call({ op: 'metadata' })).value;
     f.state.hooks['artifact-a'] = { async snapshot() { entered.resolve(); await finish.promise; } };
@@ -170,7 +170,7 @@ test('packaged server replaces verified artifact generations through its existin
 
   await t.test('verified retained catalog survives disk mutation and same bytes import a fresh generation', async t => {
     const f = await fixture(t, runtime);
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.installed] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.installed] } });
     const original = await readFile(join(f.first.directory, 'entries.mjs'));
     const lazy = await readFile(join(f.first.directory, 'probe.mjs'));
     const candidate = f.selected(f.first, 'artifact-a'), installations = candidate.installations;
@@ -195,7 +195,7 @@ test('packaged server replaces verified artifact generations through its existin
   for (const failure of artifactFailures) {
     await t.test(`artifact ${failure.name} failure retires old code, classifies recovery and permits explicit replacement`, async t => {
       const f = await fixture(t, runtime);
-      const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.installed] });
+      const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.installed] } });
       try {
         const selection = await failure.arrange(f, f.selected(f.first, 'artifact-a'));
         assert.deepEqual(await host.replaceProviderExtensions(selection), failed(failure.classification));
@@ -215,7 +215,7 @@ test('packaged server replaces verified artifact generations through its existin
   for (const phase of ['import', 'activate', 'discover']) {
     await t.test(`close during artifact ${phase} never publishes the candidate and disposes acquired resources once`, async t => {
       const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
-      const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.installed] });
+      const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.installed] } });
       f.state.hooks['artifact-a'] = { async [phase]() { entered.resolve(); await finish.promise; } };
       const replacing = host.replaceProviderExtensions([f.selected(f.first, 'artifact-a')]);
       await entered.promise;
@@ -240,7 +240,7 @@ test('packaged server replaces verified artifact generations through its existin
 
   await t.test('artifact cleanup failure retains restart recovery and releases the catalog hook once', async t => {
     const f = await fixture(t, runtime);
-    const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
+    const host = await runtime.startBrowserHost({ ...f.options, extensions: { kind: 'transient', entries: [f.selected(f.first, 'artifact-a')] } });
     const old = f.state.modules[0];
     f.state.hooks['artifact-a'] = { dispose() { throw new Error(secret); } };
     assert.deepEqual(await host.replaceProviderExtensions([f.selected(f.second, 'artifact-b')]), failed('cleanup', 'restart'));

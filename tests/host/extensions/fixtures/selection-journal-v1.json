@@ -1,0 +1,86 @@
+{
+  "head": "c3539e1462f776001cb79947c36c969b8942604e",
+  "hostId": "00109932-67a9-4096-ad61-82cbddb4736d",
+  "grantsDigest": "62d08cbf46fbcfce9610e47be17f3d6268cd4bca5e87425a6e83dfcf9eebe02c",
+  "entries": [
+    {
+      "kind": "artifact",
+      "directory": "/private/var/folders/hs/6zxz560529bf70pk48tjhc7w0000gn/T/agentui-preparation-test-PjfKCQ/artifact",
+      "artifactId": "d2acce742bd283bb59f53994ca7ff5cfeaf614ecae34b4a2ce287382c87f8952",
+      "installations": [
+        {
+          "id": "service",
+          "instance": {
+            "namespace": "example-crew",
+            "installationId": "personal",
+            "generation": "artifact-a",
+            "protocolVersion": "crew-v2"
+          },
+          "service": "http://127.0.0.1:12345",
+          "expectedAuthority": "remote-provider",
+          "authentication": {
+            "kind": "secret",
+            "revision": "first"
+          }
+        }
+      ]
+    }
+  ],
+  "tables": [
+    {
+      "name": "service_extension_boots",
+      "sql": "CREATE TABLE service_extension_boots (sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), outcome TEXT NOT NULL)",
+      "rows": [
+        {
+          "sequence": 1,
+          "id": "3d136ce8-9269-49b5-817b-bab38610568a",
+          "selection": "startup",
+          "outcome": "{\"kind\":\"applied\"}"
+        },
+        {
+          "sequence": 2,
+          "id": "454e91f8-1c35-4053-8494-7165fe2038a5",
+          "selection": "startup",
+          "outcome": "{\"kind\":\"applied\"}"
+        },
+        {
+          "sequence": 3,
+          "id": "57b2931a-0598-4f55-94cc-e4bf7fc17dee",
+          "selection": "disable",
+          "outcome": "{\"kind\":\"applied-empty\"}"
+        }
+      ]
+    },
+    {
+      "name": "service_extension_selection_schema",
+      "sql": "CREATE TABLE service_extension_selection_schema (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL, host TEXT NOT NULL)",
+      "rows": [
+        {
+          "singleton": 1,
+          "version": 1,
+          "host": "00109932-67a9-4096-ad61-82cbddb4736d"
+        }
+      ]
+    },
+    {
+      "name": "service_extension_selections",
+      "sql": "CREATE TABLE service_extension_selections (id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE, intent TEXT NOT NULL, receipt TEXT NOT NULL, digest TEXT NOT NULL)",
+      "rows": [
+        {
+          "id": "startup",
+          "revision": 0,
+          "intent": "{\"expectedRevision\":0,\"id\":\"startup\",\"selection\":{\"artifacts\":[{\"artifactId\":\"d2acce742bd283bb59f53994ca7ff5cfeaf614ecae34b4a2ce287382c87f8952\",\"directory\":\"/private/var/folders/hs/6zxz560529bf70pk48tjhc7w0000gn/T/agentui-preparation-test-PjfKCQ/artifact\"}],\"version\":1}}",
+          "receipt": "{\"grantsDigest\":\"62d08cbf46fbcfce9610e47be17f3d6268cd4bca5e87425a6e83dfcf9eebe02c\",\"hostId\":\"00109932-67a9-4096-ad61-82cbddb4736d\",\"manifests\":[{\"artifactId\":\"d2acce742bd283bb59f53994ca7ff5cfeaf614ecae34b4a2ce287382c87f8952\",\"assets\":[{\"path\":\"entries.mjs\",\"sha256\":\"373c9e4ae5884ecd3def57e8d88afb8fe67e151d9ecc4feca3fee11c8b8ea26a\",\"size\":9622},{\"path\":\"probe.mjs\",\"sha256\":\"326b585efdf0883d41cce6a0fead61ec430c400ff2606f6dbc122bf266c9745b\",\"size\":27}],\"builder\":{\"esbuildVersion\":\"0.28.2\",\"identity\":\"c1646a3f0643f7f575675fdb9496aa66f471738730e4fc4a40051c345a350ef5\"},\"catalog\":\"entries.mjs\",\"entries\":[{\"index\":0,\"module\":\"./server.mjs\",\"packageIdentity\":\"df8c2bc6c5678684189dc79c7ebf06307c22459be8743357e9f2d864e9f64249\"}],\"kind\":\"server-customization\",\"packages\":[{\"commit\":\"b444dde742cce2cfb3f594e152295b05c3cd5b97\",\"extensions\":[],\"identity\":\"df8c2bc6c5678684189dc79c7ebf06307c22459be8743357e9f2d864e9f64249\",\"inputs\":{\"files\":[{\"executable\":false,\"path\":\"crew.ts\",\"sha256\":\"eb8590f2e661bc969a19f8cead1c6072c2d74daeb1f7aa1b3b5f3f9e4def327b\"},{\"executable\":false,\"path\":\"index.ts\",\"sha256\":\"cb357ae7e2ef806c03b1b46e1dba1d93ffb3c81f2de29b14f10ccea6ffff21c6\"},{\"executable\":false,\"path\":\"package.json\",\"sha256\":\"5033d5a9239ac3a80bea3232eb5c8000f77eea7c1165756f758181efd57fef67\"},{\"executable\":false,\"path\":\"unused.ts\",\"sha256\":\"326b585efdf0883d41cce6a0fead61ec430c400ff2606f6dbc122bf266c9745b\"}],\"identity\":\"997919b47704a3debad3fd8390aae7e4c3ebdd26200f0b4de03193caf5c12699\"},\"local\":{\"manifest\":{\"entries\":[{\"kind\":\"server\",\"module\":\"./server.mjs\"}],\"namespace\":\"example-crew\",\"sdkVersion\":\"0.2.0\",\"trust\":\"full\"},\"sources\":[{\"module\":\"./server.mjs\",\"source\":\"./index.ts\"}]},\"npm\":{\"kind\":\"absent\"},\"shared\":null,\"subdirectory\":\"\"}],\"root\":\"df8c2bc6c5678684189dc79c7ebf06307c22459be8743357e9f2d864e9f64249\",\"runtime\":{\"abiIdentity\":\"ffb8fec8712c8921dda5559095312d0ceb93186b939c6fed4a9e3c84947c5590\",\"engine\":\"node\",\"modules\":\"137\",\"version\":\"24.22.3\"},\"schemaVersion\":1,\"sdkVersion\":\"0.2.0\"}],\"selection\":{\"artifacts\":[{\"artifactId\":\"d2acce742bd283bb59f53994ca7ff5cfeaf614ecae34b4a2ce287382c87f8952\",\"directory\":\"/private/var/folders/hs/6zxz560529bf70pk48tjhc7w0000gn/T/agentui-preparation-test-PjfKCQ/artifact\"}],\"version\":1},\"version\":1}",
+          "digest": "8550c8d0abaec3e0a14af50d9607e341634f3b5b68155433529f46855911ef19"
+        },
+        {
+          "id": "disable",
+          "revision": 1,
+          "intent": "{\"expectedRevision\":0,\"id\":\"disable\",\"selection\":{\"artifacts\":[],\"version\":1}}",
+          "receipt": "{\"grantsDigest\":\"62d08cbf46fbcfce9610e47be17f3d6268cd4bca5e87425a6e83dfcf9eebe02c\",\"hostId\":\"00109932-67a9-4096-ad61-82cbddb4736d\",\"manifests\":[],\"selection\":{\"artifacts\":[],\"version\":1},\"version\":1}",
+          "digest": "909071eba428fac064867551c6a0fe6362520cfc277f577fc18af0283e75516f"
+        }
+      ]
+    }
+  ]
+}

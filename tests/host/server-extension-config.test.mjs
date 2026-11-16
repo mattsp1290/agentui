@@ -18,7 +18,7 @@ function fixture(t) {
   const config = join(directory, 'extensions.json'), packagePath = join(installed, 'package.json');
   const manifest = { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.mjs' }] };
   const metadata = { name: '@example/crew', exports: './ignored.js', agentui: { sources: ['ignored'], extension: manifest } };
-  const input = { version: 1, extensions: [{ directory: './installed', installations: [grant()] }] };
+  const input = { version: 2, ownership: 'transient', extensions: [{ directory: './installed', installations: [grant()] }] };
   const environment = { AGENTUI_EXTENSION_CREW_TOKEN: secret, AGENTUI_EXTENSION_UNSELECTED: 'unselected', PATH: '/native/path', OPENCODE_GO_API_KEY: 'native-key' };
   const read = (values = environment) => {
     writeFileSync(packagePath, JSON.stringify(metadata)); writeFileSync(config, JSON.stringify(input));
@@ -37,7 +37,7 @@ function invalid(action) {
 }
 
 test('compiled consumer resolves package metadata from the config directory and captures secret bytes for the existing authority', async t => {
-  const f = fixture(t), [selection] = f.read();
+  const f = fixture(t), [selection] = f.read().entries;
   assert.equal(selection.kind, 'installed'); assert.equal(selection.directory, f.installed);
   assert.deepEqual(selection.manifest, f.manifest);
   assert.equal(selection.installations[0].service, 'https://example.com');
@@ -58,7 +58,7 @@ test('shared variables are consumed once after all grants capture their exact by
   const f = fixture(t), second = grant();
   second.id = 'other'; second.instance.installationId = 'other';
   f.input.extensions[0].installations.push(second);
-  const [selection] = f.read();
+  const [selection] = f.read().entries;
   assert.equal(Object.hasOwn(f.environment, 'AGENTUI_EXTENSION_CREW_TOKEN'), false);
   for (const installation of selection.installations) assert.equal(await installation.authentication.resolve(), secret);
 });
@@ -100,20 +100,24 @@ test('selection supports empty arrays, absolute directories, unauthenticated gra
   const f = fixture(t);
   f.input.extensions[0].directory = f.installed;
   f.input.extensions[0].installations[0].authentication = { kind: 'unauthenticated' };
-  assert.deepEqual(f.read()[0].installations[0].authentication, { kind: 'unauthenticated' });
-  f.input.extensions[0].installations = []; assert.deepEqual(f.read()[0].installations, []);
-  f.input.extensions = []; assert.deepEqual(f.read(), []);
+  assert.deepEqual(f.read().entries[0].installations[0].authentication, { kind: 'unauthenticated' });
+  f.input.extensions[0].installations = []; assert.deepEqual(f.read().entries[0].installations, []);
+  f.input.extensions = []; assert.deepEqual(f.read(), { kind: 'transient', entries: [] });
   f.input.extensions = [{ directory: './installed', installations: [] }]; f.read();
   const elsewhere = join(f.directory, 'elsewhere'); mkdirSync(elsewhere);
   const target = join(elsewhere, 'target.json'); writeFileSync(target, JSON.stringify(f.input));
   const link = join(f.directory, 'linked.json'); symlinkSync(target, link);
-  assert.equal(takeServerExtensionConfiguration(link, {})[0].directory, f.installed);
+  assert.equal(takeServerExtensionConfiguration(link, {}).entries[0].directory, f.installed);
 });
 
 for (const [name, change] of [
   ['root extra field', f => { f.input.secret = secret; }],
   ['missing root field', f => { delete f.input.version; }],
-  ['unknown version', f => { f.input.version = 2; }],
+  ['old version', f => { f.input.version = 1; }],
+  ['missing ownership', f => { delete f.input.ownership; }],
+  ['unknown ownership', f => { f.input.ownership = 'implicit'; }],
+  ['durable installed selection', f => { f.input.ownership = 'durable-artifacts'; }],
+  ['unknown version', f => { f.input.version = 3; }],
   ['string version', f => { f.input.version = '1'; }],
   ['non-array selection', f => { f.input.extensions = {}; }],
   ['entry extra field', f => { f.input.extensions[0].manifest = f.manifest; }],
@@ -170,4 +174,18 @@ test('missing files and malformed secret-bearing selection or package JSON never
     f.read({ ...f.environment }); writeFileSync(path, `{"${secret.trim()}":`);
     invalid(() => takeServerExtensionConfiguration(f.config, f.environment));
   }
+});
+
+for (const ownership of ['transient', 'durable-artifacts']) test(`explicit ${ownership} accepts empty and artifact selections without reading launch directories`, t => {
+  const f = fixture(t);
+  f.input.ownership = ownership;
+  f.input.extensions = [];
+  assert.deepEqual(f.read(), { kind: ownership, entries: [] });
+  f.input.extensions = [{ kind: 'artifact', directory: './removed-launch-artifact', artifactId: 'a'.repeat(64), installations: [] }];
+  const selected = f.read();
+  assert.equal(selected.kind, ownership);
+  assert.equal(selected.entries[0].directory, join(f.directory, 'removed-launch-artifact'));
+  f.input.extensions.push({ directory: './installed', installations: [] });
+  if (ownership === 'durable-artifacts') invalid(f.read);
+  else assert.deepEqual(f.read().entries.map(entry => entry.kind), ['artifact', 'installed']);
 });

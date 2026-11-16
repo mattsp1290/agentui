@@ -21,7 +21,7 @@ test('real host defers credential-backed discovery, imports only on retry, and d
   let provisioned = 0;
   const installations = next.value.installations;
   Object.defineProperty(next.value, 'installations', { get() { provisioned++; return installations; } });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [old.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
   try {
     assert.deepEqual(host.extensionStatus(), { kind: 'active', generation: 1, pending: 0 });
     listeners.emitter.emit('update');
@@ -57,7 +57,7 @@ test('real host defers credential-backed discovery, imports only on retry, and d
 test('explicit installed kind imports its declared module even when an entry property is present', async t => {
   const fixture = entry(t);
   Object.defineProperty(fixture.value, 'entry', { get() { return assert.fail('installed entry property was inspected'); } });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), providerExtensions: [fixture.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [fixture.value] } });
   try {
     assert.equal(fixture.calls.import, 1);
     assert.equal(fixture.calls.activate, 1);
@@ -70,7 +70,7 @@ test('competing replacements defer and host refresh discovery retains its activa
   const entered = Promise.withResolvers(), finish = Promise.withResolvers(), listeners = listenerLog();
   const old = entry(t, { label: 'old', listeners, async dispose() { entered.resolve(); await finish.promise; } });
   const next = entry(t, { label: 'next', listeners }), stale = entry(t, { label: 'stale', listeners });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), providerExtensions: [old.importedValue] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [old.importedValue] } });
   try {
     await host.discoverProviders(); await host.discoverProviders();
     assert.equal(old.calls.activate, 1); assert.equal(old.calls.connect, 1);
@@ -91,7 +91,7 @@ for (const phase of ['dispose', 'import', 'activate', 'discover']) {
     const blocked = async () => { entered.resolve(); await finish.promise; };
     const old = entry(t, { label: 'old', listeners, ...(phase === 'dispose' ? { dispose: blocked } : {}) });
     const next = entry(t, { label: 'next', listeners, ...(phase === 'dispose' ? {} : { [phase]: blocked }) });
-    const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [old.value] });
+    const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
     const replacing = host.replaceProviderExtensions([next.value]); await entered.promise;
     const closing = host.close(); assert.equal(host.close(), closing);
     assert.equal(host.extensionStatus().kind, 'closing');
@@ -112,7 +112,7 @@ for (const cleanupFails of [false, true]) {
     const old = entry(t, { label: 'old' });
     const next = entry(t, { label: 'next', async discover() { entered.resolve(); await finish.promise; },
       ...(cleanupFails ? { dispose() { throw new Error(secret); } } : {}) });
-    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [old.value] });
+    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
     const replacing = host.replaceProviderExtensions([next.value]); await entered.promise;
     const closing = host.close(); assert.equal(host.close(), closing);
     const closed = closing.then(() => null, error => error);
@@ -151,7 +151,7 @@ for (const cleanupFails of [false, true]) {
 test('shutdown still freezes credentials and rejects an admitted late discovery', { timeout: 5000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const fixture = entry(t, { async discover(value) { if (value.calls.discover > 1) { entered.resolve(); await finish.promise; } } });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), providerExtensions: [fixture.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [fixture.value] } });
   const discovery = assert.rejects(host.discoverProviders(), /^Error: Provider discovery failed$/); await entered.promise;
   const closing = host.close(); await turn();
   await assert.rejects(fixture.context.credentials.use({ credential: fixture.credential, service }, async () => secret), /credential use refused/);
@@ -167,7 +167,7 @@ for (const phase of ['load', 'authorization', 'activation', 'discovery']) {
     if (phase === 'load') bad.value.manifest.sdkVersion = 'incompatible';
     if (phase === 'authorization') bad.value.installations[0].service = 'invalid service';
     const next = entry(t, { label: 'next', listeners });
-    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), providerExtensions: [old.value] });
+    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [old.value] } });
     try {
       assert.deepEqual(await host.replaceProviderExtensions([bad.value]), failed(phase));
       assert.deepEqual(host.extensionStatus(), failed(phase));
@@ -185,7 +185,7 @@ test('discovery failure observes background cleanup without deadlock and refuses
   const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); },
     async dispose() { entered.resolve(); await finish.promise; } });
   const next = entry(t, { label: 'next' });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), providerExtensions: [old.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [old.value] } });
   try {
     await Promise.all([assert.rejects(host.discoverProviders(), /discovery failed/), assert.rejects(host.discoverProviders(), /discovery failed/)]);
     await entered.promise;
@@ -205,7 +205,7 @@ for (const trigger of ['replacement', 'discovery', 'candidate']) {
       ...(trigger === 'discovery' ? { discover(value) { if (value.calls.discover > 1) throw new Error(secret); } } : {}) });
     const bad = entry(t, { label: 'bad', discover() { throw new Error(secret); }, dispose() { throw new Error(secret); } });
     const next = entry(t, { label: 'next' });
-    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [old.value] });
+    const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
     if (trigger === 'discovery') {
       await assert.rejects(host.discoverProviders(), /discovery failed/);
       assert.deepEqual(await settledStatus(host), failed('cleanup', 'restart'));
@@ -231,7 +231,7 @@ test('mutating replacement results cannot clear cleanup failure while shutdown o
   const entered = Promise.withResolvers(), finish = Promise.withResolvers(), configured = options(t);
   const old = entry(t, { async dispose() { entered.resolve(); await finish.promise; throw new Error(secret); } });
   const next = entry(t, { label: 'next' });
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [old.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
   const replacing = host.replaceProviderExtensions([next.value]).then(result => {
     assert.deepEqual(result, failed('cleanup', 'restart'));
     result.failure = 'load'; result.recovery = 'replace';
@@ -248,7 +248,7 @@ test('mutating replacement results cannot clear cleanup failure while shutdown o
 
 test('artifact replacement without a packaged ABI retires the active generation and reports load failure', async t => {
   const fixture = entry(t), configured = options(t);
-  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [fixture.value] });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
   try {
     assert.deepEqual(await host.replaceProviderExtensions([{ kind: 'artifact', directory: '/missing', artifactId: '0'.repeat(64), installations: [] }]), failed('load'));
     assert.deepEqual(host.extensionStatus(), failed('load'));
