@@ -1,9 +1,10 @@
 import { z } from 'zod';
 import { CrewClient, CrewHttpError, type Capabilities } from '@birbcrew/client';
+import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderCommand, ProviderCommandEffect,
-  ProviderConversation, ProviderInstance, ProviderOutcome, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
+  ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
 import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
@@ -101,7 +102,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         let current = observations.get(id);
         if (!current) {
           current = observation(binding, memberId, use, service.origin, after,
-            capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'));
+            capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'), supportsStanding);
           observations.set(id, current);
           const captured = current;
           void current.ended.then(() => { if (observations.get(id) === captured) observations.delete(id); });
@@ -110,7 +111,48 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       }
       try { capabilities = await use(client => client.capabilities({ signal: AbortSignal.timeout(10000) })); }
       catch { return unavailable(); }
-      const backend: ConnectedProvider<CrewModel, string> = { instance,
+      const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
+      const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
+        standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
+      const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
+        validate(binding);
+        const list = await client.listGrants({ memberId }, { signal: AbortSignal.timeout(10000) });
+        return list.active.filter(grant => grant.toolName === 'record_work_item' && grant.policyVersion === 1 &&
+          (grant.scope === 'member' || grant.conversationId === binding.authority.binding.opaqueSessionId));
+      };
+      const permissions: ProviderPermissions<string> = {
+        async read(binding) {
+          try { return await use(async client => ({ kind: 'available', permissions: (await grants(client, binding)).map(grant => ({
+            ref: reference(binding, 'permission', grant.grantId), scope: grant.scope === 'member' ? 'agent' : 'conversation',
+            actionLabel: 'Record work items', detail: grant.scope === 'member'
+              ? 'This Crew member can record owner-initiated work items in all conversations.'
+              : 'This Crew member can record owner-initiated work items in this conversation.',
+          })) })); } catch { return unavailable(); }
+        },
+        async revoke(operation) {
+          validate(operation.binding);
+          if (canonicalJson(operation.permission.binding) !== canonicalJson(operation.binding) ||
+            canonicalJson(operation.permission.ref.instance) !== canonicalJson(instance) || operation.permission.ref.kind !== 'permission') {
+            return { kind: 'rejected', reason: 'Foreign Crew permission.', evidence: null };
+          }
+          return call(async client => {
+            const grantId = z.uuid().parse(operation.permission.ref.opaqueId);
+            const grant = (await grants(client, operation.binding)).find(row => row.grantId === grantId);
+            if (!grant || operation.scope !== (grant.scope === 'member' ? 'agent' : 'conversation')) {
+              return { kind: 'rejected', reason: 'Refresh permissions and confirm the active permission’s scope.', evidence: null };
+            }
+            const { grant: revoked } = await client.revokeGrant({ memberId, grantId }, { signal: AbortSignal.timeout(15000) });
+            if (revoked.grantId !== grantId || revoked.memberId !== memberId || revoked.scope !== grant.scope ||
+              revoked.conversationId !== grant.conversationId || revoked.status !== 'revoked') return uncertain();
+            return { kind: 'confirmed', value: { kind: 'revoke-permission', state: 'completed' }, evidence: { grantId } };
+          }, true);
+        },
+        async reconcileRevoke(operation) {
+          validate(operation.binding);
+          return uncertain();
+        },
+      };
+      const backend: ConnectedProvider<CrewModel, string> = { instance, ...(supportsStanding && { permissions }),
         capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
           decide: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' } },
         async discover() {

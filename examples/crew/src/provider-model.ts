@@ -6,7 +6,7 @@ const id = z.string().min(1).max(512);
 export const choiceSchema = z.enum(['approve', 'deny', 'inspect', 'test', 'allow_conversation', 'allow_always']);
 export const approvalSchema = z.object({ conversationId: z.uuid(), memberId: z.uuid(), requestId: z.uuid(),
   invocationId: z.uuid(), approvalId: z.uuid(), version: z.int(), summary: z.string().max(2048),
-  toolName: id.optional(), argumentsComplete: z.boolean().optional(),
+  toolName: id.optional(), policyVersion: z.int().optional(), argumentsComplete: z.boolean().optional(),
   choices: z.array(choiceSchema).max(6), standingChoices: z.array(choiceSchema).max(2).optional() });
 export const remoteSchema = z.object({ conversationId: z.uuid(), memberId: z.uuid(), phase: z.string(),
   pendingApprovals: z.array(approvalSchema).max(32), pendingQuestions: z.array(approvalSchema).max(32).optional() });
@@ -34,7 +34,7 @@ export interface CrewModel extends ProviderModel {
   readonly state: CrewState;
   readonly event: CrewState;
 }
-export function reference<K extends 'run' | 'decision' | 'choice'>(binding: ProviderConversation<string>, kind: K,
+export function reference<K extends 'run' | 'decision' | 'choice' | 'permission'>(binding: ProviderConversation<string>, kind: K,
   opaqueId: string): ConversationRef<string, K> {
   return { binding, ref: { instance: binding.creation.agent.instance, kind, opaqueId } };
 }
@@ -44,7 +44,7 @@ export function approvalKey(card: CrewApproval): string {
 }
 export const choiceLabels: Record<z.infer<typeof choiceSchema>, string> = {
   approve: 'Approve once', deny: 'Deny', inspect: 'Inspect', test: 'Test',
-  allow_conversation: 'Allow for this conversation', allow_always: 'Always allow for this member',
+  allow_conversation: 'Approve this item and allow work items for this conversation', allow_always: 'Always allow for this member',
 };
 export function runOutcome(run: z.input<typeof runSchema> | z.infer<typeof requestReceiptResponseSchema>) {
   return run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed'

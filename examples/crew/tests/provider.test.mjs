@@ -8,9 +8,10 @@ import { fixture, saved, send } from '../../../tests/application/provider-stream
 import { until } from '../../../tests/host/fixture.mjs';
 
 const memberId = randomUUID();
-async function service(t, { approvalDetails } = {}) {
+async function service(t, { approvalDetails, standingGrants } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
-  let detailHandler;
+  let detailHandler, grantHandler, revokeHandler;
+  const grants = [];
   let lost = false, observationMode = 'stream', conflict = false, decisionReply = {};
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer private-crew-test');
@@ -21,7 +22,17 @@ async function service(t, { approvalDetails } = {}) {
     const json = (status, body) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body)); };
     if (path === '/v1/capabilities') return json(200, { apiVersion: '1', requestContract: 'sql-admission-temporal-queue-v1',
       observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'],
-      ...(approvalDetails && { approvalDetails }) });
+      ...(approvalDetails && { approvalDetails }), ...(standingGrants && { standingGrants }) });
+    if (parts[2] === 'members' && parts[4] === 'grants') {
+      if (request.method === 'GET') return json(200, grantHandler ? grantHandler() : { apiVersion: '1', memberId,
+        active: grants.filter(row => row.status === 'active'), inactive: grants.filter(row => row.status !== 'active').slice(-20) });
+      const grant = grants.find(row => row.grantId === parts[5]);
+      if (!grant) return json(404, { error: 'not_found' });
+      if (lost === 'before-revoke') { response.destroy(); return; }
+      Object.assign(grant, { status: 'revoked', revokedAt: new Date().toISOString(), revocationReason: 'owner' });
+      if (lost) { response.destroy(); return; }
+      return json(200, { apiVersion: '1', grant: revokeHandler ? revokeHandler(grant) : grant });
+    }
     if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test' }], next: null });
     if (path === '/v1/conversations') {
       conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId, engine: 'codex', profile: 'test',
@@ -79,7 +90,8 @@ async function service(t, { approvalDetails } = {}) {
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => 'private-crew-test' } }] } });
-  return { calls, streams, conversations, receipts, details, emit, extension,
+  return { calls, streams, conversations, receipts, details, emit, extension, grants,
+    setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
 }
 
@@ -803,3 +815,178 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
   assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel') || call.path.endsWith('/human')).length, 0);
 });
+
+const standingCapability = { version: 1, choices: ['allow_conversation', 'allow_always'], cardField: 'standingChoices',
+  stateField: 'grantedCalls', tools: ['record_work_item'], policyVersion: 1, initiatorKinds: ['owner'],
+  route: '/v1/members/{memberId}/grants', inactiveListLimit: 20, revocation: 'later-proposals-only' };
+function activeGrant(conversationId) {
+  return { grantId: randomUUID(), memberId, conversationId, scope: conversationId ? 'conversation' : 'member',
+    choice: conversationId ? 'allow_conversation' : 'allow_always', toolName: 'record_work_item', policyVersion: 1,
+    approvalId: randomUUID(), createdAt: new Date().toISOString(), status: 'active' };
+}
+for (const variant of ['supported', 'absent-capability', 'future-capability', 'no-owner', 'no-tool', 'no-choice',
+  'child', 'question', 'public-only', 'missing-card-policy', 'future-card-policy', 'not-offered']) {
+  test(`Crew conversation permission choice requires exact owner evidence (${variant})`, async t => {
+    let standingGrants = structuredClone(standingCapability);
+    if (variant === 'absent-capability') standingGrants = undefined;
+    if (variant === 'future-capability') standingGrants = { version: 2 };
+    if (variant === 'no-owner') standingGrants.initiatorKinds = [];
+    if (variant === 'no-tool') standingGrants.tools = [];
+    if (variant === 'no-choice') standingGrants.choices = ['allow_always'];
+    const remote = await service(t, { standingGrants, ...(variant !== 'public-only' && { approvalDetails: detailCapability }) });
+    const { backend, binding } = await direct(remote); t.after(() => backend.close());
+    const conversation = remote.conversations.get(binding.authority.binding.opaqueSessionId), requestId = randomUUID();
+    conversation.messages.push({ id: requestId, role: 'user', content: 'Record an item' });
+    const card = pendingCall(conversation, requestId, { question: variant === 'question' });
+    if (variant !== 'child') card.invocationId = requestId;
+    if (variant === 'missing-card-policy') delete card.policyVersion;
+    if (variant === 'future-card-policy') card.policyVersion = 2;
+    if (variant === 'not-offered') card.standingChoices = ['allow_always'];
+    remote.details.set(card.approvalId, ownerDetail(card, { note: 'Exact current note' }));
+    const baseline = await backend.snapshot(binding);
+    assert.equal(baseline.kind, 'available');
+    const decision = baseline.snapshot.decisions[0], choices = decision.choices.map(choice => JSON.parse(choice.ref.ref.opaqueId)[1]);
+    assert.equal(choices.includes('allow_conversation'), variant === 'supported');
+    assert.equal(choices.includes('allow_always'), false);
+    if (variant === 'supported') {
+      assert.match(decision.prompt, /different notes/);
+      assert.match(decision.prompt, /Changing the model or profile keeps/);
+      assert.match(decision.prompt, /Already-approved work may finish/);
+    }
+  });
+}
+
+test('Crew lists every applicable active scope and refuses foreign or changed-scope revocation before POST', async t => {
+  const remote = await service(t, { standingGrants: standingCapability }), { backend, binding } = await direct(remote);
+  t.after(() => backend.close());
+  const conversationId = binding.authority.binding.opaqueSessionId;
+  const own = activeGrant(conversationId), broad = activeGrant(null), foreign = activeGrant(randomUUID());
+  remote.grants.push(own, broad, foreign, ...Array.from({ length: 25 }, () => activeGrant(conversationId)));
+  const listing = await backend.permissions.read(binding);
+  assert.equal(listing.kind, 'available');
+  assert.equal(listing.permissions.length, 27);
+  assert.equal(listing.permissions.some(row => row.ref.ref.opaqueId === foreign.grantId), false);
+  assert.equal(listing.permissions.find(row => row.ref.ref.opaqueId === broad.grantId).scope, 'agent');
+  const operation = { operationId: randomUUID(), binding, scope: 'conversation', permission: {
+    binding, ref: { instance: binding.creation.agent.instance, kind: 'permission', opaqueId: own.grantId } } };
+  assert.equal((await backend.permissions.revoke({ ...operation, permission: { ...operation.permission,
+    ref: { ...operation.permission.ref, opaqueId: foreign.grantId } } })).kind, 'rejected');
+  assert.equal((await backend.permissions.revoke({ ...operation, permission: { ...operation.permission,
+    ref: { ...operation.permission.ref, opaqueId: broad.grantId } } })).kind, 'rejected');
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 0);
+  assert.equal((await backend.permissions.revoke(operation)).kind, 'confirmed');
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 1);
+  remote.setGrantHandler(() => ({ apiVersion: '1', memberId, active: [broad, broad], inactive: [] }));
+  assert.equal((await backend.permissions.read(binding)).kind, 'unavailable');
+});
+
+test('Crew lost revoke ACK stays uncertain after list absence and host restart without another POST', async t => {
+  const remote = await service(t, { standingGrants: standingCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  const conversationId = [...remote.conversations.keys()][0];
+  remote.grants.push(activeGrant(conversationId), activeGrant(null));
+  const listed = await f.client.conversationPermissions(scope);
+  assert.equal(listed.permissions.length, 2);
+  remote.setLost(true);
+  const command = { version: 1, scope, clientCommandId: 'revoke', body: { kind: 'revoke-permission',
+    permissionId: listed.permissions.find(row => row.scope === 'conversation').permissionId, scope: 'conversation' } };
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'uncertain');
+  assert.deepEqual((await f.client.conversationPermissions(scope)).permissions.map(row => row.scope), ['agent']);
+  remote.setLost(false);
+  await f.restart([remote.extension()]);
+  assert.equal((await f.client.reconcile(scope, 'revoke')).state.kind, 'uncertain');
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'uncertain');
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 1);
+});
+
+for (const reply of ['exact', 'wrong-choice', 'lost']) test(`Crew standing choice ${reply} acknowledgement preserves original decision`, async t => {
+  const remote = await service(t, { standingGrants: standingCapability, approvalDetails: detailCapability });
+  const f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(receipt.conversationId);
+  const card = pendingCall(conversation, requestId); card.invocationId = requestId;
+  remote.details.set(card.approvalId, ownerDetail(card)); remote.emit(receipt.conversationId);
+  await until(() => saved(f).decisions.length === 1);
+  const decision = JSON.parse(saved(f).decisions[0].data), choice = decision.choices.find(row => row.label.includes('allow work items'));
+  if (reply === 'wrong-choice') remote.setDecisionReply({ decision: 'approve' });
+  if (reply === 'lost') remote.setLost(true);
+  const result = await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'standing',
+    body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: choice.id } });
+  assert.equal(result.receipt.state.kind, reply === 'exact' ? 'completed' : 'uncertain');
+  assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.choice, 'allow_conversation');
+  if (reply !== 'exact') {
+    remote.setLost(false);
+    remote.grants.push(activeGrant(receipt.conversationId));
+    assert.equal((await f.client.conversationPermissions(scope)).permissions.length, 1);
+    assert.equal((await f.client.reconcile(scope, 'standing')).state.kind, 'uncertain');
+  }
+});
+
+test('browser keeps permissions after run end and confirms member revocation across conversations', { timeout: 20_000 }, async t => {
+  const remote = await service(t, { standingGrants: standingCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0];
+  receipt.status = 'completed'; receipt.result = { text: 'Finished' }; remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'ended');
+  const narrow = activeGrant(receipt.conversationId), broad = activeGrant(null);
+  remote.grants.push(narrow, broad, activeGrant(randomUUID()));
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  const permissions = page.getByRole('region', { name: 'Permissions', exact: true });
+  const revokeMember = permissions.getByRole('button', { name: 'Revoke for this member in all conversations', exact: true });
+  await revokeMember.waitFor();
+  assert.equal(await permissions.locator('h3').count(), 2);
+  await revokeMember.click();
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 0);
+  await permissions.getByRole('button', { name: 'Keep permission', exact: true }).click();
+  await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).click();
+  await until(() => narrow.status === 'revoked');
+  await revokeMember.waitFor();
+  await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).waitFor({ state: 'detached' });
+  assert.equal(await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).count(), 0);
+  remote.setGrantHandler(() => ({ apiVersion: '1', memberId, active: [broad, broad], inactive: [] }));
+  await permissions.getByRole('button', { name: 'Refresh permissions', exact: true }).click();
+  await page.waitForFunction(() => document.querySelector('[aria-label="Permissions"]').textContent.includes('Provider permissions unavailable'));
+  assert.equal(await revokeMember.isDisabled(), true);
+  remote.setGrantHandler(undefined);
+  await permissions.getByRole('button', { name: 'Refresh permissions', exact: true }).click();
+  await revokeMember.click();
+  await permissions.getByRole('button', { name: 'Confirm revoke in all conversations', exact: true }).click();
+  await until(() => broad.status === 'revoked');
+  await permissions.getByText('No active work-item permissions were found.', { exact: true }).waitFor();
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 2);
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
+  assert.equal(requestId, receipt.requestId);
+});
+
+test('Crew fresh active reading permits a deliberate new revoke while original ACK remains unknown', async t => {
+  const remote = await service(t, { standingGrants: standingCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  remote.grants.push(activeGrant([...remote.conversations.keys()][0]));
+  const [permission] = (await f.client.conversationPermissions(scope)).permissions;
+  const command = { version: 1, scope, clientCommandId: 'original-revoke', body: { kind: 'revoke-permission',
+    permissionId: permission.permissionId, scope: permission.scope } };
+  remote.setLost('before-revoke');
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'uncertain');
+  assert.equal((await f.client.conversationPermissions(scope)).permissions.length, 1);
+  remote.setLost(false);
+  assert.equal((await f.client.conversation(scope).submit({ ...command, clientCommandId: 'deliberate-revoke' })).receipt.state.kind, 'completed');
+  assert.equal((await f.client.reconcile(scope, 'original-revoke')).state.kind, 'uncertain');
+  assert.equal((await f.client.conversationPermissions(scope)).permissions.length, 0);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 2);
+});
+
+for (const field of ['scope', 'conversationId', 'memberId', 'grantId']) {
+  test(`Crew rejects mismatched revoke acknowledgement ${field} as uncertain`, async t => {
+    const remote = await service(t, { standingGrants: standingCapability }), { backend, binding } = await direct(remote);
+    t.after(() => backend.close());
+    remote.grants.push(activeGrant(binding.authority.binding.opaqueSessionId));
+    const [permission] = (await backend.permissions.read(binding)).permissions;
+    remote.setRevokeHandler(grant => field === 'scope' ? { ...grant, scope: 'member', conversationId: null, choice: 'allow_always' }
+      : { ...grant, [field]: randomUUID() });
+    const result = await backend.permissions.revoke({ operationId: randomUUID(), binding, permission: permission.ref, scope: permission.scope });
+    assert.equal(result.kind, 'uncertain');
+    assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 1);
+  });
+}

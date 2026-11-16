@@ -16,7 +16,7 @@ const workItemArguments = z.strictObject({ operation_id: z.uuid() });
 const questionArguments = z.strictObject({});
 export function observation(binding: ProviderConversation<string>, memberId: string,
   use: <T>(action: (client: CrewClient, token: string) => Promise<T>) => Promise<T>, baseUrl: string,
-  previous: CrewCursor | null, ownerDetails: boolean) {
+  previous: CrewCursor | null, ownerDetails: boolean, standingPermissions: boolean) {
   let cursor: CrewCursor = { epoch: randomUUID(), sequence: 0, requests: previous?.requests ?? [] };
   let state: CrewState = { binding: stateSchema.shape.binding.parse(binding), messages: [], run: null };
   let remote: z.infer<typeof remoteSchema> | undefined;
@@ -36,7 +36,7 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     const decisions: ProviderSnapshot<CrewModel, string>['decisions'][number][] = [];
     for (const card of cards) {
       const tool = tools.get(card.approvalId);
-      let complete = false;
+      let complete = false, standing = false;
       let ownerPrompt: string | undefined;
       if (ownerDetails && card.toolName === 'record_work_item') {
         const detail = await client.approvalDetail({ conversationId: card.conversationId, memberId: card.memberId,
@@ -44,6 +44,8 @@ export function observation(binding: ProviderConversation<string>, memberId: str
         { signal: AbortSignal.any([detailReads.signal, AbortSignal.timeout(10000)]) });
         ownerPrompt = `${detail.toolName}\n${JSON.stringify(detail.arguments, null, 2)}`;
         complete = true;
+        standing = standingPermissions && remote?.pendingApprovals.includes(card) === true && card.policyVersion === 1 &&
+          detail.policyVersion === 1 && card.invocationId === card.requestId && card.standingChoices?.includes('allow_conversation') === true;
       } else if (tool && tool.name === card.toolName) {
         try {
           const args: unknown = JSON.parse(tool.arguments);
@@ -54,10 +56,11 @@ export function observation(binding: ProviderConversation<string>, memberId: str
       }
       const choices = card.choices.filter(choice => choice === 'deny' || complete &&
         (card.toolName === 'record_work_item' ? choice === 'approve' : choice === 'inspect' || choice === 'test'));
+      if (standing) choices.push('allow_conversation');
       if (!choices.length) continue;
       const details = ownerPrompt ?? (complete ? tool?.arguments : 'Action details are incomplete. Crew may have redacted the proposed note. Only Deny is available.');
       decisions.push({ ref: reference(binding, 'decision', approvalKey(card)), run: reference(binding, 'run', card.requestId),
-        prompt: `${card.summary}\n${details}`, choices: choices.map(choice => ({
+        prompt: `${card.summary}\n${details}${standing ? '\nApproving for this conversation approves this item and future owner-initiated, top-level work items, which may contain different notes. Changing the model or profile keeps this permission. Use Permissions to revoke it for later proposals. Already-approved work may finish.' : ''}`, choices: choices.map(choice => ({
           ref: reference(binding, 'choice', JSON.stringify([approvalKey(card), choice])), label: choiceLabels[choice] })) });
     }
     return { binding, projectionVersion: 1, cursor: { binding, kind: 'provider-cursor', opaque: cursorSchema.parse(cursor) },
