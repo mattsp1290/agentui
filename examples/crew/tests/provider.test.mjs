@@ -944,6 +944,7 @@ test('browser keeps permissions after run end and confirms member revocation acr
   await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).click();
   await until(() => narrow.status === 'revoked');
   await revokeMember.waitFor();
+  await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).waitFor({ state: 'detached' });
   assert.equal(await permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true }).count(), 0);
   remote.setGrantHandler(() => ({ apiVersion: '1', memberId, active: [broad, broad], inactive: [] }));
   await permissions.getByRole('button', { name: 'Refresh permissions', exact: true }).click();
