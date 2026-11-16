@@ -15,8 +15,7 @@ export interface FrontendJournal {
   acknowledged(id: string): Promise<void>;
 }
 export interface FrontendAdmission {
-  readonly ownerId: string;
-  capture(id: string): { readonly offer: FrontendOffer; commit(command: OfferedCommand, journal: FrontendJournal): boolean; release(): void } | null;
+  capture(id: string): { readonly ownerId: string; readonly offer: FrontendOffer; commit(command: OfferedCommand, journal: FrontendJournal): boolean; release(): void } | null;
   canRetry(command: OfferedCommand): boolean;
   rejected(id: string): Promise<void>;
 }
@@ -58,7 +57,6 @@ export interface ConversationStore<P> {
   refreshReceipt(clientCommandId: string): Promise<Receipt | null>;
   connect(): Promise<void>;
   disconnect(): void;
-  drained(): Promise<void>;
 }
 export interface StoreOptions<E, P> {
   readonly scope: ConversationScope;

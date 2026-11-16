@@ -23,21 +23,32 @@ type Entry = { readonly key: string; readonly viewId: string; readonly reference
   readonly retained: RetainedFrontendTools; state: { readonly status: 'waiting'; readonly binding: null } | Extract<CapturedState, { status: 'bound' }>; pending: boolean };
 type ScopeHold = { readonly viewId: string; readonly scope: ConversationScope };
 type Session = { readonly hostId: string; readonly principalId: string; readonly connection: ServiceConnection };
+type Authority = { readonly session: Session | null; readonly lifetime: AbortController };
+async function raceAbort<T>(request: () => Promise<T>, signals: readonly AbortSignal[]): Promise<T | null> {
+  if (signals.some(signal => signal.aborted)) return null;
+  let cancel = () => {};
+  const cancelled = new Promise<null>(resolve => {
+    cancel = () => resolve(null);
+    for (const signal of signals) signal.addEventListener('abort', cancel, { once: true });
+  });
+  try { return await Promise.race([request(), cancelled]); }
+  finally { for (const signal of signals) signal.removeEventListener('abort', cancel); }
+}
 export function createFrontendSends(deps: { changed(): void; failed(viewId: string, error: unknown): void; unauthorized(): void }) {
   let token: object | null = null, generations: GenerationSnapshot = { kind: 'transitioning' };
-  let session: Session | null = null, epoch = 0, closed = false;
+  let closed = false;
+  let authority: Authority = { session: null, lifetime: new AbortController() };
   let timer: ReturnType<typeof setTimeout> | undefined;
-  let authorityLifetime = new AbortController();
-  function advanceEpoch(): number {
-    authorityLifetime.abort(); authorityLifetime = new AbortController();
-    return ++epoch;
+  function become(session: Session | null): Authority {
+    authority.lifetime.abort();
+    return authority = { session, lifetime: new AbortController() };
   }
   const failedViews = new Set<string>();
   const entries = new Map<string, Entry>(), provisional = new Map<object, ScopeHold & { retained: RetainedFrontendTools }>();
   const transitions = new Map<object, ScopeHold>();
   const recent = new Map<string, CapturedSend & { ownerId: string }>();
   const keyFor = (viewId: string, command: OfferedCommand) => canonicalJson([viewId, command.scope, command.clientCommandId]);
-  const matches = (reference: FrontendRecoveryReference) => session !== null && reference.ownerId === session.principalId && reference.command.scope.hostId === session.hostId;
+  const matches = (reference: FrontendRecoveryReference) => authority.session !== null && reference.ownerId === authority.session.principalId && reference.command.scope.hostId === authority.session.hostId;
   const held = (viewId: string, scope: ConversationScope | undefined, item: ScopeHold) => item.viewId === viewId && (!scope || sameScope(scope, item.scope));
   const acquiring = (viewId: string, scope: ConversationScope) => [...provisional.values()].some(item => held(viewId, scope, item));
   function remember(viewId: string, reference: FrontendRecoveryReference): void {
@@ -47,11 +58,10 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     recent.set(key, { key, viewId, command: reference.command, ownerId: reference.ownerId, status: 'unavailable', binding: null });
     const oldest = recent.keys().next();
     if (recent.size > 32 && !oldest.done) recent.delete(oldest.value);
-    deps.changed();
   }
   function schedule(): void {
     clearTimeout(timer);
-    if (!closed && session && [...entries.values()].some(entry => entry.state.status === 'waiting' && matches(entry.reference))) {
+    if (!closed && authority.session && [...entries.values()].some(entry => entry.state.status === 'waiting' && matches(entry.reference))) {
       timer = setTimeout(() => { void poll(); }, 2_000);
     }
   }
@@ -70,8 +80,9 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
   async function recover({ viewId, journal, reference, current, signal }: {
     viewId: string; journal: FrontendJournal; reference: FrontendRecoveryReference; current: () => boolean; signal: AbortSignal;
   }): Promise<void> {
-    const key = keyFor(viewId, reference.command), authority = session, version = epoch;
-    const valid = () => !closed && !failedViews.has(viewId) && !signal.aborted && current() && authority === session && version === epoch;
+    const key = keyFor(viewId, reference.command), currentAuthority = authority;
+    const session = currentAuthority.session;
+    const valid = () => !closed && !failedViews.has(viewId) && !signal.aborted && current() && !currentAuthority.lifetime.signal.aborted;
     if (!valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     if (reference.state === 'retained') {
       try { await journal.unavailable(reference.command.clientCommandId); }
@@ -79,13 +90,10 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     }
     if (!valid()) return;
     remember(viewId, reference);
-    if (!valid() || !authority || !matches(reference) || reference.state === 'unavailable-confirmed' || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
-    const signals = [authorityLifetime.signal, signal];
-    if (signals.some(item => item.aborted)) return;
-    let cancel = () => {};
-    const cancelled = new Promise<null>(resolve => { cancel = () => resolve(null); for (const item of signals) item.addEventListener('abort', cancel, { once: true }); });
+    deps.changed();
+    if (!valid() || !session || !matches(reference) || reference.state === 'unavailable-confirmed' || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     try {
-      const result = await Promise.race([authority.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), cancelled]);
+      const result = await raceAbort(() => session.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), [currentAuthority.lifetime.signal, signal]);
       if (result === null) return;
       const response = parseFrontendBinding(result);
       if (!valid() || !matches(reference) || entries.has(key)) return;
@@ -93,16 +101,18 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       await journal.acknowledged(response.id);
     } catch (error) {
       if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
-    } finally { for (const item of signals) item.removeEventListener('abort', cancel); }
+    }
   }
   async function read(entry: Entry): Promise<void> {
+    const current = authority, session = current.session;
     if (entry.pending || !session || !matches(entry.reference) || entry.state.status !== 'waiting' || failedViews.has(entry.viewId)) return;
     entry.pending = true;
-    const current = session, version = epoch;
-    const valid = () => current === session && version === epoch && entries.get(entry.key) === entry && !failedViews.has(entry.viewId);
+    const valid = () => !current.lifetime.signal.aborted && entries.get(entry.key) === entry && !failedViews.has(entry.viewId);
     try {
       const command = entry.reference.command;
-      const response = parseFrontendBinding(await current.connection.frontendBinding({ scope: command.scope, id: command.clientCommandId, action: 'recover' }));
+      const result = await raceAbort(() => session.connection.frontendBinding({ scope: command.scope, id: command.clientCommandId, action: 'recover' }), [current.lifetime.signal]);
+      if (result === null) return;
+      const response = parseFrontendBinding(result);
       if (!valid()) return;
       if (response.kind === 'bound') {
         if (!sameScope(response.run.conversation, command.scope) || canonicalJson(response.command) !== canonicalJson(command)) throw new Error('Captured command binding does not match its original owner.');
@@ -110,11 +120,11 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
         entry.state = { status: 'bound', binding: response };
       } else {
         if (response.id !== command.clientCommandId) throw new Error('Captured command response has the wrong identity.');
-        if (response.kind === 'unavailable') await unavailable(entry);
+        if (response.kind === 'unavailable') { await unavailable(entry); return; }
       }
       deps.changed();
     } catch (error) {
-      if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && current === session) deps.unauthorized();
+      if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && valid()) deps.unauthorized();
     } finally { entry.pending = false; }
   }
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
@@ -128,7 +138,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     } satisfies GenerationSink,
     snapshot(): readonly CapturedSend[] {
       return [...entries.values()].filter(entry => matches(entry.reference)).map<CapturedSend>(entry => ({ key: entry.key, command: entry.reference.command,
-        viewId: entry.viewId, ...entry.state })).concat([...recent.values()].filter(row => session?.principalId === row.ownerId && session.hostId === row.command.scope.hostId));
+        viewId: entry.viewId, ...entry.state })).concat([...recent.values()].filter(row => authority.session?.principalId === row.ownerId && authority.session.hostId === row.command.scope.hostId));
     },
     forgetView(viewId: string): void { failedViews.delete(viewId); },
     holds(viewId: string, scope?: ConversationScope): boolean {
@@ -136,20 +146,21 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
         [...provisional.values(), ...transitions.values()].some(entry => held(viewId, scope, entry));
     },
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
+      const session = authority.session;
       const same = metadata && session && metadata.hostId === session.hostId && metadata.principalId === session.principalId && session.connection === connection;
       if (same) { schedule(); return; }
-      const transition = advanceEpoch(); session = null; recent.clear(); clearTimeout(timer);
+      const transition = become(null); recent.clear(); clearTimeout(timer);
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
       await Promise.allSettled([...entries.values()].map(unavailable));
-      if (closed || transition !== epoch) return;
-      session = metadata ? { ...metadata, connection } : null;
+      if (closed || transition.lifetime.signal.aborted) return;
+      become(metadata ? { ...metadata, connection } : null);
       deps.changed(); schedule();
     },
     forStore({ viewId, scope, eligibility }: { readonly viewId: string; readonly scope: ConversationScope; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
       return {
-        get ownerId() { if (!session) throw new Error('Reconnect before sending.'); return session.principalId; },
         capture() {
+          const current = authority, session = current.session;
           if (failedViews.has(viewId)) throw new Error('Local storage failed. Reload before capturing tools.');
           if (closed || !session || session.hostId !== scope.hostId) throw new Error('Reconnect before capturing tools.');
           if (eligibility() !== 'ag-ui-capture-and-bind') return null;
@@ -160,7 +171,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
             retained.release();
             throw new Error('32 captured sends are still retained. Release captured tools or reconnect before sending.');
           }
-          const captureToken = {}, current = session, version = epoch, ownerId = session.principalId;
+          const captureToken = {}, ownerId = session.principalId;
           provisional.set(captureToken, { viewId, scope, retained });
           try {
             if (retained.definitions.length !== retained.bindings.length) throw new Error('Captured definitions and bindings differ.');
@@ -171,15 +182,15 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
               return { definition, activationId: binding.activationId };
             });
             return {
-              offer: { platform: 'desktop', tools },
+              ownerId, offer: { platform: 'desktop', tools },
               commit(command, journal) {
                 const acquired = provisional.delete(captureToken);
-                const valid = !closed && acquired && current === session && version === epoch && !failedViews.has(viewId);
+                const valid = !closed && acquired && !current.lifetime.signal.aborted && !failedViews.has(viewId);
                 if (!valid) { retained.release(); deps.changed(); return false; }
                 const reference: FrontendRecoveryReference = { command, ownerId, state: 'retained' };
                 const key = keyFor(viewId, command);
                 entries.set(key, { key, viewId, reference, journal, retained, state: { status: 'waiting', binding: null }, pending: false });
-                deps.changed(); schedule(); return valid;
+                deps.changed(); schedule(); return true;
               },
               release() { provisional.delete(captureToken); retained.release(); deps.changed(); },
             };
@@ -203,7 +214,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
       deps.changed(); schedule();
     },
     async dispose(): Promise<void> {
-      closed = true; advanceEpoch(); session = null; recent.clear(); clearTimeout(timer);
+      closed = true; become(null); recent.clear(); clearTimeout(timer);
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
       await Promise.allSettled([...entries.values()].map(unavailable));

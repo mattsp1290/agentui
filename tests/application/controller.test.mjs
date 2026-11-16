@@ -24,7 +24,7 @@ function fixture() {
         return { scopes, after: scopes.length === 100 ? scopes.at(-1).conversationId : null };
       },
       drafts(onFailure) {
-        return { load: async selected => { loads.push(`${viewId}/${selected.hostId}/${selected.conversationId}`); return drafts.get(`${viewId}/${selected.hostId}/${selected.conversationId}`) ?? null; },
+        return { load: async selected => { await behavior.load?.(selected, viewId); loads.push(`${viewId}/${selected.hostId}/${selected.conversationId}`); return drafts.get(`${viewId}/${selected.hostId}/${selected.conversationId}`) ?? null; },
           async save(value) {
             try { await behavior.write(); if (owner.closed) throw new Error('Closed owner'); drafts.set(`${viewId}/${value.scope.hostId}/${value.scope.conversationId}`, value); }
             catch (error) { onFailure(error); throw error; }
@@ -295,7 +295,6 @@ test('own corrupt view blocks commands; a new host clears the old active convers
   assert.equal(f.created.length, 0);
 });
 
-
 test('a disposed startup releases its late storage lease and ignores old connection callbacks', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const gate = deferred();
@@ -378,7 +377,6 @@ test('a host change without an active conversation replaces the loaded recovery 
   assert.deepEqual(f.views.get('original-view/host'), original);
 });
 
-
 test('a storage acquisition failure stops the loading status and blocks commands', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.behavior.acquire = async () => { throw new Error('Storage cannot be owned'); };
@@ -435,7 +433,6 @@ test('a late saved-view read failure cannot change a replacement session', async
   assert.equal(replacement.storageFailure, '');
   assert.equal(replacement.error, '');
 });
-
 
 test('confirmed creation preserves expanded catalog pages and later paging does not duplicate it', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
@@ -708,7 +705,6 @@ test('UI recovery can retry a retained command while disconnected', async t => {
   assert.deepEqual(f.submitted, [entry.command, entry.command]);
   assert.deepEqual(f.target.store.getSnapshot().outbox, []);
 });
-
 
 test('SDK send refuses missing and non-string text without submitting the composer draft', async t => {
   const f = await openCommands(t);
@@ -1256,7 +1252,6 @@ for (const replacement of ['view', 'same-principal reconnect']) test(`recovery c
   assert.equal(requests.length, 2);
 });
 
-
 test('canceling a notification keeps live captures and drains their admitted release before closing the old view', async t => {
   const f = fixture(), oldReply = deferred(), requests = [];
   t.after(async () => { oldReply.resolve(); await f.app.dispose(); });
@@ -1327,7 +1322,7 @@ for (const ending of ['storage failure', 'disposal']) test(`recovery cancellatio
 });
 
 
-test('a rejected physical selection resumes recovery in the restored loaded view', async t => {
+for (const destination of ['other-view', 'original-view']) test(`a rejected ${destination} selection preserves the original loaded view and recovery pass`, async t => {
   const f = fixture(), gate = deferred(), requests = [];
   t.after(async () => { gate.resolve(); await f.app.dispose(); });
   f.drafts.set('original-view/host/conversation', journalRecord(scope));
@@ -1338,11 +1333,16 @@ test('a rejected physical selection resumes recovery in the restored loaded view
   };
   await f.app.start(); await eventually(() => requests.length === 1);
   f.behavior.select = () => { throw new Error('Selection failed'); };
-  await f.app.reopenView('other-view');
-  await eventually(() => requests.length === 2);
+  await f.app.reopenView(destination);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  if (destination === 'other-view') assert.equal(f.leases[1].closed, true);
+  else assert.equal(f.leases.length, 1);
+  gate.resolve();
   assert.match(f.app.getSnapshot().error, /Selection failed/);
   assert.equal(f.leases[0].closed, false);
   await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(requests.length, 1);
 });
 
 test('reconnect cancels the previous pass while metadata is held and starts only after refresh finishes', async t => {
@@ -1362,4 +1362,100 @@ test('reconnect cancels the previous pass while metadata is held and starts only
   metadata.resolve(); await refreshing;
   await eventually(() => requests.length === 2);
   await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+});
+
+for (const ending of ['navigation', 'disposal']) test(`a corrupt pending load releases its physical lease after ${ending}`, async () => {
+  const f = fixture(), gate = deferred(), entered = deferred(), corrupt = { version: 99, scope };
+  f.drafts.set('original-view/host/conversation', corrupt);
+  f.behavior.load = async (_scope, id) => { if (id === 'original-view') { entered.resolve(); await gate.promise; } };
+  try {
+    await f.app.start(); await entered.promise;
+    if (ending === 'navigation') await f.app.reopenView('other-view');
+    const closing = ending === 'disposal' ? f.app.dispose() : null;
+    gate.reject(new Error('Corrupt draft load'));
+    if (closing) await closing;
+    await eventually(() => f.leases[0].closed);
+    assert.equal(f.app.getSnapshot().storageFailure, '');
+    assert.equal(f.drafts.get('original-view/host/conversation'), corrupt);
+    assert.deepEqual(f.submitted, []);
+  } finally { gate.resolve(); await f.app.dispose().catch(() => {}); }
+});
+
+test('disposal waits for every physical close before rejecting the first close failure', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred(), closes = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose().catch(() => {}); });
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  f.behavior.close = owner => {
+    closes.push(owner.viewId);
+    if (owner.viewId === 'original-view') throw new Error('First physical close failed');
+    entered.resolve(); return gate.promise;
+  };
+  await f.app.reopenView('other-view');
+  await eventually(() => Boolean(f.app.getSnapshot().storageFailure));
+  let settled = false;
+  const closing = f.app.dispose();
+  const rejected = assert.rejects(closing, /First physical close failed/).then(() => { settled = true; });
+  await entered.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  gate.resolve(); await rejected;
+  assert.deepEqual(closes, ['original-view', 'other-view']);
+  assert.equal(f.app.dispose(), closing);
+});
+
+test('an existing selection reserves its lease while a storage callback releases its last capture', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'reserved', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start();
+  await assert.rejects(f.app.getSnapshot().active.store.send('Pending'), /Reply lost/);
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false);
+  f.behavior.select = () => {
+    f.leases[0].failure(new Error('Selection storage failed'));
+    assert.equal(f.leases[0].closed, false);
+  };
+  await f.app.reopenView('original-view');
+  assert.match(f.app.getSnapshot().storageFailure, /Selection storage failed/);
+  assert.equal(f.leases[0].closed, false);
+  await source.generation.retire();
+});
+
+for (const destination of ['original-view', 'fresh-view']) test(`disposal inside physical selection cannot install ${destination}`, async () => {
+  const f = fixture();
+  await f.app.start();
+  let closing;
+  f.behavior.select = () => { closing = f.app.dispose(); };
+  await f.app.reopenView(destination); await closing;
+  assert(f.leases.every(lease => lease.closed));
+  assert.equal(f.metadataCalls(), 1);
+});
+
+test('a fresh rejected selection retains its failed physical close for disposal and drains the selected lease', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred(), closes = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose().catch(() => {}); });
+  await f.app.start();
+  f.behavior.select = () => { throw new Error('Candidate selection failed'); };
+  f.behavior.close = owner => {
+    closes.push(owner.viewId);
+    if (owner.viewId === 'candidate-view') throw new Error('Candidate close failed');
+    entered.resolve(); return gate.promise;
+  };
+  await f.app.reopenView('candidate-view');
+  assert.match(f.app.getSnapshot().storageFailure, /Candidate close failed/);
+  assert.match(f.app.getSnapshot().error, /Candidate selection failed/);
+  assert.equal(f.leases[0].closed, false);
+  assert.deepEqual(closes, ['candidate-view']);
+  let settled = false;
+  const closing = f.app.dispose();
+  const rejected = assert.rejects(closing, /Candidate close failed/).then(() => { settled = true; });
+  await entered.promise; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  gate.resolve(); await rejected;
+  assert.deepEqual(closes, ['candidate-view', 'original-view']);
+  assert.equal(f.app.dispose(), closing);
 });

@@ -131,9 +131,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         const command = immutable(parseCommand(capture ? { version: 2, scope, clientCommandId: id, body: { ...intent, frontend: capture.offer } }
           : { version: 1, scope, clientCommandId: id, body: intent }));
         const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
-        const reference: FrontendRecoveryReference[] = command.version === 2 && options.frontend ? [{ command, ownerId: options.frontend.ownerId, state: 'retained' }] : [];
+        const offered = capture && command.version === 2 ? { capture, command } : null;
+        const reference: FrontendRecoveryReference[] = offered ? [{ command: offered.command, ownerId: offered.capture.ownerId, state: 'retained' }] : [];
         await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
-        if (capture && command.version === 2 && !capture.commit(command, journal)) {
+        if (offered && !offered.capture.commit(offered.command, journal)) {
           await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id ? { ...entry, state: 'unavailable-pending' } : entry) }));
           throw new Error('The capture session changed before sending. Reconnect to recover.');
         }
@@ -147,10 +148,9 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     ready,
     frontendJournal: journal,
     dispose() {
-      if (!disposal) { closed = true; disposal = saves; stop({ kind: 'disconnected' }); }
+      if (!disposal) { closed = true; disposal = saves.then(() => undefined, () => undefined); stop(connection.kind === 'failed' ? connection : { kind: 'disconnected' }); }
       return disposal;
     },
-    drained: () => saves,
     getSnapshot: () => view,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async setDraft(text) {

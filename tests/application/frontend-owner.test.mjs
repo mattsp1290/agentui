@@ -129,7 +129,7 @@ test('reload has no original closure and preserves original bytes while notifyin
   await second.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   const drafts = storage(saved), port = fakePort();
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, eligibility: () => 'ag-ui-capture-and-bind' }) });
-  await store.ready; await store.drained();
+  await store.ready;
   await assert.rejects(store.retry('1'), /Original captured tools/);
   for (const reference of store.frontendJournal.read()) await second.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
   assert.equal(drafts.value.frontendSends[0].state, 'unavailable-confirmed');
@@ -141,7 +141,6 @@ test('a provisional save finishing after disposal cannot reinsert an owner into 
   f.drafts.save = async records => { entered.resolve(); await gate.promise; return save(records); };
   const send = f.store.send('Disposing during save'); await entered.promise;
   await f.owner.dispose(); gate.resolve(); await assert.rejects(send, /capture session changed/);
-  await f.store.drained();
   assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-pending');
   assert.equal(f.owner.holds('view'), false);
   assert.deepEqual(f.port.submitted, []);
@@ -258,4 +257,49 @@ for (const outcome of ['reply', 'rejection', 'stale reply', 'pass abort', 'autho
   assert.deepEqual(f.drafts.value, before);
   assert.equal(before.frontendSends[0].state, outcome === 'reply' ? 'unavailable-confirmed' : 'unavailable-pending');
   assert.deepEqual(f.failures, []);
+});
+
+test('capture returns the immutable owner with its offer across an authority change', async t => {
+  const f = await fixture(t), captured = f.frontend.capture('captured');
+  assert.equal(captured.ownerId, 'A');
+  await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  assert.equal(captured.ownerId, 'A');
+  captured.release();
+});
+for (const ending of ['new principal', 'disposal']) test(`a held authority transition cannot publish over ${ending}`, async t => {
+  const f = await fixture(t), gate = deferred(), entered = deferred(), save = f.drafts.save.bind(f.drafts);
+  await f.store.send('Original');
+  f.drafts.save = async records => { entered.resolve(); await gate.promise; await save(records); };
+  const first = f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
+  await entered.promise;
+  if (ending === 'new principal') await f.owner.session({ hostId: scope.hostId, principalId: 'C' }, f.connection);
+  else await f.owner.dispose();
+  gate.resolve(); await first;
+  assert.equal(f.drafts.value.frontendSends[0].ownerId, 'A');
+  assert.equal(f.drafts.value.frontendSends[0].state, 'unavailable-pending');
+  if (ending === 'new principal') {
+    const capture = f.frontend.capture('successor'); assert.equal(capture.ownerId, 'C'); capture.release();
+    await f.store.send('Successor'); assert.equal(f.drafts.value.frontendSends[1].ownerId, 'C');
+  } else assert.throws(() => f.frontend.capture('closed'), /Reconnect/);
+});
+
+test('a live binding read removes its listener when authority ends before the reply', async t => {
+  const gate = deferred(), f = await fixture(t, { reply: () => gate.promise });
+  await f.store.send('Original');
+  const command = f.drafts.value.frontendSends[0].command, added = [], removed = [];
+  const add = AbortSignal.prototype.addEventListener, remove = AbortSignal.prototype.removeEventListener;
+  t.mock.method(AbortSignal.prototype, 'addEventListener', function(type, listener, options) {
+    if (type === 'abort') added.push(listener);
+    return add.call(this, type, listener, options);
+  });
+  t.mock.method(AbortSignal.prototype, 'removeEventListener', function(type, listener, options) {
+    if (type === 'abort') removed.push(listener);
+    return remove.call(this, type, listener, options);
+  });
+  await f.tick(); assert.equal(f.requests.length, 1);
+  await f.owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection); await flush();
+  assert.equal(added.length, 1); assert.deepEqual(removed, added);
+  const before = structuredClone(f.drafts.value);
+  gate.resolve(bound(command)); await flush();
+  assert.deepEqual(f.owner.snapshot(), []); assert.deepEqual(f.drafts.value, before); assert.deepEqual(f.calls, []);
 });

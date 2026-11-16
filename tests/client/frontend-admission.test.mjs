@@ -6,11 +6,12 @@ import { fakePort, storage, scope, projection, receipt } from './support.mjs';
 const offer = { platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] };
 test('both send callers atomically journal the exact original offer before dispatch and never recapture on retry', async () => {
   const drafts = storage(), port = fakePort(); let captures = 0;
-  const frontend = { ownerId: 'principal', capture() { captures++; return { offer, release() {}, commit() { return true; } }; },
+  const frontend = { capture() { captures++; return { ownerId: 'principal', offer, release() {}, commit() { return true; } }; },
     canRetry() { return true; }, async rejected() {} };
   port.submit = async command => {
     assert.equal(command.version, 2);
     assert.deepEqual(drafts.value.frontendSends.at(-1).command, command);
+    assert.equal(drafts.value.frontendSends.at(-1).ownerId, 'principal');
     assert.deepEqual(drafts.value.outbox.at(-1).command, command);
     return { kind: 'receipt', receipt: receipt(command) };
   };
@@ -68,7 +69,7 @@ for (const result of ['receipt', 'rejected', 'lookup']) test(`terminal disposal 
 test('terminal disposal drains admitted journal saves and retains duplicate IDs after final settlement and reload', async () => {
   const { deferred } = await import('./support.mjs');
   const drafts = storage(), port = fakePort();
-  const frontend = { ownerId: 'principal', capture: () => ({ offer, release() {}, commit: () => true }), canRetry: () => true, async rejected() {} };
+  const frontend = { capture: () => ({ ownerId: 'principal', offer, release() {}, commit: () => true }), canRetry: () => true, async rejected() {} };
   port.submit = async command => ({ kind: 'receipt', receipt: receipt(command, 'completed') });
   const store = createConversationStore({ scope, projection, drafts, port, frontend, createCommandId: () => 'same' });
   await store.send('Original');
@@ -80,4 +81,22 @@ test('terminal disposal drains admitted journal saves and retains duplicate IDs 
   assert.equal(drafts.value.frontendSends[0].state, 'unavailable-confirmed'); assert.equal(drafts.value.outbox.length, 0);
   const next = createConversationStore({ scope, projection, drafts, port, frontend, createCommandId: () => 'same' });
   await assert.rejects(next.send('Reuse'), /reused/); await next.dispose();
+});
+
+for (const timing of ['before disposal', 'during disposal']) test(`failed hydration ${timing} drains without erasing the error or rewriting corrupt bytes`, async () => {
+  const { deferred } = await import('./support.mjs');
+  const gate = deferred(), corrupt = { version: 99, scope }, drafts = storage(corrupt);
+  drafts.load = () => gate.promise;
+  const store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'never' });
+  const rejected = assert.rejects(store.ready, /Unsupported local storage version/);
+  let closing;
+  if (timing === 'during disposal') closing = store.dispose();
+  gate.resolve(corrupt); await rejected;
+  if (!closing) closing = store.dispose();
+  await closing;
+  assert.equal(store.getSnapshot().connection.kind, 'failed');
+  assert.match(store.getSnapshot().connection.reason, /Unsupported local storage version/);
+  await assert.rejects(store.send('Never'), /Unsupported local storage version/);
+  await assert.rejects(store.frontendJournal.unavailable('never'), /closed/);
+  assert.deepEqual(drafts.value, corrupt); assert.deepEqual(drafts.writes, []);
 });
