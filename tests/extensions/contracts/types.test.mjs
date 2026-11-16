@@ -10,8 +10,9 @@ test('UI authors retain typed actions, tool decoders, platform and process bound
   config: 'apps/desktop/tsconfig.json',
   prefix: fixture + `
 import { memo } from 'react';
-import { parseUiExtensionContributions, type UiExtensionCapture, type UiExtensionContext } from '@agentui/sdk/react';
+import { parseUiExtensionContributions, parseUiExtensionPresentation, type UiExtensionPresentation, type UiExtensionCapture, type UiExtensionContext } from '@agentui/sdk/react';
 export function captured(value: unknown) { const result: UiExtensionCapture = parseUiExtensionContributions(value); if (result.kind === 'ready') { void result.presentation.modules; void result.dispose(); } }
+export function presentation(value: unknown) { const result: UiExtensionPresentation = parseUiExtensionPresentation(value); return result; }
 export const ui: UiExtensionContext = { namespace: 'notes', frontendTools: { add() {} } };
 ui.frontendTools.add(textTool);
 export const wrapped: ConversationModule = { id: 'memo', label: 'Memo', component: memo(() => null) };
@@ -69,7 +70,8 @@ test('transcript selection requires a ready owner with a captured component', ()
   config: 'apps/desktop/tsconfig.json',
   prefix: `
 import type { TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
-export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, fail(_error: unknown) {},
+declare const generation: import('@agentui/sdk/tools').FrontendToolGeneration;
+export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, generation, fail(_error: unknown) {},
   presentation: { modules: [], transcript: () => null } } as const;
 export const selection: TranscriptSelection = { kind: 'override', owner };
 export function component(value: TranscriptSelection) { if (value.kind === 'override') return value.owner.presentation.transcript; return null; }

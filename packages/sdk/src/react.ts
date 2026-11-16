@@ -122,6 +122,13 @@ function parseTranscript(value: unknown): UiExtensionPresentation['transcript'] 
   return transcript;
 }
 
+/** Captures presentation without acquiring or inspecting disposal. */
+export function parseUiExtensionPresentation(value: unknown): UiExtensionPresentation {
+  const contributions = behaviour(value);
+  const modules = contributions.modules, overrides = contributions.overrides;
+  return { modules: parseConversationModules(modules), transcript: parseTranscript(overrides) };
+}
+
 export function parseUiExtensionContributions(value: unknown): UiExtensionCapture {
   let contributions: Record<string, unknown>, dispose: () => Promise<void>;
   try {
@@ -132,8 +139,7 @@ export function parseUiExtensionContributions(value: unknown): UiExtensionCaptur
     dispose = () => completion ??= Promise.resolve().then(() => release.call(contributions));
   } catch (error) { return { kind: 'invalid-lifetime', error }; }
   try {
-    const modules = contributions.modules, overrides = contributions.overrides;
-    const presentation = { modules: parseConversationModules(modules), transcript: parseTranscript(overrides) };
+    const presentation = parseUiExtensionPresentation(contributions);
     return { kind: 'ready', presentation, dispose };
   } catch (error) { return { kind: 'invalid-presentation', error, dispose }; }
 }
