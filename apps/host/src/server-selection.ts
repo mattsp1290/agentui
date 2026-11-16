@@ -5,32 +5,30 @@ import { count, hex, identifier, record } from '@agentui/contracts/decode';
 import { parseServerCustomizationArtifact } from '@agentui/host/customization';
 import type { ServerExtensionReplacement, ServerExtensionStatus } from '@agentui/host/extensions';
 import type { AccessDatabase } from './access-database.js';
-import { normalizeProviderInstallations } from './provider-credentials.js';
-import { prepareProviderExtensions } from './provider-extensions.js';
-import type { BrowserProviderExtension } from './provider-extensions.js';
-import { RECEIPT_LIMIT, parseBootOutcome, parseSelection, parseSelectionCommand } from './selection-protocol.js';
-import type { ArtifactPin, BootOutcome, OperationSummary, SelectionCommand, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import { normalizeGrantPool, publicGrantBinding } from './provider-credentials.js';
+import { verifyArtifactPins } from './provider-extensions.js';
+import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
+import { SelectionRefusal, RECEIPT_LIMIT, parseBootOutcome, parseSelection, parseSelectionCommand } from './selection-protocol.js';
+import type { BootOutcome, OperationSummary, SelectionCommand, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
-export class SelectionRefusal extends Error {
-  constructor(reason: 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset') { super(`Selection ${reason}`); }
-}
 type Boot = { readonly id: string; readonly selection: string; outcome: BootOutcome };
 export type ExtensionStartup = { readonly kind: 'transient'; readonly entries: readonly BrowserProviderExtension[] }
   | { readonly kind: 'durable-artifacts'; readonly entries: readonly (Extract<BrowserProviderExtension, { kind: 'artifact' }>)[] };
 
+export function assertNoSelectionJournal(database: AccessDatabase): void {
+  if (database.database.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*' LIMIT 1").get()) {
+    throw new Error('Existing selection journal requires durable artifact ownership');
+  }
+}
+
 export async function createServerSelection(deps: { readonly database: AccessDatabase; readonly entries: Extract<ExtensionStartup, { kind: 'durable-artifacts' }>['entries'];
-  readonly replace: (entries: readonly BrowserProviderExtension[]) => Promise<ServerExtensionReplacement>;
   readonly runtime: () => ServerExtensionStatus; readonly isClosing: () => boolean }) {
   const db = deps.database.database, bootId = randomUUID();
-  const grants = deps.entries.flatMap(entry => entry.installations);
-  const normalized = [...new Set(grants.map(grant => grant.instance.namespace))].flatMap(namespace =>
-    normalizeProviderInstallations(namespace, grants.filter(grant => grant.instance.namespace === namespace)));
-  const grantsDigest = digest(canonicalJson(normalized.map(grant => ({ id: grant.id, instance: grant.instance, service: grant.service,
-    expectedAuthority: grant.expectedAuthority, authentication: grant.authentication.kind === 'secret'
-      ? { kind: 'secret', revision: grant.authentication.revision } : { kind: 'unauthenticated' } })).sort((a, b) => canonicalJson(a) < canonicalJson(b) ? -1 : canonicalJson(a) > canonicalJson(b) ? 1 : 0)));
+  const grants = normalizeGrantPool(deps.entries.flatMap(entry => entry.installations));
+  const grantsDigest = digest('[' + grants.map(grant => canonicalJson(publicGrantBinding(grant))).sort().join(',') + ']');
   const selections = new Map<string, Selection>(), boots: Boot[] = [];
   let desired: Selection | undefined, invalid = false, busy: Promise<unknown> | undefined, closed = false;
   let running: SelectionRuntime = { kind: 'withheld' };
@@ -78,10 +76,6 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       }
     });
   } catch { invalid = true; }
-  async function preflight(pins: readonly ArtifactPin[], classify?: (failure: 'load' | 'authorization') => void) {
-    const entries = pins.map(pin => ({ ...pin, kind: 'artifact' as const, installations: [] }));
-    return prepareProviderExtensions(entries, classify, normalized);
-  }
   async function accept(command: SelectionCommand, initial = false): Promise<OperationSummary> {
     if (invalid || closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
     const intent = canonicalJson(command), existing = selections.get(command.id);
@@ -92,9 +86,9 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     if (busy) throw new SelectionRefusal('busy');
     if (!initial && command.expectedRevision !== desired?.revision) throw new SelectionRefusal('revision-conflict');
     const work = Promise.resolve().then(async () => {
-      const prepared = await preflight(command.selection.artifacts);
+      const manifests = await verifyArtifactPins(command.selection.artifacts, grants);
       const receipt = canonicalJson({ version: 1, hostId: deps.database.hostId, selection: command.selection, grantsDigest,
-        manifests: prepared.map(item => item.verified.manifest) });
+        manifests });
       if (Buffer.byteLength(receipt) > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
       const revision = initial ? 0 : count(command.expectedRevision + 1);
       const selection: Selection = { id: command.id, revision, intent, receipt: Buffer.from(receipt), receiptDigest: digest(receipt), target: command.selection, grantsDigest };
@@ -116,7 +110,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   }
   if (!invalid && !desired) await accept({ id: 'startup', expectedRevision: 0, selection: { version: 1,
     artifacts: deps.entries.map(({ directory, artifactId }) => ({ directory: resolve(directory), artifactId })) } }, true);
-  async function activate(): Promise<void> {
+  async function activate(replace: (selected: ProviderExtensionSelection) => Promise<ServerExtensionReplacement>): Promise<void> {
     if (invalid || !desired) return;
     const selection = desired, previous = boots.findLast(boot => boot.selection === selection.id);
     if (previous && previous.outcome.kind !== 'applied' && previous.outcome.kind !== 'applied-empty') return;
@@ -125,14 +119,8 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     boots.push(boot);
     if (selection.grantsDigest !== grantsDigest) { persistBoot(boot, { kind: 'grant-mismatch' }); return; }
     persistBoot(boot, { kind: 'applying' });
-    let failure: 'load' | 'authorization' = 'load';
-    let prepared;
-    try { prepared = await preflight(selection.target.artifacts, value => { failure = value; }); }
-    catch { persistBoot(boot, { kind: 'failed', failure, recovery: 'replace' }); return; }
-    const entries = prepared.map(({ directory, verified, installations }): BrowserProviderExtension => ({
-      kind: 'artifact', directory, artifactId: verified.manifest.artifactId, installations }));
     let result: ServerExtensionReplacement;
-    try { result = await deps.replace(entries); }
+    try { result = await replace({ kind: 'artifacts', pins: selection.target.artifacts, grants }); }
     catch {
       persistBoot(boot, { kind: 'failed', failure: 'discovery', recovery: 'replace' });
       throw new Error('Selection observation failed');

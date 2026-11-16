@@ -50,7 +50,7 @@ async function main(): Promise<void> {
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
     if (values.extensions !== undefined && !values.extensions.trim()) throw new Error('Invalid server extension configuration');
-    const providerExtensions = values.extensions === undefined ? undefined : takeServerExtensionConfiguration(resolve(values.extensions), process.env);
+    const extensions = values.extensions === undefined ? undefined : takeServerExtensionConfiguration(resolve(values.extensions), process.env);
     const desktopAgents: AgentConfiguration['agents'] = [
       ...(values.preferred === 'codex' ? [{ name: 'codex', kind: 'codex', cwd: resolve(values.workspace ?? '.'), ...executable } satisfies AgentConfiguration['agents'][number]] : []),
       { name: 'pi', kind: 'pi', cwd: resolve(values.workspace ?? '.') },
@@ -59,8 +59,7 @@ async function main(): Promise<void> {
     delete process.env.AGENTUI_SETUP_CAPABILITY;
     const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
       accessMode: values.trusted ? 'trusted' : 'paired',
-      ...(providerExtensions === undefined ? {} : { extensions: providerExtensions.every(entry => entry.kind === 'artifact')
-        ? { kind: 'durable-artifacts' as const, entries: providerExtensions } : { kind: 'transient' as const, entries: providerExtensions } }),
+      ...(extensions === undefined ? {} : { extensions }),
       ...(command === 'desktop' ? { setupCapability } : {}),
       agentStartup: command === 'desktop' ? { kind: 'desktop', configuration: { default: values.preferred ?? 'codex', agents: desktopAgents } } : values.config !== undefined ? { kind: 'configured', configuration: readAgentConfiguration(resolve(values.config)) }
         : provider ? { kind: 'provider', provider } : { kind: command === 'browser-dev' ? 'recorded' : 'extensions' } });

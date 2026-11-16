@@ -2,8 +2,9 @@ import { isAbsolute, resolve } from 'node:path';
 import { count, hex, identifier, record } from '@agentui/contracts/decode';
 import type { ServerExtensionFailure } from '@agentui/host/extensions';
 
+import type { ArtifactPin } from './provider-extensions.js';
+
 export const RECEIPT_LIMIT = 16 * 1024 * 1024;
-export type ArtifactPin = { readonly directory: string; readonly artifactId: string };
 export function operationId(value: unknown): string {
   const id = identifier(value, 96);
   if (!/^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(id)) throw new Error('Invalid selection operation ID');
@@ -81,4 +82,15 @@ export function parseReceiptChunk(value: unknown): ReceiptChunk {
   if (total > RECEIPT_LIMIT || next > total || next <= offset || next - offset > 8192 || typeof input.base64 !== 'string' ||
     Buffer.from(input.base64, 'base64').toString('base64') !== input.base64 || Buffer.from(input.base64, 'base64').length !== next - offset) throw new Error('Invalid receipt chunk');
   return { digest: hex(input.digest, 64), offset, next, total, base64: input.base64 };
+}
+
+export interface SelectionControl {
+  select(command: SelectionCommand): Promise<OperationSummary>;
+  status(id?: string): SelectionStatus;
+  receipt(digest: string, offset: number): ReceiptChunk;
+}
+export class SelectionRefusal extends Error {
+  constructor(reason: 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset') {
+    super(reason === 'ownership' ? 'Selection requires durable artifact ownership' : `Selection ${reason}`);
+  }
 }

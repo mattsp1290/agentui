@@ -51,7 +51,7 @@ async function fixture(t) {
   await writeFile(marker, '');
   const directory = join(f.root, 'host'), config = join(f.root, 'extensions.json');
   const pin = value => ({ directory: value.directory, artifactId: value.manifest.artifactId });
-  const configuration = { version: 1, extensions: [{ kind: 'artifact', ...pin(a), installations: [grant] }] };
+  const configuration = { version: 2, ownership: 'durable-artifacts', extensions: [{ kind: 'artifact', ...pin(a), installations: [grant] }] };
   await writeFile(config, JSON.stringify(configuration));
   const environment = { ...process.env, AGENTUI_EXTENSION_SELECTION_TOKEN: secret };
   const args = ['serve', '--data-dir', directory, '--extensions', config, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', '0', '--trusted'];
@@ -227,8 +227,12 @@ test('durable ownership refuses raw replacement and control framing preserves sp
   const transient = await runtime.startBrowserHost({ directory: transientDirectory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
     hostArtifactDirectory: join(root, 'apps/host/dist'), agentStartup: { kind: 'extensions' }, extensions: { kind: 'transient', entries } });
   try {
-    assert.deepEqual(await requestControl(join(transientDirectory, 'control.sock'), { op: 'extensions-status', id: null }),
-      { ok: false, error: 'Selection requires durable artifact ownership' });
+    for (const command of [{ op: 'extensions-status', id: null },
+      { op: 'extensions-select', command: { id: 'refused', expectedRevision: 0, selection: { version: 1, artifacts: [] } } },
+      { op: 'extensions-receipt', digest: 'a'.repeat(64), offset: 0 }]) {
+      assert.deepEqual(await requestControl(join(transientDirectory, 'control.sock'), command),
+        { ok: false, error: 'Selection requires durable artifact ownership' });
+    }
     assert.deepEqual(await transient.replaceProviderExtensions([]), { kind: 'replaced', generation: null });
   } finally { await transient.close(); }
 });

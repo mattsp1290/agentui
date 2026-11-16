@@ -25,7 +25,7 @@ import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
 import { FeedRegistry } from './feed-registry.js';
 import { serviceEndpoint } from './service-endpoint.js';
-import { startControl } from './control.js';
+import { startControl, unavailableSelectionControl } from './control.js';
 import { recoverProviderConversations, PROVIDER_RECOVERY } from './provider-recovery.js';
 import { providerInstallation } from './agent-config.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
@@ -34,11 +34,13 @@ import type { InstalledAgent } from './agents.js';
 import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
 import { directCodexEnvironment } from './native-environment.js';
-import { createServerSelection } from './server-selection.js';
+import { assertNoSelectionJournal, createServerSelection } from './server-selection.js';
 import type { ExtensionStartup, ServerSelection } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
+import type { ServerExtensionReplacement } from '@agentui/host/extensions';
+import type { SelectionControl } from './selection-protocol.js';
 import { providerExtensionSource } from './provider-extensions.js';
-import type { BrowserProviderExtension } from './provider-extensions.js';
+import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
 export type { BrowserProviderExtension } from './provider-extensions.js';
 
 export interface BrowserHostOptions {
@@ -137,17 +139,17 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
     access = new Access(accessDatabase, options.accessMode);
-    async function replaceExtensions(selected: readonly BrowserProviderExtension[]) {
+    async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
       const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
-      const selectedHost = host, generation = replacement.generation;
+      const generation = replacement.generation;
       const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
       let after: string | null = null;
-      while (selectedHost && current()) {
-        const page = selectedHost.listConversations(accessDatabase.hostId, after, 100);
+      while (current()) {
+        const page = readyHost.listConversations(accessDatabase.hostId, after, 100);
         for (const scope of page) {
           if (!current()) return replacement;
-          if ('kind' in selectedHost.inspect(scope).installation) await selectedHost.observeProvider(scope);
+          if ('kind' in readyHost.inspect(scope).installation) await readyHost.observeProvider(scope);
           if (!current()) return replacement;
           after = scope.conversationId;
         }
@@ -155,17 +157,34 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
       return replacement;
     }
-    if (options.extensions?.kind === 'durable-artifacts') {
-      selection = await createServerSelection({ database: accessDatabase, entries: options.extensions.entries,
-        replace: replaceExtensions, runtime: providers.status, isClosing: () => closing });
-    } else {
-      const replacement = await replaceExtensions(options.extensions?.entries ?? []);
-      if (replacement.kind === 'failed') {
-        const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
-          activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
-        throw new Error(messages[replacement.failure]);
+    const extensions = options.extensions ?? { kind: 'transient', entries: [] };
+    let boot: (readyHost: LocalHost<TranscriptEvent, Transcript>) => Promise<void>;
+    let directReplace: (readyHost: LocalHost<TranscriptEvent, Transcript>, entries: readonly BrowserProviderExtension[]) => Promise<ServerExtensionReplacement>;
+    let selectionControl: SelectionControl;
+    switch (extensions.kind) {
+      case 'durable-artifacts': {
+        const durable = await createServerSelection({ database: accessDatabase, entries: extensions.entries,
+          runtime: providers.status, isClosing: () => closing });
+        selection = durable;
+        boot = readyHost => durable.activate(selected => replaceExtensions(readyHost, selected));
+        directReplace = async () => { throw new Error('Durable extensions require extensions-select and restart'); };
+        selectionControl = durable;
+        break;
       }
-      if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
+      case 'transient':
+        assertNoSelectionJournal(accessDatabase);
+        boot = async readyHost => {
+          const replacement = await replaceExtensions(readyHost, { kind: 'entries', entries: extensions.entries });
+          if (replacement.kind === 'failed') {
+            const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
+              activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+            throw new Error(messages[replacement.failure]);
+          }
+          if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
+        };
+        directReplace = (readyHost, entries) => replaceExtensions(readyHost, { kind: 'entries', entries });
+        selectionControl = unavailableSelectionControl;
+        break;
     }
     if (configured) {
       if (!configured.agents.some(agent => agent.name === configured.default)) throw new Error('Missing default agent');
@@ -243,19 +262,20 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       }
     }
     const hostId = access.hostId;
-    host = startup.kind === 'recorded'
+    const readyHost = startup.kind === 'recorded'
       ? openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) })
       : openLocalHost({ path: join(owner.directory, 'host.sqlite'), projection: transcriptProjection,
         driver: [...drivers, ...modelDrivers], providers, authorize: scope => scope.hostId === hostId });
-    await selection?.activate();
+    host = readyHost;
+    await boot(readyHost);
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
       const page = host.listConversations(access.hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
-        if ('kind' in installation) { if (!selection) await host.observeProvider(scope); after = scope.conversationId; continue; }
+        if ('kind' in installation) { after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
           recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
@@ -301,12 +321,11 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
-    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selection);
+    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl);
     return { origin, hostId: access.hostId, close, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
-        if (options.extensions?.kind === 'durable-artifacts') throw new Error('Durable extensions require extensions-select and restart');
-        return replaceExtensions(selected);
+        return directReplace(readyHost, selected);
       },
     };
   } catch (error) {

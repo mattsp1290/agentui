@@ -142,11 +142,12 @@ Empty, changing, or failed catalogs remain readable with no default. Creation is
 Omitting `--extensions` preserves the existing native-agent behavior.
 Selection and credential rotation take effect after a restart.
 
-The version 1 selection document has this shape:
+The version 2 extension configuration has this shape:
 
 ```json
 {
-	"version": 1,
+	"version": 2,
+	"ownership": "transient",
 	"extensions": [{
 		"directory": "./installed/crew-v1",
 		"installations": [{
@@ -191,7 +192,7 @@ To select a [built server artifact](../customization/server-artifacts.md), use a
 }
 ```
 
-Put this object in the `extensions` array. The `artifactId` must be the exact lowercase hexadecimal ID printed by the builder. A catalog can contain several extension namespaces. Each installation grant names a namespace in that catalog. Installed entries and artifact entries can appear in the same selection.
+Put this object in the `extensions` array. The `artifactId` must be the exact lowercase hexadecimal ID printed by the builder. A catalog can contain several extension namespaces. Each installation grant names a namespace in that catalog. Installed entries and artifact entries can appear together under transient ownership. Use `"ownership": "durable-artifacts"` for journaled next-start selection.
 
 `directory` resolves relative to the selection file's directory. Absolute directories are also accepted.
 Each installed package supplies its canonical manifest at `package.json.agentui.extension`:
@@ -230,7 +231,7 @@ Use a new explicit `revision` and restart to rotate a credential. Literal secret
 
 The host validates the complete selection, all manifests, grants, and environment references before importing selected code. It also verifies each artifact against its pinned ID and the host SDK, Node, and ABI identities before importing any selected entry.
 Configuration decoding failures report `Invalid server extension configuration` without paths, secret names, values, or underlying exception text.
-Durable artifact verification occurs in selection preflight and activation, which report sanitized lifecycle failures.
+Staging verifies artifacts to retain their complete manifests in receipts without importing code. Activation verifies each artifact once after lifecycle admission, then imports those retained bytes. A fresh journal verifies separately for its initial receipt and activation. Failures report sanitized diagnostics.
 The installed package loader then checks each entry's filesystem path and imported export. An earlier entry can execute import effects before a later entry fails its import or export checks.
 
 Removing referenced variables reduces explicit inheritance by native child processes.
@@ -238,7 +239,7 @@ It does not isolate credentials from full-trust extensions, same-user processes,
 Installed entries are trusted ordinary filesystem modules with host process privileges. Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
 Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Under transient ownership, the programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner.
-Artifact-only CLI hosts require [durable selection](#durable-selection-for-the-next-startup) and restart instead. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
+CLI hosts configured with durable ownership require [durable selection](#durable-selection-for-the-next-startup) and restart instead. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
 
 ## Contribute conversation views and actions
 
@@ -409,7 +410,7 @@ Installed extensions appear in the app after later loader and activation work.
 
 ### Durable selection for the next startup
 
-Artifact-only `serve --extensions` configuration uses durable ownership. Installed or mixed configuration uses transient ownership and refuses selection commands. Programmatic callers choose `extensions: { kind: 'durable-artifacts', entries }` or `extensions: { kind: 'transient', entries }` explicitly. Durable ownership refuses direct `replaceProviderExtensions` calls.
+The version 2 `serve --extensions` configuration requires an explicit `ownership` of `durable-artifacts` or `transient`. Durable ownership accepts only artifact entries. Transient ownership accepts installed packages, artifacts, mixed selections, and empty selections, and refuses selection commands. Version 1 and missing ownership are rejected. Transient startup, including startup without extension options, refuses any existing durable selection journal before native drivers, extension imports, or listeners start. Programmatic callers choose `extensions: { kind: 'durable-artifacts', entries }` or `extensions: { kind: 'transient', entries }` explicitly. Durable ownership refuses direct `replaceProviderExtensions` calls.
 
 Run the built host's actual entry point to inspect and stage a selection:
 

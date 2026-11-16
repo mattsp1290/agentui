@@ -45,6 +45,17 @@ export function normalizeProviderInstallations(namespace: string, installations:
   });
 }
 
+export function normalizeGrantPool(grants: readonly ProviderInstallation[]): readonly ProviderInstallation[] {
+  return [...new Set(grants.map(grant => grant.instance.namespace))].flatMap(namespace =>
+    normalizeProviderInstallations(namespace, grants.filter(grant => grant.instance.namespace === namespace)));
+}
+
+export function publicGrantBinding(grant: ProviderInstallation) {
+  return { id: grant.id, instance: grant.instance, service: grant.service, expectedAuthority: grant.expectedAuthority,
+    authentication: grant.authentication.kind === 'secret'
+      ? { kind: 'secret', revision: grant.authentication.revision } : { kind: 'unauthenticated' } };
+}
+
 /** Borrows Access's connection. Only grant metadata is persisted, never secrets. */
 export function createProviderAuthority(state: AccessDatabase, namespace: string, installations: readonly ProviderInstallation[]): ProviderAuthority & { revoke(handle: string): void } {
   const configured = new Map(normalizeProviderInstallations(namespace, installations).map(installation => [installation.id, installation]));

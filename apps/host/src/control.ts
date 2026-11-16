@@ -2,10 +2,8 @@ import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import type { Socket } from 'node:net';
 import { record, identifier, count, hex } from '@agentui/contracts/decode';
-import { operationId, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
-import type { SelectionCommand, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
-import { SelectionRefusal } from './server-selection.js';
-import type { ServerSelection } from './server-selection.js';
+import { SelectionRefusal, operationId, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
+import type { SelectionControl, SelectionCommand, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
 import { parseInvitationCode } from './native-wire.js';
@@ -88,21 +86,21 @@ export async function requestControl(path: string, request: ControlRequest): Pro
   try { return parseControlResponse(request, await response); }
   finally { socket.destroy(); }
 }
-export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection?: ServerSelection) {
+const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); };
+export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, status: refuseSelection, receipt: refuseSelection };
+
+export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl) {
   if (existsSync(path)) unlinkSync(path);
   const server = createServer(socket => {
     void (async () => {
       try {
         const request = parseControlRequest(await readLine(socket, 4096));
         if (isClosing()) throw new Error('Host is shutting down');
-        if (request.op.startsWith('extensions-') && !selection) {
-          socket.end(formatControlResponse({ ok: false, error: 'Selection requires durable artifact ownership' })); return;
-        }
         let value: ControlValue;
         switch (request.op) {
-          case 'extensions-select': if (!selection) throw new Error(); value = await selection.select(request.command); break;
-          case 'extensions-status': if (!selection) throw new Error(); value = selection.status(request.id ?? undefined); break;
-          case 'extensions-receipt': if (!selection) throw new Error(); value = selection.receipt(request.digest, request.offset); break;
+          case 'extensions-select': value = await selection.select(request.command); break;
+          case 'extensions-status': value = selection.status(request.id ?? undefined); break;
+          case 'extensions-receipt': value = selection.receipt(request.digest, request.offset); break;
           case 'invite': value = { code: access.invite('browser-development') }; break;
           case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;
           case 'devices': value = access.devices(request.after); break;
