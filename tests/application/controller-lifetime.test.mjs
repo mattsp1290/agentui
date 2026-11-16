@@ -170,3 +170,76 @@ for (const updateSource of [false, true]) {
     assert.equal(f.app.getSnapshot().storageFailure, '');
   });
 }
+
+test('disposal clears published active state and disconnects the captured old target synchronously', async t => {
+  const f = fixture();
+  t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const store = f.app.getSnapshot().active.store, snapshots = [];
+  t.after(f.app.subscribe(() => snapshots.push(f.app.getSnapshot())));
+  const closing = f.app.dispose();
+  assert.equal(f.feedCloses(), 1);
+  assert.equal(store.getSnapshot().connection.kind, 'disconnected');
+  assert.ok(snapshots.length > 0);
+  assert.ok(snapshots.every(snapshot => snapshot.active === null));
+  await closing;
+});
+
+for (const failure of ['view read', 'missing conversation', 'catalog', 'connect']) {
+  test(`principal refresh ${failure} failure releases only an unfinished active handover`, async t => {
+    const f = fixture();
+    t.after(() => f.app.dispose());
+    f.views.set('original-view/host', { ...empty(), route: scope });
+    await f.app.start();
+    const store = f.app.getSnapshot().active.store;
+    f.behavior.principalId = 'replacement';
+    if (failure === 'view read') f.behavior.read = async () => { throw new Error('View read failed'); };
+    if (failure === 'missing conversation') f.behavior.agentLookup = () => null;
+    if (failure === 'catalog') f.behavior.catalog = async () => { throw new Error('Catalog failed'); };
+    if (failure === 'connect') store.connect = async () => { throw new Error('Connect failed'); };
+    await f.app.reconnect();
+    await flush();
+    const active = f.app.getSnapshot().active;
+    if (failure === 'view read' || failure === 'missing conversation') {
+      assert.equal(active, null);
+      await assert.rejects(store.setDraft('Expired owner'), /closed/);
+    } else {
+      assert.equal(active.store, store);
+      await store.setDraft('Retained owner');
+      assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Retained owner');
+      assert.match(f.app.getSnapshot().error, /failed/);
+    }
+  });
+}
+
+for (const publication of ['disconnect', 'install', 'same-store']) {
+  test(`disposal during ${publication} publication prevents the old install from publishing into a replacement`, async t => {
+    const f = fixture(), acquiring = deferred();
+    let restarted, closing, replacement;
+    t.after(async () => { acquiring.resolve(); await restarted; await f.app.dispose(); });
+    if (publication === 'same-store') f.views.set('original-view/host', { ...empty(), route: scope });
+    await f.app.start();
+    const original = f.app.getSnapshot().active, snapshots = [];
+    const unsubscribe = f.app.subscribe(() => {
+      const state = f.app.getSnapshot();
+      if (publication === 'disconnect' ? state.permissionState.reason !== 'Reconnect to refresh permissions.'
+        : !state.active || state.active === original) return;
+      unsubscribe();
+      closing = f.app.dispose();
+      f.behavior.acquire = () => acquiring.promise;
+      restarted = f.app.start();
+      replacement = f.app.getSnapshot();
+      t.after(f.app.subscribe(() => snapshots.push(f.app.getSnapshot())));
+    });
+    t.after(unsubscribe);
+    if (publication === 'same-store') await f.app.reconnect();
+    else await f.app.open(scope);
+    await closing;
+    assert.ok(restarted);
+    assert.ok(snapshots.every(snapshot => snapshot === replacement));
+    assert.equal(f.app.getSnapshot(), replacement);
+    acquiring.resolve(); await restarted;
+    assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  });
+}

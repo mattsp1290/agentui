@@ -40,11 +40,6 @@ export type V1Command = Extract<ClientCommand, { readonly version: 1 }>;
 export type MatchedProviderCommand =
   | (ProviderCapture & { readonly command: V1Command })
   | (ProviderCapture & { readonly agui: AguiRunKey; readonly command: OfferedCommand });
-export const TAGGED_SEND_KEY_SQL = `json_extract(target, '$.kind')='provider'
-  AND json_extract(target, '$.operation.kind')='send'
-  AND json_extract(target, '$.operation.protocol')='ag-ui'
-  AND json_extract(target, '$.operation.request.threadId')=?
-  AND json_extract(target, '$.operation.request.runId')=?`;
 export function parseProviderCapture(value: unknown, scope: ConversationScope): ProviderCapture {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
   const operation = record(input.operation);
