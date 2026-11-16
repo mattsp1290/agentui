@@ -125,6 +125,7 @@ export function createServerExtensions() {
   function current() { return state.kind === 'active' ? state.generation.registry : inactive; }
   const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
+  const frontendInput: ProviderConversationOperations['frontendInput'] = target => current().frontendInput(target);
   const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
   const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
   const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
@@ -161,5 +162,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, readPermissions, observe, status, close };
+  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, frontendInput, readPermissions, observe, status, close };
 }

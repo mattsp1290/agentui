@@ -1,3 +1,6 @@
+import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
+import type { FrontendSendActor } from './frontend-sends.js';
+import { matchOfferInput } from './agui-input.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
 import { providerTarget, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
@@ -27,9 +30,11 @@ const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 
 export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
+  readonly frontendSends: FrontendSends;
   onCommit: (() => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
+    this.frontendSends = new FrontendSends(this.db);
     try {
       this.transaction(() => {
         const configured = canonicalJson({ maxEventBytes: limits.maxEventBytes, maxCommandBytes: limits.maxCommandBytes, snapshotBytes: limits.snapshotBytes });
@@ -52,8 +57,14 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
       this.transaction(() => {
         const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
-        if (format !== 2 && format !== 3) throw new Error('Unsupported database version');
-        this.db.exec('PRAGMA user_version=3');
+        if (format !== 2 && format !== 3 && format !== 4) throw new Error('Unsupported database version');
+        if (format !== 4) this.db.exec(`CREATE TABLE IF NOT EXISTS frontend_sends (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+          platform TEXT NOT NULL CHECK(platform='desktop'), state TEXT NOT NULL CHECK(state IN ('tombstone','available','unavailable')),
+          PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
+          CREATE UNIQUE INDEX IF NOT EXISTS frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
+          PRAGMA user_version=4;`);
+        this.db.prepare('SELECT actor_id FROM frontend_sends LIMIT 1').get();
       });
     } catch (error) { this.db.close(); throw error; }
   }
@@ -247,7 +258,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if ('kind' in target) {
       matchProviderCommand(target, command.body);
       return { kind: 'provider', command, target, receipt: parsedReceipt,
-        observation: row.observation === null ? null : providerObservation(json(row.observation), target) };
+        observation: row.observation === null ? null : providerObservation(json(row.observation), target, command.version === 2 && target.operation.kind === 'send' ? matchOfferInput(target.operation.request, command.body.frontend).runId : undefined) };
     }
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
@@ -291,9 +302,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.db.prepare('UPDATE conversations SET head=?, document=?, bytes=? WHERE host=? AND conversation=?')
       .run(sequence, encoded, Buffer.byteLength(encoded), ...key(scope));
   }
-  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget): Admission {
+  admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget, actor?: FrontendSendActor): Admission {
     try { return this.transaction((): Admission => {
       const existing = this.command(command.scope, command.clientCommandId);
+      this.frontendSends.admission(command, existing, actor);
       if (existing) return canonicalJson(existing.command) === canonicalJson(command)
         ? { kind: 'existing', receipt: existing.receipt }
         : { kind: 'rejected', reason: 'command-id-conflict' };
@@ -303,6 +315,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (expectedInstallation && canonicalJson(installed) !== canonicalJson(expectedInstallation)) {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
+      if (command.version === 2 && !('kind' in installed)) return { kind: 'rejected', reason: 'frontend-offers-unsupported' };
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
@@ -337,7 +350,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
         let action: ProviderAction;
         if (command.body.kind === 'revoke-permission') action = command.body;
-        else if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text };
+        else if (command.body.kind === 'send') action = command.body;
         else {
           if (command.body.kind === 'approve') {
             const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);
@@ -364,6 +377,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       } else target = captureTarget({ installation: installed, run, decision: pending }, operation);
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
+      this.frontendSends.admit(command, actor);
       if (providerPending) {
         this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
           .run(operation, ...key(scope), providerPending.visible.pendingId);
@@ -375,7 +389,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         ? { kind: 'owned', stored: { kind: 'provider', command, target, receipt: admitted, observation: null } }
         : { kind: 'owned', stored: { command, target, receipt: admitted, observation: null } };
     }); } catch (error) {
-      if (error instanceof AdmissionError) return { kind: 'rejected', reason: error.message };
+      if (error instanceof AdmissionError || error instanceof FrontendAccessError) return { kind: 'rejected', reason: error.message };
       if (error instanceof CapacityError) return { kind: 'rejected', reason: 'conversation-capacity' };
       throw error;
     }
@@ -420,7 +434,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
       if ('kind' in stored) {
-        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored.target), stored.observation), { quarantined: isQuarantined(stored) });
+        const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored.target, stored.command.version === 2 && stored.target.operation.kind === 'send' ? matchOfferInput(stored.target.operation.request, stored.command.body.frontend).runId : undefined), stored.observation), { quarantined: isQuarantined(stored) });
         switch (transition.kind) {
           case 'keep': return stored.receipt;
           case 'conflict': throw new Error(`Conflicting ${transition.reason}`);

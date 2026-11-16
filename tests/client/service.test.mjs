@@ -7,7 +7,7 @@ import { parseServiceRequest, parseServiceResponse, parseServicePull, SERVICE_MA
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 3, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
-const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, commands: ['send'], availability: { kind: 'ready' } };
+const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
 const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
   extensionSdkVersion: '1', nativeRuntime: { engine: 'engine', version: '1', format: '1' },
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } } };
@@ -284,10 +284,10 @@ test('HTTP status interpretation retains classified failures and refuses a non-O
 });
 
 test('provider descriptors have a strict independent shape and retain native descriptor bytes', () => {
-  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', commands: [], availability: { kind: 'ready' } };
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
   assert.deepEqual(parse(provider), provider);
-  assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
+  assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ frontendOffers: agent.frontendOffers, id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
   for (const invalid of [{ ...provider, runtime: agent.runtime }, { ...provider, kind: 'remote' },
     { ...provider, namespace: '' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
 });

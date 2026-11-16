@@ -35,5 +35,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "check": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {
+    "@ag-ui/core": "file:../../vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-core-1.0.4.tgz"
   }
 }

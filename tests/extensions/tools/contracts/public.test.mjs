@@ -171,7 +171,7 @@ test('root and react bundles exclude the validator', async () => {
       external: ['react'],
     });
     assert.equal(
-      Object.keys(result.metafile.inputs).some((path) => path.includes('@cfworker/json-schema')),
+      Object.keys(result.metafile.inputs).some((path) => (/@cfworker\/json-schema|node_modules\/(?:zod|ajv)\//u.test(path))),
       false,
     );
   }

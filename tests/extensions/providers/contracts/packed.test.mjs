@@ -17,7 +17,7 @@ function run(command, args, cwd) {
 test('packed SDK supports isolated platform-neutral provider authors through public exports', async () => {
   const temporary = await mkdtemp(join(tmpdir(), 'agentui-provider-consumer-'));
   try {
-    const packs = JSON.parse(run('npm', ['pack', './packages/sdk', './packages/contracts', '--json', '--ignore-scripts', '--pack-destination', temporary], root));
+    const packs = JSON.parse(run('npm', ['pack', './packages/sdk', './packages/contracts', './node_modules/@ag-ui/core', '--json', '--ignore-scripts', '--pack-destination', temporary], root));
     for (const pack of packs) {
       const destination = join(temporary, 'node_modules', pack.name);
       await mkdir(destination, { recursive: true });
@@ -27,7 +27,15 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     await writeFile(join(temporary, 'tsconfig.json'), JSON.stringify({ extends: join(root, 'tsconfig.base.json') }));
     const sources = await Promise.all(['crew.ts', 'local.ts'].map((name) => readFile(new URL(name, import.meta.url), 'utf8')));
     const prefix = sources.map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
-    await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix, cases: [
+    const agui = `import type { RunAgentInput } from '@ag-ui/core';
+      type Agui = { request: RunAgentInput; cursor: SDK.Json; state: SDK.Json; event: SDK.Json };
+      declare const aguiBackend: SDK.BackendProvider<Agui, 'actual'>;
+      declare const aguiPresentation: SDK.ProviderPresentation<Agui, 'actual'>;
+      declare const contributions: SDK.ProviderContributions;
+    `;
+    await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix: prefix + agui, cases: [
+      ["contributions.addAgui('actual', aguiBackend, aguiPresentation);", null],
+      ["contributions.addAgui('generic', crew, crewPresentation);", /not assignable/u],
       ["export const constructed: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew; export const dynamic: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');", null],
       ["export const secretProvider: SDK.SecretProvider = { async resolve(reference) { return reference === 'production/api-key' ? 'synthetic-key' : Promise.reject(new Error('Unavailable')); } }; export const material: Promise<string> = secretProvider.resolve('production/api-key');", null],
       ["export const invalid: SDK.SecretProvider = { async resolve() { return 7; } };", /not assignable/u],

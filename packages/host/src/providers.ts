@@ -1,10 +1,11 @@
+import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationPermissions, ConversationScope, RunAuthority } from '@agentui/contracts';
+import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility } from '@agentui/contracts';
 import { providerTarget, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
@@ -32,6 +33,7 @@ export interface ProviderExtension {
   readonly dispose?: () => Promise<void>;
 }
 export interface DiscoveredProvider {
+  readonly frontendOffers: FrontendEligibility;
   readonly contributionId: string;
   readonly instance: ProviderIdentity;
   readonly expectedAuthority: RunAuthority['kind'];
@@ -52,6 +54,7 @@ function capability(value: unknown): boolean {
   throw new Error('Invalid provider capability');
 }
 interface BoundProvider {
+  frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput>;
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
@@ -63,7 +66,7 @@ interface BoundProvider {
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
-  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, failed: () => void): BoundProvider {
+  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui', failed: () => void): BoundProvider {
   const instance: ProviderInstance<I> = Object.freeze({ ...presentation.instance });
   const identity = providerIdentity(instance), key = identityKey(instance);
   let authorization: ProviderAuthorization<I> | undefined;
@@ -119,7 +122,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         seen.add(opaqueId);
         return { opaqueId, name: text(agent.name) };
       });
-      return { contributionId: id, instance: identity, expectedAuthority: assertAuthorized().expectedAuthority, capabilities: normalized, agents };
+      return { frontendOffers: mode === 'ag-ui' && normalized.send && normalized.reconcile ? 'ag-ui-capture-and-bind' : 'unsupported', contributionId: id, instance: identity, expectedAuthority: assertAuthorized().expectedAuthority, capabilities: normalized, agents };
     } catch {
       failed();
       throw new Error('Provider discovery failed');
@@ -132,7 +135,16 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     }
     return granted;
   }
+  function frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput> {
+    const granted = validate(target.installation);
+    if (mode !== 'ag-ui' || target.operation.kind !== 'send' || canonicalJson(target.credential) !== canonicalJson(granted.credential)) throw new Error('Original AG-UI provider unavailable');
+    const input = aguiInput(target.operation.request);
+    if (canonicalJson(presentation.decodeRequest(copyJson(target.operation.request))) !== canonicalJson(target.operation.request)) throw new Error('Provider request changed');
+    validate(target.installation);
+    return input;
+  }
   return {
+    frontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
       const granted = validate(selected);
@@ -199,11 +211,16 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
           permission: { binding, ref: { kind: 'permission', instance, opaqueId: action.permissionId } } });
       }
       if (action.kind === 'send') {
-        const request = copyJson(presentation.request(action.text, binding));
+        if (action.frontend && mode !== 'ag-ui') throw new Error('Frontend offers unsupported');
+        const raw = copyJson(presentation.request(action.text, binding));
+        const request = action.frontend ? offerInput(raw, action.frontend) : raw;
+        if (mode === 'ag-ui') aguiInput(request);
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
         const decoded = presentation.decodeRequest(copyJson(request));
         if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-        return target({ kind: 'send', operationId, binding, request });
+        const captured = target({ kind: 'send', operationId, binding, request });
+        if (action.frontend) frontendInput(captured);
+        return captured;
       } else {
         const run = providerReference(action.run, binding, original.installation, 'run');
         return target(action.kind === 'cancel' ? { kind: 'cancel', operationId, binding, run }
@@ -257,7 +274,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         entered = true;
         const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
         authorize();
-        return providerOutcome(result, original, fresh);
+        return providerOutcome(result, original, fresh, mode === 'ag-ui' && original.operation.kind === 'send' ? frontendInput(original).runId : undefined);
       } catch {
         return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
       }
@@ -368,22 +385,25 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
             let invalid = false;
             let lifetime: ExtensionLifetime;
             try {
+              const register = <M extends ProviderModel, I extends string>(mode: 'generic' | 'ag-ui', id: string,
+                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void => {
+                try {
+                  if (!registering || phase !== 'activating') throw new Error('Registration closed');
+                  text(id);
+                  const identity = providerIdentity(presentation.instance), key = identityKey(identity);
+                  if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
+                    backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
+                    [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
+                      presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
+                    throw new Error('Invalid provider registration');
+                  }
+                  ids.add(id); identities.add(key);
+                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode, () => { void close().catch(() => {}); }));
+                } catch { invalid = true; throw new Error('Invalid provider registration'); }
+              };
               lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials,
-                providers: { add(id, backend, presentation) {
-                  try {
-                    if (!registering || phase !== 'activating') throw new Error('Registration closed');
-                    text(id);
-                    const identity = providerIdentity(presentation.instance), key = identityKey(identity);
-                    if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
-                      backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
-                      [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
-                        presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
-                      throw new Error('Invalid provider registration');
-                    }
-                    ids.add(id); identities.add(key);
-                    bindings.push(bindProvider(id, backend, presentation, extension.authority, () => { void close().catch(() => {}); }));
-                  } catch { invalid = true; throw new Error('Invalid provider registration'); }
-                } },
+                providers: { add: (id, backend, presentation) => register('generic', id, backend, presentation),
+                  addAgui: (id, backend, presentation) => register('ag-ui', id, backend, presentation) },
               });
             } finally { registering = false; }
             validateExtensionLifetime(lifetime);
@@ -414,6 +434,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
+    },
+    frontendInput(target: ProviderTarget): ReturnType<typeof aguiInput> {
+      const binding = bindings.find(binding => binding.matches(target.installation));
+      if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
+      return binding.frontendInput(target);
     },
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');
@@ -462,4 +487,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'frontendInput'>;

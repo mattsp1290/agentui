@@ -1,3 +1,7 @@
+import { recoverFrontendBinding } from './frontend-sends.js';
+import type { FrontendSendActor } from './frontend-sends.js';
+import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
+import { frontendToolsFor } from './frontend-tools/index.js';
 import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
@@ -36,8 +40,9 @@ export interface LocalHost<E, P> {
   installation(scope: ConversationScope): ConversationInstallation | null;
   inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> };
   append(scope: ConversationScope, output: HostOutput<E>): void;
-  conversation(scope: ConversationScope): ConversationPort<E, P>;
-  reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
+  conversation(scope: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P>;
+  reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
+  frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor): Promise<FrontendBinding>;
   close(): void;
 }
 export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
@@ -116,6 +121,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     observing.set(key, entry);
     await task;
   };
+  const checkOwner = (stored: ReturnType<typeof store.command>, actor?: FrontendSendActor, effect = false) => {
+    if (stored?.command.version !== 2) return;
+    if (effect) {
+      if (!('kind' in stored) || !options.providers) throw new Error('Frontend owner unavailable');
+      options.providers.frontendInput(stored.target);
+    }
+    const state = store.frontendSends.check({ scope: stored.command.scope, id: stored.command.clientCommandId, actor, command: stored.command });
+    if (effect && state !== 'available') throw new Error('Frontend owner unavailable');
+  };
   const host: LocalHost<E, P> = {
     drained,
     observeProvider,
@@ -187,7 +201,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     append(scope: ConversationScope, output: HostOutput<E>): void {
       store.append(authorized(scope), output);
     },
-    conversation(value: ConversationScope): ConversationPort<E, P> {
+    conversation(value: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P> {
       const scope = authorized(value);
       return {
         scope,
@@ -205,13 +219,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const admit = () => store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
-            registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);
+            registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined, actor);
           let admitted = admit();
           if (provider && command.body.kind === 'send' && admitted.kind === 'rejected' && admitted.reason === 'send-awaiting-confirmation') {
             const blocker = store.blockingSend(scope);
             if (!blocker || !('kind' in blocker) || blocker.receipt.state.kind !== 'accepted') return admitted;
             let receipt: Receipt | null;
-            try { receipt = await host.reconcile(scope, blocker.command.clientCommandId); }
+            try { receipt = await host.reconcile(scope, blocker.command.clientCommandId, actor); }
             catch { return admitted; }
             if (receipt?.state.kind !== 'completed' && receipt?.state.kind !== 'rejected') return admitted;
             authorized(scope);
@@ -225,9 +239,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             dispatching.add(key);
             try {
               const observed = 'kind' in stored
-                ? await registry?.executeCommand(stored.target, true, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
+                ? await registry?.executeCommand(stored.target, true, () => { authorized(scope); checkOwner(stored, actor, true); store.verifyIntent(stored); }) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
               const receipt = store.settle(scope, command.clientCommandId, observed);
+              checkOwner(stored, actor);
               return { kind: 'receipt' as const, receipt };
             } finally { dispatching.delete(key); }
           });
@@ -235,6 +250,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         async receipt(id) {
           authorized(scope);
           const stored = store.command(scope, nonempty(id));
+          checkOwner(stored, actor);
           return stored ? stored.receipt : null;
         },
         watch(request, receive) {
@@ -243,25 +259,36 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         },
       };
     },
-    async reconcile(scope: ConversationScope, id: string) {
+    async reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor) {
       authorized(scope);
       const stored = store.command(scope, nonempty(id));
       if (!stored) return null;
+      checkOwner(stored, actor);
       if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) {
         return store.settle(scope, id, stored.observation);
       }
       if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
       return inFlight(async () => {
         const observed = 'kind' in stored
-          ? await options.providers?.executeCommand(stored.target, false, () => { authorized(scope); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
+          ? await options.providers?.executeCommand(stored.target, false, () => { authorized(scope); checkOwner(stored, actor, true); store.verifyIntent(stored); }) ?? { kind: 'outcome-unknown' } as const
           : await reconcileNative(stored, driverFor(stored.target.installation));
         if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
           const current = store.command(scope, id);
           if (!current) throw new Error('Unknown command');
+          checkOwner(current, actor);
           return current.receipt;
         }
-        return store.settle(scope, id, observed);
+        const receipt = store.settle(scope, id, observed);
+        checkOwner(stored, actor);
+        return receipt;
       });
+    },
+    frontendBinding(input, actor) {
+      const scope = authorized(input.scope);
+      return inFlight(() => recoverFrontendBinding({ request: { ...input, scope }, actor, owners: store.frontendSends,
+        command: () => { authorized(scope); return store.command(scope, input.id); },
+        transaction: work => store.transaction(work), reconcile: () => host.reconcile(scope, input.id, actor),
+        producer: () => frontendToolsFor(host).producer(scope), providers: options.providers }));
     },
     close(): void {
       if (closed) return;

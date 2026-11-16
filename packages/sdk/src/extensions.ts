@@ -1,3 +1,4 @@
+import type { RunAgentInput } from '@ag-ui/core';
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import { nonempty, record } from '@agentui/contracts/decode';
 import type { BackendProvider, ProviderModel } from './providers.js';
@@ -22,7 +23,10 @@ export interface ExtensionManifest {
 export interface ExtensionLifetime {
   dispose(): void | Promise<void>;
 }
+export type AguiModel = ProviderModel & { readonly request: RunAgentInput };
 export interface ProviderContributions {
+  /** The backend sends this exact AG-UI input and confirms its preallocated runId. */
+  addAgui<M extends AguiModel, I extends string>(id: string, provider: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void;
   add<M extends ProviderModel, I extends string>(id: string, provider: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void;
 }
 export interface ServerExtensionContext {

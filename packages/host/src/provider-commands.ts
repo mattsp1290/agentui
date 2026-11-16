@@ -1,5 +1,6 @@
+import { matchOfferInput } from './agui-input.js';
 import { canonicalJson, copyJson, parseRunIdentity, parsePermissionScope } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope, Json, RunIdentity, PermissionScope, FrontendOffer } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { ConversationRef, ConversationRefKind, ProviderConversation, ProviderInstance } from '@agentui/sdk';
 import { creationBinding, providerCreation, providerIdentity } from './provider-creation.js';
@@ -15,7 +16,7 @@ export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 
     | { readonly kind: 'decide'; readonly run: ConversationRef<string, 'run'>;
       readonly decision: ConversationRef<string, 'decision'>; readonly choice: ConversationRef<string, 'choice'> });
 }
-export type ProviderAction = { readonly kind: 'send'; readonly text: string }
+export type ProviderAction = { readonly kind: 'send'; readonly text: string; readonly frontend?: FrontendOffer }
   | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope }
   | { readonly kind: 'cancel'; readonly run: unknown }
   | { readonly kind: 'decide'; readonly run: unknown; readonly decision: unknown; readonly choice: unknown };
@@ -53,7 +54,10 @@ export function providerTarget(value: unknown, scope: ConversationScope): Provid
 export function matchProviderCommand(target: ProviderTarget, body: ClientCommand['body']): void {
   const operation = target.operation;
   if (body.kind === 'revoke-permission' && operation.kind === 'revoke-permission' && body.permissionId === operation.permission.ref.opaqueId && body.scope === operation.scope) return;
-  if (body.kind === 'send' && operation.kind === 'send') return;
+  if (body.kind === 'send' && operation.kind === 'send') {
+    if ('frontend' in body) matchOfferInput(operation.request, body.frontend);
+    return;
+  }
   if (body.kind === 'cancel' && operation.kind === 'cancel' && body.runId === operation.run.ref.opaqueId) return;
   if (body.kind === 'approve' && operation.kind === 'decide' && body.pendingId === operation.decision.ref.opaqueId && body.choiceId === operation.choice.ref.opaqueId) return;
   throw new Error('Invalid provider command association');
@@ -71,7 +75,7 @@ export function providerRun(value: unknown, binding: ProviderConversation<string
   return { kind: 'provider', identity: parseRunIdentity({ conversation: binding.creation.scope,
     runId: reference.ref.opaqueId, authority: binding.authority }), reference };
 }
-export function providerObservation(value: unknown, target: ProviderTarget): ProviderObservation {
+export function providerObservation(value: unknown, target: ProviderTarget, expectedRunId?: string): ProviderObservation {
   const input = record(value);
   if (input.kind === 'outcome-unknown') { record(input, ['kind']); return { kind: 'outcome-unknown' }; }
   if (input.kind === 'not-dispatched') { record(input, ['kind', 'reason']); return { kind: 'not-dispatched', reason: identifier(input.reason) }; }
@@ -86,7 +90,7 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
     if (target.operation.kind !== 'send') throw new Error('Unexpected provider run output');
     const stored = record(source.run, ['kind', 'identity', 'reference']);
     run = providerRun(stored.reference, target.operation.binding, target.installation);
-    if (canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
+    if ((expectedRunId !== undefined && run.identity.runId !== expectedRunId) || canonicalJson(stored) !== canonicalJson(run)) throw new Error('Foreign provider run identity');
   }
   const parsed = { correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
     source: { source: source.source, data, run } } satisfies Extract<ProviderObservation, { kind: 'pending' }>['evidence'];
@@ -100,7 +104,7 @@ export function providerObservation(value: unknown, target: ProviderTarget): Pro
   if (result.kind === 'rejected') { record(result, ['kind', 'reason']); return { kind: 'conclusive', evidence: parsed, result: { kind: 'rejected', reason: identifier(result.reason) } }; }
   throw new Error('Invalid provider result');
 }
-export function providerOutcome(value: unknown, target: ProviderTarget, fresh: boolean): ProviderObservation {
+export function providerOutcome(value: unknown, target: ProviderTarget, fresh: boolean, expectedRunId?: string): ProviderObservation {
   const input = record(copyJson(value));
   const source: ProviderEvidence['source'] = fresh ? 'provider-reply' : 'provider-lookup';
   let run: ProviderRun | null = null;
@@ -127,7 +131,7 @@ export function providerOutcome(value: unknown, target: ProviderTarget, fresh: b
   return providerObservation({ kind, ...(result ? { result } : {}), evidence: {
     correlation: canonicalJson(target), operation: run ? { namespace: target.installation.instance.namespace, id: canonicalJson(run.reference) } : null,
     source: { source, data: input.evidence, run },
-  } }, target);
+  } }, target, expectedRunId);
 }
 
 export function retainProviderRun(incoming: ProviderObservation, previous: ProviderObservation | null): ProviderObservation {
