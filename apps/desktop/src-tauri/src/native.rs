@@ -1,4 +1,7 @@
-use crate::{keychain::Keychain, wire};
+use crate::{
+    keychain::{Keychain, ReadMode},
+    wire,
+};
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -15,6 +18,7 @@ use std::{
 #[serde(tag = "kind", rename_all = "lowercase", deny_unknown_fields)]
 pub enum Command {
     Status {},
+    Restore {},
     Pair {
         observation: String,
         invitation: Value,
@@ -123,11 +127,11 @@ impl Owner {
             && token(&record.credential.secret, 43))
         .then_some(record)
     }
-    fn status(&mut self) -> Result<Value, &'static str> {
+    fn status(&mut self, mode: ReadMode) -> Result<Value, &'static str> {
         if self.blocked {
             return Err("keychain-unavailable");
         }
-        let raw = self.store.read()?;
+        let raw = self.store.read(mode)?;
         if raw != self.raw || self.reference.is_none() {
             self.reference = None;
             self.raw = raw;
@@ -150,7 +154,7 @@ impl Owner {
         if self.reference.as_deref() != Some(reference) {
             return Err("stale");
         }
-        if self.store.read()? != self.raw {
+        if self.store.read(ReadMode::Quiet)? != self.raw {
             self.reference = None;
             return Err("stale");
         }
@@ -160,11 +164,11 @@ impl Owner {
         self.reference = None;
         self.blocked = true;
         let write = self.store.write(&self.raw, &intended);
-        let actual = self.store.read()?;
+        let actual = self.store.read(ReadMode::Quiet)?;
         if actual == intended {
             self.raw = actual;
             self.blocked = false;
-            return self.status();
+            return self.status(ReadMode::Quiet);
         }
         if actual == self.raw && write != Err("stale") {
             self.blocked = false;
@@ -216,7 +220,8 @@ fn http(
 }
 pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
     match command {
-        Command::Status {} => locked(owner)?.status(),
+        Command::Status {} => locked(owner)?.status(ReadMode::Quiet),
+        Command::Restore {} => locked(owner)?.status(ReadMode::UserInitiated),
         Command::Forget { observation } => {
             let unreadable = {
                 let mut state = locked(owner)?;
@@ -441,9 +446,102 @@ mod tests {
         assert!(!ready.to_string().contains(&"S".repeat(43)));
     }
     #[test]
+    fn restore_preserves_records_and_observations_and_respects_blocked_owners() {
+        let fixture = Fixture::new();
+        let absent = run(&fixture.owner, Command::Restore {}).unwrap();
+        assert_eq!(absent["kind"], "absent");
+        assert_eq!(run(&fixture.owner, Command::Status {}).unwrap(), absent);
+        let ready = fixture.ready();
+        let bytes = locked(&fixture.owner).unwrap().raw.clone();
+        assert_eq!(run(&fixture.owner, Command::Restore {}).unwrap(), ready);
+        {
+            let state = locked(&fixture.owner).unwrap();
+            assert_eq!(state.store.read(ReadMode::Quiet).unwrap(), bytes);
+            state
+                .store
+                .write(&bytes, &Some(b"unreadable".to_vec()))
+                .unwrap();
+        }
+        let unreadable = run(&fixture.owner, Command::Restore {}).unwrap();
+        assert_eq!(unreadable["kind"], "unreadable");
+        assert_ne!(unreadable["observation"], ready["observation"]);
+        assert_eq!(
+            run(&fixture.owner, Command::Restore {}).unwrap(),
+            unreadable
+        );
+        let mut state = locked(&fixture.owner).unwrap();
+        assert_eq!(
+            state.guard(ready["observation"].as_str().unwrap()),
+            Err("stale")
+        );
+        assert_eq!(
+            state.store.read(ReadMode::Quiet).unwrap(),
+            Some(b"unreadable".to_vec())
+        );
+        state.blocked = true;
+        let reference = state.reference.clone();
+        drop(state);
+        assert_eq!(
+            run(&fixture.owner, Command::Restore {}),
+            Err("keychain-unavailable")
+        );
+        let state = locked(&fixture.owner).unwrap();
+        assert!(state.blocked);
+        assert_eq!(state.reference, reference);
+        assert_eq!(state.raw, Some(b"unreadable".to_vec()));
+    }
+    #[test]
+    fn all_keychain_operations_wait_for_the_process_interaction_lock() {
+        let fixture = Fixture::new();
+        fixture.ready();
+        for operation in ["quiet", "restore", "write"] {
+            let state = locked(&fixture.owner).unwrap();
+            let store = Keychain {
+                handle: fixture.handle.clone(),
+                service: state.store.service.clone(),
+            };
+            let bytes = state.raw.clone();
+            let lock = crate::keychain::INTERACTION.lock().unwrap();
+            let interaction = SecKeychain::disable_user_interaction().unwrap();
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            let (started, starting) = std::sync::mpsc::channel();
+            let (finished, finishing) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let result = match operation {
+                    "quiet" => store
+                        .read(ReadMode::Quiet)
+                        .map(|actual| assert_eq!(actual, bytes)),
+                    "restore" => store
+                        .read(ReadMode::UserInitiated)
+                        .map(|actual| assert_eq!(actual, bytes)),
+                    _ => store.write(&bytes, &bytes),
+                };
+                finished.send(result).unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                finishing.recv_timeout(Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            drop(interaction);
+            assert!(SecKeychain::user_interaction_allowed().unwrap());
+            drop(lock);
+            finishing
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+            worker.join().unwrap();
+            let _lock = crate::keychain::INTERACTION.lock().unwrap();
+            assert!(SecKeychain::user_interaction_allowed().unwrap());
+        }
+    }
+    #[test]
     fn locked_private_keychain_stops_admission_without_removal() {
         let fixture = Fixture::new();
-        let ready = fixture.ready();
+        fixture.ready();
+        let ready = run(&fixture.owner, Command::Restore {}).unwrap();
         let before = locked(&fixture.owner).unwrap().raw.clone();
         unsafe {
             assert_eq!(SecKeychainLock(fixture.handle.as_CFTypeRef() as *mut _), 0);
@@ -457,7 +555,21 @@ mod tests {
             }
         )
         .is_err());
-        assert_eq!(locked(&fixture.owner).unwrap().raw, before);
+        assert!(run(&fixture.owner, Command::Status {}).is_err());
+        assert!(run(
+            &fixture.owner,
+            Command::Execute {
+                observation: ready["observation"].as_str().unwrap().to_string(),
+                request: json!({"op":"metadata"}),
+            }
+        )
+        .is_err());
+        let state = locked(&fixture.owner).unwrap();
+        assert_eq!(state.raw, before);
+        assert_eq!(state.reference.as_deref(), ready["observation"].as_str());
+        assert!(state.store.write(&before, &before).is_err());
+        let _lock = crate::keychain::INTERACTION.lock().unwrap();
+        assert!(SecKeychain::user_interaction_allowed().unwrap());
     }
     #[test]
     fn profile_lock_rejects_a_second_owner_and_closed_commands_reject_extras() {
@@ -474,8 +586,14 @@ mod tests {
             ),
             Err("profile-in-use")
         ));
+        assert!(matches!(
+            serde_json::from_value::<Command>(json!({"kind":"restore"})),
+            Ok(Command::Restore {})
+        ));
         for value in [
             json!({"kind":"status","url":"http://elsewhere"}),
+            json!({"kind":"restore","observation":"x"}),
+            json!({"kind":"restore","mode":"quiet"}),
             json!({"kind":"forget","observation":"x","secret":"x"}),
             json!({"kind":"execute","observation":"x","request":{},"headers":{}}),
         ] {
@@ -608,7 +726,7 @@ mod tests {
         assert!(locked(&fixture.owner)
             .unwrap()
             .store
-            .read()
+            .read(ReadMode::Quiet)
             .unwrap()
             .is_none());
     }

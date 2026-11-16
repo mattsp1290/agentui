@@ -101,7 +101,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>
         <p>{presentation.settings}</p>
         {connectionControls}
-        <button disabled={app.busy || Boolean(app.storageFailure)} onClick={() => reconnect ? reconnect() : void controller.reconnect()}>Reconnect</button>
+        <button disabled={suspended || app.busy || Boolean(app.storageFailure)} onClick={() => reconnect ? reconnect() : void controller.reconnect()}>Reconnect</button>
       </section>
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>

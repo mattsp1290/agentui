@@ -8,7 +8,7 @@ import type { ServiceConnectionOptions } from './service-engine.js';
 export type MacAccess =
   | { readonly kind: 'ready'; readonly observation: string; readonly hostId: string; readonly principalId: string }
   | { readonly kind: 'absent' | 'unreadable'; readonly observation: string };
-type AccessCommand = { readonly kind: 'status' } | { readonly kind: 'pair'; readonly observation: string; readonly invitation: unknown }
+type AccessCommand = { readonly kind: 'status' } | { readonly kind: 'restore' } | { readonly kind: 'pair'; readonly observation: string; readonly invitation: unknown }
   | { readonly kind: 'forget'; readonly observation: string };
 export type MacNativeInvoke = (command: AccessCommand | {
   readonly kind: 'execute'; readonly observation: string; readonly request: ServiceRequest;
