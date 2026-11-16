@@ -148,3 +148,13 @@ test('manifest namespaces use the shared bounded grammar', () => {
   for (const namespace of ['Notes', 'acme.notes', 'my_ext', 'a'.repeat(33)]) assert.throws(() => parseExtensionManifest({ ...manifest, namespace }));
   assert.equal(parseExtensionManifest({ ...manifest, namespace: 'a'.repeat(32) }).namespace, 'a'.repeat(32));
 });
+
+test('transcript slot validates known override shapes and shares module component wrapper support', () => {
+  for (const component of [() => null, memo(() => null), forwardRef(() => null), lazy(async () => ({ default: () => null }))]) {
+    validateUiExtensionContributions({ modules: [], overrides: { transcript: component }, dispose() {}, future: true });
+  }
+  for (const overrides of [null, [], false, { transcript: null }, { transcript: {} }, { transcript: 'div' }, { composer: () => null }, { [Symbol('unknown')]: true }]) {
+    assert.throws(() => validateUiExtensionContributions({ modules: [], overrides, dispose() {} }));
+  }
+  validateUiExtensionContributions({ modules: [], overrides: {}, dispose() {} });
+});

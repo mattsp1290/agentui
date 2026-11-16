@@ -8,6 +8,7 @@ import { ConversationStatus, ConversationView } from '../application/Conversatio
 import { agentPresentation } from '../application/agent-presentation.js';
 import '../application/application.css';
 import customization from '../application/customization-selection.js';
+import { useDesktopCustomizations } from '../application/DesktopCustomizations.js';
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
@@ -22,6 +23,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
+  const custom = useDesktopCustomizations({ customizations: customization, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
   const pendingScope = app.saved.pendingCreation?.scope;
   const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
@@ -45,7 +47,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const conversation = app.active
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        observation={app.observation} actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        transcript={custom.transcript} observation={app.observation} actions={controller.conversationActions(app.active)} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
         composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
     : <section className="conversation-panel empty-workspace">
@@ -94,7 +96,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </div>;
   const views = <>
     <div className="chat-view" hidden={selectedView !== 'chats'} inert={suspended}>{conversation}
-      {children === undefined && customizationEnabled && customization.map(item => <CustomizationModules key={item.manifest.namespace} customization={item}
+      {custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
         active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />)}
     </div>
     <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">

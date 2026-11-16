@@ -71,3 +71,12 @@ Snapshots permit up to 20000 files and 256 MiB of materialized content. Individu
 `@agentui/contracts` exports `OptionalIosArtifact` and `parseOptionalIosArtifact`. A version 1 descriptor declares either `absent` or `present`. A present artifact requires `embedded-full-native-build` delivery, the current SDK version, a sorted asset inventory, and a native runtime identity. `assertIosRuntime` compares the SDK, engine, engine version, format, React Native version, and native build identity exactly.
 
 Parsing checks the descriptor shape. A future consumer must also hash `iosArtifactIdentityText` and call `assertIosArtifactId`, then verify each asset's bytes before acceptance. This desktop command does not emit or install iOS bundles. The contract does not enable iOS live updates.
+
+### Replace transcript presentation
+
+An activation can add `overrides: { transcript: MyTranscript }` alongside its required `modules` and `dispose` fields.
+`MyTranscript` receives `ConversationModuleProps`, including current conversation scope, activity, and captured commands.
+See the [SDK transcript example](../../docs/architecture/extension-sdk.md#contribute-conversation-views-and-actions).
+Only transcript presentation changes. The ordinary composer, approvals, Stop, and recovery remain available.
+The host retains the default transcript while selected activations or a lazy override load, and reports a conflict if multiple namespaces claim it.
+A failed namespace is disposed once. Restore default view removes both contributions and preserves the draft.
