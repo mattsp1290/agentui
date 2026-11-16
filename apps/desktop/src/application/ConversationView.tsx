@@ -16,7 +16,7 @@ const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
   'invalid-projection': 'The provider’s saved state or updates could not be validated.',
   'recovery-failed': 'The provider could not resume updates.',
   'retry-exhausted': 'Updates stopped after repeated gaps without progress.',
-  'provider-disconnected': 'The provider disconnected.',
+  'provider-disconnected': 'The provider stopped delivering updates.',
   'original-provider-unavailable': 'Restore this conversation’s original provider configuration to resume updates.',
   'original-credentials-unavailable': 'Restore this conversation’s original provider credentials to resume updates.',
   'original-binding-unavailable': 'This conversation’s original provider binding is unavailable. Restore its original configuration.',
@@ -103,8 +103,11 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     {observationStatus?.kind === 'recovering' && <p role="status">Resuming provider updates…</p>}
     {observationStatus?.kind === 'stopped' && <div role="status" className="observation-notice">
       <p>Updates paused. {OBSERVATION_NOTICE[observationStatus.reason]} Saved messages and your draft remain available.{run && run.kind !== 'ended' ? ' The provider may still be running.' : ''}</p>
-      {canRetryObservation(observationStatus) && <button type="button" disabled={!enabled || observation?.retrying}
-        onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Retrying observation…' : 'Retry observation'}</button>}
+      {canRetryObservation(observationStatus) && <>
+        <p>Checking for updates does not restart this request or resend commands.</p>
+        <button type="button" disabled={!enabled || observation?.retrying}
+          onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Checking for updates…' : 'Check for updates'}</button>
+      </>}
     </div>}
     <CustomizationTranscript selection={transcript}
       conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
