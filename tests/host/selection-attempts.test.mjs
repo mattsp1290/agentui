@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -51,9 +52,10 @@ function oldJournal(t, { seeded = true } = {}) {
     if (!seeded && table.name !== 'service_extension_selection_schema') continue;
     for (const row of table.rows) database.prepare(`INSERT INTO ${table.name} (${Object.keys(row).join(',')}) VALUES (${Object.keys(row).map(() => '?').join(',')})`).run(...Object.values(row));
   }
+  let effects = 0, stops = 0;
   const open = (entries = []) => createServerSelection({ database: { database, hostId: golden.hostId }, entries,
-    runtime: () => ({ kind: 'empty' }), isClosing: () => false, replace: async () => assert.fail('Unresolved history activated'), stopRuntime() {} });
-  return { database, open };
+    runtime: () => ({ kind: 'empty' }), isClosing: () => false, replace: async () => { effects++; assert.fail('Unresolved history activated'); }, stopRuntime() { stops++; } });
+  return { database, open, effects: () => effects, stops: () => stops };
 }
 function snapshot(database) {
   const schema = database.prepare('SELECT * FROM sqlite_schema ORDER BY name').all();
@@ -65,6 +67,7 @@ test('v1 migration preserves exact selections, receipts, history and legacy coll
   const outcomes = [ { kind: 'pending' }, { kind: 'applying' }, { kind: 'interrupted' }, { kind: 'grant-mismatch' },
     ...['load', 'authorization', 'activation', 'discovery'].map(failure => ({ kind: 'failed', failure, recovery: 'replace' })), { kind: 'failed', failure: 'cleanup', recovery: 'restart' } ];
   for (const [i, outcome] of outcomes.entries()) database.prepare('INSERT INTO service_extension_boots(id,selection,outcome) VALUES(?,?,?)').run('old-' + i, 'disable', JSON.stringify(outcome));
+  database.exec("UPDATE service_extension_boots SET outcome=' '||outcome||' '");
   const selections = database.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all();
   const boots = database.prepare('SELECT * FROM service_extension_boots ORDER BY sequence').all();
   const owner = await open();
@@ -422,4 +425,113 @@ test('historical replay precedes current cleanup refusal and restart enables exp
   assert.deepEqual(await restarted.live(first), failed);
   assert.deepEqual((await restarted.live(retry)).outcome, failure);
   assert.equal(effects, 2);
+});
+
+const markerFaults = [
+  ['marker-version', 'UPDATE service_extension_selection_schema SET version=1'],
+  ['marker-host', "UPDATE service_extension_selection_schema SET host='PRIVATE_HOST'"],
+  ['marker-deleted', 'DELETE FROM service_extension_selection_schema'],
+];
+const attemptFaults = [
+  ...markerFaults,
+  ['id', "UPDATE service_extension_attempts SET id='changed' WHERE id=NEW.id"],
+  ['sequence', 'UPDATE service_extension_attempts SET sequence=sequence+10 WHERE id=NEW.id'],
+  ['selection', "UPDATE service_extension_attempts SET selection='other' WHERE id=NEW.id"],
+  ['intent', "UPDATE service_extension_attempts SET intent='{}' WHERE id=NEW.id"],
+  ['outcome', `UPDATE service_extension_attempts SET outcome='{"kind":"interrupted"}' WHERE id=NEW.id`],
+  ['delete', 'DELETE FROM service_extension_attempts WHERE id=NEW.id'],
+  ['ignore', 'SELECT RAISE(IGNORE)'],
+  ['tail', `INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('extra',NEW.selection,'{"kind":"boot"}','{"kind":"applied-empty"}')`],
+  ['newer-selection', `INSERT INTO service_extension_selections SELECT 'unexpected',revision+1,intent,receipt,digest FROM service_extension_selections WHERE id=NEW.selection`],
+];
+for (const phase of ['admission', 'applying', 'final']) for (const [fault, sql] of attemptFaults) {
+  test(`transaction integrity ${phase} ${fault}`, async t => {
+    const f = await diskFixture(t), owner = await f.open();
+    await owner.select({ id: 'other', expectedRevision: 0, selection: empty });
+    await owner.select({ id: 'target', expectedRevision: 1, selection: empty });
+    const outcome = phase === 'final' ? 'applied-empty' : 'applying';
+    f.database.exec(`CREATE TRIGGER damage_transaction ${fault === 'ignore' ? 'BEFORE' : 'AFTER'} ${phase === 'admission' ? 'INSERT' : 'UPDATE'} ON service_extension_attempts
+      WHEN NEW.id='request' ${phase === 'admission' ? '' : `AND json_extract(NEW.outcome,'$.kind')='${outcome}'`} BEGIN ${sql}; END`);
+    const before = snapshot(f.database);
+    if (phase !== 'admission') {
+      const table = before.schema.filter(row => row.type === 'table').findIndex(row => row.name === 'service_extension_attempts');
+      before.rows[table].push(Object.assign(Object.create(null), { sequence: 1, id: 'request', selection: 'target',
+        intent: '{"expectedRevision":2,"kind":"apply","requestId":"request","selectionId":"target"}',
+        outcome: JSON.stringify({ kind: phase === 'final' ? 'applying' : 'pending' }) }));
+    }
+    const error = await owner.live({ kind: 'apply', requestId: 'request', selectionId: 'target', expectedRevision: 2 }).then(() => undefined, error => error);
+    assert.deepEqual(snapshot(f.database), before);
+    assert.equal(error?.message, `Selection ${phase === 'final' ? 'uncertain' : 'unavailable'}`);
+    assert.equal(f.effects(), Number(phase === 'final')); assert.equal(f.stops(), 1);
+    assert.equal(owner.status().desiredRevision, 2);
+    assert.equal(owner.status().runtime.kind, phase === 'final' ? 'uncertain' : 'withheld');
+    if (phase === 'admission') assert.throws(() => owner.status({ kind: 'attempt', id: 'request' }), /unknown-operation/);
+    else assert.equal(owner.status({ kind: 'attempt', id: 'request' }).operation.outcome.kind, phase === 'final' ? 'applying' : 'pending');
+    await assert.rejects(owner.live({ kind: 'apply', requestId: 'again', selectionId: 'target', expectedRevision: 2 }), /unavailable/);
+    assert.equal(f.stops(), 1);
+    await owner.close(); f.database.exec('DROP TRIGGER damage_transaction');
+    const reopened = await f.open();
+    assert.equal(reopened.status().kind, 'ready');
+    if (phase !== 'admission') assert.equal(reopened.status({ kind: 'attempt', id: 'request' }).operation.outcome.kind, 'interrupted');
+  });
+}
+
+const startupFaults = [
+  ...markerFaults,
+  ['late-terminal-bytes', "UPDATE service_extension_attempts SET outcome=' '||outcome||' ' WHERE sequence=1"],
+  ['terminal-bytes', "UPDATE service_extension_attempts SET outcome=' '||outcome||' ' WHERE sequence=1"],
+  ['terminal-kind', `UPDATE service_extension_attempts SET outcome='{"kind":"applied-empty"}' WHERE sequence=1`],
+  ['attempt-id', "UPDATE service_extension_attempts SET id='changed' WHERE sequence=1"],
+  ['attempt-sequence', 'UPDATE service_extension_attempts SET sequence=sequence+10 WHERE sequence=1'],
+  ['attempt-selection', "UPDATE service_extension_attempts SET selection='disable' WHERE sequence=1"],
+  ['attempt-intent', "UPDATE service_extension_attempts SET intent='{}' WHERE sequence=1"],
+  ['deleted-attempt', 'DELETE FROM service_extension_attempts WHERE sequence=1'],
+  ['extra-attempt', `INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('extra','disable','{"kind":"boot"}','{"kind":"applied-empty"}')`],
+  ['selection-valid-receipt', undefined],
+  ['selection-id', "UPDATE service_extension_selections SET id='changed' WHERE id='disable'"],
+  ['selection-receipt', "UPDATE service_extension_selections SET receipt=receipt||' ' WHERE id='disable'"],
+  ['selection-digest', "UPDATE service_extension_selections SET digest='PRIVATE_DIGEST' WHERE id='disable'"],
+  ['selection-intent', "UPDATE service_extension_selections SET intent='{}' WHERE id='disable'"],
+  ['selection-revision', "UPDATE service_extension_selections SET revision=revision+1 WHERE id='disable'"],
+  ['extra-selection', "INSERT INTO service_extension_selections SELECT 'extra',revision+1,intent,receipt,digest FROM service_extension_selections WHERE id='disable'"],
+  ['deleted-selection', "DELETE FROM service_extension_selections WHERE id='disable'"],
+];
+for (const version of [1, 2]) for (const [fault, sql] of startupFaults.filter(([fault]) => version === 2 || fault !== 'late-terminal-bytes')) {
+  test(`transaction integrity startup v${version} ${fault}`, async t => {
+    const { database, open, effects, stops } = oldJournal(t);
+    database.exec('PRAGMA foreign_keys=OFF');
+    if (version === 2) await (await open()).close();
+    database.prepare(`INSERT INTO service_extension_${version === 1 ? 'boots' : 'attempts'}(id,selection,${version === 1 ? '' : 'intent,'}outcome)
+      VALUES(${version === 1 ? '?,?,?' : '?,?,?,?'})`).run('unresolved', 'disable', ...(version === 1 ? [] : ['{"kind":"boot"}']), '{"kind":"applying"}');
+    const event = version === 1 && fault !== 'late-terminal-bytes' ? 'service_extension_selection_schema' : 'service_extension_attempts';
+    const receipt = JSON.parse(database.prepare("SELECT receipt FROM service_extension_selections WHERE id='disable'").get().receipt);
+    receipt.grantsDigest = 'a'.repeat(64);
+    const bytes = JSON.stringify(receipt), hash = createHash('sha256').update(bytes).digest('hex');
+    const change = sql ?? `UPDATE service_extension_selections SET receipt='${bytes.replaceAll("'", "''")}',digest='${hash}' WHERE id='disable'`;
+    database.exec(`CREATE TRIGGER damage_startup AFTER UPDATE ON ${event}
+      ${event === 'service_extension_selection_schema' ? '' : `WHEN NEW.id='unresolved' AND NEW.outcome='{"kind":"interrupted"}'`} BEGIN ${change}; END`);
+    const before = snapshot(database);
+    const error = await open().then(async owner => { await owner.close(); }, error => error);
+    assert.deepEqual(snapshot(database), before);
+    assert.equal(error?.message, `Selection ${version === 1 ? 'migration' : 'recovery'} failed`);
+    assert.equal(effects(), 0); assert.equal(stops(), 0);
+    database.exec('DROP TRIGGER damage_startup');
+    const reopened = await open();
+    assert.equal(reopened.status().kind, 'ready');
+    assert.equal(reopened.status({ kind: 'attempt', id: 'unresolved' }).operation.outcome.kind, 'interrupted');
+    await reopened.close();
+  });
+}
+
+test('transaction integrity v1 terminal-only migration preserves raw bytes', async t => {
+  const { database, open, effects, stops } = oldJournal(t);
+  database.exec(`CREATE TRIGGER damage_terminal AFTER UPDATE ON service_extension_selection_schema BEGIN
+    UPDATE service_extension_attempts SET outcome=' '||outcome||' ' WHERE sequence=1; END`);
+  const before = snapshot(database);
+  const error = await open().then(async owner => { await owner.close(); }, error => error);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(error?.message, 'Selection migration failed');
+  assert.equal(effects(), 0); assert.equal(stops(), 0);
+  database.exec('DROP TRIGGER damage_terminal');
+  await (await open()).close();
 });

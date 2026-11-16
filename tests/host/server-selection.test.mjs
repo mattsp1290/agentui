@@ -14,10 +14,10 @@ function unseededV1(database) {
 function fixture(t) {
   const database = new DatabaseSync(':memory:');
   t.after(() => database.close());
-  let activations = 0;
+  let activations = 0, stops = 0;
   const open = (entries = []) => createServerSelection({ database: { database, hostId: 'selection-test-host' }, entries,
-    runtime: () => ({ kind: 'empty' }), isClosing: () => false, replace: async () => { activations++; return { kind: 'replaced', generation: null }; }, stopRuntime() {} });
-  return { database, open, activations: () => activations };
+    runtime: () => ({ kind: 'empty' }), isClosing: () => false, replace: async () => { activations++; return { kind: 'replaced', generation: null }; }, stopRuntime() { stops++; } });
+  return { database, open, activations: () => activations, stops: () => stops };
 }
 
 function snapshot(database) {
@@ -221,4 +221,59 @@ test('selection commit after total namespace loss remains unavailable without re
   assert.deepEqual(snapshot(database), before);
   assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
   await owner.close();
+});
+
+const selectionFaults = [
+  ['marker-version', 'UPDATE service_extension_selection_schema SET version=1'],
+  ['marker-host', "UPDATE service_extension_selection_schema SET host='PRIVATE_HOST'"],
+  ['marker-deleted', 'DELETE FROM service_extension_selection_schema'],
+  ['id', "UPDATE service_extension_selections SET id='changed' WHERE id=NEW.id"],
+  ['revision', 'UPDATE service_extension_selections SET revision=revision+1 WHERE id=NEW.id'],
+  ['intent', "UPDATE service_extension_selections SET intent='{}' WHERE id=NEW.id"],
+  ['receipt', "UPDATE service_extension_selections SET receipt=receipt||' ' WHERE id=NEW.id"],
+  ['digest', "UPDATE service_extension_selections SET digest='PRIVATE_DIGEST' WHERE id=NEW.id"],
+  ['delete', 'DELETE FROM service_extension_selections WHERE id=NEW.id'],
+  ['ignore', 'SELECT RAISE(IGNORE)'],
+  ['newer-selection', `INSERT INTO service_extension_selections SELECT 'unexpected',revision+1,intent,receipt,digest FROM service_extension_selections WHERE id=NEW.id`],
+];
+for (const seeded of [false, true]) for (const [fault, sql] of selectionFaults) {
+  test(`transaction integrity selection ${seeded ? 'ordinary' : 'v1 seed'} ${fault}`, async t => {
+    const { database, open, activations, stops } = fixture(t);
+    const owner = seeded ? await open() : undefined;
+    if (owner) t.after(() => owner.close()); else unseededV1(database);
+    database.exec(`CREATE TRIGGER damage_selection ${fault === 'ignore' ? 'BEFORE' : 'AFTER'} INSERT ON service_extension_selections BEGIN ${sql}; END`);
+    const before = snapshot(database);
+    const error = await (owner ? owner.select({ id: 'next', expectedRevision: 0, selection: { version: 1, artifacts: [] } }) : open())
+      .then(async value => { if (!owner) await value.close(); return undefined; }, error => error);
+    assert.deepEqual(snapshot(database), before);
+    assert.ok(error);
+    assert.equal(error.message, seeded ? 'Selection unavailable' : fault.startsWith('marker') ? 'Invalid selection journal' : 'Selection journal write failed');
+    assert.equal(activations(), 0); assert.equal(stops(), Number(seeded));
+    if (owner) {
+      assert.equal(owner.status().desired.id, 'startup');
+      assert.equal(owner.status().desiredRevision, 0);
+      assert.throws(() => owner.status({ kind: 'selection', id: 'next' }), /unknown-operation/);
+      await assert.rejects(owner.select({ id: 'again', expectedRevision: 0, selection: { version: 1, artifacts: [] } }), /unavailable/);
+      assert.equal(stops(), 1);
+      await owner.close();
+    }
+    database.exec('DROP TRIGGER damage_selection');
+    const reopened = await open();
+    assert.equal(reopened.status().kind, 'ready'); await reopened.close();
+  });
+}
+
+for (const stage of ['migration', 'selection']) test(`transaction integrity unseeded ${stage} cannot invent an attempt`, async t => {
+  const { database, open, activations, stops } = fixture(t);
+  unseededV1(database);
+  database.exec('PRAGMA foreign_keys=OFF');
+  database.exec(`CREATE TRIGGER invent_attempt AFTER ${stage === 'migration' ? 'UPDATE ON service_extension_selection_schema' : 'INSERT ON service_extension_selections'} BEGIN
+    INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('invented','startup','{"kind":"boot"}','{"kind":"applied-empty"}'); END`);
+  const before = snapshot(database);
+  const error = await open().then(async owner => { await owner.close(); }, error => error);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(error?.message, 'Selection journal write failed');
+  assert.equal(activations(), 0); assert.equal(stops(), 0);
+  database.exec('DROP TRIGGER invent_attempt');
+  await (await open()).close();
 });

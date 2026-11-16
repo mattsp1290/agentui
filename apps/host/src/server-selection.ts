@@ -21,6 +21,8 @@ const legacyColumns = 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, se
 type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
 type Attempt = { readonly id: string; readonly selection: string; readonly intent: string; readonly origin: LiveRequest | { readonly kind: 'boot' }; outcome: AttemptOutcome };
+type StoredAttempt = Pick<Attempt, 'id' | 'selection' | 'intent'> & { readonly sequence: number; readonly outcome: string };
+type JournalResult<T> = { readonly namespace: 0 | 1 | 2; readonly value: T };
 type Running = { readonly kind: 'withheld' | 'uncertain' }
   | { readonly kind: 'acknowledged'; readonly generation: number | null; readonly identity: Extract<SelectionRuntime, { id: string }> };
 export type ExtensionStartup = { readonly kind: 'transient'; readonly entries: readonly BrowserProviderExtension[] }
@@ -41,9 +43,13 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   const selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
   let desired: Selection | undefined, invalid = false, poisoned = false, busy: Promise<unknown> | undefined, closed = false, booted = false;
   let running: Running = { kind: 'withheld' };
-  function transaction<T>(work: () => T): T {
+  function transaction<T>(work: () => JournalResult<T>): T {
     db.exec('BEGIN IMMEDIATE');
-    try { const value = work(); db.exec('COMMIT'); return value; }
+    try {
+      const result = work();
+      if (inspectNamespace() !== result.namespace) throw new Error('Invalid selection journal');
+      db.exec('COMMIT'); return result.value;
+    }
     catch (error) { db.exec('ROLLBACK'); throw error; }
   }
   function decodeSelection(row: Record<string, unknown>): Selection {
@@ -84,7 +90,14 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
     db.exec(`INSERT INTO service_extension_attempts SELECT sequence,id,selection,'{"kind":"boot"}',outcome FROM service_extension_boots`);
     db.exec('DROP TABLE service_extension_boots; UPDATE service_extension_selection_schema SET version=2');
-    if (inspectNamespace() !== 2) throw new Error('Invalid selection journal');
+  }
+  function assertStoredAttempt(expected: StoredAttempt): void {
+    const row = db.prepare('SELECT sequence,selection,intent,outcome FROM service_extension_attempts WHERE id=?').get(expected.id);
+    if (row?.sequence !== expected.sequence || row.selection !== expected.selection || row.intent !== expected.intent || row.outcome !== expected.outcome) throw new Error('Selection journal write failed');
+  }
+  function assertStoredSelection(expected: Selection): void {
+    const row = db.prepare('SELECT revision,intent,receipt,digest FROM service_extension_selections WHERE id=?').get(expected.id);
+    if (row?.revision !== expected.revision || row.intent !== expected.intent || row.receipt !== expected.receipt.toString() || row.digest !== expected.receiptDigest) throw new Error('Selection journal write failed');
   }
   {
     let recoveryFailure: 'Selection migration failed' | 'Selection recovery failed' | undefined;
@@ -92,7 +105,8 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     try {
       const unresolved = transaction<Attempt[]>(() => {
         const version = inspectNamespace();
-        if (!version) return [];
+        if (!version) return { namespace: 0, value: [] };
+        const storedAttempts: StoredAttempt[] = [], unresolved: Attempt[] = [];
         for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
           const selection = decodeSelection(row);
           if (selection.revision !== selections.size || selections.has(selection.id)) throw new Error();
@@ -101,7 +115,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         if (version === 2 && !desired) throw new Error('Invalid selection journal');
         let sequence = 0;
         for (const row of db.prepare(`SELECT * FROM service_extension_${version === 1 ? 'boots' : 'attempts'} ORDER BY sequence`).all()) {
-          const id = identifier(row.id), selection = identifier(row.selection, 96), outcome = parseAttemptOutcome(JSON.parse(identifier(row.outcome)));
+          const id = identifier(row.id), selection = identifier(row.selection, 96), rawOutcome = identifier(row.outcome), outcome = parseAttemptOutcome(JSON.parse(rawOutcome));
           const intent = version === 1 ? '{"kind":"boot"}' : identifier(row.intent);
           const input = record(JSON.parse(intent));
           const origin = input.kind === 'boot' ? { kind: 'boot' as const } : parseLiveRequest(input);
@@ -113,22 +127,22 @@ export async function createServerSelection(deps: { readonly database: AccessDat
             !allowsPredecessor(origin, previous))) throw new Error();
           const attempt: Attempt = { id, selection, intent, origin, outcome };
           attempts.push(attempt); byId.set(id, attempt);
+          const unsettled = outcome.kind === 'pending' || outcome.kind === 'applying';
+          if (unsettled) unresolved.push(attempt);
+          storedAttempts.push({ id, selection, intent, sequence, outcome: unsettled ? canonicalJson(interrupted) : rawOutcome });
         }
-        const unresolved = attempts.filter(attempt => attempt.outcome.kind === 'pending' || attempt.outcome.kind === 'applying');
-        if (desired) {
-          recoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
-          if (version === 1) migrateV1();
-          const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
-          for (const attempt of unresolved) {
-            if (update.run(outcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
-          }
-          const readAttempt = db.prepare('SELECT selection,intent,outcome FROM service_extension_attempts WHERE id=?');
-          for (const attempt of unresolved) {
-            const written = readAttempt.get(attempt.id);
-            if (written?.selection !== attempt.selection || written.intent !== attempt.intent || written.outcome !== outcome) throw new Error('Invalid selection attempt');
-          }
+        if (!desired) return { namespace: 1, value: [] };
+        recoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
+        if (version === 1) migrateV1();
+        const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
+        for (const attempt of unresolved) {
+          if (update.run(outcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
         }
-        return unresolved;
+        if (db.prepare('SELECT COUNT(*) AS n FROM service_extension_attempts').get()?.n !== storedAttempts.length ||
+          db.prepare('SELECT COUNT(*) AS n FROM service_extension_selections').get()?.n !== selections.size) throw new Error('Selection journal write failed');
+        for (const attempt of storedAttempts) assertStoredAttempt(attempt);
+        for (const selection of selections.values()) assertStoredSelection(selection);
+        return { namespace: 2, value: unresolved };
       });
       for (const attempt of unresolved) attempt.outcome = interrupted;
     } catch {
@@ -164,13 +178,16 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   function persist(attempt: Attempt, selection: Selection, outcome: AttemptOutcome): void {
     transaction(() => {
       authority(selection);
-      const readAttempt = db.prepare('SELECT selection,intent,outcome FROM service_extension_attempts WHERE id=?');
+      const readAttempt = db.prepare('SELECT sequence,selection,intent,outcome FROM service_extension_attempts WHERE id=?');
       const row = readAttempt.get(attempt.id), nextOutcome = canonicalJson(outcome);
       if (row?.selection !== selection.id || row.intent !== attempt.intent || row.outcome !== canonicalJson(attempt.outcome)) throw new Error('Invalid selection attempt');
+      const sequence = count(row.sequence);
+      if (!sequence) throw new Error('Invalid selection attempt');
       if (db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?').run(nextOutcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
       authority(selection);
-      const written = readAttempt.get(attempt.id);
-      if (written?.selection !== selection.id || written.intent !== attempt.intent || written.outcome !== nextOutcome) throw new Error('Invalid selection attempt');
+      assertStoredAttempt({ ...attempt, sequence, outcome: nextOutcome });
+      if (db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
+      return { namespace: 2, value: undefined };
     });
     attempt.outcome = outcome;
   }
@@ -206,6 +223,11 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         }
       }
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
+      if (version !== 2 && db.prepare('SELECT COUNT(*) AS n FROM service_extension_attempts').get()?.n !== 0) throw new Error('Selection journal write failed');
+      assertStoredSelection(selection);
+      const latest = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
+      if (latest?.id !== selection.id || latest.revision !== selection.revision) throw new Error('Selection journal write failed');
+      return { namespace: 2, value: undefined };
     });
     selections.set(selection.id, selection); desired = selection;
   }
@@ -237,12 +259,12 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   async function execute(selection: Selection, attempt: Attempt): Promise<void> {
     let admission: 'admitted' | 'withheld';
     try {
-      admission = transaction(() => {
+      admission = transaction<'admitted' | 'withheld'>(() => {
         available(); authority(selection);
         const latest = db.prepare('SELECT id,outcome FROM service_extension_attempts WHERE selection=? ORDER BY sequence DESC LIMIT 1').get(selection.id);
         const previous = latest && { id: identifier(latest.id), outcome: parseAttemptOutcome(JSON.parse(identifier(latest.outcome))) };
         if (!allowsPredecessor(attempt.origin, previous)) {
-          if (attempt.origin.kind === 'boot') return 'withheld';
+          if (attempt.origin.kind === 'boot') return { namespace: 2, value: 'withheld' };
           throw new SelectionRefusal('attempt-conflict');
         }
         if (attempt.origin.kind !== 'boot') {
@@ -251,8 +273,15 @@ export async function createServerSelection(deps: { readonly database: AccessDat
           if (attempt.origin.kind === 'retry' && previous?.outcome.kind === 'grant-mismatch' && selection.grantsDigest !== grantsDigest) throw new SelectionRefusal('attempt-conflict');
         }
         if (db.prepare('SELECT 1 FROM service_extension_selections WHERE id=?').get(attempt.id)) throw new SelectionRefusal('id-conflict');
-        db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, canonicalJson(attempt.outcome));
-        return 'admitted';
+        const outcome = canonicalJson(attempt.outcome);
+        const inserted = db.prepare('INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES(?,?,?,?)').run(attempt.id, selection.id, attempt.intent, outcome);
+        const sequence = count(inserted.lastInsertRowid);
+        if (inserted.changes !== 1 || !sequence) throw new Error('Selection journal write failed');
+        assertStoredAttempt({ ...attempt, sequence, outcome });
+        const latestSelection = db.prepare('SELECT id,revision FROM service_extension_selections ORDER BY revision DESC LIMIT 1').get();
+        if (latestSelection?.id !== selection.id || latestSelection.revision !== selection.revision ||
+          db.prepare('SELECT MAX(sequence) AS sequence FROM service_extension_attempts').get()?.sequence !== sequence) throw new Error('Selection journal write failed');
+        return { namespace: 2, value: 'admitted' };
       });
     } catch (error) {
       if (error instanceof SelectionRefusal) throw error;
