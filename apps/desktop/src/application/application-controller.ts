@@ -10,6 +10,8 @@ import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage,
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
+import { createFrontendSends } from './frontend-sends.js';
+import type { CapturedSend, GenerationSink } from './frontend-sends.js';
 import { conversationResponding } from './responding.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
@@ -44,6 +46,7 @@ export interface ApplicationSnapshot {
   readonly error: string;
   readonly storageFailure: string;
   readonly busy: boolean;
+  readonly capturedSends: readonly CapturedSend[];
 }
 export interface ConversationActions {
   readonly commands: ConversationCommands;
@@ -53,6 +56,8 @@ export interface ConversationActions {
   retryObservation(): Promise<void>;
 }
 export interface ApplicationController {
+  readonly frontendGenerations: GenerationSink;
+  releaseCapturedSend(key: string): Promise<void>;
   getSnapshot(): ApplicationSnapshot;
   subscribe(listener: () => void): () => void;
   start(): Promise<void>;
@@ -73,7 +78,8 @@ type OwnedView = { readonly storage: OwnedViewStorage; readonly saved: null } | 
 type ApplicationFailure =
   | { readonly kind: 'access-revoked' }
   | { readonly kind: 'operation-failed'; readonly error: string };
-interface Session { view: OwnedView | null; readonly connection: ServiceConnection }
+interface ViewLease { readonly storage: OwnedViewStorage; readonly stores: Map<string, ConversationStore<Transcript>>; closing: Promise<void> | null }
+interface Session { readonly views: Map<string, ViewLease>; view: OwnedView | null; readonly connection: ServiceConnection }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
   active: null, observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
@@ -85,7 +91,7 @@ function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
     : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
 }
 function initialSnapshot(): ApplicationSnapshot {
-  return { ...DETACHED_VIEW, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false };
+  return { ...DETACHED_VIEW, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : 'The operation failed.'; }
 function classifyFailure(cause: unknown): ApplicationFailure {
@@ -110,6 +116,32 @@ export function createApplicationController(deps: {
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved'>>): void {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW });
     for (const listener of listeners) listener();
+  }
+  const frontend = createFrontendSends({
+    changed() {
+      const capturedSends = frontend.snapshot();
+      if (capturedSends.length || state.capturedSends.length) publish({ capturedSends });
+      if (session) void evictUnused(session);
+    },
+    failed(viewId, cause) { if (session) failStorage(session, session.views.get(viewId)?.storage ?? null, cause); },
+    unauthorized() { if (session) fail(session, { kind: 'access-revoked' }); },
+  });
+  function closeLease(owner: Session, id: string, lease: ViewLease): Promise<void> {
+    return lease.closing ??= (async () => {
+      for (const store of lease.stores.values()) store.disconnect();
+      await Promise.all([...lease.stores.values()].map(store => store.drained()));
+      await lease.storage.close();
+      owner.views.delete(id);
+      frontend.forgetView(id);
+    })();
+  }
+  function evictUnused(owner: Session): void {
+    for (const [id, lease] of owner.views) {
+      if (lease.closing || owner.view?.storage === lease.storage || frontend.holds(id)) continue;
+      void closeLease(owner, id, lease).catch(error => {
+        if (session === owner) { publish({ storageFailure: message(error) }); disconnectActive(); }
+      });
+    }
   }
   let permissionRead = 0;
   function stalePermissions(reason: string): void {
@@ -150,6 +182,7 @@ export function createApplicationController(deps: {
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
     if (failure.kind === 'access-revoked') {
+      void frontend.session(null, owner.connection);
       disconnectActive();
       publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
     } else {
@@ -163,7 +196,9 @@ export function createApplicationController(deps: {
     return result;
   }
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
-    if (session !== owner || (owner.view?.storage ?? null) !== storage) return;
+    if (session !== owner || (storage !== null && !owner.views.has(storage.viewId))) return;
+    if (storage && owner.view?.storage !== storage && !frontend.holds(storage.viewId)) return;
+    if (storage) frontend.storageFailed(storage.viewId);
     publish({ storageFailure: message(cause) });
     disconnectActive();
   }
@@ -183,11 +218,22 @@ export function createApplicationController(deps: {
     return view;
   }
   async function acquire(owner: Session, viewId: string | null): Promise<OwnedViewStorage> {
+    const existing = viewId === null ? undefined : owner.views.get(viewId);
+    if (existing) {
+      if (existing.closing) throw new Error('This view is closing. Try reopening it again.');
+      selectView(owner, existing.storage);
+      return existing.storage;
+    }
     let storage: OwnedViewStorage | null = null;
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
     storage = await (viewId === null ? deps.ownedViewStorage.open(failed) : deps.ownedViewStorage.reopen(viewId, failed));
     if (session !== owner) { await storage.close(); throw new Error('This application has closed.'); }
+    selectView(owner, storage);
     return storage;
+  }
+  function selectView(owner: Session, storage: OwnedViewStorage): void {
+    if (!owner.views.has(storage.viewId)) owner.views.set(storage.viewId, { storage, stores: new Map(), closing: null });
+    owner.view = { storage, saved: null };
   }
   async function save(owner: Session, next: SavedView): Promise<void> {
     const view = requireSaved(owner);
@@ -243,7 +289,7 @@ export function createApplicationController(deps: {
     const found = await current(owner, owner.connection.conversationAgent(scope));
     if (!found) throw new Error('Conversation does not exist.');
     const agent = compatibleAgent(found);
-    if (state.active && sameScope(state.active.scope, scope)) {
+    if (state.active && state.active.viewId === storage.viewId && sameScope(state.active.scope, scope)) {
       publish({ active: { ...state.active, agent } });
       observeActive(owner, state.active);
       await current(owner, state.active.store.connect());
@@ -251,8 +297,16 @@ export function createApplicationController(deps: {
     }
     disconnectActive();
     const failed = (cause: unknown) => failStorage(owner, storage, cause);
-    const store = createConversationStore({ scope, port: owner.connection.conversation(scope), projection: transcriptProjection,
-      drafts: storage.drafts(failed), createCommandId: deps.createId });
+    const lease = owner.views.get(storage.viewId);
+    if (!lease) throw new Error('The original view lease is unavailable.');
+    const key = JSON.stringify([scope.hostId, scope.conversationId]);
+    let store = lease.stores.get(key);
+    if (!store) {
+      store = createConversationStore({ scope, port: owner.connection.conversation(scope), projection: transcriptProjection,
+        drafts: storage.drafts(failed), createCommandId: deps.createId,
+        frontend: frontend.forStore({ viewId: storage.viewId, scope, eligibility: () => state.host.kind === 'ready' ? state.host.metadata.agents.find(item => item.id === agent.id)?.frontendOffers ?? 'unsupported' : 'unsupported' }) });
+      lease.stores.set(key, store);
+    }
     try { await current(owner, store.ready); local(owner); }
     catch (cause) { store.disconnect(); failed(cause); throw cause; }
     const active = { scope, store, agent, viewId: storage.viewId };
@@ -299,10 +353,13 @@ export function createApplicationController(deps: {
     stopObservation();
     stalePermissions('Reconnecting to refresh permissions.');
     const storage = local(owner);
+    const previousHost = state.host;
     publish({ host: { kind: 'loading' } });
     try {
       const received = await current(owner, owner.connection.metadata());
       const metadata = { ...received, agents: received.agents.map(compatibleAgent) };
+      await frontend.session(metadata, owner.connection);
+      if ('metadata' in previousHost && previousHost.metadata.principalId !== metadata.principalId) { disconnectActive(); publish({ active: null }); }
       const previous = owner.view;
       if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
         disconnectActive();
@@ -374,12 +431,14 @@ export function createApplicationController(deps: {
     if (state.active !== target) throw new Error('Open the command’s conversation before continuing.');
   }
   return {
+    frontendGenerations: frontend.source,
+    async releaseCapturedSend(key) { try { await frontend.release(key); } catch (cause) { publish({ error: message(cause) }); } },
     getSnapshot: () => state,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     start() {
       if (session) return Promise.resolve();
       const closing = disposal;
-      const next: Session = { view: null, connection: deps.createConnection({ onUnauthorized: () => {
+      const next: Session = { views: new Map(), view: null, connection: deps.createConnection({ onUnauthorized: () => {
         fail(next, { kind: 'access-revoked' });
       } }) };
       session = next;
@@ -387,7 +446,8 @@ export function createApplicationController(deps: {
       return run(async owner => {
         try {
           if (closing) await current(owner, closing);
-          owner.view = { storage: await acquire(owner, null), saved: null };
+          frontend.start();
+          await current(owner, acquire(owner, null));
         }
         catch (cause) { failStorage(owner, null, cause); if (session === owner) publish({ host: { kind: 'unavailable' } }); return; }
         await refresh(owner);
@@ -398,10 +458,16 @@ export function createApplicationController(deps: {
       const owner = session;
       session = null;
       disconnectActive();
-      return disposal = Promise.all([disposal, owner?.view?.storage.close()]).then(() => {});
+      const previousDisposal = disposal, capturedClosing = frontend.dispose();
+      return disposal = (async () => {
+        await previousDisposal;
+        await capturedClosing;
+        if (owner) await Promise.all([...owner.views].map(([id, lease]) => closeLease(owner, id, lease)));
+      })();
     },
     pair: code => run(async owner => {
       local(owner);
+      await frontend.session(null, owner.connection);
       try { await current(owner, owner.connection.pair(code)); }
       catch (cause) { fail(owner, { kind: 'operation-failed', error: message(cause) }); return; }
       await refresh(owner);
@@ -409,16 +475,13 @@ export function createApplicationController(deps: {
     reconnect: () => run(refresh),
     reopenView: viewId => run(async owner => {
       requireHost(owner);
-      const next = owner.view?.storage.viewId === viewId ? null : await acquire(owner, viewId);
+      const previous = owner.view;
+      const next = await current(owner, acquire(owner, viewId));
+      try { next.select(); }
+      catch (error) { owner.view = previous; evictUnused(owner); throw error; }
       disconnectActive();
-      const closing = disposal = Promise.all([disposal, owner.view?.storage.close()]).then(() => {});
-      owner.view = next ? { storage: next, saved: null } : null;
       publish({ ...DETACHED_VIEW, host: { kind: 'loading' } });
-      try {
-        await current(owner, Promise.resolve(closing));
-        owner.view = { storage: next ?? await acquire(owner, viewId), saved: null };
-      }
-      catch (cause) { await next?.close(); failStorage(owner, null, cause); if (session === owner) publish({ host: { kind: 'unavailable' } }); return; }
+      void evictUnused(owner);
       await refresh(owner);
     }),
     moreConversations: () => run(async owner => {

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createFrontendToolGeneration } from '@agentui/sdk/tools';
 import { ServiceError } from '@agentui/contracts/service';
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
@@ -10,11 +11,11 @@ const deferred = () => { let resolve, reject; const promise = new Promise((yes, 
 function fixture() {
   const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
     observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
-    const owner = { viewId, failure, closed: false,
+    const owner = { viewId, failure, closed: false, select() { behavior.select(); },
       async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
       async saveView(host, value) { if (owner.closed) throw new Error('Closed owner'); views.set(`${viewId}/${host}`, value); },
       savedViews: (...args) => behavior.listing(...args),
@@ -29,10 +30,11 @@ function fixture() {
     leases.push(owner);
     return owner;
   }
-  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
+  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, frontendOffers: behavior.frontendOffers, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
+    frontendBinding: request => behavior.binding(request),
+    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: behavior.principalId, agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
       desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
@@ -138,6 +140,7 @@ test('late writes from a replaced storage owner cannot poison the reopened view'
   await failed;
   assert.equal(f.app.getSnapshot().storageFailure, '');
   assert.equal(f.app.getSnapshot().active.viewId, 'restored-view');
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.leases[0].closed, true);
   f.behavior.write = async () => {};
   await f.app.getSnapshot().active.store.setDraft('New edit');
@@ -155,6 +158,7 @@ test('disposal closes admission and feeds immediately, and restart waits for the
   f.behavior.close = () => { closes++; return drain.promise; };
   const closing = f.app.dispose();
   assert.equal(f.app.dispose(), closing);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(closes, 1);
   assert.equal(f.leases[0].closed, true);
   assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
@@ -179,43 +183,33 @@ test('disposal closes admission and feeds immediately, and restart waits for the
   assert.deepEqual(f.submitted, []);
 });
 
-test('reopening the same view waits for the previous owner to drain before acquiring its lock', async t => {
+test('reopening an owned view reuses its original store and exclusive storage lease', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.views.set('original-view/host', { ...empty(), route: scope });
   await f.app.start();
-  const old = f.app.getSnapshot().active, drain = deferred();
-  let acquired = false;
-  f.behavior.close = () => drain.promise;
-  f.behavior.reopen = async id => { assert.equal(id, 'original-view'); acquired = true; };
-  const reopening = f.app.reopenView('original-view');
-  assert.equal(f.leases[0].closed, true);
-  assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
-  await Promise.resolve();
-  assert.equal(acquired, false);
-  f.leases[0].failure(new Error('Late closed-owner write failed during drain'));
-  assert.equal(f.app.getSnapshot().storageFailure, '');
-  drain.resolve();
-  await reopening;
-  assert.equal(acquired, true);
+  const old = f.app.getSnapshot().active;
+  f.behavior.reopen = async () => { throw new Error('Must reuse original lease'); };
+  await f.app.reopenView('original-view');
+  assert.equal(f.leases.length, 1);
+  assert.equal(f.leases[0].closed, false);
+  assert.equal(f.app.getSnapshot().active.store, old.store);
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
-  assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
-  assert.deepEqual(f.submitted, []);
 });
 
-test('failed replacement acquisition leaves saved records intact and refuses mutations through the closed owner', async t => {
+test('failed replacement acquisition leaves the selected owner and saved records usable', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const saved = { ...empty(), route: scope };
   f.views.set('original-view/host', saved);
   await f.app.start();
+  const active = f.app.getSnapshot().active;
   f.behavior.reopen = async () => { throw new Error('Saved view is already open'); };
-  await f.app.reopenView('original-view');
-  assert.equal(f.app.getSnapshot().active, null);
-  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
-  assert.match(f.app.getSnapshot().storageFailure, /already open/);
-  assert.equal(f.leases[0].closed, true);
-  await f.app.create();
+  await f.app.reopenView('other-view');
+  assert.equal(f.app.getSnapshot().active, active);
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.match(f.app.getSnapshot().error, /already open/);
+  assert.equal(f.leases[0].closed, false);
   assert.deepEqual(f.views.get('original-view/host'), saved);
-  assert.deepEqual(f.created, []);
+  await active.store.setDraft('Still writable');
 });
 
 test('disposal during an existing same-view handover still awaits its admitted storage drain', async t => {
@@ -1069,4 +1063,60 @@ test('permission reads from a disposed session cannot populate its replacement',
     { permissionId: 'old', scope: 'agent', actionLabel: 'Old', detail: 'Old session' }] });
   await assert.rejects(pending, /closed/);
   assert.deepEqual(f.app.getSnapshot().permissionState.listing.permissions, []);
+});
+
+test('original physical store and storage survive navigation and principal changes while old notification remains pending', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.views.set('other-view/host', empty());
+  const disposed = [], source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() { disposed.push('A'); } }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); const original = f.app.getSnapshot().active.store;
+  f.behavior.submit = async command => ({ kind: 'receipt', receipt: { scope, clientCommandId: command.clientCommandId, hostOperationId: 'operation', sequence: 1, state: { kind: 'completed' } } });
+  await original.send('A message');
+  assert.equal(original.getSnapshot().outbox.length, 0);
+  const retiring = source.generation.retire();
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false);
+  await f.app.reopenView('original-view');
+  assert.equal(f.app.getSnapshot().active.store, original); assert.equal(f.leases.filter(lease => lease.viewId === 'original-view').length, 1);
+  f.behavior.principalId = 'replacement';
+  await f.app.reconnect(); await retiring;
+  assert.equal(f.app.getSnapshot().active.store, original);
+  assert.deepEqual(disposed, ['A']);
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].ownerId, 'principal');
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  await original.setDraft('New principal draft');
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'New principal draft');
+  await assert.rejects(original.retry(f.submitted[0].clientCommandId), /outbox|unavailable/);
+});
+
+test('a failed background storage close blocks commands and disposal joins the same close without retrying it', async () => {
+  const f = fixture(); let closes = 0;
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  f.behavior.close = owner => { if (owner.viewId === 'original-view') { closes++; throw new Error('Storage close failed'); } };
+  await f.app.reopenView('other-view'); await new Promise(resolve => setImmediate(resolve));
+  assert.match(f.app.getSnapshot().storageFailure, /Storage close failed/);
+  await f.app.create(); assert.deepEqual(f.created, []);
+  await assert.rejects(f.app.dispose(), /Storage close failed/); assert.equal(closes, 1);
+});
+
+test('a newly acquired view already owns its selected lease when another capture changes during selection', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start();
+  await assert.rejects(f.app.getSnapshot().active.store.send('Pending'), /Reply lost/);
+  const key = f.app.getSnapshot().capturedSends[0].key;
+  f.behavior.select = () => { void f.app.releaseCapturedSend(key); };
+  await f.app.reopenView('new-view'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.leases.find(lease => lease.viewId === 'new-view').closed, false);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  await source.generation.retire();
 });

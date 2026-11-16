@@ -93,6 +93,11 @@ export class BrowserViewStorage implements OwnedViewStorage {
     } catch (error) { db?.close(); release(); throw error; }
   }
 
+  select(): void {
+    if (this.closing) throw new Error('This view no longer owns local storage.');
+    sessionStorage.setItem('agentui.viewId', this.viewId);
+  }
+
   async savedViews(hostId: string, after: string | null = null): ReturnType<OwnedViewStorage['savedViews']> {
     return new Promise((resolve, reject) => {
       const range = viewKeyRange(after);

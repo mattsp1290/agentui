@@ -1,6 +1,6 @@
 import { canonicalJson, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationScope } from '@agentui/contracts';
-import type { LocalRecords, OutboxEntry } from './types.js';
+import type { FrontendRecoveryReference, LocalRecords, OutboxEntry } from './types.js';
 
 export function immutable<T>(value: T, visited = new WeakSet<object>()): T {
   if (value && typeof value === 'object' && !visited.has(value)) {
@@ -26,9 +26,9 @@ export function copyCanonicalJson<T>(value: T): T {
   return JSON.parse(canonicalJson(value)) as T;
 }
 export function restore(value: unknown, scope: ConversationScope): LocalRecords {
-  if (value === null) return immutable({ version: 1, scope, draft: '', draftRevision: 0, outbox: [] });
+  if (value === null) return immutable({ version: 2, scope, draft: '', draftRevision: 0, outbox: [], frontendSends: [] });
   const input = object(copyCanonicalJson(value));
-  if (input.version !== 1) throw new Error('Unsupported local storage version');
+  if (input.version !== 1 && input.version !== 2) throw new Error('Unsupported local storage version');
   if (!sameScope(parseScope(input.scope), scope)) throw new Error('Local storage scope mismatch');
   if (!Array.isArray(input.outbox)) throw new Error('Invalid outbox');
   const ids = new Set<string>();
@@ -43,5 +43,17 @@ export function restore(value: unknown, scope: ConversationScope): LocalRecords 
     if (revision !== null && (revision > draftRevision || command.body.kind !== 'send')) throw new Error('Invalid captured draft revision');
     return { command, draftRevision: revision };
   });
-  return immutable({ version: 1, scope, draft: string(input.draft), draftRevision, outbox });
+  if (input.version === 2 && !Array.isArray(input.frontendSends)) throw new Error('Invalid frontend recovery journal');
+  const history = new Set<string>();
+  const frontendSends: FrontendRecoveryReference[] = (input.version === 2 && Array.isArray(input.frontendSends) ? input.frontendSends : []).map(value => {
+    const entry = object(value), command = parseCommand(entry.command), ownerId = string(entry.ownerId);
+    if (command.version !== 2 || !sameScope(command.scope, scope) || !ownerId || history.has(command.clientCommandId)) throw new Error('Invalid frontend recovery identity');
+    if (entry.state !== 'retained' && entry.state !== 'unavailable-pending' && entry.state !== 'unavailable-confirmed') throw new Error('Invalid frontend recovery state');
+    const queued = outbox.find(item => item.command.clientCommandId === command.clientCommandId);
+    if (queued && canonicalJson(queued.command) !== canonicalJson(command)) throw new Error('Frontend recovery command mismatch');
+    history.add(command.clientCommandId);
+    return { command, ownerId, state: entry.state };
+  });
+  if (outbox.some(entry => entry.command.version === 2 && !history.has(entry.command.clientCommandId))) throw new Error('Offered command has no recovery owner');
+  return immutable({ version: 2, scope, draft: string(input.draft), draftRevision, outbox, frontendSends });
 }

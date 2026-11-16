@@ -2,6 +2,7 @@ import { Component, Suspense, useEffect, useRef, useState, type ComponentType, t
 import { checkExtensionEntrypoint, type ExtensionManifest } from '@agentui/sdk';
 import type { ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
 import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';
+import type { GenerationSink } from './frontend-sends.js';
 import type { FrontendToolGeneration } from '@agentui/sdk/tools';
 
 export interface DesktopCustomization {
@@ -100,8 +101,8 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
   return () => { removed = true; cleanup(); };
 }
 
-export function useDesktopCustomizations({ customizations, enabled }: {
-  readonly customizations: readonly DesktopCustomization[]; readonly enabled: boolean;
+export function useDesktopCustomizations({ customizations, enabled, sink }: {
+  readonly customizations: readonly DesktopCustomization[]; readonly enabled: boolean; readonly sink?: GenerationSink;
 }): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly generations: readonly FrontendToolGeneration[] } {
   const [request, setRequest] = useState({ customizations, enabled });
   const [snapshot, setSnapshot] = useState<{ readonly request: typeof request; readonly namespaces: readonly NamespaceActivation[] }>(() => ({ request, namespaces: [] }));
@@ -109,17 +110,24 @@ export function useDesktopCustomizations({ customizations, enabled }: {
   const current = request.customizations === customizations && request.enabled === enabled;
   if (!current) setRequest({ customizations, enabled });
   useEffect(() => {
-    if (!request.enabled) return;
+    const token = {};
+    sink?.begin(token);
+    if (!request.enabled) { sink?.publish(token, { kind: 'ready', generations: [] }); return () => sink?.clear(token); }
     let removed = false;
     let namespaces: readonly NamespaceActivation[] = request.customizations.map(item => ({ kind: 'loading', namespace: item.manifest.namespace }));
-    const publish = () => { if (!removed) setSnapshot({ request, namespaces }); };
+    const publish = () => {
+      if (removed) return;
+      sink?.publish(token, namespaces.some(owner => owner.kind !== 'ready') ? { kind: 'transitioning' }
+        : { kind: 'ready', generations: namespaces.flatMap(owner => owner.kind === 'ready' ? [owner.generation] : []) });
+      setSnapshot({ request, namespaces });
+    };
     publish();
     const cleanups = request.customizations.map((customization, index) => activateNamespace(customization, ++nextLifetime.current, owner => {
       namespaces = namespaces.map((previous, position) => position === index ? owner : previous);
       publish();
     }));
-    return () => { removed = true; cleanups.forEach(cleanup => cleanup()); };
-  }, [request]);
+    return () => { removed = true; sink?.clear(token); cleanups.forEach(cleanup => cleanup()); };
+  }, [request, sink]);
   const namespaces = current && enabled && snapshot.request === request ? snapshot.namespaces : [];
   const ready = namespaces.filter((owner): owner is ReadyActivation => owner.kind === 'ready');
   return { namespaces, transcript: selectTranscript(namespaces), generations: ready.map(owner => owner.generation) };

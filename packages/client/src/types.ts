@@ -1,11 +1,29 @@
-import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, PermissionScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
+import type { ClientCommand, FrontendOffer, OfferedCommand, ConversationDocument, ConversationPort, ConversationScope, PermissionScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
 
 export interface OutboxEntry {
   readonly command: ClientCommand;
   readonly draftRevision: number | null;
 }
+export interface FrontendRecoveryReference {
+  readonly command: OfferedCommand;
+  readonly ownerId: string;
+  readonly state: 'retained' | 'unavailable-pending' | 'unavailable-confirmed';
+}
+export interface FrontendJournal {
+  read(): readonly FrontendRecoveryReference[];
+  unavailable(id: string): Promise<void>;
+  acknowledged(id: string): Promise<void>;
+}
+export interface FrontendAdmission {
+  readonly ownerId: string;
+  capture(id: string): { readonly offer: FrontendOffer; commit(command: OfferedCommand, journal: FrontendJournal): boolean; release(): void } | null;
+  restore(journal: FrontendJournal): void;
+  canRetry(command: OfferedCommand): boolean;
+  rejected(id: string): Promise<void>;
+}
 export interface LocalRecords {
-  readonly version: 1;
+  readonly version: 2;
+  readonly frontendSends: readonly FrontendRecoveryReference[];
   readonly scope: ConversationScope;
   readonly draft: string;
   readonly draftRevision: number;
@@ -39,6 +57,7 @@ export interface ConversationStore<P> {
   refreshReceipt(clientCommandId: string): Promise<Receipt | null>;
   connect(): Promise<void>;
   disconnect(): void;
+  drained(): Promise<void>;
 }
 export interface StoreOptions<E, P> {
   readonly scope: ConversationScope;
@@ -46,4 +65,5 @@ export interface StoreOptions<E, P> {
   readonly projection: Projection<E, P>;
   readonly drafts: DraftStoragePort;
   readonly createCommandId: () => string;
+  readonly frontend?: FrontendAdmission;
 }

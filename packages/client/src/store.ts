@@ -3,7 +3,7 @@ import type { CommandBody, Feed, Receipt, SubmitResult } from '@agentui/contract
 import { applyDelivery, decodeReceipt, DeliveryError } from './delivery.js';
 import type { DeliveryState } from './delivery.js';
 import { copyCanonicalJson, immutable, restore } from './local-state.js';
-import type { ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
+import type { FrontendJournal, FrontendRecoveryReference, ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
 type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
 type ReplayState<P> = { readonly delivery: DeliveryState<P> } &
@@ -47,7 +47,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     view = makeView();
     for (const listener of listeners) listener();
   }
-  const ready = drafts.load(scope).then(value => { local = restore(value, scope); publish(); });
+  const ready = drafts.load(scope).then(value => { local = restore(value, scope); options.frontend?.restore(journal); publish(); });
   void ready.catch(error => {
     connection = { kind: 'failed', reason: error instanceof Error ? error.message : 'Local storage load failed' };
     publish();
@@ -61,6 +61,17 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   async function persist(next: LocalRecords): Promise<void> {
     await drafts.save(next);
     local = next;
+  }
+  const journal: FrontendJournal = {
+    read: () => local.frontendSends,
+    unavailable: id => updateFrontend(id, 'unavailable-pending'),
+    acknowledged: id => updateFrontend(id, 'unavailable-confirmed'),
+  };
+  function updateFrontend(id: string, state: 'unavailable-pending' | 'unavailable-confirmed'): Promise<void> {
+    return enqueue(async () => {
+      await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id && entry.state !== 'unavailable-confirmed' ? { ...entry, state } : entry) }));
+      publish();
+    });
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
   function requireCompatible(): void {
@@ -81,6 +92,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
     requireCompatible();
     const id = entry.command.clientCommandId;
+    if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
@@ -91,6 +103,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
           publish();
         });
+        if (admission === 'known-absent' && entry.command.version === 2) await options.frontend?.rejected(id);
         return result;
       }
       if (result.kind !== 'receipt') throw new Error('Unsupported submit result');
@@ -107,17 +120,28 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     await ready;
     const entry = await enqueue(async () => {
       requireCompatible();
-      const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? { kind: 'send', text: local.draft } }));
-      if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
-      const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
-      await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
-      publish();
-      return created;
+      const id = createCommandId(), intent = body ?? { kind: 'send', text: local.draft };
+      if (local.outbox.some(value => value.command.clientCommandId === id) || local.frontendSends.some(value => value.command.clientCommandId === id) || Object.hasOwn(view.document.receipts, id)) throw new Error('Command ID generator reused an existing ID');
+      const capture = intent.kind === 'send' ? options.frontend?.capture(id) : null;
+      try {
+        const command = immutable(parseCommand(capture ? { version: 2, scope, clientCommandId: id, body: { ...intent, frontend: capture.offer } }
+          : { version: 1, scope, clientCommandId: id, body: intent }));
+        const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
+        const reference: FrontendRecoveryReference[] = command.version === 2 && options.frontend ? [{ command, ownerId: options.frontend.ownerId, state: 'retained' }] : [];
+        await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
+        if (capture && command.version === 2 && !capture.commit(command, journal)) {
+          await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id ? { ...entry, state: 'unavailable-pending' } : entry) }));
+          throw new Error('The capture session changed before sending. Reconnect to recover.');
+        }
+        publish();
+        return created;
+      } catch (error) { capture?.release(); throw error; }
     });
     return dispatch(entry, 'known-absent');
   }
   return {
     ready,
+    drained: () => saves,
     getSnapshot: () => view,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async setDraft(text) {
