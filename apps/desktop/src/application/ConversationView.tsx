@@ -2,7 +2,8 @@ import { canRetryObservation } from '@agentui/contracts';
 import type { ObservationStopReason } from '@agentui/contracts';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
-import type { ConversationActions, OpenConversation, ConversationObservation } from './application-controller.js';
+import type { ConversationActions, OpenConversation, ConversationObservation, PermissionState } from './application-controller.js';
+import { ConversationPermissions } from './ConversationPermissions.js';
 import { CommandRecovery } from './CommandRecovery.js';
 import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
@@ -32,8 +33,9 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, observation = null, agent = 'recorded', composerControls, transcript = { kind: 'default' } }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' } }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
+  readonly permissionState?: PermissionState;
   readonly observation?: ConversationObservation | null;
   readonly transcript?: TranscriptSelection;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
@@ -109,6 +111,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
           onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Checking for updates…' : 'Check for updates'}</button>
       </>}
     </div>}
+    {permissionState && <ConversationPermissions outbox={view.outbox} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationTranscript selection={transcript}
       conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
       context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
