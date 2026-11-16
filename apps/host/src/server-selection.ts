@@ -60,15 +60,17 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     if (db.prepare('UPDATE service_extension_boots SET outcome=? WHERE id=?').run(canonicalJson(outcome), boot.id).changes !== 1) throw new Error('Selection journal write failed');
     boot.outcome = outcome;
   }
+  function inspectNamespace(): 'empty' | 'journal' {
+    const tables = db.prepare("SELECT name, type FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
+    if (tables.length === 0) return 'empty';
+    if (tables.length !== journalTables.size || tables.some(table => table.type !== 'table' || typeof table.name !== 'string' || !journalTables.has(table.name.toLowerCase()))) throw new Error('Invalid selection journal');
+    const schema = db.prepare('SELECT * FROM service_extension_selection_schema').all();
+    if (schema.length !== 1 || schema[0]?.singleton !== 1 || schema[0]?.version !== 1 || schema[0]?.host !== deps.database.hostId) throw new Error('Invalid selection journal');
+    return 'journal';
+  }
   try {
     transaction(() => {
-      const tables = db.prepare("SELECT name, type FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
-      if (tables.length === 0) {
-        for (const [name, columns] of journalTables) db.exec(`CREATE TABLE ${name} (${columns})`);
-        db.prepare('INSERT INTO service_extension_selection_schema VALUES(1,1,?)').run(deps.database.hostId);
-      } else if (tables.length !== journalTables.size || tables.some(table => table.type !== 'table' || typeof table.name !== 'string' || !journalTables.has(table.name.toLowerCase()))) throw new Error();
-      const schema = db.prepare('SELECT * FROM service_extension_selection_schema').all();
-      if (schema.length !== 1 || schema[0]?.singleton !== 1 || schema[0]?.version !== 1 || schema[0]?.host !== deps.database.hostId) throw new Error();
+      if (inspectNamespace() === 'empty') return;
       for (const row of db.prepare('SELECT * FROM service_extension_selections ORDER BY revision').all()) {
         const selection = decodeSelection(row);
         if (selection.revision !== selections.size) throw new Error();
@@ -82,7 +84,31 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       }
     });
   } catch { invalid = true; }
-  async function accept(command: SelectionCommand, initial = false): Promise<OperationSummary> {
+  async function prepareSelection(command: SelectionCommand, expectedStoredRevision: number): Promise<Selection> {
+    if (closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
+    const manifests = await verifyArtifactPins(command.selection.artifacts, grants);
+    const receipt = canonicalJson({ version: 1, hostId: deps.database.hostId, selection: command.selection, grantsDigest, manifests });
+    if (Buffer.byteLength(receipt) > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
+    return { id: command.id, revision: count(expectedStoredRevision + 1), intent: canonicalJson(command), receipt: Buffer.from(receipt),
+      receiptDigest: digest(receipt), target: command.selection, grantsDigest };
+  }
+  function insertSelection(selection: Selection, expectedStoredRevision: number): void {
+    transaction(() => {
+      if (closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
+      if (expectedStoredRevision === -1) {
+        if (inspectNamespace() === 'empty') {
+          for (const [name, columns] of journalTables) db.exec(`CREATE TABLE ${name} (${columns})`);
+          db.prepare('INSERT INTO service_extension_selection_schema VALUES(1,1,?)').run(deps.database.hostId);
+        }
+        if (db.prepare('SELECT 1 FROM service_extension_boots LIMIT 1').get()) throw new Error('Invalid selection journal');
+      }
+      const storedRevision = db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1;
+      if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
+      if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
+    });
+    selections.set(selection.id, selection); desired = selection;
+  }
+  async function accept(command: SelectionCommand): Promise<OperationSummary> {
     if (invalid || closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
     const intent = canonicalJson(command), existing = selections.get(command.id);
     if (existing) {
@@ -90,21 +116,10 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       return summary(existing);
     }
     if (busy) throw new SelectionRefusal('busy');
-    if (!initial && command.expectedRevision !== desired?.revision) throw new SelectionRefusal('revision-conflict');
+    if (command.expectedRevision !== desired?.revision) throw new SelectionRefusal('revision-conflict');
     const work = Promise.resolve().then(async () => {
-      const manifests = await verifyArtifactPins(command.selection.artifacts, grants);
-      const receipt = canonicalJson({ version: 1, hostId: deps.database.hostId, selection: command.selection, grantsDigest,
-        manifests });
-      if (Buffer.byteLength(receipt) > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
-      const revision = initial ? 0 : count(command.expectedRevision + 1);
-      const selection: Selection = { id: command.id, revision, intent, receipt: Buffer.from(receipt), receiptDigest: digest(receipt), target: command.selection, grantsDigest };
-      transaction(() => {
-        if (closed || deps.isClosing()) throw new SelectionRefusal('unavailable');
-        const storedRevision = db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1;
-        if (storedRevision !== (initial ? -1 : command.expectedRevision)) throw new SelectionRefusal('revision-conflict');
-        if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, revision, intent, receipt, selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
-      });
-      selections.set(selection.id, selection); desired = selection;
+      const selection = await prepareSelection(command, command.expectedRevision);
+      insertSelection(selection, command.expectedRevision);
       return summary(selection);
     });
     busy = work;
@@ -114,8 +129,11 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     return { id: selection.id, revision: selection.revision, receiptDigest: selection.receiptDigest, artifacts: selection.target.artifacts.length,
       bootId: attempt?.id ?? null, outcome: attempt?.outcome ?? { kind: selection === desired ? 'staged' : 'superseded' } };
   }
-  if (!invalid && !desired) await accept({ id: 'startup', expectedRevision: 0, selection: { version: 1,
-    artifacts: deps.entries.map(({ directory, artifactId }) => ({ directory: resolve(directory), artifactId })) } }, true);
+  if (!invalid && !desired) {
+    const selection = await prepareSelection({ id: 'startup', expectedRevision: 0, selection: { version: 1,
+      artifacts: deps.entries.map(({ directory, artifactId }) => ({ directory: resolve(directory), artifactId })) } }, -1);
+    insertSelection(selection, -1);
+  }
   async function activate(replace: (selected: ProviderExtensionSelection) => Promise<ServerExtensionReplacement>): Promise<void> {
     if (invalid || !desired) return;
     const selection = desired, previous = boots.findLast(boot => boot.selection === selection.id);

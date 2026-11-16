@@ -412,6 +412,8 @@ Installed extensions appear in the app after later loader and activation work.
 
 The version 2 `serve --extensions` configuration requires an explicit `ownership` of `durable-artifacts` or `transient`. Durable ownership accepts only artifact entries. Transient ownership accepts installed packages, artifacts, mixed selections, and empty selections, and refuses selection commands. Version 1 and missing ownership are rejected. Transient startup, including startup without extension options, refuses any existing durable selection journal before native drivers, extension imports, or listeners start. Programmatic callers choose `extensions: { kind: 'durable-artifacts', entries }` or `extensions: { kind: 'transient', entries }` explicitly. Durable ownership refuses direct `replaceProviderExtensions` calls.
 
+On a fresh data directory, startup verifies the artifact pins and checks the receipt size before atomically creating the journal and accepting revision zero. Failed verification leaves no selection journal, so the directory remains eligible for transient startup. A complete, valid unseeded journal from an older version retains durable ownership and can be seeded by correcting the durable configuration. Partial or malformed journals are never repaired automatically.
+
 Run the built host's actual entry point to inspect and stage a selection:
 
 ```sh

@@ -87,6 +87,23 @@ async function fixture(t) {
   return { ...f, a, b, pin, directory, config, configuration, marker, pause, launch, cli, select, database, names, environment };
 }
 
+test('packaged CLI leaves a fresh namespace unclaimed after bad startup pins and accepts corrected pins', { timeout: 120000 }, async t => {
+  const f = await fixture(t);
+  await writeFile(f.config, JSON.stringify({ ...f.configuration, extensions: f.configuration.extensions.map(entry => ({ ...entry, artifactId: '0'.repeat(64) })) }));
+  const failure = await f.launch().exited;
+  assert.equal(failure.code, 1);
+  assert.match(failure.stderr, /Invalid artifact selection/);
+  assert.equal(await readFile(f.marker, 'utf8'), '');
+  assert.deepEqual(f.database(db => db.prepare("SELECT name FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all()), []);
+  await writeFile(f.config, JSON.stringify(f.configuration));
+  const host = f.launch(), ready = await host.ready;
+  assert.deepEqual(await f.names(ready), ['A']);
+  const status = await f.cli('extensions-status');
+  assert.equal(status.desiredRevision, 0);
+  assert.equal(status.runtime.id, 'startup');
+  assert.equal((await host.stop()).code, 0);
+});
+
 test('packaged CLI stages immutable artifact selections and restores them independently of launch pins', { timeout: 120000 }, async t => {
   const f = await fixture(t);
   let host = f.launch(), ready = await host.ready;

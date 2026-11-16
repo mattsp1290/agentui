@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
-import { createServerSelection } from '../../apps/host/build/tsc/server-selection.js';
+import { assertNoSelectionJournal, createServerSelection } from '../../apps/host/build/tsc/server-selection.js';
 
 function fixture(t) {
   const database = new DatabaseSync(':memory:');
   t.after(() => database.close());
-  const open = () => createServerSelection({ database: { database, hostId: 'selection-test-host' }, entries: [],
+  const open = (entries = []) => createServerSelection({ database: { database, hostId: 'selection-test-host' }, entries,
     runtime: () => ({ kind: 'empty' }), isClosing: () => false });
   return { database, open };
 }
@@ -16,6 +16,54 @@ function snapshot(database) {
   return { schema, rows: schema.filter(row => row.type === 'table').map(row =>
     database.prepare(`SELECT * FROM "${row.name.replaceAll('"', '""')}"`).all()) };
 }
+
+for (const existing of [false, true]) test(`failed startup verification preserves ${existing ? 'old unseeded journal ownership' : 'a fresh namespace'}`, async t => {
+  const { database, open } = fixture(t);
+  if (existing) {
+    await (await open()).close();
+    database.exec('DELETE FROM service_extension_selections');
+  }
+  const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
+  await assert.rejects(open([{ kind: 'artifact', directory: '/missing-selection-artifact', artifactId: 'a'.repeat(64), installations: [] }]), /Invalid artifact selection/);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
+  const access = { database, hostId: 'selection-test-host' };
+  if (existing) assert.throws(() => assertNoSelectionJournal(access), /requires durable artifact ownership/);
+  else assert.doesNotThrow(() => assertNoSelectionJournal(access));
+  const owner = await open();
+  assert.equal(owner.status().desiredRevision, 0);
+  assert.equal(owner.status().desired.id, 'startup');
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM service_extension_selections').get().count, 1);
+  await owner.close();
+});
+
+for (const [name, existing, change] of [
+  ['new unknown object', false, 'CREATE TABLE service_extension_future(value TEXT)'],
+  ['removed old marker', true, 'DELETE FROM service_extension_selection_schema'],
+  ['new orphan boot', true, `INSERT INTO service_extension_boots(id,selection,outcome) VALUES('orphan','startup','{"kind":"pending"}')`],
+]) test(`startup rechecks ${name} after verification without holding a transaction`, async t => {
+  const { database, open } = fixture(t);
+  if (existing) {
+    await (await open()).close();
+    database.exec('DELETE FROM service_extension_selections');
+  }
+  if (name === 'new orphan boot') database.exec('PRAGMA foreign_keys=OFF');
+  const opening = open();
+  database.exec(`BEGIN IMMEDIATE; ${change}; COMMIT`);
+  const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
+  await assert.rejects(opening, /Invalid selection journal/);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
+});
+
+test('competing fresh starts accept only one revision-zero selection', async t => {
+  const { database, open } = fixture(t);
+  const results = await Promise.allSettled([open(), open()]);
+  assert.equal(results.filter(result => result.status === 'fulfilled').length, 1);
+  assert.match(results.find(result => result.status === 'rejected').reason.message, /revision-conflict/);
+  assert.equal(database.prepare('SELECT COUNT(*) AS count FROM service_extension_selections').get().count, 1);
+  await results.find(result => result.status === 'fulfilled').value.close();
+});
 
 test('missing boot history withholds an existing selection without replay or schema repair', async t => {
   const { database, open } = fixture(t);
