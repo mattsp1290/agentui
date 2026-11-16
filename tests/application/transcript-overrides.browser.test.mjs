@@ -223,7 +223,8 @@ test('overridden live conversation retains approval, Stop and uncertain recovery
       return <ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} />; }
     createRoot(document.getElementById('root')).render(<App />);`, resolveDir: root, loader: 'jsx' }, bundle: true, write: false, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
   const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage();
-  await page.setContent('<div id="root"></div>'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  await page.route('http://localhost/fixture', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
+  await page.goto('http://localhost/fixture'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
   await page.getByRole('button', { name: 'Fail live transcript', exact: true }).waitFor();
   const previous = await editor(page).elementHandle(), stop = await page.getByRole('button', { name: 'Stop', exact: true }).elementHandle();
   const approval = await page.getByRole('region', { name: 'Approval required', exact: true }).elementHandle();
@@ -310,7 +311,8 @@ test('StrictMode delayed same-array reactivation never remounts an obsolete tran
     bundle: true, write: false, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"development"' } });
   const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage(), errors = [];
   page.on('pageerror', error => errors.push(error.message));
-  await page.setContent('<div id="root"></div>'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  await page.route('http://localhost/fixture', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
+  await page.goto('http://localhost/fixture'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
   await wait(() => page.evaluate(() => window.activations === 1), 'StrictMode activation');
   assert.equal(await page.evaluate(() => window.loads), 2);
   await page.evaluate(() => window.finish[1](false)); await page.getByText('Owner 1', { exact: true }).waitFor();

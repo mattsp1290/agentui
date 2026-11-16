@@ -69,7 +69,8 @@ test('transcript selection requires a ready owner with a captured component', ()
   config: 'apps/desktop/tsconfig.json',
   prefix: `
 import type { TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
-export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, fail(_error: unknown) {},
+declare const generation: import('@agentui/sdk/tools').FrontendToolGeneration;
+export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, generation, fail(_error: unknown) {},
   presentation: { modules: [], transcript: () => null } } as const;
 export const selection: TranscriptSelection = { kind: 'override', owner };
 export function component(value: TranscriptSelection) { if (value.kind === 'override') return value.owner.presentation.transcript; return null; }

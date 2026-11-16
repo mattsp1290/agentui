@@ -1,6 +1,7 @@
 # Author an extension
 
 The existing `@agentui/sdk` package exposes server contracts at its root and UI contracts at `@agentui/sdk/react`.
+The `@agentui/sdk/react-tools` entry adapts captured UI contributions to frontend tool generations.
 Installed server code runs with host process privileges.
 Installed UI code runs with client process privileges.
 Extensions are full trust. There is no sandbox or isolation promise.
@@ -306,24 +307,35 @@ The UI context exposes `frontendTools.add(tool)`.
 Each contribution supplies a protocol tool definition, a decoder from `unknown`, and an async handler returning a string.
 The handler receives the pinned conversation scope.
 The factory supplies the validated namespace and registration sink in an immutable activation context.
-Import the runtime from `@agentui/sdk/tools` when implementing an activation owner:
+The `@agentui/sdk/react-tools` adapter includes tool validation.
+The root and React presentation entries stay lightweight.
+Import the adapter and the pin runtime from their separate entries:
 
 ```ts
-const { generation, contributions } = await createFrontendToolGeneration({
+import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';
+import { pinFrontendTools } from '@agentui/sdk/tools';
+
+const { generation, presentation } = await createUiExtensionGeneration({
   namespace: manifest.namespace, generation: 'activation-1', platform: 'desktop',
-  accept: value => { validateUiExtensionContributions(value); return value; },
   activate: context => entry.activate(context),
 });
 const pin = pinFrontendTools({ generations: [generation], platform: 'desktop', run, capabilities });
 try {
-  const outcome = await pin.invoke(`${manifest.namespace}__text_length`, { text: 'hello' });
+  const binding = pin.bindings.find(value => value.name === `${manifest.namespace}__text_length`);
+  if (binding) {
+    const outcome = await pin.invoke(binding.name, { text: 'hello' }, binding.activationId);
+  }
 } finally {
   pin.release();
 }
 await generation.retire();
 ```
 
-Use `contributions.modules` to render validated modules and handle the returned tool outcome.
+Render `presentation.modules` and `presentation.transcript`, which contain captured presentation values.
+The UI adapter reads producer fields once and transfers its captured disposer to the generation.
+The returned presentation contains no disposal method.
+This activation support does not advertise tools to backends or deliver tool calls from the host.
+
 - **Creation.** If activation throws or returns a value without a callable disposer, the callback owns cleanup of any partial activation.
 Otherwise, creation captures its disposer once, then awaits the acceptance decoder.
 The decoder may return the original contribution or a transformed contribution.

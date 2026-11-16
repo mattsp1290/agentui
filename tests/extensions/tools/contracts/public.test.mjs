@@ -169,3 +169,21 @@ test('tools import survives a URL with a getter-only hash', () => {
     root,
   );
 });
+
+
+test('react-tools opts into validator runtime while its declarations need no platform globals', async () => {
+  const result = await build({
+    stdin: { contents: "import { createUiExtensionGeneration } from '@agentui/sdk/react-tools'; console.log(createUiExtensionGeneration);", resolveDir: root },
+    bundle: true, platform: 'node', format: 'esm', write: false, metafile: true, external: ['react'],
+  });
+  assert.equal(Object.keys(result.metafile.inputs).some(path => path.includes('@cfworker/json-schema')), true);
+  await assertCompileCases({ config: join(root, 'packages/sdk/tsconfig.react.json'),
+    prefix: "import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';\n",
+    cases: [
+      ["const active = await createUiExtensionGeneration({ namespace: 'demo', generation: 'one', platform: 'desktop', activate() { return { modules: [], dispose() {} }; } }); void active.generation.retire; void active.presentation.modules;", null],
+      ["const active = await createUiExtensionGeneration({ namespace: 'demo', generation: 'one', platform: 'desktop', activate() { return { modules: [], dispose() {} }; } }); active.presentation.dispose();", /Property 'dispose' does not exist/u],
+      ["void createUiExtensionGeneration; void document;", /Cannot find name 'document'/u],
+      ["void createUiExtensionGeneration; void process;", /Cannot find name 'process'/u],
+    ],
+  });
+});
