@@ -56,11 +56,11 @@ activate(context: ServerExtensionContext) {
 const running = await startBrowserHost({
   directory, assetsDirectory,
   agentStartup: { kind: 'extensions' },
-  providerExtensions: [{ manifest, entry, installations: [{
+  extensions: { kind: 'transient', entries: [{ manifest, entry, installations: [{
     id: 'service', instance: presentation.instance, service: 'https://service.example',
     expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: 'operator-revision-1', resolve: readOperatorSecret },
-  }] }],
+  }] }] },
 });
 const catalog = await running.discoverProviders(); // Private server catalog; metadata exposes safe agent descriptors.
 await running.close();

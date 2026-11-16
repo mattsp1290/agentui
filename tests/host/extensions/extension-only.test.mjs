@@ -11,7 +11,7 @@ import { describeAgent } from '../../../apps/host/build/tsc/agents.js';
 import { entry, options, startBrowserHost } from './fixtures.mjs';
 
 async function open(t, selected, configured = options(t), cleanupFails = false) {
-  const host = await startBrowserHost({ ...configured, agentStartup: { kind: 'extensions' }, accessMode: 'trusted', providerExtensions: selected.map(value => value.value) });
+  const host = await startBrowserHost({ ...configured, agentStartup: { kind: 'extensions' }, accessMode: 'trusted', extensions: { kind: 'transient', entries: selected.map(value => value.value) } });
   t.after(async () => { if (cleanupFails) await assert.rejects(host.close(), /shutdown failed/); else await host.close(); });
   const client = createBrowserConnection({ fetch: (path, init) => fetch(host.origin + path, { ...init, headers: { ...init.headers, Origin: host.origin } }) });
   const inspect = action => { const db = new DatabaseSync(join(configured.directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };

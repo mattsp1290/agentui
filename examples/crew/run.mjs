@@ -18,8 +18,8 @@ const running = await startBrowserHost({ directory: resolve(config.directory), p
   assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)),
   hostArtifactDirectory: fileURLToPath(new URL('../../apps/host/dist/', import.meta.url)),
   agentStartup: config.nativeConfig ? { kind: 'configured', configuration: readAgentConfiguration(resolve(config.nativeConfig)) } : { kind: 'extensions' },
-  providerExtensions: [{ ...extension, installations: [{ id: 'member', instance, service: config.service,
+  extensions: { kind: 'transient', entries: [{ ...extension, installations: [{ id: 'member', instance, service: config.service,
     expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: config.credentialRevision,
-      resolve: async () => (await readFile(resolve(config.tokenFile), 'utf8')).trim() } }] }] });
+      resolve: async () => (await readFile(resolve(config.tokenFile), 'utf8')).trim() } }] }] } });
 process.stdout.write(`AgentUI with Crew is ready at ${running.origin}/browser.html\n`);
 for (const signal of ['SIGINT', 'SIGTERM']) process.once(signal, () => { void running.close().catch(() => { process.exitCode = 1; }); });

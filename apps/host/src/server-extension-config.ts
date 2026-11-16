@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { hex, identifier, record } from '@agentui/contracts/decode';
 import { providerIdentity } from '@agentui/host';
-import { parseServerCustomizationArtifact, serverCatalog } from '@agentui/host/customization';
 import { EXTENSION_SDK_VERSION, parseExtensionManifest } from '@agentui/sdk';
 import { normalizeProviderInstallations } from './provider-credentials.js';
 import type { ProviderInstallation } from './provider-credentials.js';
@@ -47,16 +46,9 @@ export function takeServerExtensionConfiguration(path: string, environment: Reco
       const directory = resolve(dirname(filename), directoryName);
       if (candidate.kind === 'artifact') {
         const artifactId = hex(selected.artifactId, 64);
-        const artifact = parseServerCustomizationArtifact(JSON.parse(readFileSync(join(directory, 'customization.json'), 'utf8')));
-        if (artifact.artifactId !== artifactId) throw new Error('Invalid artifact selection');
-        const manifests = serverCatalog(artifact.packages, artifact.sdkVersion).manifests;
-        for (const manifest of manifests) {
-          if (namespaces.has(manifest.namespace)) throw new Error('Invalid manifest selection');
-          namespaces.add(manifest.namespace);
-        }
-        const installations = selected.installations.map((value: unknown) => installation(value, environment, variables));
-        for (const grant of installations) if (!manifests.some(manifest => manifest.namespace === grant.instance.namespace)) throw new Error('Invalid installation');
-        for (const manifest of manifests) normalizeProviderInstallations(manifest.namespace, installations.filter(grant => grant.instance.namespace === manifest.namespace));
+        const grants = selected.installations.map((value: unknown) => installation(value, environment, variables));
+        const installations = [...new Set(grants.map(grant => grant.instance.namespace))].flatMap(namespace =>
+          normalizeProviderInstallations(namespace, grants.filter(grant => grant.instance.namespace === namespace)));
         return { kind: 'artifact', directory, artifactId, installations };
       }
       const metadata = record(JSON.parse(readFileSync(join(directory, 'package.json'), 'utf8')));

@@ -41,7 +41,7 @@ For UI activation, check the lifetime first and retain it for cleanup before val
 Behaviour checks accept class instances, accessors, and callable objects with the required fields.
 They check field shapes, not arbitrary JavaScript behaviour.
 A server activation likewise returns required disposal, checked with `validateExtensionLifetime`.
-The host accepts already imported server entries through `startBrowserHost({ agentStartup: { kind: 'extensions' }, providerExtensions })`.
+The host accepts already imported server entries through `startBrowserHost({ agentStartup: { kind: 'extensions' }, extensions: { kind: 'transient', entries } })`.
 It stages all registrations before connecting, rejects duplicate contributions or full instances, and closes registration when activation settles.
 Failed activation disposes earlier valid lifetimes; an entry that throws before returning a valid lifetime owns its partial activation cleanup.
 
@@ -49,7 +49,7 @@ Failed activation disposes earlier valid lifetimes; an entry that throws before 
 
 ### Contract
 
-`startBrowserHost` accepts imported `providerExtensions` and installed entries with this shape:
+`startBrowserHost` accepts imported entries and installed entries inside `extensions: { kind: 'transient', entries }`. An installed entry has this shape:
 
 ```ts
 {
@@ -371,3 +371,32 @@ WKWebView and native Hermes have not been qualified.
 This contract does not implement frontend-tool delivery, authorization, durable call claims, stream parsing, or protocol continuation.
 It does not by itself justify advertising `tools.clientProvided`.
 Installed extensions appear in the app after later loader and activation work.
+
+
+### Durable selection for the next startup
+
+Artifact-only `serve --extensions` configuration uses durable ownership. Installed or mixed configuration uses transient ownership and refuses selection commands. Programmatic callers choose `extensions: { kind: 'durable-artifacts', entries }` or `extensions: { kind: 'transient', entries }` explicitly. Durable ownership refuses direct `replaceProviderExtensions` calls.
+
+Run the built host's actual entry point to inspect and stage a selection:
+
+```sh
+node apps/host/dist/main.js extensions-status --data-dir /private/host
+node apps/host/dist/main.js extensions-select --data-dir /private/host --operation build-b --expected-revision 0 --selection /build/selection.json
+node apps/host/dist/main.js extensions-status --data-dir /private/host --operation build-b --receipt /build/receipt.json
+```
+
+The selection file contains a version and ordered, absolute artifact pins:
+
+```json
+{"version":1,"artifacts":[{"directory":"/build/artifact-b","artifactId":"<64 lowercase hex characters>"}]}
+```
+
+Use `{"version":1,"artifacts":[]}` to disable every artifact at the next startup. Unused startup grants remain in the binding. A selection cannot edit grants or add authority. Keep provider instance identities unchanged when only artifact code changes.
+
+Read `desiredRevision` before starting an external build and submit that revision when the build finishes. A newer accepted selection rejects the stale build. Caller operation IDs use 1–96 ASCII letters, digits, dots, underscores, or hyphens and start with a letter or digit. `startup` identifies the initial revision-zero selection. Repeating an identical operation returns its recorded outcome; changing its intent refuses the reused ID. A socket timeout leaves admission uncertain. Query or resend the same ID before deciding what to do next.
+
+A successful select reports `staged`. The current provider generation continues until the process restarts. Startup loads the durable pins even if the original launch artifact has been removed. The configured public grants must still match and credentials must be supplied again. The parser consumes environment credentials once and never stores credential values, resolver functions, or handles in the selection journal.
+
+Each startup journals a separate activation attempt before executing artifact code. `applied` and `applied-empty` name successful historical boot outcomes. `runtime` describes the current process separately. An interrupted, failed, or grant-mismatched boot withholds providers. A new explicit selection with a new operation ID authorizes another startup. Ordinary restart reloads a settled applied target. There is no live apply, retry command, queue, or automatic fallback in this increment.
+
+The local control socket limits requests to 4096 UTF-8 bytes and replies to 16000 bytes, including framing. Summaries omit paths and full manifests. Receipt export reads digest-addressed base64 chunks of at most 8192 raw bytes, validates contiguous offsets and the final SHA-256, and writes the complete JSON receipt. The journal retains complete immutable artifact manifests and source provenance. Receipts exceeding 16 MiB are refused before staging. Malformed journals expose `journal-invalid` and do not activate providers or accept new selections.

@@ -20,10 +20,46 @@ type Prepared = {
   readonly manifests: readonly ExtensionManifest[];
   readonly installations: readonly ProviderInstallation[];
 } & (
-  | { readonly kind: 'artifact'; readonly verified: VerifiedServerCustomizationArtifact }
+  | { readonly kind: 'artifact'; readonly directory: string; readonly verified: VerifiedServerCustomizationArtifact }
   | { readonly kind: 'installed'; readonly directory: string; readonly manifest: ExtensionManifest }
   | { readonly kind: 'entry'; readonly manifest: ExtensionManifest; readonly entry: ServerExtensionEntry }
 );
+
+type ArtifactExtension = Extract<BrowserProviderExtension, { kind: 'artifact' }>;
+type PreparedArtifact = Extract<Prepared, { kind: 'artifact' }>;
+export function prepareProviderExtensions(selected: readonly ArtifactExtension[], classify?: (failure: 'load' | 'authorization') => void, grants?: readonly ProviderInstallation[]): Promise<readonly PreparedArtifact[]>;
+export function prepareProviderExtensions(selected: readonly BrowserProviderExtension[], classify?: (failure: 'load' | 'authorization') => void, grants?: readonly ProviderInstallation[]): Promise<readonly Prepared[]>;
+export async function prepareProviderExtensions(selected: readonly BrowserProviderExtension[],
+  classify: (failure: 'load' | 'authorization') => void = () => {}, grants?: readonly ProviderInstallation[]): Promise<readonly Prepared[]> {
+  const prepared: Prepared[] = [];
+  const namespaces = new Set<string>();
+  for (const extension of selected) {
+    classify('load');
+    let item: Prepared;
+    if (extension.kind === 'artifact') {
+      const directory = extension.directory;
+      const verified = await readServerCustomizationArtifact({ directory, expected: serverArtifactExpectation(extension.artifactId) });
+      const manifests = serverCatalog(verified.manifest.packages, verified.manifest.sdkVersion).manifests;
+      item = { kind: 'artifact', directory, verified, manifests,
+        installations: grants === undefined ? extension.installations : grants.filter(grant =>
+          manifests.some(manifest => manifest.namespace === grant.instance.namespace)) };
+    } else {
+      const manifest = parseExtensionManifest(extension.manifest);
+      item = extension.kind === 'installed' ? { kind: 'installed', directory: extension.directory, manifest,
+        manifests: [manifest], installations: extension.installations } : { kind: 'entry', entry: extension.entry, manifest,
+        manifests: [manifest], installations: extension.installations };
+    }
+    for (const manifest of item.manifests) {
+      if (manifest.sdkVersion !== EXTENSION_SDK_VERSION || !manifest.entries.some(entry => entry.kind === 'server') || namespaces.has(manifest.namespace)) throw new Error();
+      namespaces.add(manifest.namespace);
+      classify('authorization');
+      normalizeProviderInstallations(manifest.namespace, item.installations.filter(grant => grant.instance.namespace === manifest.namespace));
+    }
+    if (item.installations.some(grant => !item.manifests.some(manifest => manifest.namespace === grant.instance.namespace))) throw new Error();
+    prepared.push(item);
+  }
+  return prepared;
+}
 
 export function providerExtensionSource(database: AccessDatabase, selected: readonly BrowserProviderExtension[]): ServerExtensionSource {
   return { async prepare() {
@@ -36,30 +72,7 @@ export function providerExtensionSource(database: AccessDatabase, selected: read
     };
     let failure: 'load' | 'authorization' = 'load';
     try {
-      const prepared: Prepared[] = [];
-      const namespaces = new Set<string>();
-      for (const extension of selected) {
-        failure = 'load';
-        let item: Prepared;
-        if (extension.kind === 'artifact') {
-          const verified = await readServerCustomizationArtifact({ directory: extension.directory, expected: serverArtifactExpectation(extension.artifactId) });
-          item = { kind: 'artifact', verified, manifests: serverCatalog(verified.manifest.packages, verified.manifest.sdkVersion).manifests,
-            installations: extension.installations };
-        } else {
-          const manifest = parseExtensionManifest(extension.manifest);
-          item = extension.kind === 'installed' ? { kind: 'installed', directory: extension.directory, manifest,
-            manifests: [manifest], installations: extension.installations } : { kind: 'entry', entry: extension.entry, manifest,
-            manifests: [manifest], installations: extension.installations };
-        }
-        for (const manifest of item.manifests) {
-          if (manifest.sdkVersion !== EXTENSION_SDK_VERSION || !manifest.entries.some(entry => entry.kind === 'server') || namespaces.has(manifest.namespace)) throw new Error();
-          namespaces.add(manifest.namespace);
-          failure = 'authorization';
-          normalizeProviderInstallations(manifest.namespace, item.installations.filter(grant => grant.instance.namespace === manifest.namespace));
-        }
-        if (item.installations.some(grant => !item.manifests.some(manifest => manifest.namespace === grant.instance.namespace))) throw new Error();
-        prepared.push(item);
-      }
+      const prepared = await prepareProviderExtensions(selected, value => { failure = value; });
       failure = 'load';
       for (const item of prepared) {
         const entries = item.kind === 'artifact' ? await loadServerArtifact(item.verified, serverArtifactSdk())

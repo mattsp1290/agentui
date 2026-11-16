@@ -1,13 +1,20 @@
 import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import type { Socket } from 'node:net';
-import { record, identifier, count } from '@agentui/contracts/decode';
+import { record, identifier, count, hex } from '@agentui/contracts/decode';
+import { operationId, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
+import type { SelectionCommand, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import { SelectionRefusal } from './server-selection.js';
+import type { ServerSelection } from './server-selection.js';
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
 import { parseInvitationCode } from './native-wire.js';
 
-export type ControlRequest = { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
-type ControlValue = { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
+export type ControlRequest = { readonly op: 'extensions-select'; readonly command: SelectionCommand }
+  | { readonly op: 'extensions-status'; readonly id: string | null }
+  | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
+  | { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
+type ControlValue = OperationSummary | SelectionStatus | ReceiptChunk | { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
 type ControlResponse = { readonly ok: true; readonly value: ControlValue } | { readonly ok: false; readonly error: string };
 export function parseControlRequest(value: unknown): ControlRequest {
   const input = record(value);
@@ -17,6 +24,9 @@ export function parseControlRequest(value: unknown): ControlRequest {
       record(input, input.after === undefined ? ['op'] : ['op', 'after']);
       return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
     }
+    case 'extensions-select': record(input, ['op', 'command']); return { op: input.op, command: parseSelectionCommand(input.command) };
+    case 'extensions-status': record(input, ['op', 'id']); return { op: input.op, id: input.id === null ? null : operationId(input.id) };
+    case 'extensions-receipt': record(input, ['op', 'digest', 'offset']); return { op: input.op, digest: hex(input.digest, 64), offset: count(input.offset) };
     case 'revoke': record(input, ['op', 'id']); return { op: 'revoke', id: identifier(input.id) };
     default: throw new Error('Unknown control operation');
   }
@@ -27,6 +37,9 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
   record(input, ['ok', 'value']);
   if (input.ok !== true) throw new Error('Invalid control response');
   switch (request.op) {
+    case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
+    case 'extensions-status': return { ok: true, value: parseSelectionStatus(input.value) };
+    case 'extensions-receipt': return { ok: true, value: parseReceiptChunk(input.value) };
     case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
     case 'invite-native': {
       const invitation = record(input.value, ['hostId', 'code']);
@@ -43,17 +56,23 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
     }
   }
 }
-export function formatControlResponse(response: ControlResponse): string { return `${JSON.stringify(response)}\n`; }
+export function formatControlResponse(response: ControlResponse): string {
+  const line = `${JSON.stringify(response)}\n`;
+  if (Buffer.byteLength(line) > 16_000) throw new Error('Host control message too large');
+  return line;
+}
 function readLine(socket: Socket, limit: number): Promise<unknown> {
   return new Promise((resolve, reject) => {
-    let input = '';
+    const chunks: Buffer[] = [];
+    let bytes = 0;
     socket.setTimeout(5000, () => socket.destroy(new Error('Host control request timed out')));
     const data = (chunk: Buffer) => {
-      input += chunk.toString('utf8');
-      if (Buffer.byteLength(input) > limit) { socket.destroy(new Error('Host control message too large')); return; }
-      if (!input.includes('\n')) return;
+      bytes += chunk.length;
+      chunks.push(chunk);
+      if (bytes > limit) { socket.destroy(new Error('Host control message too large')); return; }
+      if (!chunk.includes(10)) return;
       socket.off('data', data);
-      try { resolve(JSON.parse(input)); } catch (error) { reject(error); }
+      try { resolve(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))); } catch (error) { reject(error); }
     };
     socket.on('data', data);
     socket.once('error', reject);
@@ -61,28 +80,36 @@ function readLine(socket: Socket, limit: number): Promise<unknown> {
   });
 }
 export async function requestControl(path: string, request: ControlRequest): Promise<ControlResponse> {
+  const line = `${JSON.stringify(request)}\n`;
+  if (Buffer.byteLength(line) > 4096) throw new Error('Host control message too large');
   const socket = createConnection(path);
   const response = readLine(socket, 16_000);
-  socket.once('connect', () => socket.write(`${JSON.stringify(request)}\n`));
+  socket.once('connect', () => socket.write(line));
   try { return parseControlResponse(request, await response); }
   finally { socket.destroy(); }
 }
-export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean) {
+export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection?: ServerSelection) {
   if (existsSync(path)) unlinkSync(path);
   const server = createServer(socket => {
     void (async () => {
       try {
         const request = parseControlRequest(await readLine(socket, 4096));
         if (isClosing()) throw new Error('Host is shutting down');
+        if (request.op.startsWith('extensions-') && !selection) {
+          socket.end(formatControlResponse({ ok: false, error: 'Selection requires durable artifact ownership' })); return;
+        }
         let value: ControlValue;
         switch (request.op) {
+          case 'extensions-select': if (!selection) throw new Error(); value = await selection.select(request.command); break;
+          case 'extensions-status': if (!selection) throw new Error(); value = selection.status(request.id ?? undefined); break;
+          case 'extensions-receipt': if (!selection) throw new Error(); value = selection.receipt(request.digest, request.offset); break;
           case 'invite': value = { code: access.invite('browser-development') }; break;
           case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;
           case 'devices': value = access.devices(request.after); break;
           case 'revoke': access.revoke(request.id); feeds.closePrincipal(request.id); value = null; break;
         }
         socket.end(formatControlResponse({ ok: true, value }));
-      } catch { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: 'Control operation refused' })); }
+      } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: error instanceof SelectionRefusal ? error.message : 'Control operation refused' })); }
     })();
   });
   await new Promise<void>((resolve, reject) => {
