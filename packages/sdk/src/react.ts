@@ -32,11 +32,18 @@ export interface ConversationModule {
 
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
+  readonly overrides?: { readonly transcript?: ComponentType<ConversationModuleProps> };
 }
 export interface UiExtensionEntry<K extends FrontendPlatform> {
   readonly kind: K;
   readonly sdkVersion: typeof EXTENSION_SDK_VERSION;
   activate(context: UiExtensionContext): UiExtensionContributions | Promise<UiExtensionContributions>;
+}
+
+function validateComponent(component: unknown): void {
+  const wrapper = typeof component === 'object' && component !== null && '$$typeof' in component &&
+    typeof component.$$typeof === 'symbol' && [Symbol.for('react.memo'), Symbol.for('react.forward_ref'), Symbol.for('react.lazy')].includes(component.$$typeof);
+  if (typeof component !== 'function' && !wrapper) throw new Error('Expected React component');
 }
 
 /** IDs are local to siblings. Action identity includes namespace and the entire module path. */
@@ -56,10 +63,7 @@ export function validateConversationModules(value: unknown): asserts value is re
     for (const moduleValue of value) {
       if (ancestors.has(moduleValue)) throw new Error('Cyclic module tree');
       const module = named(moduleValue, ids);
-      const component = module.component;
-      const wrapper = typeof component === 'object' && component !== null && '$$typeof' in component &&
-        typeof component.$$typeof === 'symbol' && [Symbol.for('react.memo'), Symbol.for('react.forward_ref'), Symbol.for('react.lazy')].includes(component.$$typeof);
-      if (typeof component !== 'function' && !wrapper) throw new Error('Expected module component');
+      validateComponent(module.component);
       if (module.actions !== undefined) {
         if (!Array.isArray(module.actions)) throw new Error('Expected action array');
         const actions = new Set<string>();
@@ -79,5 +83,11 @@ export function validateConversationModules(value: unknown): asserts value is re
 
 export function validateUiExtensionContributions(value: unknown): asserts value is UiExtensionContributions {
   validateExtensionLifetime(value);
-  validateConversationModules(behaviour(value).modules);
+  const contributions = behaviour(value);
+  validateConversationModules(contributions.modules);
+  if (contributions.overrides !== undefined) {
+    const overrides = behaviour(contributions.overrides);
+    if (Reflect.ownKeys(overrides).some(key => key !== 'transcript')) throw new Error('Unknown transcript override slot');
+    if (overrides.transcript !== undefined) validateComponent(overrides.transcript);
+  }
 }

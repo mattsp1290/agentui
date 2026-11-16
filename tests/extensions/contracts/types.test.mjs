@@ -13,6 +13,7 @@ import type { UiExtensionContext } from '@agentui/sdk/react';
 export const ui: UiExtensionContext = { namespace: 'notes', frontendTools: { add() {} } };
 ui.frontendTools.add(textTool);
 export const wrapped: ConversationModule = { id: 'memo', label: 'Memo', component: memo(() => null) };
+export const transcript: UiExtensionContributions = { modules: [], overrides: { transcript: memo(({ activity }: ConversationModuleProps) => createElement('p', null, activity.domain.messages.length)) }, dispose() {} };
 export const action: ModuleAction = { id: 'cancel', label: 'Stop', run: ({ commands }) => commands.cancel('run') };
 `,
   cases: [
@@ -21,6 +22,10 @@ export const action: ModuleAction = { id: 'cancel', label: 'Stop', run: ({ comma
     ["export const bad: ModuleAction = { id: 'x', label: 'X', async run() {} };", /not assignable/u],
     ["ui.frontendTools.add<{ count: number }>(textTool);", /not assignable/u],
     ["export const bad: FrontendToolContribution<{ text: string }> = { ...textTool, async execute() { return 3; } };", /not assignable/u],
+    ["export const bad: UiExtensionContributions = { overrides: {}, dispose() {} };", /'modules' is missing/u],
+    ["export const bad: UiExtensionContributions = { modules: [], overrides: {} };", /'dispose' is missing/u],
+    ["export const bad: UiExtensionContributions = { modules: [], overrides: { composer: () => null }, dispose() {} };", /does not exist/u],
+    ["export const bad: UiExtensionContributions = { modules: [], overrides: { transcript: ({ wrong }: { wrong: string }) => createElement('p', null, wrong) }, dispose() {} };", /not assignable/u],
     ["ui.credentials;", /Property 'credentials' does not exist/u],
     ["ui.providers;", /Property 'providers' does not exist/u],
     ["export const bad: ExtensionManifest = { ...manifest, entries: [] };", /not assignable/u],

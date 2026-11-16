@@ -1,26 +1,11 @@
-import { Component, useEffect, useRef, useState, type ReactNode } from 'react';
+import { Suspense, useEffect, useRef, useState } from 'react';
 import { useConversation } from '@agentui/client/react';
-import { checkExtensionEntrypoint, validateExtensionLifetime, type ExtensionManifest } from '@agentui/sdk';
-import { validateUiExtensionContributions, type ConversationModule, type ConversationModuleProps, type ModuleAction, type UiExtensionContributions, type UiExtensionEntry } from '@agentui/sdk/react';
+import type { ConversationModule, ConversationModuleProps, ModuleAction, UiExtensionContributions } from '@agentui/sdk/react';
 import type { SubmitResult } from '@agentui/contracts';
 import { Button } from '@agentui/ui-primitives/desktop';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { conversationResponding } from './responding.js';
-
-export interface DesktopCustomization {
-  readonly manifest: ExtensionManifest;
-  load(): Promise<{ readonly default: unknown }>;
-}
-type Activation = { readonly kind: 'loading' } | { readonly kind: 'ready'; readonly value: UiExtensionContributions } |
-  { readonly kind: 'failed'; readonly message: string };
-const message = (error: unknown) => error instanceof Error ? error.message : 'Customization failed.';
-
-class ModuleBoundary extends Component<{ readonly children: ReactNode; readonly fail: (error: unknown) => void }, { readonly failed: boolean }> {
-  override state = { failed: false };
-  static getDerivedStateFromError() { return { failed: true }; }
-  override componentDidCatch(error: unknown) { this.props.fail(error); }
-  override render() { return this.state.failed ? null : this.props.children; }
-}
+import { CustomizationBoundary, customizationMessage as message, type NamespaceActivation } from './DesktopCustomizations.js';
 
 function actionOutcome(result: SubmitResult): string {
   if (result.kind === 'rejected') return `Submission rejected. ${result.reason}`;
@@ -87,52 +72,18 @@ function ConversationModules({ value, active, actions, enabled, agent }: {
   </fieldset>;
 }
 
-export function CustomizationModules({ customization, active, actions, enabled, agent }: {
-  readonly customization: DesktopCustomization; readonly active: OpenConversation | null;
+export function CustomizationModules({ owner, active, actions, enabled, agent }: {
+  readonly owner: NamespaceActivation; readonly active: OpenConversation | null;
   readonly actions: ConversationActions | null; readonly enabled: boolean; readonly agent: string;
 }) {
-  const [activation, setActivation] = useState<Activation>({ kind: 'loading' });
-  const fail = useRef<(error: unknown) => void>(() => {});
-  useEffect(() => {
-    let removed = false;
-    let dispose: (() => void | Promise<void>) | undefined;
-    const cleanup = async () => {
-      const release = dispose;
-      dispose = undefined;
-      try { await release?.(); }
-      catch (error) { if (!removed) setActivation({ kind: 'failed', message: `Customization cleanup failed. ${message(error)}` }); }
-    };
-    const failed = (error: unknown) => {
-      if (!removed) setActivation({ kind: 'failed', message: message(error) });
-      void cleanup();
-    };
-    fail.current = failed;
-    void (async () => {
-      try {
-        const imported = await customization.load();
-        if (removed) return;
-        const compatibility = checkExtensionEntrypoint(customization.manifest, 'desktop', imported.default);
-        if (compatibility.kind !== 'compatible') throw new Error(compatibility.reason);
-        const entry = imported.default as UiExtensionEntry<'desktop'>;
-        const value: unknown = await entry.activate({ namespace: customization.manifest.namespace,
-          frontendTools: { add() { throw new Error('Frontend tools are not supported by this local build.'); } } });
-        validateExtensionLifetime(value);
-        const release = value.dispose;
-        dispose = () => release.call(value);
-        if (removed) { await cleanup(); return; }
-        validateUiExtensionContributions(value);
-        setActivation({ kind: 'ready', value });
-      } catch (error) { failed(error); }
-    })();
-    return () => { removed = true; void cleanup(); };
-  }, [customization]);
-  return <aside className="customization-panel" aria-label={`Customization ${customization.manifest.namespace}`}
-    data-customization-namespace={customization.manifest.namespace} data-customization-state={activation.kind}>
-    {activation.kind === 'loading' && <p role="status">Loading custom tools…</p>}
-    {activation.kind === 'failed' && <p role="alert">Custom tools could not load. {activation.message} Use Restore default view to continue without them.</p>}
-    {activation.kind === 'ready' && active && actions && <ModuleBoundary fail={error => fail.current(error)}>
-      <ConversationModules key={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
-        value={activation.value} active={active} actions={actions} enabled={enabled} agent={agent} />
-    </ModuleBoundary>}
+  return <aside className="customization-panel" aria-label={`Customization ${owner.namespace}`}
+    data-customization-namespace={owner.namespace} data-customization-state={owner.kind}>
+    {owner.kind === 'loading' && <p role="status">Loading custom tools…</p>}
+    {owner.kind === 'failed' && <p role="alert">Custom tools could not load. {owner.message} Use Restore default view to continue without them.</p>}
+    {owner.kind === 'ready' && active && actions && <Suspense fallback={<p role="status">Loading custom tools…</p>}>
+      <CustomizationBoundary key={`${owner.lifetime}/${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`} fail={owner.fail} fallback={null}>
+        <ConversationModules value={owner.value} active={active} actions={actions} enabled={enabled} agent={agent} />
+      </CustomizationBoundary>
+    </Suspense>}
   </aside>;
 }

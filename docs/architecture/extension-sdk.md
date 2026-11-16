@@ -260,6 +260,31 @@ Navigation gives the next conversation fresh props and feedback; late results st
 A descendant render failure removes only its extension, with its captured disposer called once.
 Restore default view preserves the ordinary conversation and composer.
 
+UI contributions may also replace the desktop transcript with `overrides: { transcript: MyTranscript }`.
+`MyTranscript` is a React component receiving the same `ConversationModuleProps` as modules.
+`modules` and `dispose` remain required. An override-only extension returns `modules: []`.
+Function, memo, forwardRef, and lazy components follow the same validation as module components.
+Unknown override slots and malformed components are rejected.
+
+```tsx
+function MyTranscript({ conversation, activity }: ConversationModuleProps) {
+  return <section aria-label="My transcript">
+    <h2>{conversation.conversationId}</h2>
+    {activity.domain.messages.map(message => <p key={message.messageId}>{message.text}</p>)}
+  </section>;
+}
+// Returned from the existing activate function.
+return { modules: [], overrides: { transcript: MyTranscript }, dispose() {} };
+```
+
+The desktop activates each namespace once for both contributions.
+The override changes only transcript presentation. The ordinary composer, approvals, Stop, and command recovery keep their owners.
+The default transcript stays visible while any selected activation is pending or a lazy override is loading.
+If multiple ready namespaces claim the transcript after all activations settle, the host reports their sorted names and keeps the default transcript.
+A failed namespace releases its claim and disposes once; other namespaces remain available.
+Restore default view removes both override and additive contributions while preserving the composer and draft.
+This slot does not provide a layout language, split conversations, or live artifact refresh.
+
 The host calls `action.run(context)` directly.
 The supplied commands already use the existing client command and outbox path; wrapping an action in another submission owner would contend with that path.
 `commands.send(text)` submits explicit text without replacing the composer draft.

@@ -8,6 +8,7 @@ import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
+import { CustomizationTranscript, type TranscriptSelection } from './DesktopCustomizations.js';
 
 const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
   'unsupported': 'This provider does not support live updates.',
@@ -31,9 +32,10 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, observation = null, agent = 'recorded', composerControls }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, agent = 'recorded', composerControls, transcript = { kind: 'default' } }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly observation?: ConversationObservation | null;
+  readonly transcript?: TranscriptSelection;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
 }) {
   const presentation = 'kind' in active.agent ? agentPresentation(active.agent).presentation : AGENT_PRESENTATION[agent];
@@ -104,7 +106,10 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
       {canRetryObservation(observationStatus) && <button type="button" disabled={!enabled || observation?.retrying}
         onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Retrying observation…' : 'Retry observation'}</button>}
     </div>}
-    <div className="transcript" aria-label="Messages" aria-live="polite">
+    <CustomizationTranscript selection={transcript}
+      conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
+      context={{ conversation: active.scope, activity: view.document, commands: actions.commands }}
+      fallback={<div className="transcript" aria-label="Messages" aria-live="polite">
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
         <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
@@ -112,7 +117,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
       <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
-    </div>
+    </div>} />
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
         {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve') || decision.reserved || approving.has(decision.pendingId)} onClick={() => approve(decision.pendingId, choice)}>{decision.choiceLabels?.[choice] ?? (agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice)}</button>)}
