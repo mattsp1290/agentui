@@ -1,7 +1,15 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs/promises';
+import { syncBuiltinESMExports } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { assertNoSelectionJournal, createServerSelection } from '../../apps/host/build/tsc/server-selection.js';
+
+const legacy = JSON.parse(await fs.readFile(new URL('./extensions/fixtures/selection-journal-v1.json', import.meta.url), 'utf8'));
+function unseededV1(database) {
+  for (const table of legacy.tables) database.exec(table.sql);
+  database.prepare('INSERT INTO service_extension_selection_schema VALUES(1,1,?)').run('selection-test-host');
+}
 
 function fixture(t) {
   const database = new DatabaseSync(':memory:');
@@ -21,8 +29,7 @@ function snapshot(database) {
 for (const existing of [false, true]) test(`failed startup verification preserves ${existing ? 'old unseeded journal ownership' : 'a fresh namespace'}`, async t => {
   const { database, open } = fixture(t);
   if (existing) {
-    await (await open()).close();
-    database.exec('DELETE FROM service_extension_selections');
+    unseededV1(database);
   }
   const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
   await assert.rejects(open([{ kind: 'artifact', directory: '/missing-selection-artifact', artifactId: 'a'.repeat(64), installations: [] }]), /Invalid artifact selection/);
@@ -41,12 +48,11 @@ for (const existing of [false, true]) test(`failed startup verification preserve
 for (const [name, existing, change] of [
   ['new unknown object', false, 'CREATE TABLE service_extension_future(value TEXT)'],
   ['removed old marker', true, 'DELETE FROM service_extension_selection_schema'],
-  ['new orphan boot', true, `INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('orphan','startup','{"kind":"boot"}','{"kind":"pending"}')`],
+  ['new orphan boot', true, `INSERT INTO service_extension_boots(id,selection,outcome) VALUES('orphan','startup','{"kind":"pending"}')`],
 ]) test(`startup rechecks ${name} after verification without holding a transaction`, async t => {
   const { database, open } = fixture(t);
   if (existing) {
-    await (await open()).close();
-    database.exec('DELETE FROM service_extension_selections');
+    unseededV1(database);
   }
   if (name === 'new orphan boot') database.exec('PRAGMA foreign_keys=OFF');
   const opening = open();
@@ -133,13 +139,11 @@ for (const object of ['TABLE service_extension_future(value TEXT)', 'VIEW Servic
   });
 }
 
-test('fresh, fully initialized unseeded and settled empty journals activate normally', async t => {
+for (const existing of [false, true]) test(`${existing ? 'unseeded v1' : 'fresh'} and settled empty journals activate normally`, async t => {
   const { database, open, activations } = fixture(t);
   database.exec('CREATE TABLE serviceXextensionYfuture(value TEXT)');
-  let owner = await open();
-  assert.equal(owner.status().desired.id, 'startup');
-  await owner.close();
-  database.exec('DELETE FROM service_extension_selections');
+  if (existing) unseededV1(database);
+  let owner;
   for (let attempt = 0; attempt < 2; attempt++) {
     owner = await open();
     const before = activations();
@@ -152,4 +156,69 @@ test('fresh, fully initialized unseeded and settled empty journals activate norm
   }
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM service_extension_selections').get().count, 1);
   assert.equal(database.prepare('SELECT COUNT(*) AS count FROM service_extension_attempts').get().count, 2);
+});
+
+for (const badPin of [false, true]) test(`lost v2 histories refuse all mutations without ${badPin ? 'reading invalid launch pins' : 'reseeding or activation'}`, async t => {
+  const { database, open, activations } = fixture(t);
+  const original = await open();
+  await original.select({ id: 'disable', expectedRevision: 0, selection: { version: 1, artifacts: [] } });
+  await original.activate();
+  await original.close();
+  database.exec('DELETE FROM service_extension_attempts; DELETE FROM service_extension_selections');
+  const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
+  const directory = '/missing-selection-artifact', reads = [], readFile = fs.readFile;
+  const mock = t.mock.method(fs, 'readFile', async (path, ...args) => {
+    if (String(path).startsWith(directory)) reads.push(String(path));
+    return readFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    const owner = await open(badPin ? [{ kind: 'artifact', directory, artifactId: 'a'.repeat(64), installations: [] }] : []);
+    await owner.activate();
+    assert.deepEqual(owner.status(), { kind: 'journal-invalid' });
+    await assert.rejects(owner.select({ id: 'later', expectedRevision: 0, selection: { version: 1, artifacts: [] } }), /unavailable/);
+    const request = { kind: 'apply', requestId: 'apply-later', selectionId: 'startup', expectedRevision: 0 };
+    await assert.rejects(owner.apply(request), /unavailable/);
+    await assert.rejects(owner.retry({ ...request, kind: 'retry', requestId: 'retry-later', afterAttemptId: 'lost' }), /unavailable/);
+    assert.equal(activations(), 1);
+    assert.deepEqual(reads, []);
+    assert.deepEqual(snapshot(database), before);
+    assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
+    await owner.close();
+  } finally { mock.mock.restore(); syncBuiltinESMExports(); }
+});
+
+for (const populated of [false, true]) test(`fresh startup rechecks concurrent ${populated ? 'populated' : 'empty'} v2 before any seed writes`, async t => {
+  const { database, open, activations } = fixture(t);
+  const original = await open();
+  const definitions = database.prepare("SELECT sql FROM sqlite_schema WHERE type='table' AND name GLOB 'service_extension_*'").all();
+  const seed = database.prepare('SELECT * FROM service_extension_selections').get();
+  await original.close();
+  database.exec('DROP TABLE service_extension_attempts; DROP TABLE service_extension_selections; DROP TABLE service_extension_selection_schema');
+  const opening = open();
+  for (const { sql } of definitions) database.exec(sql);
+  database.prepare('INSERT INTO service_extension_selection_schema VALUES(1,2,?)').run('selection-test-host');
+  if (populated) {
+    database.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(...Object.values(seed));
+    database.exec(`INSERT INTO service_extension_attempts(id,selection,intent,outcome) VALUES('concurrent','startup','{"kind":"boot"}','{"kind":"pending"}')`);
+  }
+  const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
+  await assert.rejects(opening, populated ? /revision-conflict/ : /Invalid selection journal/);
+  assert.equal(activations(), 0);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
+});
+
+test('selection commit after total namespace loss remains unavailable without recreating the journal', async t => {
+  const { database, open, activations } = fixture(t);
+  const owner = await open();
+  const selecting = owner.select({ id: 'later', expectedRevision: 0, selection: { version: 1, artifacts: [] } });
+  database.exec('DROP TABLE service_extension_attempts; DROP TABLE service_extension_selections; DROP TABLE service_extension_selection_schema');
+  const before = snapshot(database), changes = database.prepare('SELECT total_changes() AS count').get().count;
+  await assert.rejects(selecting, /unavailable/);
+  await assert.rejects(owner.select({ id: 'another', expectedRevision: 0, selection: { version: 1, artifacts: [] } }), /unavailable/);
+  assert.equal(activations(), 0);
+  assert.deepEqual(snapshot(database), before);
+  assert.equal(database.prepare('SELECT total_changes() AS count').get().count, changes);
+  await owner.close();
 });

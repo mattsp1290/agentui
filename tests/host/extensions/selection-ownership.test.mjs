@@ -195,3 +195,45 @@ test('transient configured-native startup rejects existing durable ownership bef
   await assert.rejects(fs.readFile(marker), { code: 'ENOENT' });
   assert.equal(f.state.modules.length, 1);
 });
+
+test('packaged host refuses lost v2 histories before reading corrupt launch artifacts or importing code', async t => {
+  const runtime = await packagedHost(t), f = await fixture(t, runtime);
+  const options = { ...f.options, extensions: { kind: 'durable-artifacts', entries: [f.selected(f.first, 'artifact-a')] } };
+  let host = await runtime.startBrowserHost(options);
+  const socket = join(options.directory, 'control.sock');
+  assert.equal((await requestControl(socket, { op: 'extensions-select', command: {
+    id: 'disable', expectedRevision: 0, selection: { version: 1, artifacts: [] },
+  } })).ok, true);
+  await host.close();
+  const database = new DatabaseSync(join(options.directory, 'host.sqlite'));
+  function snapshot() {
+    const schema = database.prepare("SELECT * FROM sqlite_schema WHERE name GLOB 'service_extension_*' ORDER BY name").all();
+    return { schema, rows: schema.filter(row => row.type === 'table').map(row => database.prepare(`SELECT * FROM ${row.name}`).all()) };
+  }
+  database.exec('DELETE FROM service_extension_attempts; DELETE FROM service_extension_selections');
+  const before = snapshot(), imports = f.state.modules.length;
+  await fs.writeFile(join(f.first.directory, 'entries.mjs'), 'corrupt launch artifact');
+  const readFile = fs.readFile, reads = [];
+  const mock = t.mock.method(fs, 'readFile', async (path, ...args) => {
+    if (String(path).startsWith(f.first.directory + '/')) reads.push(String(path));
+    return readFile(path, ...args);
+  });
+  syncBuiltinESMExports();
+  try {
+    host = await runtime.startBrowserHost(options);
+    assert.deepEqual(await requestControl(socket, { op: 'extensions-status', query: null }), { ok: true, value: { kind: 'journal-invalid' } });
+    const requests = [
+      { op: 'extensions-select', command: { id: 'later', expectedRevision: 0, selection: { version: 1, artifacts: [] } } },
+      { op: 'extensions-apply', request: { kind: 'apply', requestId: 'apply-later', selectionId: 'startup', expectedRevision: 0 } },
+      { op: 'extensions-retry', request: { kind: 'retry', requestId: 'retry-later', selectionId: 'startup', expectedRevision: 0, afterAttemptId: 'lost' } },
+    ];
+    for (const request of requests) assert.deepEqual(await requestControl(socket, request), { ok: false, error: 'Selection unavailable' });
+    assert.deepEqual(reads, []);
+    assert.equal(f.state.modules.length, imports);
+    assert.deepEqual(host.extensionStatus(), { kind: 'empty' });
+    assert.deepEqual(snapshot(), before);
+  } finally {
+    mock.mock.restore(); syncBuiltinESMExports();
+    await host.close(); database.close();
+  }
+});

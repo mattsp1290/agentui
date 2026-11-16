@@ -217,7 +217,7 @@ Selection objects, grants, authentication objects, identities, and manifests rej
 Empty `extensions` and `installations` arrays are valid.
 Selected namespaces, grant IDs within a package, and complete provider identities must be unique.
 Under transient ownership, each grant's namespace must match a manifest in its selected package or artifact catalog.
-[Durable selection](#durable-selection-for-the-next-startup) retains unused startup grants when an artifact is disabled.
+[Durable selection](#durable-selection-and-explicit-live-application) retains unused startup grants when an artifact is disabled.
 `expectedAuthority` accepts `agentui-host` or `remote-provider`.
 `service` must be an HTTP or HTTPS origin without credentials, a query, a fragment, or a non-root path.
 
@@ -240,7 +240,7 @@ It does not isolate credentials from full-trust extensions, same-user processes,
 Installed entries are trusted ordinary filesystem modules with host process privileges. Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
 Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Under transient ownership, the programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner.
-CLI hosts configured with durable ownership require [durable selection](#durable-selection-for-the-next-startup) and restart instead. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
+CLI hosts configured with durable ownership use [durable selection](#durable-selection-and-explicit-live-application), followed by explicit live application or a restart. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
 
 ## Contribute conversation views and actions
 

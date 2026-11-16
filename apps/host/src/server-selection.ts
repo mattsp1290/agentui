@@ -99,6 +99,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         if (selection.revision !== selections.size || selections.has(selection.id)) throw new Error();
         selections.set(selection.id, selection); desired = selection;
       }
+      if (version === 2 && !desired) throw new Error('Invalid selection journal');
       let sequence = 0;
       for (const row of db.prepare(`SELECT * FROM service_extension_${version === 1 ? 'boots' : 'attempts'} ORDER BY sequence`).all()) {
         const id = identifier(row.id), selection = identifier(row.selection, 96), outcome = parseAttemptOutcome(JSON.parse(identifier(row.outcome)));
@@ -165,17 +166,19 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     transaction(() => {
       available();
       const version = inspectNamespace();
+      if (expectedStoredRevision !== -1 && version !== 2) throw new Error('Invalid selection journal');
+      const storedRevision = version ? db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1 : -1;
+      if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
       if (expectedStoredRevision === -1) {
+        if (version === 2) throw new Error('Invalid selection journal');
         if (!version) {
           for (const [name, columns] of journalTables) db.exec(`CREATE TABLE ${name} (${columns})`);
           db.prepare('INSERT INTO service_extension_selection_schema VALUES(1,2,?)').run(deps.database.hostId);
         } else {
-          if (db.prepare(`SELECT 1 FROM service_extension_${version === 1 ? 'boots' : 'attempts'} LIMIT 1`).get()) throw new Error('Invalid selection journal');
+          if (db.prepare('SELECT 1 FROM service_extension_boots LIMIT 1').get()) throw new Error('Invalid selection journal');
           upgrade(version);
         }
-      } else if (version !== 2) throw new Error('Invalid selection journal');
-      const storedRevision = db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1;
-      if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
+      }
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
     });
     selections.set(selection.id, selection); desired = selection;
