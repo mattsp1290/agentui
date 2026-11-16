@@ -232,7 +232,7 @@ Removing referenced variables reduces explicit inheritance by native child proce
 It does not isolate credentials from full-trust extensions, same-user processes, existing environment snapshots, or the same secret under another variable name.
 Installed entries are trusted ordinary filesystem modules with host process privileges. Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
-Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Artifact selection is restart-only. When the active or requested selection includes an artifact, live server extension replacement is unavailable. Restart the host to change the selection.
+Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. The programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
 
 ## Contribute conversation views and actions
 
