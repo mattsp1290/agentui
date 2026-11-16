@@ -13,12 +13,15 @@ test('packed core installs and imports with no React present', t => {
     const packed = JSON.parse(execFileSync('npm', ['pack', `./packages/${name}`, '--pack-destination', directory, '--json', '--ignore-scripts'], { cwd: root, encoding: 'utf8' }));
     return join(directory, packed[0].filename);
   });
-  writeFileSync(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module', overrides: { '@ag-ui/core': `file:${join(root, 'vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-core-1.0.4.tgz')}` } }));
+  writeFileSync(join(directory, 'package.json'), JSON.stringify({ private: true, type: 'module' }));
   execFileSync('npm', ['install', '--offline', '--ignore-scripts', '--no-audit', '--no-fund', ...archives], { cwd: directory, stdio: 'pipe' });
   execFileSync(process.execPath, ['--input-type=module', '-e', `
     import assert from 'node:assert/strict';
     import { createConversationStore } from '@agentui/client';
     assert.equal(typeof createConversationStore, 'function');
-    await assert.rejects(import('react'), { code: 'ERR_MODULE_NOT_FOUND' });
+    for (const dependency of ['react', '@ag-ui/core', 'zod']) await assert.rejects(import(dependency), { code: 'ERR_MODULE_NOT_FOUND' });
   `], { cwd: directory, stdio: 'pipe' });
+  writeFileSync(join(directory, 'consumer.ts'), `import { createConversationStore } from '@agentui/client'; import type { FrontendDefinition } from '@agentui/contracts'; export const factory = createConversationStore; export const tool: FrontendDefinition = { name: 'demo__echo', description: 'Echo', parameters: { type: 'object' } };`);
+  writeFileSync(join(directory, 'tsconfig.json'), JSON.stringify({ compilerOptions: { target: 'ES2023', module: 'NodeNext', moduleResolution: 'NodeNext', strict: true, exactOptionalPropertyTypes: true, noEmit: true, skipLibCheck: false, types: [], lib: ['ES2023'] }, files: ['consumer.ts'] }));
+  execFileSync(process.execPath, [join(root, 'node_modules/typescript/bin/tsc'), '-p', join(directory, 'tsconfig.json')], { cwd: directory, stdio: 'pipe' });
 });

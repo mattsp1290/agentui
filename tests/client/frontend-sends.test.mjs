@@ -77,3 +77,11 @@ test('host binding requires the lazy scoped register and cancel capability', () 
     ['host.frontendBinding(request, actor, () => ({ register() {} }));', /cancel/u],
   ],
 }));
+
+test('frontend wire definitions retain object-valued parameters and nested boolean schemas', () => {
+  const request = structuredClone(cases[0].request);
+  request.command.body.frontend.tools[0].definition.parameters = { properties: { enabled: true } };
+  assert.deepEqual(parseServiceRequest(request), request);
+  request.command.body.frontend.tools[0].definition.parameters = true;
+  assert.throws(() => parseServiceRequest(request));
+});

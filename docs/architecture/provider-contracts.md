@@ -128,6 +128,9 @@ An `addAgui` provider advertises `frontendOffers: 'ag-ui-capture-and-bind'` only
 Generic and native providers advertise `unsupported`. This does not change AG-UI executable-tool capabilities.
 The paired service accepts a version-2 send containing a desktop offer of definitions and original activation IDs.
 Version-1 commands retain their existing shape and canonical identity.
+The offer definition type follows its parsed wire shape, with optional object-valued parameters and metadata.
+The SDK tool type remains derived from the pinned AG-UI package; the host still validates definitions with its schemas.
+Packed contracts and client consumers need no AG-UI package or checkout-specific dependency override.
 
 Admission binds the authenticated principal, command, original provider installation and credentials in one durable transaction.
 The host validates the actual AG-UI input, appends noncolliding captured definitions, and saves the complete raw request.
