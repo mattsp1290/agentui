@@ -250,9 +250,21 @@ Every command and contributed action returns `Promise<SubmitResult>`.
 Preserve rejected admission and uncertain receipt states for the caller.
 Resolving an action does not establish native execution success.
 
-The eventual production UI bridge must use the existing client command and outbox path.
-Its `send(text)` implementation must submit explicit text as an intent.
-It must not call `setDraft(text)` followed by send, which would overwrite the user's draft.
+The desktop customization host renders nested modules as labeled sections beside the default conversation.
+It renders declarative actions as labeled buttons, suppresses duplicate clicks while an action is pending, and reports the returned submission state.
+The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, and thrown errors.
+An accepted or pending receipt does not mean the agent has finished.
+Uncertain feedback points to the conversation recovery controls; the host never automatically replays an action callback.
+Action state belongs to its namespace, complete module path, action ID, and current conversation.
+Navigation gives the next conversation fresh props and feedback; late results stay with the previous view.
+A descendant render failure removes only its extension, with its captured disposer called once.
+Restore default view preserves the ordinary conversation and composer.
+
+The host calls `action.run(context)` directly.
+The supplied commands already use the existing client command and outbox path; wrapping an action in another submission owner would contend with that path.
+`commands.send(text)` submits explicit text without replacing the composer draft.
+Controls are disabled when the conversation is unavailable, disconnected, busy, or responding.
+Captured commands still validate the active conversation and availability at invocation; a saved callback cannot bypass those checks.
 The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.

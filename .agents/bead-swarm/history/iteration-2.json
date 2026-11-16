@@ -1,0 +1,63 @@
+{
+  "schema_version": "bead-swarm-history-v1",
+  "iteration": 2,
+  "branch": "bead-swarm/iteration-2-nested-module-actions",
+  "slug": "nested-module-actions",
+  "main_branch": "main",
+  "main_branch_source": "default",
+  "execution_mode": "orchestrator-subagent",
+  "degraded_reason": null,
+  "selected_beans": [
+    "agentui-fama"
+  ],
+  "beans_done": [
+    "agentui-fama"
+  ],
+  "beans_blocked": [],
+  "beans_partial": [],
+  "merge_target": "main",
+  "validation": [
+    "Pinned Node24.22.3/npm11.19.1 toolchain",
+    "npm run verify:PASS;2080tests passed,4skipped",
+    "Focused Chromium and real committed template artifact suites:PASS;58tests",
+    "node scripts/verify-agui-fork.mjs:PASS",
+    "Shared browser helper function bodies compared unchanged with main",
+    "Actual emitted-template desktop and minimum-viewport screenshots visually inspected",
+    "git diff --check main...HEAD:PASS after EOF separator trim"
+  ],
+  "review_mode": "reviewer-subagents",
+  "review_assurance": "normal",
+  "findings_fixed_re_reviewed": true,
+  "review_artifacts_local_only": true,
+  "review_blocker_summary": [],
+  "reviews": [
+    {
+      "reviewer": "module-ownership",
+      "verdict": "APPROVE",
+      "required_findings": 0,
+      "optional_findings": 1,
+      "artifact": ".audit/nested-module-actions/standard/module-ownership"
+    },
+    {
+      "reviewer": "submission-semantics",
+      "verdict": "APPROVE",
+      "required_findings": 0,
+      "optional_findings": 1,
+      "artifact": ".audit/nested-module-actions/standard/submission-semantics"
+    },
+    {
+      "reviewer": "thermo-nuclear-code-quality-review",
+      "verdict": "APPROVE",
+      "required_findings": 0,
+      "optional_findings": 0,
+      "artifact": ".audit/nested-module-actions/strict/thermo-nuclear-code-quality-review",
+      "rubric_sha": "bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7",
+      "rubric_url": "https://raw.githubusercontent.com/cursor/plugins/bf0c7cd80abdbf7fe47b634978a7d1b4071f71a7/cursor-team-kit/skills/thermo-nuclear-code-quality-review/SKILL.md"
+    }
+  ],
+  "review_fix_summary": "One deduplicated optional documentation wording correction applied and reviewed in the separate strict pass; no runtime change. Finalization trims only an EOF separator and replaces active metadata with history.",
+  "validated_source_revision": "af5d4089b0b943702c76e2056c5d91cb7e4e6079",
+  "reviewed_source_revision": "dc47cb6e4d006b666a30ec5589f4c245adf18d0e",
+  "parent_bean_remains_open": "agentui-5p90",
+  "status": "complete"
+}
