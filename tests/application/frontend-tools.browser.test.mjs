@@ -72,6 +72,53 @@ for (const [label, registration] of [
   assert.equal(await page.evaluate(() => window.disposals), 1); await unchanged(page, previous); assert.deepEqual(errors, []);
 });
 
+const transcriptSibling = sibling.replace('dispose() {}', 'overrides: { transcript() { return <p>Healthy sibling transcript</p>; } }, dispose() {}');
+for (const [label, registration, modules, message] of [
+  ['invalid presentation', `frontendTools.add(${tool});`, 'null', 'Expected module array'],
+  ['swallowed malformed', `try { frontendTools.add({...${tool}, definition:{name:'bad.name',description:''}}); } catch {}`, "[{id:'rejected',label:'Rejected',component(){return <p>Rejected tool module</p>}}]", 'Invalid tool name'],
+  ['swallowed duplicate', `frontendTools.add(${tool}); try { frontendTools.add(${tool}); } catch {}`, "[{id:'rejected',label:'Rejected',component(){return <p>Rejected tool module</p>}}]", 'Duplicate tool name'],
+]) for (const settlement of ['resolve', 'reject', 'remove then reject']) test(`${label} publishes failure before pending cleanup can ${settlement}`, { timeout: 45_000 }, async t => {
+  const { host, page } = await open(t), errors = [];
+  page.on('pageerror', error => errors.push(error.message));
+  await page.addInitScript(() => { window.unhandled = []; window.addEventListener('unhandledrejection', event => window.unhandled.push(String(event.reason))); });
+  await customRuntime(page, host, entry(`return new Promise(resolve => { window.finish = () => {
+    ${registration}
+    resolve({ get modules() { window.moduleReads = (window.moduleReads || 0) + 1; return ${modules}; },
+      get dispose() { window.disposeReads = (window.disposeReads || 0) + 1; return () => {
+        window.disposals = (window.disposals || 0) + 1;
+        return new Promise((resolve, reject) => { window.resolveCleanup = resolve; window.rejectCleanup = () => reject(new Error('Deferred cleanup rejected')); });
+      }; } });
+  }; });`), false, transcriptSibling);
+  await page.getByText('Healthy namespace', { exact: true }).waitFor();
+  await draft(page, 'Keep tool draft'); const previous = await editor(page).elementHandle();
+  assert.equal(await page.getByText('Healthy sibling transcript', { exact: true }).count(), 0);
+  await page.evaluate(() => window.finish());
+  await wait(() => page.evaluate(() => window.disposals === 1), 'pending failed cleanup');
+  await page.getByRole('alert').filter({ hasText: message }).waitFor();
+  await page.getByText('Healthy sibling transcript', { exact: true }).waitFor();
+  assert.equal(await page.getByText('Rejected tool module', { exact: true }).count(), 0);
+  assert.deepEqual(await page.evaluate(() => [window.disposeReads, window.moduleReads]), [1, 1]);
+  await unchanged(page, previous);
+  await page.getByRole('button', { name: 'Send sibling', exact: true }).click();
+  await wait(async () => (await host.entries()).length === 1, 'sibling command during failed cleanup');
+  await unchanged(page, previous);
+  if (settlement === 'remove then reject') {
+    await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  }
+  await page.evaluate(settlement => settlement === 'resolve' ? window.resolveCleanup() : window.rejectCleanup(), settlement);
+  await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
+  if (settlement === 'remove then reject') {
+    assert.equal(await page.getByRole('alert').filter({ hasText: 'Custom tools could not load.' }).count(), 0);
+    await page.getByLabel('Messages', { exact: true }).waitFor();
+  } else {
+    await page.getByRole('alert').filter({ hasText: settlement === 'resolve' ? message : 'Tool activation failed and its disposal also failed' }).waitFor();
+    await page.getByText('Healthy sibling transcript', { exact: true }).waitFor();
+    await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  }
+  await unchanged(page, previous); assert.equal(await page.evaluate(() => window.disposals), 1);
+  assert.deepEqual(await page.evaluate(() => window.unhandled), []); assert.deepEqual(errors, []);
+});
+
 test('late tool activation after disable is never published and rejected retirement is observed', { timeout: 45_000 }, async t => {
   const { host, page } = await open(t); const errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -142,3 +189,59 @@ test('in-process only: actual hook retirement retains original A pin and slow ca
   assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).evaluate((node,old)=>node===old,previous),true);
   assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).inputValue(),'Keep tool draft'); assert.deepEqual(errors,[]);
 });
+
+for (const failure of ['presentation', 'malformed', 'duplicate']) for (const replace of [false, true]) {
+  test(`in-process only: rejected ${failure} is never eligible and late cleanup ${replace ? 'cannot overwrite replacement' : 'keeps sibling eligible'}`, { timeout: 45_000 }, async t => {
+    const bundle = await build({ stdin: { resolveDir: root, loader: 'jsx', contents: `
+      import React from 'react'; import {createRoot} from 'react-dom/client'; import {flushSync} from 'react-dom';
+      import {useDesktopCustomizations} from './apps/desktop/src/application/DesktopCustomizations.tsx';
+      const manifest={namespace:'fixture',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]};
+      const sibling={manifest:{...manifest,namespace:'sibling'},${entry("return {modules:[],dispose(){}};")}};
+      const rejected={manifest,${entry(`return new Promise(resolve=>{window.finish=()=>{
+        if('${failure}'!=='presentation')try{
+          if('${failure}'==='duplicate')frontendTools.add(${tool});
+          frontendTools.add('${failure}'==='duplicate'?${tool}:{...${tool},definition:{name:'bad.name',description:''}});
+        }catch{}
+        resolve({modules:'${failure}'==='presentation'?null:[],dispose(){window.disposals=(window.disposals||0)+1;
+          return new Promise((resolve,reject)=>{window.resolveCleanup=resolve;window.rejectCleanup=()=>reject(new Error('Old cleanup rejected'));});}});
+      };});`)}};
+      const replacement={manifest,${entry(`frontendTools.add(${tool});return {modules:[],dispose(){window.replacementDisposals=(window.replacementDisposals||0)+1;}};`)}};
+      const initial=[sibling,rejected]; window.eligibility=[];
+      function App(){const [customizations,setCustomizations]=React.useState(initial);
+        const custom=useDesktopCustomizations({customizations,enabled:true});window.custom=custom;
+        window.eligibility.push(custom.generations.map(g=>({namespace:g.namespace,activationId:g.activationId})));
+        window.replace=()=>flushSync(()=>setCustomizations([sibling,replacement]));
+        return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;
+      }
+      createRoot(document.getElementById('root')).render(<App/>);` }, bundle: true, write: false, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
+    const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage(), errors = [];
+    page.on('pageerror', error => errors.push(error.message));
+    await page.addInitScript(() => { window.unhandled = []; window.addEventListener('unhandledrejection', event => window.unhandled.push(String(event.reason))); });
+    await page.route('http://localhost/fixture', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
+    await page.goto('http://localhost/fixture'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
+    await wait(() => page.evaluate(() => window.custom?.generations.length === 1 && typeof window.finish === 'function'), 'healthy sibling before rejected activation settles');
+    const previous = await page.getByRole('textbox', { name: 'Persistent draft' }).elementHandle();
+    await page.evaluate(() => window.finish());
+    await wait(() => page.evaluate(() => window.custom.namespaces.some(owner => owner.namespace === 'fixture' && owner.kind === 'failed') && window.disposals === 1), 'failed namespace during pending cleanup');
+    assert.deepEqual(await page.evaluate(() => window.custom.generations.map(g => g.namespace)), ['sibling']);
+    assert.equal(await page.evaluate(() => window.eligibility.some(snapshot => snapshot.some(g => g.namespace === 'fixture'))), false);
+    let replacementId;
+    if (replace) {
+      await page.evaluate(() => window.replace());
+      await wait(() => page.evaluate(() => window.custom.generations.length === 2), 'ready replacement');
+      replacementId = await page.evaluate(() => window.custom.generations.find(g => g.namespace === 'fixture').activationId);
+      await page.evaluate(() => window.rejectCleanup());
+    } else await page.evaluate(() => window.resolveCleanup());
+    await page.evaluate(() => new Promise(resolve => setTimeout(resolve, 0)));
+    assert.deepEqual(await page.evaluate(() => window.custom.generations.map(g => g.namespace)), replace ? ['sibling', 'fixture'] : ['sibling']);
+    if (replace) {
+      assert.equal(await page.evaluate(() => window.custom.namespaces.find(owner => owner.namespace === 'fixture').kind), 'ready');
+      assert.equal(await page.evaluate(() => window.custom.generations.find(g => g.namespace === 'fixture').activationId), replacementId);
+      assert.equal(await page.evaluate(() => window.replacementDisposals || 0), 0);
+    } else assert.equal(await page.evaluate(() => window.eligibility.some(snapshot => snapshot.some(g => g.namespace === 'fixture'))), false);
+    assert.equal(await page.evaluate(() => window.disposals), 1);
+    assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).evaluate((node, old) => node === old, previous), true);
+    assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).inputValue(), 'Keep tool draft');
+    assert.deepEqual(await page.evaluate(() => window.unhandled), []); assert.deepEqual(errors, []);
+  });
+}

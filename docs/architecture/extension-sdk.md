@@ -334,6 +334,8 @@ await generation.retire();
 Render `presentation.modules` and `presentation.transcript`, which contain captured presentation values.
 The UI adapter reads producer fields once and transfers its captured disposer to the generation.
 The returned presentation contains no disposal method.
+Activation owners can supply `onFailure` to publish a rejected activation before cleanup finishes.
+The creation promise still awaits the observer and cleanup, preserving the original error and any later failures.
 This activation support does not advertise tools to backends or deliver tool calls from the host.
 
 - **Creation.** If activation throws or returns a value without a callable disposer, the callback owns cleanup of any partial activation.

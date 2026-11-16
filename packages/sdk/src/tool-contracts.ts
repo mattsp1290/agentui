@@ -51,6 +51,8 @@ export interface FrontendToolGenerationOptions<L extends ExtensionLifetime> {
   activate(context: UiExtensionContext): unknown;
   /** Decodes the activation result. The raw activation result owns disposal, captured before this runs. */
   accept(value: unknown): L | Promise<L>;
+  /** Called once on creation failure before disposal starts. Creation awaits both observer and disposal completion. */
+  onFailure?(error: unknown): void | Promise<void>;
 }
 export interface FrontendToolPinOptions {
   readonly generations: readonly FrontendToolGeneration[];

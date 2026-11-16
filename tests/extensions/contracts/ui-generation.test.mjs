@@ -70,3 +70,39 @@ test('invalid lifetime never invents cleanup or reads presentation', async () =>
     assert.equal(presentationReads, 0);
   }
 });
+
+for (const kind of ['presentation', 'malformed', 'duplicate']) for (const rejects of [false, true]) {
+  test(`UI ${kind} failure notifies before pending cleanup ${rejects ? 'rejects' : 'resolves'} without rereading producer fields`, async () => {
+    const cleanup = Promise.withResolvers(), notified = Promise.withResolvers(), reads = {}, failures = [];
+    const secondary = new Error('Cleanup rejected'); let disposals = 0, settled = false, registration;
+    const source = onceFields({ modules: kind === 'presentation' ? null : [{ id: 'rejected', label: 'Rejected', component: () => null }], overrides: undefined,
+      dispose() { assert.equal(this, source); disposals++; return cleanup.promise; } }, reads);
+    const completion = createUiExtensionGeneration({ ...options, activate({ frontendTools }) {
+      if (kind !== 'presentation') try {
+        if (kind === 'duplicate') frontendTools.add(tool);
+        frontendTools.add(kind === 'duplicate' ? tool : { ...tool, definition: { name: 'bad.name', description: '' } });
+      } catch (error) { registration = error; }
+      return source;
+    }, onFailure(error) { failures.push(error); assert.equal(disposals, 0); notified.resolve(error); } }).then(
+      value => { settled = true; return { value }; }, error => { settled = true; return { error }; });
+    const primary = await notified.promise;
+    await new Promise(resolve => setImmediate(resolve));
+    if (kind === 'presentation') assert.match(primary.message, /Expected module array/); else assert.equal(primary, registration);
+    assert.equal(settled, false); assert.equal(disposals, 1);
+    assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1 });
+    if (rejects) cleanup.reject(secondary); else cleanup.resolve();
+    const result = await completion;
+    assert.equal('value' in result, false);
+    if (rejects) { assert.ok(result.error instanceof AggregateError); assert.deepEqual(result.error.errors, [primary, secondary]); }
+    else assert.equal(result.error, primary);
+    assert.deepEqual(failures, [primary]); assert.equal(disposals, 1);
+    assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1 });
+  });
+}
+
+for (const field of ['namespace', 'generation', 'platform', 'onFailure']) test(`UI pre-factory ${field} getter failure rejects without retry or activation`, async () => {
+  const primary = new Error(field); let reads = 0, activated = 0, notified = 0;
+  const config = Object.defineProperty({ ...options, activate() { activated++; }, onFailure() { notified++; } }, field, { get() { reads++; throw primary; } });
+  await assert.rejects(createUiExtensionGeneration(config), error => error === primary);
+  assert.equal(reads, 1); assert.equal(activated, 0); assert.equal(notified, 0);
+});

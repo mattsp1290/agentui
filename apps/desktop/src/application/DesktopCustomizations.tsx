@@ -45,7 +45,7 @@ function selectTranscript(owners: readonly NamespaceActivation[]): TranscriptSel
 
 function activateNamespace(customization: DesktopCustomization, lifetime: number, publish: (owner: NamespaceActivation) => void): () => void {
   const namespace = customization.manifest.namespace;
-  let removed = false, failed = false;
+  let removed = false;
   let generation: FrontendToolGeneration | undefined;
   const cleanup = () => {
     const retiring = generation;
@@ -55,8 +55,6 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
     });
   };
   const fail = (error: unknown) => {
-    if (failed) return;
-    failed = true;
     if (!removed) publish({ kind: 'failed', namespace, message: customizationMessage(error) });
     cleanup();
   };
@@ -68,7 +66,7 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
       if (compatibility.kind !== 'compatible') throw new Error(compatibility.reason);
       const entry = imported.default as UiExtensionEntry<'desktop'>;
       const active = await createUiExtensionGeneration({ namespace, generation: String(lifetime), platform: 'desktop',
-        activate: context => entry.activate(context) });
+        activate: context => entry.activate(context), onFailure: fail });
       generation = active.generation;
       if (removed) { cleanup(); return; }
       publish({ kind: 'ready', namespace, lifetime, generation, presentation: active.presentation, fail });

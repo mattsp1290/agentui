@@ -82,27 +82,27 @@ function generationHandle(identity: Lifetime['identity'], dispose: () => Promise
  * must observe the result and retire its generation. A pending acceptance retains captured resources.
  */
 export async function createFrontendToolGeneration<L extends ExtensionLifetime>(options: FrontendToolGenerationOptions<L>): Promise<FrontendToolActivation<L>> {
-  const { generation, activate, accept } = options;
-  const platform = frontendPlatform(options.platform);
-  const namespace = extensionNamespace(options.namespace);
-  if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
-  if (typeof activate !== 'function' || typeof accept !== 'function') throw new Error('Tool activation requires activate and accept functions');
-  const tools = new Map<string, Registered>();
-  let open = true; let failure: { error: unknown } | undefined;
-  const registrationSink = Object.freeze({ add<Input>(tool: FrontendToolContribution<Input>): void {
-    if (!open) throw new Error('Tool registration is closed');
-    try {
-      const registered = registerTool(namespace, tool);
-      if (tools.has(registered.definition.name)) throw new Error('Duplicate tool name');
-      tools.set(registered.definition.name, registered);
-    } catch (error) { failure ??= { error }; throw error; }
-  } });
-  const context = Object.freeze({ namespace, frontendTools: registrationSink });
-  let lifetime: unknown; let registered: Registered[];
-  try { lifetime = await activate.call(options, context); }
-  finally { open = false; registered = [...tools.values()]; tools.clear(); }
   let dispose: (() => Promise<void>) | undefined;
   try {
+    const { generation, activate, accept } = options;
+    const platform = frontendPlatform(options.platform);
+    const namespace = extensionNamespace(options.namespace);
+    if (typeof generation !== 'string' || !generation.trim()) throw new Error('Invalid generation');
+    if (typeof activate !== 'function' || typeof accept !== 'function') throw new Error('Tool activation requires activate and accept functions');
+    const tools = new Map<string, Registered>();
+    let open = true; let failure: { error: unknown } | undefined;
+    const registrationSink = Object.freeze({ add<Input>(tool: FrontendToolContribution<Input>): void {
+      if (!open) throw new Error('Tool registration is closed');
+      try {
+        const registered = registerTool(namespace, tool);
+        if (tools.has(registered.definition.name)) throw new Error('Duplicate tool name');
+        tools.set(registered.definition.name, registered);
+      } catch (error) { failure ??= { error }; throw error; }
+    } });
+    const context = Object.freeze({ namespace, frontendTools: registrationSink });
+    let lifetime: unknown; let registered: Registered[];
+    try { lifetime = await activate.call(options, context); }
+    finally { open = false; registered = [...tools.values()]; tools.clear(); }
     const method = behaviour(lifetime).dispose;
     if (typeof method !== 'function') throw new Error('Expected extension disposal');
     dispose = async () => { await method.call(lifetime); };
@@ -110,10 +110,15 @@ export async function createFrontendToolGeneration<L extends ExtensionLifetime>(
     const contributions = await accept(lifetime);
     return { generation: generationHandle({ namespace, generation, platform, activationId: globalThis.crypto.randomUUID() }, dispose, registered), contributions };
   } catch (error) {
-    if (dispose) {
-      try { await dispose(); }
-      catch (disposeError) { throw new AggregateError([error, disposeError], 'Tool activation failed and its disposal also failed'); }
+    let notification: Promise<void>;
+    try { notification = Promise.resolve(options.onFailure?.(error)); }
+    catch (observerError) { notification = Promise.reject(observerError); }
+    const [notified, disposed] = await Promise.allSettled([notification, dispose?.()]);
+    if (notified.status === 'rejected') {
+      throw new AggregateError([error, notified.reason, ...(disposed.status === 'rejected' ? [disposed.reason] : [])],
+        'Tool activation failed and its failure observer also failed');
     }
+    if (disposed.status === 'rejected') throw new AggregateError([error, disposed.reason], 'Tool activation failed and its disposal also failed');
     throw error;
   }
 }
