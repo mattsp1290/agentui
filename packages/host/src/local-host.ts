@@ -202,10 +202,21 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          const admitted = store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
+          const admit = () => store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);
+          let admitted = admit();
+          if (provider && command.body.kind === 'send' && admitted.kind === 'rejected' && admitted.reason === 'send-awaiting-confirmation') {
+            const blocker = store.blockingSend(scope);
+            if (!blocker || !('kind' in blocker) || blocker.receipt.state.kind !== 'accepted') return admitted;
+            let receipt: Receipt | null;
+            try { receipt = await host.reconcile(scope, blocker.command.clientCommandId); }
+            catch { return admitted; }
+            if (receipt?.state.kind !== 'completed' && receipt?.state.kind !== 'rejected') return admitted;
+            authorized(scope);
+            admitted = admit();
+          }
           if (admitted.kind === 'rejected') return admitted;
           if (admitted.kind === 'existing') return { kind: 'receipt', receipt: admitted.receipt };
           const stored = admitted.stored;

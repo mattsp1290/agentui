@@ -137,12 +137,14 @@ test('Crew follow-up confirms the original completed request before admitting it
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
   const port = f.client.conversation(scope), first = await port.submit(send(scope));
   assert.equal(first.receipt.state.kind, 'accepted');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
   const [requestId, receipt] = [...remote.receipts][0];
   const target = f.inspect(db => db.prepare("SELECT target FROM commands WHERE id='send'").get().target);
   const captured = JSON.parse(target);
   assert.equal(requestId, captured.operation.operationId);
   assert.equal(receipt.conversationId, captured.operation.binding.authority.binding.opaqueSessionId);
   receipt.status = 'completed'; receipt.result = { text: 'Finished' };
+  const before = remote.calls.length;
   const next = send(scope, 'follow-up');
   const result = await port.submit(next);
   assert.equal(result.kind, 'receipt');
@@ -153,9 +155,10 @@ test('Crew follow-up confirms the original completed request before admitting it
   const posts = remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests'));
   assert.deepEqual(posts.map(call => call.input.requestId), [requestId, result.receipt.hostOperationId]);
   assert.notEqual(result.receipt.hostOperationId, requestId);
-  const lookups = remote.calls.filter(call => call.method === 'GET' && call.path.endsWith(`/requests/${requestId}`));
-  assert.equal(lookups.length, 1);
-  assert.equal(lookups[0].path, `/v1/conversations/${receipt.conversationId}/requests/${requestId}`);
+  const lookup = remote.calls.findIndex((call, index) => index >= before && call.method === 'GET' &&
+    call.path === `/v1/conversations/${receipt.conversationId}/requests/${requestId}`);
+  assert(lookup >= before);
+  assert(lookup < remote.calls.indexOf(posts[1]));
   assert.equal(f.inspect(db => db.prepare("SELECT target FROM commands WHERE id='send'").get().target), target);
 });
 
