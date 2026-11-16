@@ -246,7 +246,7 @@ test('mutating replacement results cannot clear cleanup failure while shutdown o
   assert.throws(() => ownDirectory(configured.directory), /Another host owns/);
 });
 
-test('invalid artifact replacement retires the active generation and reports load failure', async t => {
+test('artifact replacement without a packaged ABI retires the active generation and reports load failure', async t => {
   const fixture = entry(t), configured = options(t);
   const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, providerExtensions: [fixture.value] });
   try {

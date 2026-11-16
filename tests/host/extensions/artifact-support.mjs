@@ -1,11 +1,10 @@
-import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { mkdtemp, mkdir, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { build } from 'esbuild';
+import { buildHostBundle } from '../../../scripts/host-bundle.mjs';
 import { serverCustomizationAbi } from '../../../scripts/server-customization-abi.mjs';
 import { setup, extension, write, resigned } from '../../customization/build/server-support.mjs';
 
@@ -19,26 +18,12 @@ export async function packagedHost(t) {
     const directory = await mkdtemp(join(tmpdir(), 'agentui-artifact-host-'));
     const abi = await serverCustomizationAbi();
     try {
-      const result = await build({ absWorkingDir: root,
-        entryPoints: { server: 'apps/host/src/server.ts', sdk: 'packages/sdk/dist/index.js' }, outdir: directory,
-        splitting: true, chunkNames: 'chunks/[name]-[hash]', define: { AGENTUI_SERVER_CUSTOMIZATION_ABI: JSON.stringify(abi.identity) },
-        bundle: true, platform: 'node', format: 'esm', target: 'node24', metafile: true, logLevel: 'silent',
-        banner: { js: "import {createRequire as hostCreateRequire} from 'node:module'; const require=hostCreateRequire(import.meta.url);" },
-        plugins: [{ name: 'optional-websocket-acceleration', setup(plugin) {
-          plugin.onResolve({ filter: /^(bufferutil|utf-8-validate)$/ }, args => /[/\\]ws[/\\]lib[/\\]/.test(args.importer)
-            ? { path: args.path, namespace: 'optional-websocket-acceleration' } : undefined);
-          plugin.onLoad({ filter: /.*/, namespace: 'optional-websocket-acceleration' }, () => ({ contents: "throw new Error('Optional native WebSocket acceleration is unavailable');", loader: 'js' }));
-        } }],
-      });
-      assert.deepEqual(result.warnings, []);
-      const sdkOwners = Object.entries(result.metafile.outputs).filter(([, output]) => Object.keys(output.inputs).includes('packages/sdk/dist/extensions.js'));
-      assert.equal(sdkOwners.length, 1, 'host and SDK share one runtime module graph');
-      const shared = sdkOwners[0][0];
-      for (const entry of ['server.js', 'sdk.js']) {
-        const output = Object.entries(result.metafile.outputs).find(([path]) => path.endsWith('/' + entry))[1];
-        assert.ok(output.imports.some(value => value.path === shared));
+      const result = await buildHostBundle({ abi, entryPoint: 'apps/host/src/server.ts', outdir: directory });
+      for (const file of result.outputFiles) {
+        await mkdir(dirname(file.path), { recursive: true });
+        await writeFile(file.path, file.contents);
       }
-      return { directory, ...await import(pathToFileURL(join(directory, 'server.js')).href),
+      return { directory, ...await import(pathToFileURL(join(directory, 'main.js')).href),
         sdk: await import(pathToFileURL(join(directory, 'sdk.js')).href) };
     } catch (error) { await rm(directory, { recursive: true, force: true }); throw error; }
   })();
@@ -131,3 +116,11 @@ export async function fixture(t, runtime) {
     count(module, phase) { return state.events.filter(value => value === `${module.label}:${module.id}:${phase}`).length; } };
 }
 export const failed = (failure, recovery = 'replace') => ({ kind: 'failed', failure, recovery });
+
+export function api(host) {
+  return async body => {
+    const response = await fetch(host.origin + '/api/v1', { method: 'POST', signal: AbortSignal.timeout(5000),
+      headers: { Origin: host.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return response.json();
+  };
+}

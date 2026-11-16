@@ -4,7 +4,50 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import test from 'node:test';
 import { resigned } from '../../customization/build/server-support.mjs';
-import { packagedHost, fixture, failed, secret, service } from './artifact-support.mjs';
+import { api, packagedHost, fixture, failed, secret, service } from './artifact-support.mjs';
+
+function resignManifest(mutate) {
+  return async (f, candidate) => {
+    const manifest = resigned(f.first.manifest, mutate);
+    await writeFile(join(f.first.directory, 'customization.json'), JSON.stringify(manifest));
+    candidate.artifactId = manifest.artifactId;
+    return [candidate];
+  };
+}
+
+function failPhase(phase) {
+  return (f, candidate) => {
+    f.state.hooks['artifact-a'] = { [phase]() { throw new Error(secret); } };
+    return [candidate];
+  };
+}
+
+const artifactFailures = [
+  { name: 'caller pin', classification: 'load', imported: 0,
+    arrange(f, candidate) { candidate.artifactId = '0'.repeat(64); return [candidate]; } },
+  { name: 'missing directory', classification: 'load', imported: 0,
+    arrange(f, candidate) { candidate.directory = join(f.root, 'missing-artifact'); return [candidate]; } },
+  { name: 'bytes', classification: 'load', imported: 0,
+    async arrange(f, candidate) {
+      await writeFile(join(f.first.directory, 'entries.mjs'), "throw new Error('PRIVATE_TAMPER');");
+      return [candidate];
+    } },
+  { name: 'SDK', classification: 'load', imported: 0, arrange: resignManifest(value => { value.sdkVersion = '99.0.0'; }) },
+  { name: 'Node', classification: 'load', imported: 0, arrange: resignManifest(value => { value.runtime.version = '0.0.0'; }) },
+  { name: 'modules', classification: 'load', imported: 0, arrange: resignManifest(value => { value.runtime.modules = '0'; }) },
+  { name: 'ABI', classification: 'load', imported: 0, arrange: resignManifest(value => { value.runtime.abiIdentity = '0'.repeat(64); }) },
+  { name: 'duplicate namespace', classification: 'load', imported: 0, arrange(f, candidate) { return [candidate, candidate]; } },
+  { name: 'grant', classification: 'authorization', imported: 0,
+    arrange(f, candidate) { candidate.installations[0].service = 'invalid service'; return [candidate]; } },
+  { name: 'import', classification: 'load', imported: 1, arrange: failPhase('import') },
+  { name: 'activation', classification: 'activation', imported: 1, arrange: failPhase('activate') },
+  { name: 'discovery', classification: 'discovery', imported: 1, arrange: failPhase('discover'),
+    async assertRetired(f) {
+      const bad = f.state.modules[1];
+      assert.equal(f.count(bad, 'close'), 1); assert.equal(f.count(bad, 'dispose'), 1);
+      await assert.rejects(bad.probe(), /./);
+    } },
+];
 
 test('packaged server replaces verified artifact generations through its existing owner', { timeout: 120000 }, async t => {
   const runtime = await packagedHost(t);
@@ -78,11 +121,7 @@ test('packaged server replaces verified artifact generations through its existin
   await t.test('admitted artifact command keeps its receipt and identity across explicit retry', async t => {
     const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
     const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
-    async function call(body) {
-      const response = await fetch(host.origin + '/api/v1', { method: 'POST', signal: AbortSignal.timeout(5000),
-        headers: { Origin: host.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return response.json();
-    }
+    const call = api(host);
     try {
       const metadata = (await call({ op: 'metadata' })).value;
       const scope = { hostId: host.hostId, conversationId: 'artifact-command' };
@@ -110,11 +149,7 @@ test('packaged server replaces verified artifact generations through its existin
   await t.test('admitted artifact observation acquisition defers candidate preparation', async t => {
     const f = await fixture(t, runtime), entered = Promise.withResolvers(), finish = Promise.withResolvers();
     const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.selected(f.first, 'artifact-a')] });
-    async function call(body) {
-      const response = await fetch(host.origin + '/api/v1', { method: 'POST', signal: AbortSignal.timeout(5000),
-        headers: { Origin: host.origin, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-      return response.json();
-    }
+    const call = api(host);
     const metadata = (await call({ op: 'metadata' })).value;
     f.state.hooks['artifact-a'] = { async snapshot() { entered.resolve(); await finish.promise; } };
     const scope = { hostId: host.hostId, conversationId: 'artifact-observation' };
@@ -157,38 +192,18 @@ test('packaged server replaces verified artifact generations through its existin
     } finally { await host.close(); }
   });
 
-  for (const failure of ['caller pin', 'bytes', 'SDK', 'Node', 'modules', 'ABI', 'duplicate namespace', 'grant', 'import', 'activation', 'discovery']) {
-    await t.test(`artifact ${failure} failure retires old code, classifies recovery and permits explicit replacement`, async t => {
+  for (const failure of artifactFailures) {
+    await t.test(`artifact ${failure.name} failure retires old code, classifies recovery and permits explicit replacement`, async t => {
       const f = await fixture(t, runtime);
       const host = await runtime.startBrowserHost({ ...f.options, providerExtensions: [f.installed] });
-      let candidate = f.selected(f.first, 'artifact-a');
-      if (failure === 'caller pin') candidate.artifactId = '0'.repeat(64);
-      if (failure === 'bytes') await writeFile(join(f.first.directory, 'entries.mjs'), "throw new Error('PRIVATE_TAMPER');");
-      if (['SDK', 'Node', 'modules', 'ABI'].includes(failure)) {
-        const manifest = resigned(f.first.manifest, value => {
-          if (failure === 'SDK') value.sdkVersion = '99.0.0';
-          if (failure === 'Node') value.runtime.version = '0.0.0';
-          if (failure === 'modules') value.runtime.modules = '0';
-          if (failure === 'ABI') value.runtime.abiIdentity = '0'.repeat(64);
-        });
-        await writeFile(join(f.first.directory, 'customization.json'), JSON.stringify(manifest));
-        candidate.artifactId = manifest.artifactId;
-      }
-      if (failure === 'grant') candidate.installations[0].service = 'invalid service';
-      const phase = failure === 'activation' ? 'activate' : failure === 'discovery' ? 'discover' : 'import';
-      if (['import', 'activation', 'discovery'].includes(failure)) f.state.hooks['artifact-a'] = { [phase]() { throw new Error(secret); } };
       try {
-        const classification = failure === 'grant' ? 'authorization' : ['activation', 'discovery'].includes(failure) ? failure : 'load';
-        assert.deepEqual(await host.replaceProviderExtensions(failure === 'duplicate namespace' ? [candidate, candidate] : [candidate]), failed(classification));
-        assert.deepEqual(host.extensionStatus(), failed(classification));
+        const selection = await failure.arrange(f, f.selected(f.first, 'artifact-a'));
+        assert.deepEqual(await host.replaceProviderExtensions(selection), failed(failure.classification));
+        assert.deepEqual(host.extensionStatus(), failed(failure.classification));
         await assert.rejects(host.discoverProviders(), /unavailable/);
         assert.equal(f.count(f.state.modules[0], 'close'), 1); assert.equal(f.count(f.state.modules[0], 'dispose'), 1);
-        assert.equal(f.state.modules.length, ['import', 'activation', 'discovery'].includes(failure) ? 2 : 1);
-        if (failure === 'discovery') {
-          const bad = f.state.modules[1];
-          assert.equal(f.count(bad, 'close'), 1); assert.equal(f.count(bad, 'dispose'), 1);
-          await assert.rejects(bad.probe(), /./);
-        }
+        assert.equal(f.state.modules.length, 1 + failure.imported);
+        await failure.assertRetired?.(f);
         assert.equal((await host.replaceProviderExtensions([f.selected(f.second, 'artifact-b')])).kind, 'replaced');
         assert.equal((await host.discoverProviders())[0].agents[0].name, 'artifact-b');
         assert.equal(f.state.maximum, 1); assert.deepEqual(f.state.commands, []);
