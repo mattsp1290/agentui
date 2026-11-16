@@ -5,6 +5,8 @@ export type {
 } from '@mattsp1290/switchboard';
 export type { ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
 
+export { imageFailure } from './image-input.js';
+
 export const hostRuntime = 'node';
 export { secretResolver } from './secret-provider.js';
 export { createProviderRegistry, providerIdentity } from './providers.js';

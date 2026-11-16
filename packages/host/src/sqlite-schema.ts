@@ -5,12 +5,12 @@ export function openDatabase(path: string): DatabaseSync {
   try {
     db.exec('PRAGMA busy_timeout=5000;');
     const version = db.prepare('PRAGMA user_version').get()?.user_version;
-    if (typeof version !== 'number' || (version !== 0 && version !== 1 && version !== 2 && version !== 3)) throw new Error('Unsupported database version');
+    if (typeof version !== 'number' || (version !== 0 && version !== 1 && version !== 2 && version !== 3 && version !== 4)) throw new Error('Unsupported database version');
     db.exec('PRAGMA foreign_keys=ON;');
     if (version === 0) {
       db.exec('BEGIN IMMEDIATE');
       const lockedVersion = db.prepare('PRAGMA user_version').get()?.user_version;
-      if (lockedVersion !== 0 && lockedVersion !== 1 && lockedVersion !== 2 && lockedVersion !== 3) throw new Error('Unsupported database version');
+      if (lockedVersion !== 0 && lockedVersion !== 1 && lockedVersion !== 2 && lockedVersion !== 3 && lockedVersion !== 4) throw new Error('Unsupported database version');
       if (lockedVersion === 0) db.exec(`
         CREATE TABLE conversations (
           host TEXT NOT NULL, conversation TEXT NOT NULL, installation TEXT NOT NULL,
@@ -61,7 +61,7 @@ export function openDatabase(path: string): DatabaseSync {
           PRIMARY KEY(host, conversation, thread, run, call),
           FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
         PRAGMA user_version=2;`);
-      else if (lockedVersion !== 2 && lockedVersion !== 3) throw new Error('Unsupported database version');
+      else if (lockedVersion !== 2 && lockedVersion !== 3 && lockedVersion !== 4) throw new Error('Unsupported database version');
       db.exec('COMMIT');
     }
     const allTables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));

@@ -1,3 +1,5 @@
+import { IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
+import { utf8Bytes } from '@agentui/contracts/decode';
 import { record, identifier, count } from '@agentui/contracts/decode';
 import { parseServiceRequest, ServiceError } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest } from '@agentui/contracts/service';
@@ -47,13 +49,13 @@ export async function macAccess(command: AccessCommand, nativeInvoke: MacNativeI
   return { kind: input.kind, observation };
 }
 export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeInvoke, options: ServiceConnectionOptions = {}): ServiceConnection {
-  const connection = createServiceConnection(async body => {
+  const connection = createServiceConnection(async (body, { op }) => {
     if (access.kind !== 'ready') throw new ServiceError('unauthorized', 'Pair this Mac with the local host.');
     let value: unknown;
     try { value = await nativeInvoke({ kind: 'execute', observation: access.observation, request: parseServiceRequest(JSON.parse(body)) }); }
     catch (cause) { throw failure(cause); }
     const reply = record(value, ['status', 'body']), status = count(reply.status);
-    if (status < 200 || status > 599 || typeof reply.body !== 'string' || reply.body.length > 4_100_000) throw new Error(invalidResponse);
+    if (status < 200 || status > 599 || typeof reply.body !== 'string' || utf8Bytes(reply.body) > (op === 'image-upload' || op === 'image-read' ? IMAGE_TRANSFER_MAX_BYTES : 4_100_000)) throw new Error(invalidResponse);
     return new Response(reply.body, { status, headers: { 'Content-Type': 'application/json' } });
   }, transcriptProjection, options);
   return { ...connection, pair: async () => { throw new Error('Use native pairing controls to enroll this Mac.'); } };

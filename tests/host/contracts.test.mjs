@@ -18,6 +18,20 @@ test('commands validate exact keys and canonicalize the entire scoped intent', (
   assert.throws(() => canonicalJson(NaN));
 });
 
+test('send commands carry an optional image reference without changing text-only bytes', () => {
+  const imageId = 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa';
+  assert.equal(canonicalJson(parseCommand(command('id'))),
+    '{"body":{"kind":"send","text":"hello"},"clientCommandId":"id","scope":{"conversationId":"conversation","hostId":"host"},"version":1}');
+  assert.equal(Object.hasOwn(parseCommand(command('id')).body, 'imageId'), false);
+  for (const body of [{ kind: 'send', text: 'look', imageId }, { kind: 'send', text: '', imageId }]) {
+    assert.deepEqual(parseCommand(command('id', body)), command('id', body));
+  }
+  for (const body of [{ kind: 'send', text: '' }, { kind: 'send', text: 'x', imageId: null }, { kind: 'send', text: 'x', imageId: undefined },
+    { kind: 'send', text: 'x', imageId: imageId.toUpperCase() }, { kind: 'send', imageId }, { kind: 'send', text: 1, imageId }]) {
+    assert.throws(() => parseCommand(command('id', body)));
+  }
+});
+
 test('shared wrapper applies immutable receipt and decision events', () => {
   const initial = { domain: [], receipts: {}, decisions: {} };
   const pending = { pendingId: '__proto__', runId: 'r', choices: ['yes'], prompt: 'go?' };

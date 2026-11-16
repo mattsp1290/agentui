@@ -99,7 +99,7 @@ test('extension-only removal preserves confirmed and uncertain original creation
   assert.equal((await f.client.conversationAgent(scope)).id, oldId);
   assert.equal((await f.client.conversationAgent(scope)).availability.kind, 'unavailable');
   assert.deepEqual((await f.client.catalog()).map(item => item.scope), [scope]);
-  const watch = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, () => {});
+  const watch = f.client.conversation(scope).watch({ after: null, projectionVersion: 4 }, () => {});
   watch.close(); await watch.ended;
   await f.client.create(scope, oldId);
   await f.host.replaceProviderExtensions([next.value]);
@@ -163,7 +163,7 @@ test('extension-only restart reads saved native history without installing its r
   const saved = await f.client.conversationAgent(scope);
   assert.equal(saved.runtime.engine, 'agentui-recorded'); assert.equal(saved.availability.kind, 'unavailable');
   const received = Promise.withResolvers();
-  const feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, frame => received.resolve(frame));
+  const feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 4 }, frame => received.resolve(frame));
   try { assert.equal((await received.promise).kind, 'snapshot'); }
   finally { feed.close(); await feed.ended; }
 });

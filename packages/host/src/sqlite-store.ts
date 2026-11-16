@@ -1,3 +1,8 @@
+import { identifier } from '@agentui/contracts/decode';
+import { parseImageId, parseUploadId } from '@agentui/contracts/image';
+import type { ImageId, UploadId } from '@agentui/contracts/image';
+import { verifyImageUpload } from './image-input.js';
+import { hasImage, insertImage, migrateImages, readImage } from './sqlite-images.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
 import { providerTarget, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
@@ -51,11 +56,17 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
       this.transaction(() => {
-        const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
-        if (format !== 2 && format !== 3) throw new Error('Unsupported database version');
-        this.db.exec('PRAGMA user_version=3');
+        migrateImages(this.db);
       });
     } catch (error) { this.db.close(); throw error; }
+  }
+  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array) {
+    const target = parseScope(scope), owner = identifier(uploader), upload = parseUploadId(uploadId);
+    const verified = verifyImageUpload(name, bytes);
+    return this.transaction(() => insertImage(this.db, target, owner, upload, verified));
+  }
+  readImage(scope: ConversationScope, imageId: ImageId) {
+    return this.transaction(() => readImage(this.db, parseScope(scope), parseImageId(imageId)), false);
   }
   close(): void { this.db.close(); }
   transaction<T>(work: () => T, write = true): T {
@@ -306,6 +317,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
+      const imageId = command.body.kind === 'send' ? command.body.imageId : undefined;
+      if (imageId !== undefined && !hasImage(this.db, scope, imageId)) return { kind: 'rejected', reason: 'This image is not available in this conversation. Attach it again.' };
       let run = null, pending = null;
       if (command.body.kind === 'approve' && !('kind' in installed)) {
         const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?')
@@ -364,6 +377,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       } else target = captureTarget({ installation: installed, run, decision: pending }, operation);
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
+      if (imageId !== undefined) this.db.prepare('INSERT INTO command_images(host, conversation, command, image) VALUES (?, ?, ?, ?)')
+        .run(...key(scope), command.clientCommandId, imageId);
       if (providerPending) {
         this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
           .run(operation, ...key(scope), providerPending.visible.pendingId);

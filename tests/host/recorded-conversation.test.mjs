@@ -38,7 +38,7 @@ function harness(t, progressMs = 15) {
   const watch = host => {
     const history = [], events = [];
     let document;
-    const feed = host.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => {
+    const feed = host.conversation(scope).watch({ after: null, projectionVersion: 4 }, async item => {
       if (item.kind === 'snapshot') document = item.snapshot.document;
       else for (const envelope of item.events) {
         document = foldDocument(document, envelope.event, transcriptProjection);
@@ -67,6 +67,10 @@ test('conversation previews use the first user message and keep text readable an
   assert.equal(conversationPreview(transcript), 'Plan a garden with herbs and tomatoes');
   assert.equal(conversationPreview({ ...transcript, messages: [] }), null);
   assert.equal(conversationPreview({ ...transcript, messages: [message('user', ' \n\t ', 'blank')] }), null);
+  const image = name => ({ imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name, mediaType: 'image/png', byteLength: 70, width: 1, height: 1 });
+  const imageFirst = { ...message('user', '', 'image'), image: image('chart.png') };
+  assert.equal(conversationPreview({ ...transcript, messages: [imageFirst, message('user', 'What changed here?', 'question')] }), 'What changed here?');
+  assert.equal(conversationPreview({ ...transcript, messages: [message('assistant', 'Hi', 'a'), imageFirst, { ...message('user', ' ', 'second'), image: image('other.png') }] }), 'chart.png');
   assert.equal(conversationPreview({ ...transcript, messages: [message('user', 'x'.repeat(1000), 'long')] }), `${'x'.repeat(79)}…`);
   const unicode = conversationPreview({ ...transcript, messages: [message('user', `${'x'.repeat(78)}😀tail`, 'unicode')] });
   assert.equal(unicode, `${'x'.repeat(78)}…`);

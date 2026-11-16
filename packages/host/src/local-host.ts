@@ -1,3 +1,4 @@
+import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
 import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
@@ -24,6 +25,8 @@ export interface LocalHostOptions<E, P> {
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
+  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array): ImageAttachment;
+  readImage(scope: ConversationScope, imageId: ImageId): { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
@@ -117,6 +120,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     await task;
   };
   const host: LocalHost<E, P> = {
+    uploadImage: (scope, uploader, uploadId, name, bytes) => store.uploadImage(authorized(scope), uploader, uploadId, name, bytes),
+    readImage: (scope, imageId) => store.readImage(authorized(scope), imageId),
     drained,
     observeProvider,
     observationStatus,
@@ -202,7 +207,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          const admit = () => store.admit(command, provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
+          const image = command.body.kind === 'send' && command.body.imageId !== undefined;
+          const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
+            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => registry.captureCommand(original, action, operation) : undefined);

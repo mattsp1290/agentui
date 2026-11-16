@@ -55,7 +55,7 @@ test('store notifies only successful write commits after other connections can o
 
 test('opening incomplete version two refuses before adding provider creation metadata', t => {
   const f = fixture(t), host = f.open(); host.close();
-  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
   assert.deepEqual(readFileSync(f.path), before);
@@ -68,7 +68,7 @@ for (const [failure, mutate, options, message] of [
 ]) {
   test(`pre-feature version two ${failure} refuses without adding provider metadata or changing file bytes`, t => {
     const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
-    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP TABLE provider_creations; ${mutate}`); db.close();
+    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP TABLE command_images; DROP TABLE images; DROP TABLE provider_creations; ${mutate}`); db.close();
     const before = readFileSync(f.path);
     assert.throws(() => f.open(options), message);
     const reader = new DatabaseSync(f.path);
@@ -88,21 +88,21 @@ test('corrupt existing provider metadata refuses before migrating a legacy trans
   assert.deepEqual(readFileSync(f.path), before);
 });
 
-test('version two upgrades preserve pending decisions and uncertain commands and the older opener refuses format three', async t => {
+test('version two upgrades preserve pending decisions and uncertain commands and the older opener refuses format four', async t => {
   const f = fixture(t, { async afterAcceptance() { throw new Error('Reply lost'); } }), host = f.open();
   host.createConversation(scope, installed);
   host.append(scope, { ...note('saved'), runs: [run()], decisions: [question()] });
   await host.conversation(scope).submit(command('uncertain'));
   host.close(); await host.drained;
   const db = new DatabaseSync(f.path);
-  db.exec('PRAGMA user_version=2');
+  db.exec('PRAGMA user_version=2; DROP TABLE command_images; DROP TABLE images;');
   const saved = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits']
     .map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]);
   assert.equal(JSON.parse(saved.find(([name]) => name === 'commands')[1][0].receipt).state.kind, 'uncertain');
   db.close();
   const reopened = f.open();
   const reader = new DatabaseSync(f.path);
-  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 3);
+  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 4);
   for (const [table, rows] of saved) assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), rows);
   reader.close(); reopened.close(); await reopened.drained;
   const bytes = readFileSync(f.path);
