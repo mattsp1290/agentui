@@ -21,7 +21,9 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
     import {createFrontendSends,createGenerationSource} from './apps/desktop/src/application/frontend-sends.ts';
     const scope={hostId:'host',conversationId:'conversation'};
     const source=createGenerationSource();
-    const owner=createFrontendSends({generations:source,changed(){},failed(){throw Error('Unexpected storage failure');},unauthorized(){throw Error('Unexpected authorization failure');}});
+    const owner=createFrontendSends({generations:source,rowsChanged(){},unauthorized(){throw Error('Unexpected authorization failure');}});
+    window.borrows=0;
+    const captureStore={borrow(){window.borrows++;let released=false;return {failed(error){throw error;},release(){if(!released){released=true;window.borrows--;}}};}};
     window.ready=owner.session({hostId:'host',principalId:'principal'},{frontendBinding(){throw Error('No network before commit');}});
     const manifest={namespace:'healthy',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]};
     const customizations=[{manifest,${entry(`frontendTools.add(${tool});return {modules:[],dispose(){}};`)}},
@@ -30,7 +32,7 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
         else resolve({default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){frontendTools.add(${tool});return {modules:[],dispose(){}};}}});
       };})}];
     function App(){window.custom=useDesktopCustomizations({customizations,enabled:true,sink:source});return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;}
-    window.capture=()=>{try{const capture=owner.forStore({viewId:'view',scope,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
+    window.capture=()=>{try{const capture=owner.forStore({viewId:'view',scope,capture:captureStore,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
       const names=capture?.offer.tools.map(tool=>tool.definition.name);capture?.release();return {kind:'captured',names};
     }catch(error){return {kind:'error',message:error.message};}};
     window.finish=()=>owner.dispose();createRoot(document.getElementById('root')).render(<App/>);
@@ -53,6 +55,7 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
   assert.deepEqual(await page.evaluate(() => window.capture()), { kind: 'captured', names: ['healthy__echo'] });
   assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).evaluate((node, old) => node === old, previous), true);
   assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).inputValue(), 'Keep tool draft');
+  assert.equal(await page.evaluate(() => window.borrows), 0);
   await page.evaluate(() => window.finish()); assert.deepEqual(errors, []);
 });
 
