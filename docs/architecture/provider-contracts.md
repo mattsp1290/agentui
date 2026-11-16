@@ -145,7 +145,9 @@ Historical untagged targets and their evidence correlations stay byte-identical.
 Version-2 commands require the tag and the exact authored offer suffix.
 Untagged version-1 requests remain generic, including after registration through `addAgui`.
 Admission permanently reserves each offered conversation, thread and run for its original command.
-Another command using that identity is rejected with `frontend-run-reused` before dispatch, including after release.
+Another tagged send using that identity is rejected with `frontend-run-reused` before dispatch, including after release or terminal settlement.
+A new offered command also rejects a key captured by any earlier tagged send.
+Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic sends keep their historical semantics.
 An exact command retry returns its existing receipt without translating or dispatching again.
 This reservation does not qualify frontend handler execution ownership.
 
@@ -157,7 +159,8 @@ The owner checks protect direct receipt lookup and the captured offer associatio
 Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
 The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
 It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.
-Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive evidence keep the blocker.
+Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive lookup evidence keep the blocker.
+Public reconciliation and binding recovery also retain the latest persisted offered receipt and observation on an inconclusive lookup, including pending admission with no observation.
 An authorized original owner can still reconcile its receipt after releasing closures.
 A terminal rejection without a retained run returns `unavailable` with `provider-rejected`; not-dispatched returns `not-dispatched`.
 Both final no-run results work offline and need no coordinator. Explicit closure release takes precedence as `closures-unavailable`.

@@ -382,6 +382,17 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
         if (Buffer.byteLength(canonicalJson(target)) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
       } else target = captureTarget({ installation: installed, run, decision: pending }, operation);
+      if (capture?.agui) {
+        if (command.version === 2) {
+          if (this.db.prepare(`SELECT 1 FROM commands WHERE host=? AND conversation=?
+            AND json_extract(target, '$.kind')='provider'
+            AND json_extract(target, '$.operation.kind')='send'
+            AND json_extract(target, '$.operation.protocol')='ag-ui'
+            AND json_extract(target, '$.operation.request.threadId')=?
+            AND json_extract(target, '$.operation.request.runId')=? LIMIT 1`)
+            .get(...key(scope), capture.agui.threadId, capture.agui.runId)) throw new FrontendAccessError('frontend-run-reused');
+        } else this.frontendSends.assertRunUnreserved(scope, capture.agui);
+      }
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(target), canonicalJson(admitted));
       if (command.version === 2) {

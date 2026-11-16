@@ -158,7 +158,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     const observed = 'kind' in stored
       ? await options.providers?.executeCommand(stored, false, () => lookupFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
-    if (observed.kind === 'outcome-unknown' && dispatching.has(commandKey(scope, id))) {
+    if (observed.kind === 'outcome-unknown' && (stored.command.version === 2 || dispatching.has(commandKey(scope, id)))) {
       const current = store.command(scope, id);
       if (!current) throw new Error('Unknown command');
       return current.receipt;

@@ -715,7 +715,7 @@ test('offered input preserves absent defaults and ownership admission rolls back
 });
 
 test('offered commands require a fresh actor after host restart and keep old evidence private during blocker settlement', async t => {
-  const a = aguiExtension({ submit: (operation, { effect }) => effect(operation, 'accepted', operation.request.runId) });
+  const a = aguiExtension({ request: text => ({ ...actualInput(text), runId: `run-${text}` }), submit: (operation, { effect }) => effect(operation, 'accepted', operation.request.runId) });
   const registry = createProviderRegistry([{ ...a.value, authority: { credentials: {},
     issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {} } }]);
   await registry.activate(); t.after(() => registry.close());
@@ -733,7 +733,7 @@ test('offered commands require a fresh actor after host restart and keep old evi
   const other = { ...actor, id: 'different-owner' };
   assert.equal((await host.conversation(hostScope).submit(send(hostScope, 'actorless'))).reason, 'send-awaiting-confirmation');
   assert.equal(a.calls.reconciles.length, 0);
-  assert.equal((await host.conversation(hostScope, other).submit(send(hostScope, 'follow-up'))).receipt.state.kind, 'accepted');
+  assert.equal((await host.conversation(hostScope, other).submit(send(hostScope, 'follow-up', 'Next'))).receipt.state.kind, 'accepted');
   await assert.rejects(host.reconcile(hostScope, command.clientCommandId, other), /frontend-owner/);
   await assert.rejects(host.conversation(hostScope, other).receipt(command.clientCommandId), /frontend-owner/);
   assert.equal((await host.frontendBinding({ scope: hostScope, id: command.clientCommandId, action: 'recover' }, actor, scope => frontendToolsFor(host).producer(scope))).kind, 'bound');
