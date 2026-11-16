@@ -144,7 +144,7 @@ Add `--trusted` for trusted browser access. `--extensions` is valid only for `se
 With both files, the configured native default remains selected. Without native configuration, the default is the ready provider with the smallest stable ID in the current catalog, independent of discovery order.
 Empty, changing, or failed catalogs remain readable with no default. Creation is disabled while saved conversations and their original agent identities remain available.
 Omitting `--extensions` preserves the existing native-agent behavior.
-Selection and credential rotation take effect after a restart.
+Changes to launch configuration and credential rotation take effect after a restart. Saved durable artifact selections can also be applied explicitly [without restarting](#durable-selection-and-explicit-live-application).
 
 The version 2 extension configuration has this shape:
 
@@ -220,7 +220,7 @@ Selection objects, grants, authentication objects, identities, and manifests rej
 Empty `extensions` and `installations` arrays are valid.
 Selected namespaces, grant IDs within a package, and complete provider identities must be unique.
 Under transient ownership, each grant's namespace must match a manifest in its selected package or artifact catalog.
-[Durable selection](#durable-selection-for-the-next-startup) retains unused startup grants when an artifact is disabled.
+[Durable selection](#durable-selection-and-explicit-live-application) retains unused startup grants when an artifact is disabled.
 `expectedAuthority` accepts `agentui-host` or `remote-provider`.
 `service` must be an HTTP or HTTPS origin without credentials, a query, a fragment, or a non-root path.
 
@@ -243,7 +243,7 @@ It does not isolate credentials from full-trust extensions, same-user processes,
 Installed entries are trusted ordinary filesystem modules with host process privileges. Use distinct immutable installation directories for package revisions because Node caches imported module URLs.
 
 Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Under transient ownership, the programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner.
-CLI hosts configured with durable ownership require [durable selection](#durable-selection-for-the-next-startup) and restart instead. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
+CLI hosts configured with durable ownership use [durable selection](#durable-selection-and-explicit-live-application), followed by explicit live application or a restart. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
 
 ## Contribute conversation views and actions
 
@@ -428,7 +428,7 @@ It does not by itself justify advertising `tools.clientProvided`.
 Installed extensions appear in the app after later loader and activation work.
 
 
-### Durable selection for the next startup
+### Durable selection and explicit live application
 
 The version 2 `serve --extensions` configuration requires an explicit `ownership` of `durable-artifacts` or `transient`. Durable ownership accepts only artifact entries. Transient ownership accepts installed packages, artifacts, mixed selections, and empty selections, and refuses selection commands. Version 1 and missing ownership are rejected. Transient startup, including startup without extension options, refuses any existing durable selection journal before native drivers, extension imports, or listeners start. Programmatic callers choose `extensions: { kind: 'durable-artifacts', entries }` or `extensions: { kind: 'transient', entries }` explicitly. Durable ownership refuses direct `replaceProviderExtensions` calls.
 
@@ -450,10 +450,36 @@ The selection file contains a version and ordered, absolute artifact pins:
 
 Use `{"version":1,"artifacts":[]}` to disable every artifact at the next startup. Unused startup grants remain in the binding. A selection cannot edit grants or add authority. Keep provider instance identities unchanged when only artifact code changes.
 
-Read `desiredRevision` before starting an external build and submit that revision when the build finishes. A newer accepted selection rejects the stale build. Caller operation IDs use 1–96 ASCII letters, digits, dots, underscores, or hyphens and start with a letter or digit. `startup` identifies the initial revision-zero selection. Repeating an identical operation returns its recorded outcome; changing its intent refuses the reused ID. A socket timeout leaves admission uncertain. Query or resend the same ID before deciding what to do next.
+Read `desiredRevision` before starting an external build and submit that revision when the build finishes. A newer accepted selection rejects the stale build. Caller operation IDs use 1–96 ASCII letters, digits, dots, underscores, or hyphens and start with a letter or digit. `startup` identifies the initial revision-zero selection. Repeating an identical operation returns its recorded outcome; changing its intent refuses the reused ID. After connecting, select waits for its reply until completion or transport failure. A lost reply leaves admission uncertain. Query or resend the same ID before deciding what to do next.
 
-A successful select reports `staged`. The current provider generation continues until the process restarts. Startup loads the durable pins even if the original launch artifact has been removed. The configured public grants must still match and credentials must be supplied again. The parser consumes environment credentials once and never stores credential values, resolver functions, or handles in the selection journal.
+A successful select reports `staged` and leaves the current provider generation running. Startup loads the durable pins even if the original launch artifact has been removed. The configured public grants must still match and credentials must be supplied again. The parser consumes environment credentials once and never stores credential values, resolver functions, or handles in the selection journal.
 
-Each startup journals a separate activation attempt before executing artifact code. `applied` and `applied-empty` name successful historical boot outcomes. `runtime` describes the current process separately. An interrupted, failed, or grant-mismatched boot withholds providers. A new explicit selection with a new operation ID authorizes another startup. Ordinary restart reloads a settled applied target. There is no live apply, retry command, queue, or automatic fallback in this increment.
+Apply an accepted selection without restarting:
+
+```sh
+node apps/host/dist/main.js extensions-apply --data-dir /private/host --operation build-b --expected-revision 1 --request apply-b
+node apps/host/dist/main.js extensions-status --data-dir /private/host --attempt apply-b
+```
+
+`--operation` identifies the immutable selection. `--expected-revision` must equal its accepted revision and the current desired revision. Apply reads its original receipt and uses the fixed startup grants. It accepts no selection file or replacement grants. The selection must have no prior activation attempt. Select and apply are separate commands. A restart between them can consume the staged selection, after which apply refuses and status reports the boot attempt.
+
+Active provider work produces a persisted `deferred` outcome before candidate artifact reads. Completing that work does not activate the candidate. Retry explicitly names the latest attempt:
+
+```sh
+node apps/host/dist/main.js extensions-retry --data-dir /private/host --operation build-b --expected-revision 1 --request retry-b --after-attempt apply-b
+node apps/host/dist/main.js extensions-status --data-dir /private/host --attempt retry-b --receipt /build/receipt.json
+```
+
+A retry accepts deferred, interrupted, or failed attempts for the current desired selection. A grant mismatch requires restoring the original fixed grant binding first. A cleanup failure that requires restart blocks new apply and retry requests in that process without recording an attempt. After a real restart, explicit retry can use the clean lifecycle. Two new retry requests cannot both consume the same predecessor. Pending, applying, and successful attempts cannot be retried with a new request ID.
+
+After connecting, apply and retry wait for a reply until completion or transport failure. If an apply or retry reply is lost, resend the identical `--request` and arguments or inspect `--attempt`. The existing request returns its exact historical attempt, even after later attempts, supersession, or restart. Changed intent under the same request ID refuses. A new request for a superseded selection also refuses. Selection and attempt IDs share a collision domain for new commands. `extensions-status --operation` selects a selection's latest attempt. `--attempt` selects one exact attempt. The flags are mutually exclusive, including for legacy IDs that occur in both histories.
+
+Boot, apply, and retry share one durable attempt ledger. `attemptId` identifies the attempt in summaries and runtime identity. `applied` and `applied-empty` name successful historical outcomes. `runtime` describes the current process separately. It exposes an acknowledged selection only while its provider generation is current, or its acknowledged empty selection remains empty. Replacement retires the old generation before the observation pass and final journal commit. During that interval, `runtime` is `withheld`, the attempt remains `applying`, and `lastApplied` retains the previous success. A deferred replacement retains the still-active generation's identity. Startup converts unresolved pending and applying attempts to interrupted. A latest deferred, interrupted, failed, or grant-mismatched attempt withholds providers. Ordinary restart restores only a staged target or its latest settled success. There is no queue, automatic retry, or previous-success fallback.
+
+A live mutation holds admission through artifact preparation, replacement, every saved-conversation page, and the final journal commit. A successful acknowledgement follows the complete observation pass. Individual provider observation failures retain their existing conversation status and do not imply that every remote feed resumed. An exception escaping the observation pass, a lost final journal write, or changed desired authority starts shutdown and freezes credentials. The initiating request receives a sanitized uncertainty error when its connection remains available. Journal errors while recording a selection or admitting an attempt also stop the host, even before any runtime effect. Those failures report `Selection unavailable` when the connection remains available. Shutdown can make subsequent status requests unavailable. Shutdown drains source preparation that was already admitted. Candidate module evaluation can finish during that drain, but the closing lifecycle refuses activation. Reopening an unresolved attempt never assumes that its effect did not happen.
+
+The packaged CLI exits nonzero after fatal uncertainty even when cleanup succeeds. Programmatic hosts expose a non-rejecting `fatal` promise that resolves after fatal shutdown starts. `close()` separately reports cleanup completion or failure. The host does not change its caller's process exit status.
+
+Journal version 2 migrates valid deployed version 1 history in one transaction. It preserves selection rows, receipt bytes and digests, and settled historical outcomes. Receipts remain version 1. An unseeded version 1 journal migrates only after startup verification succeeds. Older bundled hosts refuse version 2 journals before artifact import. A downgrade requires restoring a separately managed backup. The bundled host and CLI use the updated protocol together.
 
 The local control socket limits requests to 4096 UTF-8 bytes and replies to 16000 bytes, including framing. Summaries omit paths and full manifests. Receipt export reads digest-addressed base64 chunks of at most 8192 raw bytes, validates contiguous offsets and the final SHA-256, and writes the complete JSON receipt. The journal retains complete immutable artifact manifests and source provenance. Receipts exceeding 16 MiB are refused before staging. Malformed journals expose `journal-invalid` and do not activate providers or accept new selections.

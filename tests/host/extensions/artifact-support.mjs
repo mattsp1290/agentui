@@ -32,7 +32,7 @@ export async function packagedHost(t) {
   return value;
 }
 
-export async function fixture(t, runtime) {
+export async function fixture(t, runtime, { stableIdentity = false, liveFeeds = false } = {}) {
   const key = 'agentuiArtifactReplacement' + randomUUID().replaceAll('-', '');
   const state = { events: [], modules: [], emitter: new EventEmitter(), deliveries: [], maximum: 0, hooks: {}, commands: [] };
   state.phase = async (phase, module) => {
@@ -44,9 +44,9 @@ export async function fixture(t, runtime) {
   const source = label => `import { EXTENSION_SDK_VERSION, parseExtensionManifest } from '@agentui/sdk';
     import { createCrewFixture } from './crew.ts';
     const state = globalThis[${JSON.stringify(key)}] ?? {modules:[],phase:async()=>{}}, label = ${JSON.stringify(label)};
-    const instance = {namespace:'example-crew',installationId:'personal',generation:label,protocolVersion:'crew-v2'};
+    const instance = {namespace:'example-crew',installationId:'personal',generation:${stableIdentity ? "'stable'" : 'label'},protocolVersion:'crew-v2'};
     const fixture = createCrewFixture(instance);
-    const module = {label,id:state.modules.length + 1,parser:parseExtensionManifest,probe:()=>import('./unused.ts')};
+    const module = {label,id:state.modules.length + 1,feeds:[],parser:parseExtensionManifest,probe:()=>import('./unused.ts')};
     state.modules.push(module);
     await state.phase('import',module);
     export default {kind:'server',sdkVersion:EXTENSION_SDK_VERSION,async activate(context) {
@@ -66,7 +66,12 @@ export async function fixture(t, runtime) {
         async reconcileCreation(operation){state.commands.push(operation);return fixture.crewBackend.reconcileCreation(operation);},
         async reconcileCommand(operation){state.commands.push(operation);return fixture.crewBackend.reconcileCommand(operation);},
         async snapshot(binding){await state.phase('snapshot',module);return {kind:'available',snapshot:{binding,cursor:{kind:'provider-cursor',binding,opaque:{checkpoint:'start',stream:1}},projectionVersion:1,state:{messages:[]},decisions:[]}};},
-        observe(...args){state.events.push(label+':'+module.id+':observe');return fixture.crewBackend.observe(...args);},
+        observe(...args){
+          state.events.push(label+':'+module.id+':observe');
+          if(!${liveFeeds}) return fixture.crewBackend.observe(...args);
+          const done=Promise.withResolvers(),feed={request:args[0],closes:0,ended:done.promise,close(){this.closes++;done.resolve({kind:'closed',cursor:null});}};
+          module.feeds.push(feed);return feed;
+        },
         async close(){await state.phase('close',module);}
       };
       context.providers.add('service',{...fixture.crew,async connect(request){module.credential=request.credential;return {kind:'connected',backend};}},fixture.crewPresentation);
@@ -95,7 +100,7 @@ export async function fixture(t, runtime) {
   const second = await probeArtifact(await f.build(f.repo.commit(), 'second'));
   let provisioned = 0;
   function grants(label) {
-    return [{ id: 'service', instance: { namespace: 'example-crew', installationId: 'personal', generation: label, protocolVersion: 'crew-v2' },
+    return [{ id: 'service', instance: { namespace: 'example-crew', installationId: 'personal', generation: stableIdentity ? 'stable' : label, protocolVersion: 'crew-v2' },
       service, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: 'first', async resolve() { provisioned++; return secret; } } }];
   }
   function selected(artifact, label) {
