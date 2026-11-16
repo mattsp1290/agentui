@@ -61,10 +61,13 @@ export class FrontendSends {
     if (command.version !== 2) return;
     if (this.check({ scope: command.scope, id: command.clientCommandId, actor }) === 'unavailable') throw new FrontendAccessError('frontend-closures-unavailable');
   }
+  assertRunUnreserved(scope: ConversationScope, run: AguiRunKey): void {
+    if (this.db.prepare('SELECT 1 FROM frontend_sends WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
+      .get(scope.hostId, scope.conversationId, run.threadId, run.runId)) throw new FrontendAccessError('frontend-run-reused');
+  }
   admit(command: OfferedCommand, run: AguiRunKey, actor: FrontendSendActor | undefined): void {
     const owner = this.assertActor(actor);
-    if (this.db.prepare('SELECT 1 FROM frontend_sends WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
-      .get(command.scope.hostId, command.scope.conversationId, run.threadId, run.runId)) throw new FrontendAccessError('frontend-run-reused');
+    this.assertRunUnreserved(command.scope, run);
     this.db.prepare("INSERT INTO frontend_sends(host,conversation,command_id,actor_id,platform,state,thread_id,run_id) VALUES (?,?,?,?,?,'available',?,?)")
       .run(command.scope.hostId, command.scope.conversationId, command.clientCommandId, owner.id, owner.platform, run.threadId, run.runId);
   }
