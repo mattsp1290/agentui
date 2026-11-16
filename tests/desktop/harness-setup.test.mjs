@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn, spawnSync } from 'node:child_process';
+import { openSync, closeSync, writeFileSync } from 'node:fs';
 import { copyFile, mkdir, mkdtemp, readFile, readlink, readdir, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
@@ -12,9 +13,9 @@ import { shellQuote } from '../../scripts/agentui-runtime.mjs';
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const entry = join(root, 'scripts/agentui-setup.mjs');
 
-async function fixture(t) {
+async function fixture(t, beforeCleanup = () => {}) {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-harness-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  t.after(async () => { try { await beforeCleanup(); } finally { await rm(directory, { recursive: true, force: true }); } });
   const home = join(directory, 'home'), bin = join(directory, 'bin');
   await Promise.all([mkdir(home), mkdir(bin)]);
   await symlink(process.execPath, join(bin, 'node'));
@@ -200,18 +201,194 @@ for (const output of ['{invalid SECRET_SENTINEL', JSON.stringify({ event: 'insta
   });
 }
 
-test('cancellation stops setup without returning an installed result', { timeout: 10_000 }, async t => {
-  const f = await fixture(t);
-  await writeFile(join(f.bin, 'ssh'), `#!/bin/sh\nexec ${shellQuote(process.execPath)} -e 'process.stderr.write("SETUP_RUNNING\\n");setInterval(()=>{},1000);'\n`, { mode: 0o755 });
-  const child = spawn(process.execPath, [entry, '--agent', 'pi', '--ssh', 'host'], { env: f.env, stdio: ['ignore', 'pipe', 'pipe'] });
-  t.after(() => { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); });
-  let stdout = '', stderr = '';
+function waitForMarker(child, marker, signal, stderr) {
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      child.stderr.off('data', onData);
+      child.off('exit', onExit);
+      child.off('error', onError);
+      signal.removeEventListener('abort', onAbort);
+    };
+    const onData = () => { if (stderr.value.includes(marker)) { cleanup(); resolve(); } };
+    const onExit = () => { cleanup(); reject(new Error(`Setup exited before ${marker}`)); };
+    const onError = error => { cleanup(); reject(error); };
+    const onAbort = () => { cleanup(); reject(new Error(`Setup interrupted before ${marker}`)); };
+    child.stderr.on('data', onData);
+    child.once('exit', onExit);
+    child.once('error', onError);
+    signal.addEventListener('abort', onAbort, { once: true });
+    if (signal.aborted) onAbort();
+    else if (stderr.value.includes(marker)) onData();
+    else if (stderr.error) onError(stderr.error);
+    else if (child.exitCode !== null || child.signalCode !== null) onExit();
+  });
+}
+
+async function beforeAbort(promise, signal) {
+  let onAbort;
+  const aborted = new Promise((_, reject) => {
+    onAbort = () => reject(new Error('Setup did not close before the test deadline'));
+    if (signal.aborted) onAbort();
+    else signal.addEventListener('abort', onAbort, { once: true });
+  });
+  try { return await Promise.race([promise, aborted]); } finally { signal.removeEventListener('abort', onAbort); }
+}
+
+async function cancellationFixture(t, sshScript, executable = process.execPath) {
+  let child;
+  const f = await fixture(t, () => {
+    if (!child) return;
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL');
+    child.stdout.destroy();
+    child.stderr.destroy();
+    child.unref();
+  });
+  await writeFile(join(f.bin, 'ssh'), sshScript, { mode: 0o755 });
+  const owner = join(f.directory, 'setup.pid');
+  child = spawn(executable, [entry, '--agent', 'pi', '--ssh', 'host'], { env: { ...f.env, TEST_SETUP_OWNER: owner }, stdio: ['ignore', 'pipe', 'pipe'] });
+  if (child.pid) writeFileSync(owner, String(child.pid));
+  let stdout = '';
+  const stderr = { value: '' };
   child.stdout.on('data', data => { stdout += data; });
-  const started = new Promise(resolve => child.stderr.on('data', data => { stderr += data; if (stderr.includes('SETUP_RUNNING')) resolve(); }));
-  const exited = new Promise(resolve => child.once('close', resolve));
-  await started;
+  child.stderr.on('data', data => { stderr.value += data; });
+  const closed = new Promise(resolve => {
+    child.once('error', error => { stderr.error = error; resolve({ error }); });
+    child.once('close', (code, signal) => resolve({ code, signal }));
+  });
+  return { child, stderr, stdout: () => stdout, closed };
+}
+
+const runningSsh = `#!${process.execPath}
+const fs = require('node:fs');
+const path = require('node:path');
+let parent;
+const timer = setInterval(() => {
+  if (parent === undefined) {
+    try {
+      const owner = Number(fs.readFileSync(process.env.TEST_SETUP_OWNER, 'utf8'));
+      if (!Number.isSafeInteger(owner) || owner <= 0) return;
+      parent = owner;
+      process.stderr.write('SETUP_RUNNING\\n');
+    } catch (error) {
+      if (error.code === 'ENOENT' && !fs.existsSync(path.dirname(process.env.TEST_SETUP_OWNER))) process.exit(0);
+      if (error.code !== 'ENOENT') throw error;
+    }
+  } else if (process.ppid !== parent) {
+    clearInterval(timer);
+    process.exit(0);
+  }
+}, 20);
+setTimeout(() => process.exit(1), 10000).unref();
+`;
+
+test('cancellation stops setup without returning an installed result', { timeout: 10_000 }, async t => {
+  const { child, stderr, stdout, closed } = await cancellationFixture(t, runningSsh);
+  await waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr);
   child.kill('SIGTERM');
-  assert.equal(await exited, 1);
-  assert.equal(stdout, '');
-  assert.match(stderr, /did not complete/u);
+  assert.deepEqual(await beforeAbort(closed, t.signal), { code: 1, signal: null });
+  assert.equal(stdout(), '');
+  assert.match(stderr.value, /did not complete/u);
 });
+
+test('cancellation setup reports an early exit before its startup marker', { timeout: 10_000 }, async t => {
+  const ssh = `#!/bin/sh\nexit 1\n`;
+  const { child, stderr, closed } = await cancellationFixture(t, ssh);
+  await assert.rejects(waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr), /Setup exited before SETUP_RUNNING/u);
+  assert.deepEqual(await beforeAbort(closed, t.signal), { code: 1, signal: null });
+});
+
+test('cancellation setup reports a spawn error before waiting for startup', { timeout: 10_000 }, async t => {
+  const missing = join(tmpdir(), `agentui-missing-node-${process.pid}`);
+  const { child, stderr, closed } = await cancellationFixture(t, runningSsh, missing);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(stderr.error?.code, 'ENOENT');
+  await assert.rejects(waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr), { code: 'ENOENT' });
+  assert.equal((await beforeAbort(closed, t.signal)).error.code, 'ENOENT');
+});
+
+test('fake SSH releases its inherited pipes if setup dies', { timeout: 10_000 }, async t => {
+  const { child, stderr, closed } = await cancellationFixture(t, runningSsh);
+  await waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr);
+  child.kill('SIGKILL');
+  assert.deepEqual(await beforeAbort(closed, t.signal), { code: null, signal: 'SIGKILL' });
+});
+
+if (process.env.AGENTUI_CANCELLATION_PROBE) {
+  test('cancellation deadline probe', async t => {
+    const probe = process.env.AGENTUI_CANCELLATION_PROBE;
+    const ssh = `#!${process.execPath}
+const fs = require('node:fs');
+fs.writeFileSync(${JSON.stringify(join(probe, 'started'))}, '');
+process.stderr.write('SETUP_RUNNING\\n');
+const timer = setInterval(() => {
+  if (!fs.existsSync(${JSON.stringify(probe)})) process.exit(0);
+  if (fs.existsSync(${JSON.stringify(join(probe, 'release'))})) {
+    clearInterval(timer);
+    fs.writeFileSync(${JSON.stringify(join(probe, 'done'))}, '');
+    process.exit(0);
+  }
+}, 20);
+setTimeout(() => {
+  if (fs.existsSync(${JSON.stringify(probe)})) fs.writeFileSync(${JSON.stringify(join(probe, 'fallback-expired'))}, '');
+  process.exit(1);
+}, 10000).unref();
+`;
+    const { child, stderr } = await cancellationFixture(t, ssh);
+    await waitForMarker(child, 'SETUP_RUNNING', t.signal, stderr);
+    await writeFile(join(probe, 'ready'), '');
+    while (true) {
+      try { await readFile(join(probe, 'arm')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      t.signal.throwIfAborted();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    await t.test('deadline', { timeout: 100 }, async subtest => {
+      await waitForMarker(child, 'NEVER_WRITTEN', subtest.signal, stderr);
+    });
+  });
+} else {
+  test('a timed-out cancellation test releases its worker despite inherited stderr', { timeout: 15_000 }, async t => {
+    const directory = await mkdtemp(join(tmpdir(), 'agentui-deadline-'));
+    const output = openSync(join(directory, 'output'), 'w');
+    const env = { ...process.env, AGENTUI_CANCELLATION_PROBE: directory };
+    delete env.NODE_TEST_CONTEXT;
+    const runner = spawn(process.execPath, ['--test', '--test-isolation=none', '--test-name-pattern=^cancellation deadline probe$', fileURLToPath(import.meta.url)], {
+      env, stdio: ['ignore', output, output],
+    });
+    let runnerError;
+    const exited = new Promise(resolve => {
+      runner.once('error', error => { runnerError = error; resolve({ error }); });
+      runner.once('exit', (code, signal) => resolve({ code, signal }));
+    });
+    t.after(async () => {
+      await writeFile(join(directory, 'release'), '');
+      if (runner.exitCode === null && runner.signalCode === null) runner.kill('SIGKILL');
+      runner.unref();
+      closeSync(output);
+      await rm(directory, { recursive: true, force: true });
+    });
+    while (true) {
+      try { await readFile(join(directory, 'ready')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      if (runnerError) throw runnerError;
+      if (runner.exitCode !== null || runner.signalCode !== null) throw new Error('Deadline runner exited before the deadline was ready');
+      t.signal.throwIfAborted();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    const timeout = AbortSignal.timeout(5000);
+    await writeFile(join(directory, 'arm'), '');
+    const result = await Promise.race([
+      exited,
+      new Promise((_, reject) => timeout.addEventListener('abort', () => reject(new Error('Timed-out runner did not exit')), { once: true })),
+    ]);
+    assert.deepEqual(result, { code: 1, signal: null });
+    assert.equal(await readFile(join(directory, 'started'), 'utf8'), '');
+    await assert.rejects(readFile(join(directory, 'done')), { code: 'ENOENT' });
+    await assert.rejects(readFile(join(directory, 'fallback-expired')), { code: 'ENOENT' });
+    assert.match(await readFile(join(directory, 'output'), 'utf8'), /test timed out/u);
+    await writeFile(join(directory, 'release'), '');
+    while (true) {
+      try { await readFile(join(directory, 'done')); break; } catch (error) { if (error.code !== 'ENOENT') throw error; }
+      t.signal.throwIfAborted();
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  });
+}

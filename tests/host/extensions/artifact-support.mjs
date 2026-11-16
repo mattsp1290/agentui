@@ -66,6 +66,7 @@ export async function fixture(t, runtime) {
         async reconcileCreation(operation){state.commands.push(operation);return fixture.crewBackend.reconcileCreation(operation);},
         async reconcileCommand(operation){state.commands.push(operation);return fixture.crewBackend.reconcileCommand(operation);},
         async snapshot(binding){await state.phase('snapshot',module);return {kind:'available',snapshot:{binding,cursor:{kind:'provider-cursor',binding,opaque:{checkpoint:'start',stream:1}},projectionVersion:1,state:{messages:[]},decisions:[]}};},
+        observe(...args){state.events.push(label+':'+module.id+':observe');return fixture.crewBackend.observe(...args);},
         async close(){await state.phase('close',module);}
       };
       context.providers.add('service',{...fixture.crew,async connect(request){module.credential=request.credential;return {kind:'connected',backend};}},fixture.crewPresentation);

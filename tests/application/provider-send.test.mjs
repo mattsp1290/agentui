@@ -80,7 +80,7 @@ async function fixture(t, extensions) {
     return response;
   } });
   const start = async values => {
-    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), providerExtensions: values.map(item => item.value) });
+    running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), extensions: { kind: 'transient', entries: values.map(item => item.value) } });
     if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
@@ -140,6 +140,100 @@ test('authenticated send commits exact target before HTTP effect, persists accep
   assert.deepEqual(f.inspect(db => db.prepare("SELECT installation,document FROM conversations WHERE conversation='native'").get()), nativeBytes);
 });
 
+test('follow-up retains refusal for unresolved, failed and mismatched original lookups', async t => {
+  const a = extension(), f = await fixture(t, [a]), scope = await create(f);
+  const first = await f.client.conversation(scope).submit(send(scope)), bytes = stored(f, 'chat');
+  for (const reconcile of [
+    operation => a.effect(operation),
+    () => ({ kind: 'pending', evidence: { queued: true } }),
+    () => ({ kind: 'uncertain', evidence: null }),
+    () => ({ kind: 'unavailable', reason: 'missing' }),
+    () => { throw new Error('Read failed'); },
+    operation => a.effect(operation, 'completed', 'foreign-run'),
+  ]) {
+    a.connected.reconcileCommand = reconcile;
+    assert.deepEqual(await f.client.conversation(scope).submit(send(scope, 'next')), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+    assert.deepEqual(await f.client.conversation(scope).receipt('send'), first.receipt);
+    assert.equal(await f.client.conversation(scope).receipt('next'), null);
+    assert.equal(stored(f, 'chat').target, bytes.target);
+    assert.equal(a.calls.submits.length, 1);
+  }
+});
+
+test('pending send blocks follow-up without lookup, while confirmed rejection admits it', async t => {
+  const a = extension({ submit: () => ({ kind: 'pending', evidence: { queued: true } }),
+    reconcile: () => ({ kind: 'rejected', reason: 'Declined', evidence: { rejected: true } }) });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  assert.equal((await port.submit(send(scope))).receipt.state.kind, 'pending');
+  assert.equal((await port.submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
+  assert.equal(a.calls.reconciles.length, 0);
+  a.connected.reconcileCommand = async operation => a.effect(operation);
+  await f.client.reconcile(scope, 'send');
+  a.connected.reconcileCommand = async () => ({ kind: 'rejected', reason: 'Declined', evidence: { rejected: true } });
+  assert.equal((await port.submit(send(scope, 'next'))).receipt.state.kind, 'pending');
+  assert.equal((await port.receipt('send')).state.kind, 'rejected');
+  assert.equal(a.calls.submits.length, 2);
+});
+
+for (const duplicate of [false, true]) {
+  test(`racing ${duplicate ? 'duplicate' : 'distinct'} follow-ups admit one new send after original confirmation`, { timeout: 5000 }, async t => {
+    const entered = Promise.withResolvers(), release = Promise.withResolvers();
+    const a = extension({ submit: (operation, { effect }) => effect(operation),
+      async reconcile(operation, { effect }) {
+        if (a.calls.reconciles.length === 2) entered.resolve();
+        await release.promise;
+        return effect(operation, 'completed');
+      } });
+    const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+    await port.submit(send(scope));
+    a.connected.submit = async operation => { a.calls.submits.push(operation); return { kind: 'pending', evidence: { queued: true } }; };
+    const left = port.submit(send(scope, 'left')), right = port.submit(send(scope, duplicate ? 'left' : 'right'));
+    await entered.promise;
+    release.resolve();
+    const results = await Promise.all([left, right]);
+    assert.equal(results.filter(result => result.kind === 'receipt').length, duplicate ? 2 : 1);
+    if (duplicate) assert.equal(results[0].receipt.hostOperationId, results[1].receipt.hostOperationId);
+    else assert.equal(results.find(result => result.kind === 'rejected').reason, 'send-awaiting-confirmation');
+    assert.deepEqual(a.calls.reconciles, [a.calls.submits[0], a.calls.submits[0]]);
+    assert.equal(a.calls.submits.length, 2);
+    assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands').get().n), 2);
+    assert.equal((await port.receipt('send')).state.kind, 'completed');
+  });
+}
+
+test('follow-up refuses completion returned after the original provider credential is revoked', async t => {
+  const a = extension({ reconcile(operation, { effect }) {
+    f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1'));
+    return effect(operation, 'completed');
+  } });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  const first = await port.submit(send(scope));
+  assert.equal((await port.submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
+  assert.deepEqual(await port.receipt('send'), first.receipt);
+  assert.equal(await port.receipt('next'), null);
+  assert.equal(a.calls.submits.length, 1);
+});
+
+test('follow-up rechecks local authority after original confirmation', async t => {
+  let authorized = true;
+  const a = extension({ reconcile(operation, { effect }) { authorized = false; return effect(operation, 'completed'); } });
+  const registry = createProviderRegistry([{ ...a.value, authority: { credentials: {},
+    issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {} } }]);
+  await registry.activate(); t.after(() => registry.close());
+  const [discovered] = await registry.discover();
+  const target = { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance, agent: discovered.agents[0],
+    presentationVersion: 1, expectedAuthority: discovered.expectedAuthority };
+  const f = hostFixture(t), host = f.open({ providers: registry, authorize: () => authorized });
+  await host.createProviderConversation(hostScope, target, registry);
+  const port = host.conversation(hostScope);
+  await port.submit(send(hostScope));
+  await assert.rejects(port.submit(send(hostScope, 'next')), /Unauthorized scope/);
+  authorized = true;
+  assert.equal(await port.receipt('next'), null);
+  assert.equal(a.calls.submits.length, 1);
+  assert.equal((await port.receipt('send')).state.kind, 'completed');
+});
+
 test('lost response and restart retry never translate or submit; explicit lookup receives original bytes and rejects a changed run', async t => {
   const a = extension({ submit() { throw new Error('Reply lost'); } }), f = await fixture(t, [a]), scope = await create(f);
   const original = await f.client.conversation(scope).submit(send(scope));
@@ -169,18 +263,21 @@ for (const state of ['pending', 'accepted']) {
     for (const kind of ['unavailable', 'authentication-failed', 'unsupported', 'not-dispatched', 'uncertain']) {
       a.connected.reconcileCommand = async () => ({ kind, reason: secret, ...(kind === 'uncertain' ? { evidence: null } : {}) });
       assert.deepEqual(await f.client.reconcile(scope, 'send'), original.receipt);
+      assert.equal((await f.client.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
       assert.deepEqual(stored(f, 'chat'), bytes);
     }
     for (const change of [{ revision: '2' }, { generation: 'replacement' }]) {
       const b = extension(change); await f.restart([b]);
       assert.deepEqual(await f.client.conversation(scope).submit(send(scope)), original);
       assert.deepEqual(await f.client.reconcile(scope, 'send'), original.receipt);
+      assert.equal((await f.client.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
       assert.equal(b.calls.translations + b.calls.submits.length + b.calls.reconciles.length, 0);
       assert.deepEqual(stored(f, 'chat'), bytes);
     }
     const b = extension(); await f.restart([b]);
     f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1'));
     assert.deepEqual(await f.client.reconcile(scope, 'send'), original.receipt);
+    assert.equal((await f.client.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
     assert.equal(b.calls.reconciles.length, 0); assert.deepEqual(stored(f, 'chat'), bytes);
   });
 }
