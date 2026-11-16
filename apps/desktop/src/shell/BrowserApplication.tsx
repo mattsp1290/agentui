@@ -114,7 +114,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       {custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
         active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />)}
     </div>
-    <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
+  </>;
+  const settings = <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>
       <section className="settings-section"><h2 ref={connectionHeading} tabIndex={-1}>Connection</h2>
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>
@@ -134,8 +135,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       </section>
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>
-    </section>
-  </>;
+    </section>;
   const rail = <nav className="view-rail" aria-label="Workspace views">
     <button type="button" aria-label="Chats" title="Chats" aria-pressed={selectedView === 'chats'} onClick={() => setSelectedView('chats')}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-9.5A7.5 7.5 0 0 1 9.5 5H12"/><path d="M16 5h6m-3-3v6"/></svg>
@@ -144,7 +144,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4m4 0h8M4 12h8m4 0h4M4 18h2m4 0h10"/><circle cx="10" cy="6" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg>
     </button>
   </nav>;
-  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} restoreMode={children === undefined ? 'managed' : 'remount'}
+  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} settingsView={settings} restoreMode={children === undefined ? 'managed' : 'remount'}
     onRestore={() => { setCustomizationEnabled(false); setSelectedView('chats'); }}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
     buildLabel={presentation.buildLabel}>{children}</DesktopShell>;

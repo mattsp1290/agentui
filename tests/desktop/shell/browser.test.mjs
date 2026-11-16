@@ -80,9 +80,9 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   assert.deepEqual(violations, []);
 });
 
-test('content failure leaves shell controls usable and restores the built-in view', async (t) => {
+async function serveFixture(t, entry) {
   const fixture = await build({
-    entryPoints: [fileURLToPath(new URL('failure-fixture.jsx', import.meta.url))],
+    entryPoints: [fileURLToPath(new URL(entry, import.meta.url))],
     outfile: 'fixture.js', bundle: true, write: false, jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' },
   });
@@ -108,6 +108,11 @@ test('content failure leaves shell controls usable and restores the built-in vie
   const page = await browser.newPage();
   const violations = await observeCspViolations(page);
   await page.goto(`http://127.0.0.1:${server.address().port}`);
+  return { page, violations };
+}
+
+test('content failure leaves shell controls usable and restores the built-in view', async (t) => {
+  const { page, violations } = await serveFixture(t, 'failure-fixture.jsx');
   await page.getByRole('alert').waitFor();
   await revealRecovery(page);
   await page.getByRole('navigation', { name: 'Recovery controls' }).waitFor();
@@ -152,4 +157,28 @@ test('chat workspace separates the icon rail and chat list and opens settings wi
   assert.equal(await chats.getAttribute('aria-pressed'), 'true');
   assert.equal(await page.locator('.shell-header').isVisible(), false);
   assert.equal(await page.locator('.settings-panel').isVisible(), false);
+});
+
+test('connection settings stay reachable while the content boundary is failed', async (t) => {
+  const { page } = await serveFixture(t, 'settings-failure-fixture.jsx');
+  const failure = page.getByText('This view could not load.', { exact: true });
+  const chats = page.getByRole('button', { name: 'Chats', exact: true });
+  const settings = page.getByRole('button', { name: 'Settings', exact: true });
+  const settingsHeading = page.getByRole('heading', { name: 'Settings', level: 1, exact: true });
+  await failure.waitFor();
+  await settings.click();
+  await settingsHeading.waitFor();
+  await page.getByRole('heading', { name: 'Connection', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+  assert.equal(await failure.count(), 0, 'the failed content notice does not cover Settings');
+  await chats.click();
+  await failure.waitFor();
+  assert.equal(await settingsHeading.isVisible(), false);
+  await revealRecovery(page);
+  await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
+  await page.getByRole('heading', { name: 'A conversation that stays with you.', exact: true }).waitFor();
+  assert.equal(await failure.count(), 0);
+  assert.equal(await chats.getAttribute('aria-pressed'), 'true');
+  await settings.click();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
 });
