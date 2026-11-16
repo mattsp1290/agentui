@@ -1126,6 +1126,28 @@ const journalRecord = (selected, count = 1) => ({ version: 2, scope: selected, d
     clientCommandId: `${selected.conversationId}-${index}`, body: { kind: 'send', text: 'Original', frontend: { platform: 'desktop', tools: [{ activationId: 'old', definition: { name: 'fixture__echo', description: 'Original' } }] } } } })) });
 const eventually = async predicate => { for (let attempt = 0; attempt < 500; attempt++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('Recovery did not reach its durable state'); };
 
+test('settled history beyond 32 references keeps captured rows stable on the next recovery pass', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.drafts.set('original-view/host/conversation', journalRecord(scope, 40));
+  const requests = [];
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start();
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends.every(row => row.state === 'unavailable-confirmed'));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const rows = f.app.getSnapshot().capturedSends, order = rows.map(row => row.command.clientCommandId);
+  assert.deepEqual(order, Array.from({ length: 32 }, (_, index) => `conversation-${index + 8}`));
+  assert.equal(requests.length, 40);
+  const loads = f.loads.length;
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  await eventually(() => f.loads.length > loads);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(publications, 0);
+  assert.equal(f.app.getSnapshot().capturedSends, rows);
+  assert.deepEqual(f.app.getSnapshot().capturedSends.map(row => row.command.clientCommandId), order);
+  assert.equal(requests.length, 40);
+});
+
 for (const route of [null, scope]) test(`owned-view sweep reaches more than 100 scopes and 32 references with route ${route?.conversationId ?? 'null'}`, async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.views.set('original-view/host', { ...empty(), route });

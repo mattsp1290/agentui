@@ -10,7 +10,8 @@ const flush = () => new Promise(resolve => setImmediate(resolve));
 async function fixture(t, { drafts = storage(), reply } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const disposed = [], calls = [], failures = [], requests = [];
-  const owner = createFrontendSends({ changed() {}, failed(view, error) { failures.push([view, error.message]); owner.storageFailed(view); }, unauthorized() { void owner.session(null, connection); } });
+  let changes = 0;
+  const owner = createFrontendSends({ changed() { changes++; }, failed(view, error) { failures.push([view, error.message]); owner.storageFailed(view); }, unauthorized() { void owner.session(null, connection); } });
   const connection = { async frontendBinding(request) { requests.push(structuredClone(request)); return reply ? reply(request) : request.action === 'unavailable' ? { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' } : { kind: 'pending', id: request.id }; } };
   await owner.session({ hostId: scope.hostId, principalId: 'A' }, connection);
   const generation = async id => (await createFrontendToolGeneration({ namespace: 'fixture', generation: id, platform: 'desktop', capture: () => undefined,
@@ -23,7 +24,7 @@ async function fixture(t, { drafts = storage(), reply } = {}) {
   t.after(async () => { await owner.dispose(); await a.retire(); });
   const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
   const tick = async () => { t.mock.timers.tick(2000); await flush(); await recover(); };
-  return { owner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover };
+  return { owner, store, port, frontend, drafts, a, token, generation, disposed, calls, requests, failures, connection, tick, recover, changes: () => changes };
 }
 const bound = command => ({ kind: 'bound', command, hostOperationId: 'operation', threadId: 'actual-thread', run: { conversation: scope, runId: 'actual-run', authority: { kind: 'remote-provider', binding: { namespace: 'provider', installationId: 'installation', opaqueSessionId: 'session' } } } });
 
@@ -200,6 +201,11 @@ test('more than 32 restored references occupy only bounded presentation rows and
   assert.equal(f.owner.snapshot().length, 32); assert.equal(f.owner.holds('view'), false);
   assert.ok(drafts.value.frontendSends.slice(0, 70).every(row => row.state === 'unavailable-confirmed'));
   assert.deepEqual(drafts.value.frontendSends.slice(0, 70).map(row => row.command), saved.frontendSends.map(row => row.command));
+  const rows = f.owner.snapshot(), changes = f.changes(), requests = f.requests.length, writes = drafts.writes.length;
+  for (const reference of store.frontendJournal.read().slice(0, 70)) await f.owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
+  assert.equal(f.changes(), changes);
+  assert.deepEqual(f.owner.snapshot(), rows);
+  assert.equal(f.requests.length, requests); assert.equal(drafts.writes.length, writes);
 });
 
 test('session invalidation releases a stalled recovery and its late reply cannot acknowledge a successor epoch', async t => {

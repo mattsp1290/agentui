@@ -83,7 +83,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     const key = keyFor(viewId, reference.command), currentAuthority = authority;
     const session = currentAuthority.session;
     const valid = () => !closed && !failedViews.has(viewId) && !signal.aborted && current() && !currentAuthority.lifetime.signal.aborted;
-    if (!valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
+    if (reference.state === 'unavailable-confirmed' || !valid() || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     if (reference.state === 'retained') {
       try { await journal.unavailable(reference.command.clientCommandId); }
       catch (error) { if (valid()) deps.failed(viewId, error); return; }
@@ -91,7 +91,7 @@ export function createFrontendSends(deps: { changed(): void; failed(viewId: stri
     if (!valid()) return;
     remember(viewId, reference);
     deps.changed();
-    if (!valid() || !session || !matches(reference) || reference.state === 'unavailable-confirmed' || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
+    if (!valid() || !session || !matches(reference) || entries.has(key) || acquiring(viewId, reference.command.scope)) return;
     try {
       const result = await raceAbort(() => session.connection.frontendBinding({ scope: reference.command.scope, id: reference.command.clientCommandId, action: 'unavailable' }), [currentAuthority.lifetime.signal, signal]);
       if (result === null) return;

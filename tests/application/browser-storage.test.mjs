@@ -61,6 +61,7 @@ test('native initial view waits for the previous document and retains its exact 
     }),
     page.evaluate(async scope => {
       const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true);
+      owner.select();
       const result = { viewId: owner.viewId, sessionViewId: sessionStorage.getItem('agentui.viewId'),
         saved: await owner.readView('host'), draft: await owner.drafts(() => {}).load(scope) };
       await owner.close();
@@ -87,6 +88,33 @@ test('native initial view refuses a lock that stays held without inventing anoth
   assert.match(result.failure, /already open/);
   assert.equal(result.lockAvailable, false);
   assert.equal(result.sessionViewId, null);
+});
+
+test('acquiring a candidate view preserves selection until select succeeds', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const a = await globalThis.BrowserViewStorage.open(() => {}), selected = () => sessionStorage.getItem('agentui.viewId');
+    const b = await globalThis.BrowserViewStorage.reopen('candidate-b', () => {});
+    const acquired = selected();
+    let failed;
+    try { await globalThis.BrowserViewStorage.reopen('candidate-b', () => {}); } catch (error) { failed = error.message; }
+    const afterFailed = selected();
+    await b.close();
+    let rejected;
+    try { b.select(); } catch (error) { rejected = error.message; }
+    const afterRejected = selected();
+    const c = await globalThis.BrowserViewStorage.reopen('candidate-b', () => {});
+    c.select();
+    const committed = selected();
+    await Promise.all([a.close(), c.close()]);
+    return { a: a.viewId, acquired, rejected, afterRejected, committed, failed, afterFailed };
+  });
+  assert.equal(result.acquired, result.a);
+  assert.match(result.rejected, /no longer owns local storage/);
+  assert.equal(result.afterRejected, result.a);
+  assert.equal(result.committed, 'candidate-b');
+  assert.match(result.failed, /already open/);
+  assert.equal(result.afterFailed, result.a);
 });
 
 test('saved views reject noncanonical records without overwriting local data or deleting foreign records', async t => {

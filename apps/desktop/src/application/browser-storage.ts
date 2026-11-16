@@ -89,7 +89,6 @@ export class BrowserViewStorage implements OwnedViewStorage {
     let db: IDBDatabase | undefined;
     try {
       db = await openDatabase();
-      sessionStorage.setItem('agentui.viewId', viewId);
       return new BrowserViewStorage(viewId, db, release, onFailure);
     } catch (error) { db?.close(); release(); throw error; }
   }

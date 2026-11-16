@@ -117,7 +117,7 @@ export function useDesktopCustomizations({ customizations, enabled, sink }: {
     let namespaces: readonly NamespaceActivation[] = request.customizations.map(item => ({ kind: 'loading', namespace: item.manifest.namespace }));
     const publish = () => {
       if (removed) return;
-      sink?.publish(token, namespaces.some(owner => owner.kind !== 'ready') ? { kind: 'transitioning' }
+      sink?.publish(token, namespaces.some(owner => owner.kind === 'loading') ? { kind: 'transitioning' }
         : { kind: 'ready', generations: namespaces.flatMap(owner => owner.kind === 'ready' ? [owner.generation] : []) });
       setSnapshot({ request, namespaces });
     };
