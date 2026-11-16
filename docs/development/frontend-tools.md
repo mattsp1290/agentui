@@ -18,6 +18,25 @@ const client = tools.client(scope, authenticatedActor);
 
 Each SDK tool activation has a unique `activationId`. A run pin exposes frozen `bindings` with each advertised tool's name and activation identity. `pin.invoke(name, arguments, activationId)` requires the captured identity. Missing or mismatched identities return `activation-mismatch` before a handler runs.
 
+When the actual run is not known yet, `retainFrontendTools` from `@agentui/sdk/tools` captures the original generations synchronously. It exposes frozen `definitions` and `bindings` without an invocation method. Retire or replace those generations after capture, then call `retained.bind(actualRun)` to obtain a pin over the original handlers.
+
+```ts
+import { retainFrontendTools } from '@agentui/sdk/tools';
+
+const retained = retainFrontendTools({ generations, platform: 'desktop' });
+try {
+  const actualRun = await confirmRun(retained.definitions, retained.bindings);
+  const pin = retained.bind(actualRun);
+  await consumePin(pin);
+} finally {
+  retained.release();
+}
+```
+
+The caller supplies `generations`, `confirmRun` and `consumePin`. Binding validates and copies the complete run identity. It does not authenticate the run or establish backend eligibility. The caller must obtain the actual run from trusted integration wiring. Rebinding an equal identity returns the same pin. A different or malformed identity throws and leaves the owner intact. Release through either the retention or its pin closes the same owner once. Pending calls retain their resources until they settle. Release unbound owners on cancellation or failure too. Fresh captures of retired generations fail.
+
+`pinFrontendTools` uses the same retained owner after reading its existing run and capability options. It continues to gate advertising on `tools.clientProvided` and `tools.supported`, checks agent tool name collisions when enabled, and validates all supplied generation handles even when disabled. The new export preserves SDK version `0.2.0` because it adds no activation requirement or wire format.
+
 The producer registers the pin's run identity, AG-UI thread ID, platform, definitions and activation bindings. Re-registering the same identity and bindings is idempotent. Changing the bindings for an existing run fails. A generation label is diagnostic and cannot restore a lost activation.
 
 ## Stream and consent
