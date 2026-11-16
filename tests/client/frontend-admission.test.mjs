@@ -100,3 +100,39 @@ for (const timing of ['before disposal', 'during disposal']) test(`failed hydrat
   await assert.rejects(store.frontendJournal.unavailable('never'), /closed/);
   assert.deepEqual(drafts.value, corrupt); assert.deepEqual(drafts.writes, []);
 });
+
+for (const timing of ['sequential', 'concurrent']) test(`journal mutations preserve failed hydration for ${timing} calls`, async () => {
+  const { deferred } = await import('./support.mjs');
+  const gate = deferred(), corrupt = { version: 99, scope, draft: 'Preserve the failed-load record' }, drafts = storage(corrupt);
+  drafts.load = () => gate.promise;
+  const store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'never' });
+  const failure = /Unsupported local storage version/;
+  const ready = assert.rejects(store.ready, failure);
+  try {
+    if (timing === 'concurrent') {
+      const mutations = Promise.all([store.frontendJournal.unavailable('original'), store.frontendJournal.acknowledged('original'),
+        store.frontendJournal.unavailable('original')].map(result => assert.rejects(result, failure)));
+      gate.resolve(corrupt); await ready; await mutations;
+    } else {
+      gate.resolve(corrupt); await ready;
+      await assert.rejects(store.frontendJournal.unavailable('original'), failure);
+      await assert.rejects(store.frontendJournal.acknowledged('original'), failure);
+      await assert.rejects(store.frontendJournal.unavailable('original'), failure);
+    }
+    assert.equal(store.getSnapshot().connection.kind, 'failed');
+    assert.deepEqual(drafts.value, corrupt); assert.deepEqual(drafts.writes, []);
+  } finally { gate.resolve(corrupt); await store.dispose(); }
+});
+
+test('journal can recover after an ordinary save error once hydration succeeded', async () => {
+  const drafts = storage(), save = drafts.save.bind(drafts);
+  let fail = true;
+  drafts.save = async value => { if (fail) { fail = false; throw new Error('Journal save failed'); } await save(value); };
+  const store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'never' });
+  try {
+    await store.ready;
+    await assert.rejects(store.frontendJournal.unavailable('original'), /Journal save failed/);
+    await store.frontendJournal.acknowledged('original');
+    assert.equal(drafts.writes.length, 1);
+  } finally { await store.dispose(); }
+});

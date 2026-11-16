@@ -56,7 +56,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let saves: Promise<void> = ready;
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
     if (closed) return Promise.reject(new Error('This conversation store has closed.'));
-    const result = saves.then(operation);
+    const result = saves.then(async () => {
+      await ready;
+      return operation();
+    });
     saves = result.then(() => undefined, () => undefined);
     return result;
   }
