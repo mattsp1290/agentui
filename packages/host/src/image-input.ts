@@ -97,7 +97,8 @@ function pngDimensions(bytes: Buffer) {
   return dimensions;
 }
 
-function jpegDimensions(bytes: Buffer) {
+// Phones append MPF secondary images and gain maps after the primary image's EOI; only the primary is checked and decoded.
+function jpegPrimary(bytes: Buffer) {
   let dimensions: ReturnType<typeof parseImageDimensions> | undefined;
   let scanned = false, inScan = false;
   for (let offset = 2; offset < bytes.length;) {
@@ -110,8 +111,8 @@ function jpegDimensions(bytes: Buffer) {
     if (inScan && (marker === 0 || marker >= 0xd0 && marker <= 0xd7)) continue;
     inScan = false;
     if (marker === 0xd9) {
-      if (!dimensions || !scanned || offset !== bytes.length) invalid();
-      return dimensions;
+      if (!dimensions || !scanned) invalid();
+      return { dimensions, end: offset };
     }
     if (offset + 2 > bytes.length) invalid();
     const length = bytes.readUInt16BE(offset), end = offset + length;
@@ -146,8 +147,8 @@ export function verifyImageUpload(name: string, input: Uint8Array): VerifiedImag
     const bytes = Buffer.from(input);
     const isPng = bytes.subarray(0, 8).equals(pngSignature);
     if (!isPng && (bytes[0] !== 0xff || bytes[1] !== 0xd8)) throw new ImageInputError('invalid-image', 'Choose a PNG or JPEG image');
-    const dimensions = isPng ? pngDimensions(bytes) : jpegDimensions(bytes);
-    const decoded = isPng ? PNG.sync.read(bytes, { checkCRC: true }) : decode(bytes, {
+    const primary = isPng ? { dimensions: pngDimensions(bytes), end: bytes.length } : jpegPrimary(bytes), { dimensions } = primary;
+    const decoded = isPng ? PNG.sync.read(bytes, { checkCRC: true }) : decode(bytes.subarray(0, primary.end), {
       tolerantDecoding: false, maxResolutionInMP: 16, maxMemoryUsageInMB: 256, formatAsRGBA: true,
     });
     if (decoded.width !== dimensions.width || decoded.height !== dimensions.height || decoded.data.length !== dimensions.width * dimensions.height * 4) invalid();

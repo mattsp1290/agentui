@@ -25,9 +25,12 @@ function settle(local: LocalRecords, receipt: Receipt): LocalRecords {
   const entry = local.outbox.find(value => value.command.clientCommandId === receipt.clientCommandId);
   if (!entry) return local;
   const body = entry.command.body;
-  const clearDraft = (receipt.state.kind === 'accepted' || receipt.state.kind === 'completed') &&
-    entry.draftRevision === local.draftRevision && body.kind === 'send' && body.text === local.draft;
-  const clearImage = clearDraft && body.imageId !== undefined && local.image?.attachment?.imageId === body.imageId;
+  const sent = (receipt.state.kind === 'accepted' || receipt.state.kind === 'completed') && entry.draftRevision !== null && body.kind === 'send';
+  const clearDraft = sent && entry.draftRevision === local.draftRevision && body.text === local.draft;
+  // The sent image leaves the composer even when the user kept typing, so it is never sent twice. Settlement is not an
+  // edit, so draftRevision stays put: a later capture of the same edit still clears its text, and any newer edit
+  // already advanced the revision past older captures. A different image has a different imageId and is kept.
+  const clearImage = sent && body.imageId !== undefined && local.image?.attachment?.imageId === body.imageId;
   return immutable({ ...local, draft: clearDraft ? '' : local.draft, image: clearImage ? null : local.image,
     outbox: local.outbox.filter(value => value.command.clientCommandId !== receipt.clientCommandId) });
 }
@@ -139,7 +142,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   function composerBody(): CommandBody {
     const image = local.image;
     if (!image) return { kind: 'send', text: local.draft };
-    if (!image.attachment) throw new Error('Wait for the image to finish uploading.');
+    if (!image.attachment) throw new Error(uploading?.selectionId === image.selectionId ? 'Wait for the image to finish uploading.' : 'Retry or remove the image before sending.');
     return { kind: 'send', text: local.draft, imageId: image.attachment.imageId };
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }

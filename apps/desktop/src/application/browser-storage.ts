@@ -4,6 +4,10 @@ import type { DraftStoragePort } from '@agentui/client';
 
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 
+export class SupersededDraftsError extends Error {
+  constructor() { super('This conversation was reopened in a newer view.'); this.name = 'SupersededDrafts'; }
+}
+
 function decodeView(value: unknown, hostId: string): SavedView {
   if (value === undefined) return { version: 2, route: null, pendingCreation: null };
   let input: Record<string, unknown>;
@@ -167,14 +171,16 @@ export class BrowserViewStorage implements OwnedViewStorage {
         return (await this.transaction('readonly', store => store.get(['draft', this.viewId, scope.hostId, scope.conversationId]))) ?? null;
       }),
       // A replaced store for the same conversation can finish late uploads or settlements; only the latest loader may write.
-      save: async (records, image) => (this.draftOwners.get(conversation(records.scope)) ?? port) !== port ? undefined : protect(async () => {
-        const key = (selectionId: string) => ['draft-image', this.viewId, records.scope.hostId, records.scope.conversationId, selectionId];
-        await this.transaction('readwrite', store => {
+      // The refusal stays outside protect: the newer view still owns healthy storage.
+      save: async (records, image) => {
+        if ((this.draftOwners.get(conversation(records.scope)) ?? port) !== port) throw new SupersededDraftsError();
+        await protect(() => this.transaction('readwrite', store => {
+          const key = (selectionId: string) => ['draft-image', this.viewId, records.scope.hostId, records.scope.conversationId, selectionId];
           for (const selectionId of image?.remove ?? []) store.delete(key(selectionId));
           if (image?.put) store.put(image.put.bytes, key(image.put.selectionId));
           return store.put(records, ['draft', this.viewId, records.scope.hostId, records.scope.conversationId]);
-        });
-      }),
+        }));
+      },
       loadImage: (scope, selectionId) => protect(async () => {
         const bytes = await this.transaction('readonly', store =>
           store.get(['draft-image', this.viewId, scope.hostId, scope.conversationId, selectionId]));

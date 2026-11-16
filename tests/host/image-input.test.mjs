@@ -84,16 +84,29 @@ test('rejects PNG truncation, inflation surplus, animation, invalid chunks and c
   assert.throws(() => verify(truncated), { code: 'invalid-image' });
 });
 
-test('rejects truncated JPEG scans, forged dimensions and trailing or malformed segments', () => {
+test('rejects truncated JPEG scans, forged dimensions and malformed segments before the end of the primary image', () => {
   const valid = screenshotJpeg();
   const oversized = Buffer.from(valid);
   const frame = oversized.indexOf(Buffer.from([0xff, 0xc0]));
   assert.ok(frame > 0);
   oversized.writeUInt16BE(8193, frame + 7);
   assert.throws(() => verify(oversized), /8192/);
-  for (const bytes of [valid.subarray(0, -2), Buffer.concat([valid, Buffer.from([0])]),
-    Buffer.concat([valid.subarray(0, -100), Buffer.from([0xff, 0xd9])]),
-    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 1, 0xff, 0xd9])]) {
+  const segment = valid.indexOf(Buffer.from([0xff, 0xdb])), malformed = Buffer.from(valid);
+  assert.ok(segment > 0);
+  malformed.writeUInt16BE(1, segment + 2);
+  for (const bytes of [valid.subarray(0, -2), Buffer.concat([valid.subarray(0, -100), Buffer.from([0xff, 0xd9])]),
+    Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 1, 0xff, 0xd9]), malformed, Buffer.concat([malformed, valid])]) {
     assert.throws(() => verify(bytes), { code: 'invalid-image' });
   }
+});
+
+test('accepts phone JPEGs with secondary images after the primary EOI and keeps every original byte', () => {
+  const primary = screenshotJpeg();
+  for (const trailer of [Buffer.from([0]), Buffer.concat([Buffer.from([0xff, 0xd8]), Buffer.alloc(64, 0xa5)]), primary]) {
+    const bytes = Buffer.concat([primary, trailer]);
+    const result = verify(bytes);
+    assert.deepEqual(result.metadata, { name: 'Screenshot.png', mediaType: 'image/jpeg', byteLength: bytes.length, width: 1200, height: 800 });
+    assert.deepEqual(result.bytes, bytes);
+  }
+  assert.throws(() => verify(Buffer.concat([primary, Buffer.alloc(IMAGE_MAX_BYTES - primary.length + 1)])), { code: 'invalid-image' });
 });

@@ -354,11 +354,25 @@ test('a replaced draft port for the same conversation cannot overwrite its succe
     await stale.save(records('old', 'first'), { put: { selectionId: 'first', bytes: new Uint8Array([1]) } });
     await current.load(scope);
     await current.save(records('new', 'second'), { put: { selectionId: 'second', bytes: new Uint8Array([2]) }, remove: ['first'] });
-    await stale.save(records('old', 'first'));
+    const refused = await stale.save(records('old', 'first'), { put: { selectionId: 'first', bytes: new Uint8Array([1]) }, remove: ['second'] })
+      .then(() => null, error => ({ name: error.name, message: error.message }));
     const saved = await current.load(scope);
     const bytes = [await current.loadImage(scope, 'first'), [...await current.loadImage(scope, 'second')]];
+    const submitted = [], port = { scope, receipt: async () => null, async submit(command) { submitted.push(command); return { kind: 'rejected', reason: 'unexpected' }; },
+      watch() { return { ended: new Promise(() => {}), close() {} }; } };
+    const storeScope = { hostId: 'host', conversationId: 'replaced-store' };
+    const makeStore = () => globalThis.createConversationStore({ scope: storeScope, port: { ...port, scope: storeScope }, projection: globalThis.transcriptProjection,
+      drafts: owner.drafts(error => failures.push(error)), createCommandId: () => '00000000-0000-4000-8000-000000000001' });
+    const older = makeStore();
+    await older.ready;
+    await older.setDraft('Typed in the older view');
+    const newer = makeStore();
+    await newer.ready;
+    const blocked = await Promise.all([older.send(), older.setDraft('More')].map(attempt => attempt.then(() => 'written', error => error.name)));
+    const kept = await owner.drafts(() => {}).load(storeScope);
     await owner.close();
-    return { draft: saved.draft, image: saved.image, bytes, failures: failures.length };
+    return { refused, blocked, submitted: submitted.length, kept: [kept.draft, kept.outbox.length], draft: saved.draft, image: saved.image, bytes, failures: failures.length };
   });
-  assert.deepEqual(result, { draft: 'new', image: 'second', bytes: [null, [2]], failures: 0 });
+  assert.deepEqual(result, { refused: { name: 'SupersededDrafts', message: 'This conversation was reopened in a newer view.' },
+    blocked: ['SupersededDrafts', 'SupersededDrafts'], submitted: 0, kept: ['Typed in the older view', 0], draft: 'new', image: 'second', bytes: [null, [2]], failures: 0 });
 });

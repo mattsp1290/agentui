@@ -53,6 +53,7 @@ test('production desktop renders disconnected, follows appearance, and reloads',
   assert.equal(response.status(), 200);
   assert.equal(await response.headerValue('content-security-policy'), config.app.security.csp);
   assert.match(config.app.security.csp, /connect-src ipc: http:\/\/ipc\.localhost;/);
+  assert.match(config.app.security.csp, /img-src 'self' data: blob:;/);
   await page.getByRole('heading', { name: 'A home for your conversations.' }).waitFor();
   await page.getByRole('heading', { name: 'No host connected' }).waitFor();
   await page.getByRole('button', { name: 'Connect to local Codex', exact: true }).waitFor({ timeout: 2000 });

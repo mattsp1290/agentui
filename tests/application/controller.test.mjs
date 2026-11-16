@@ -42,13 +42,15 @@ function fixture() {
     providerObservation: input => behavior.observation(input),
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
+    uploadImage: input => behavior.uploadImage(input),
+    readImage: (selected, imageId) => behavior.readImage(selected, imageId),
     conversation(selected) { return { scope: selected,
       async submit(command) { submitted.push(command); return behavior.submit(command); },
       async receipt() { return null; },
       watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
   };
   const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
-    ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => `id-${++nextId}` });
+    ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => behavior.uuids ? `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` : `id-${++nextId}` });
   return { app, views, drafts, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
     host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
@@ -1069,4 +1071,45 @@ test('permission reads from a disposed session cannot populate its replacement',
     { permissionId: 'old', scope: 'agent', actionLabel: 'Old', detail: 'Old session' }] });
   await assert.rejects(pending, /closed/);
   assert.deepEqual(f.app.getSnapshot().permissionState.listing.permissions, []);
+});
+
+test('image previews and uploads share one host transfer slot, reusing concurrent reads and retrying refused overlaps', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const active = f.app.getSnapshot().active;
+  let busy = false, overlaps = 0;
+  const reads = [], uploads = [];
+  // Mirrors the host: one transfer per access, overlaps refused as unavailable.
+  const transfer = async work => {
+    if (busy) { overlaps++; throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.'); }
+    busy = true;
+    try { await new Promise(resolve => setTimeout(resolve, 5)); return work(); } finally { busy = false; }
+  };
+  let refuseFirstUpload = true;
+  f.behavior.readImage = (_, imageId) => transfer(() => { reads.push(imageId); return { attachment: null, bytes: new Uint8Array([imageId.length]) }; });
+  f.behavior.uploadImage = input => {
+    if (refuseFirstUpload) { refuseFirstUpload = false; return Promise.reject(new ServiceError('unavailable', 'Another image transfer is in progress. Try again.')); }
+    return transfer(() => { uploads.push(input.uploadId);
+      return { imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name: input.name, mediaType: 'image/png', byteLength: input.bytes.byteLength, width: 1, height: 1 }; });
+  };
+  f.behavior.uuids = true;
+  const actions = f.app.conversationActions(active);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+  const previews = ['a', 'bb', 'a', 'ccc'].map(id => actions.readImage(id));
+  const selecting = active.store.selectImage({ name: 'chart.png', bytes: png });
+  assert.deepEqual((await Promise.all(previews)).map(bytes => [...bytes]), [[1], [2], [1], [3]]);
+  await selecting;
+  assert.equal(active.store.getSnapshot().image.status, 'ready');
+  assert.deepEqual(reads, ['a', 'bb', 'ccc']);
+  assert.equal(uploads.length, 1);
+  assert.equal(overlaps, 0);
+  let refusals = 0;
+  f.behavior.readImage = async () => { refusals++; throw new ServiceError('unavailable', 'Busy'); };
+  await assert.rejects(actions.readImage('d'), { kind: 'unavailable' });
+  assert.equal(refusals, 3);
+  f.behavior.readImage = async () => { refusals++; throw new ServiceError('image-scope', 'Elsewhere'); };
+  await assert.rejects(actions.readImage('d'), { kind: 'image-scope' });
+  assert.equal(refusals, 4);
+  assert.equal(f.app.getSnapshot().error, '');
 });

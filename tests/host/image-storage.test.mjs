@@ -208,7 +208,7 @@ test('image sends admit only through image-capable drivers and imageIds in the s
     finally { db.close(); }
   };
   for (const [id, imageId] of [['foreign', foreign.imageId], ['unknown', randomUUID()]]) {
-    assert.deepEqual(await host.conversation(scope).submit(send(id, imageId)), { kind: 'rejected', reason: 'image-scope' });
+    assert.deepEqual(await host.conversation(scope).submit(send(id, imageId)), { kind: 'rejected', reason: 'This image is not available in this conversation. Attach it again.' });
   }
   const accepted = await host.conversation(scope).submit(send('image', own.imageId));
   assert.equal(accepted.kind, 'receipt');

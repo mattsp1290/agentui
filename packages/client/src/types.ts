@@ -27,7 +27,7 @@ export interface DraftImageChange {
 }
 /** Image bytes are stored once beside the records and must change in the same transaction as them. */
 export interface DraftStoragePort {
-  /** Use one port per store: loading claims the conversation, and saves from a port replaced by a later loader are ignored. */
+  /** Use one port per store: loading claims the conversation, and saves from a port replaced by a later loader reject without writing. */
   load(scope: ConversationScope): Promise<unknown>;
   save(records: LocalRecords, image?: DraftImageChange): Promise<void>;
   loadImage(scope: ConversationScope, selectionId: string): Promise<Uint8Array | null>;

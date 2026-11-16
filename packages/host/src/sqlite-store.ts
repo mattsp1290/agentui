@@ -318,7 +318,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
       const imageId = command.body.kind === 'send' ? command.body.imageId : undefined;
-      if (imageId !== undefined && !hasImage(this.db, scope, imageId)) return { kind: 'rejected', reason: 'image-scope' };
+      if (imageId !== undefined && !hasImage(this.db, scope, imageId)) return { kind: 'rejected', reason: 'This image is not available in this conversation. Attach it again.' };
       let run = null, pending = null;
       if (command.body.kind === 'approve' && !('kind' in installed)) {
         const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?')

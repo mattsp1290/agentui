@@ -448,6 +448,18 @@ test('composer send carries a ready image, waits for confirmation and allows ima
   assert.deepEqual(port.submitted[1].body, { kind: 'send', text: '', imageId: images.calls[0].attachment.imageId });
 });
 
+test('a failed or interrupted image asks to retry or remove before sending instead of waiting', async () => {
+  const { store, port, drafts } = fixture({ images: uploads({ fail: new Error('socket closed') }) });
+  await store.selectImage({ name: 'chart.png', bytes: png(1) });
+  assert.equal(store.getSnapshot().image.status, 'failed');
+  await assert.rejects(store.send(), { message: 'Retry or remove the image before sending.' });
+  const reloaded = fixture({ drafts: storage(structuredClone(drafts.value)) });
+  await reloaded.store.ready;
+  assert.equal(reloaded.store.getSnapshot().image.status, 'interrupted');
+  await assert.rejects(reloaded.store.send(), { message: 'Retry or remove the image before sending.' });
+  assert.deepEqual([port.submitted, reloaded.port.submitted], [[], []]);
+});
+
 test('accepted image send clears draft, image and bytes only for the captured revision', async () => {
   const images = uploads();
   const { store, port, drafts } = fixture({ images });
@@ -473,6 +485,42 @@ test('accepted image send clears draft, image and bytes only for the captured re
   assert.equal(store.getSnapshot().draft, 'again');
   assert.equal(store.getSnapshot().image.name, 'replacement.png');
   assert.deepEqual([...drafts.images.keys()], [store.getSnapshot().image.selectionId]);
+});
+
+test('a sent image leaves the composer once accepted even when typing kept the text, without reviving older captures', async () => {
+  const images = uploads();
+  const { store, port, drafts } = fixture({ images });
+  await store.setDraft('look');
+  await store.selectImage({ name: 'chart.png', bytes: png(1) });
+  const selected = store.getSnapshot().image.selectionId, imageId = store.getSnapshot().image.attachment.imageId;
+  const replies = [];
+  port.submit = command => { port.submitted.push(command); const reply = deferred(); replies.push({ command, reply }); return reply.promise; };
+  const first = store.send();
+  await new Promise(resolve => setImmediate(resolve));
+  await store.setDraft('look at the axis');
+  const second = store.send();
+  await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual(port.submitted.map(command => command.body), [{ kind: 'send', text: 'look', imageId }, { kind: 'send', text: 'look at the axis', imageId }]);
+  const revision = drafts.value.draftRevision;
+  replies[0].reply.resolve({ kind: 'receipt', receipt: receipt(replies[0].command, 'accepted') });
+  await first;
+  assert.equal(store.getSnapshot().draft, 'look at the axis');
+  assert.equal(store.getSnapshot().image, null);
+  assert.equal(drafts.value.draftRevision, revision);
+  assert.deepEqual(drafts.imageWrites.at(-1), { put: null, remove: [selected] });
+  assert.equal(drafts.images.size, 0);
+  replies[1].reply.resolve({ kind: 'receipt', receipt: receipt(replies[1].command, 'accepted') });
+  await second;
+  assert.equal(store.getSnapshot().draft, '');
+  await store.setDraft('next');
+  await store.selectImage({ name: 'other.png', bytes: png(2) });
+  const kept = store.getSnapshot().image;
+  const third = store.send();
+  await new Promise(resolve => setImmediate(resolve));
+  await store.setDraft('next, edited');
+  replies[2].reply.resolve({ kind: 'receipt', receipt: receipt(replies[2].command, 'rejected') });
+  await third;
+  assert.deepEqual([store.getSnapshot().draft, store.getSnapshot().image.selectionId], ['next, edited', kept.selectionId]);
 });
 
 test('an unconfirmed selection reloads as interrupted and retry re-uploads its stored bytes with the same upload ID', async () => {

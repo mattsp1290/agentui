@@ -24,7 +24,7 @@ export function ImageAttachmentCard({ attachment, read }: {
   }, [imageId, mediaType]);
   const shown = preview?.imageId === imageId ? preview : null;
   return <figure className="image-attachment">
-    {shown?.url ? <img src={shown.url} alt={name} /> : <span className="image-preview-status">{shown ? 'Preview unavailable' : 'Loading preview…'}</span>}
+    {shown?.url ? <img src={shown.url} alt={name} onError={() => setPreview(current => current === shown ? { imageId, url: null } : current)} /> : <span className="image-preview-status">{shown ? 'Preview unavailable' : 'Loading preview…'}</span>}
     <figcaption>{name} · {imageSize(attachment.byteLength)}</figcaption>
   </figure>;
 }
