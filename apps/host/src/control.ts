@@ -2,14 +2,15 @@ import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import type { Socket } from 'node:net';
 import { record, identifier, count, hex } from '@agentui/contracts/decode';
-import { SelectionRefusal, operationId, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
-import type { SelectionControl, SelectionCommand, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import { SelectionRefusal, parseLiveRequest, parseSelectionQuery, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
+import type { SelectionControl, SelectionCommand, LiveRequest, SelectionQuery, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
 import { parseInvitationCode } from './native-wire.js';
 
 export type ControlRequest = { readonly op: 'extensions-select'; readonly command: SelectionCommand }
-  | { readonly op: 'extensions-status'; readonly id: string | null }
+  | { readonly op: 'extensions-live'; readonly request: LiveRequest }
+  | { readonly op: 'extensions-status'; readonly query: SelectionQuery | null }
   | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
   | { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
 type ControlValue = OperationSummary | SelectionStatus | ReceiptChunk | { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
@@ -23,7 +24,11 @@ export function parseControlRequest(value: unknown): ControlRequest {
       return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
     }
     case 'extensions-select': record(input, ['op', 'command']); return { op: input.op, command: parseSelectionCommand(input.command) };
-    case 'extensions-status': record(input, ['op', 'id']); return { op: input.op, id: input.id === null ? null : operationId(input.id) };
+    case 'extensions-live': {
+      record(input, ['op', 'request']);
+      return { op: input.op, request: parseLiveRequest(input.request) };
+    }
+    case 'extensions-status': record(input, ['op', 'query']); return { op: input.op, query: input.query === null ? null : parseSelectionQuery(input.query) };
     case 'extensions-receipt': record(input, ['op', 'digest', 'offset']); return { op: input.op, digest: hex(input.digest, 64), offset: count(input.offset) };
     case 'revoke': record(input, ['op', 'id']); return { op: 'revoke', id: identifier(input.id) };
     default: throw new Error('Unknown control operation');
@@ -35,7 +40,7 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
   record(input, ['ok', 'value']);
   if (input.ok !== true) throw new Error('Invalid control response');
   switch (request.op) {
-    case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
+    case 'extensions-live': case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
     case 'extensions-status': return { ok: true, value: parseSelectionStatus(input.value) };
     case 'extensions-receipt': return { ok: true, value: parseReceiptChunk(input.value) };
     case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
@@ -70,6 +75,7 @@ function readLine(socket: Socket, limit: number): Promise<unknown> {
       if (bytes > limit) { socket.destroy(new Error('Host control message too large')); return; }
       if (!chunk.includes(10)) return;
       socket.off('data', data);
+      socket.setTimeout(0);
       try { resolve(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))); } catch (error) { reject(error); }
     };
     socket.on('data', data);
@@ -82,12 +88,15 @@ export async function requestControl(path: string, request: ControlRequest): Pro
   if (Buffer.byteLength(line) > 4096) throw new Error('Host control message too large');
   const socket = createConnection(path);
   const response = readLine(socket, 16_000);
-  socket.once('connect', () => socket.write(line));
+  socket.once('connect', () => {
+    if (request.op === 'extensions-live' || request.op === 'extensions-select') socket.setTimeout(0);
+    socket.write(line);
+  });
   try { return parseControlResponse(request, await response); }
   finally { socket.destroy(); }
 }
 const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); };
-export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, status: refuseSelection, receipt: refuseSelection };
+export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, live: refuseSelection, status: refuseSelection, receipt: refuseSelection };
 
 export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl) {
   if (existsSync(path)) unlinkSync(path);
@@ -99,7 +108,8 @@ export async function startControl(path: string, access: Access, feeds: FeedRegi
         let value: ControlValue;
         switch (request.op) {
           case 'extensions-select': value = await selection.select(request.command); break;
-          case 'extensions-status': value = selection.status(request.id ?? undefined); break;
+          case 'extensions-live': value = await selection.live(request.request); break;
+          case 'extensions-status': value = selection.status(request.query ?? undefined); break;
           case 'extensions-receipt': value = selection.receipt(request.digest, request.offset); break;
           case 'invite': value = { code: access.invite('browser-development') }; break;
           case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;

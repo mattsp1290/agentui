@@ -1,6 +1,6 @@
 import { isAbsolute, resolve } from 'node:path';
 import { count, hex, identifier, record } from '@agentui/contracts/decode';
-import type { ServerExtensionFailure } from '@agentui/host/extensions';
+import type { ServerExtensionFailure, ServerExtensionReplacement } from '@agentui/host/extensions';
 
 import type { ArtifactPin } from './provider-extensions.js';
 
@@ -24,10 +24,30 @@ export function parseSelectionCommand(value: unknown): SelectionCommand {
   const input = record(value, ['id', 'expectedRevision', 'selection']);
   return { id: operationId(input.id), expectedRevision: count(input.expectedRevision), selection: parseSelection(input.selection) };
 }
-export type BootOutcome = { readonly kind: 'pending' | 'applying' | 'applied' | 'applied-empty' | 'interrupted' | 'grant-mismatch' } | ServerExtensionFailure;
-export function parseBootOutcome(value: unknown): BootOutcome {
+export type ApplyRequest = { readonly kind: 'apply'; readonly requestId: string; readonly selectionId: string; readonly expectedRevision: number };
+export type RetryRequest = Omit<ApplyRequest, 'kind'> & { readonly kind: 'retry'; readonly afterAttemptId: string };
+export type LiveRequest = ApplyRequest | RetryRequest;
+export function parseLiveRequest(value: unknown): LiveRequest {
   const input = record(value);
-  if (input.kind === 'failed') {
+  record(input, input.kind === 'retry' ? ['kind', 'requestId', 'selectionId', 'expectedRevision', 'afterAttemptId'] : ['kind', 'requestId', 'selectionId', 'expectedRevision']);
+  const common = { requestId: operationId(input.requestId), selectionId: operationId(input.selectionId), expectedRevision: count(input.expectedRevision) };
+  if (input.kind === 'apply') return { kind: 'apply', ...common };
+  if (input.kind === 'retry') return { kind: 'retry', ...common, afterAttemptId: operationId(input.afterAttemptId) };
+  throw new Error('Invalid selection request');
+}
+export type SelectionQuery = { readonly kind: 'selection' | 'attempt'; readonly id: string };
+export function parseSelectionQuery(value: unknown): SelectionQuery {
+  const input = record(value, ['kind', 'id']);
+  if (input.kind !== 'selection' && input.kind !== 'attempt') throw new Error('Invalid selection query');
+  return { kind: input.kind, id: operationId(input.id) };
+}
+export type AttemptOutcome = { readonly kind: 'pending' | 'applying' | 'applied' | 'applied-empty' | 'interrupted' | 'grant-mismatch' } | ServerExtensionFailure | Extract<ServerExtensionReplacement, { kind: 'deferred' }>;
+export function parseAttemptOutcome(value: unknown): AttemptOutcome {
+  const input = record(value);
+  if (input.kind === 'deferred') {
+    record(input, ['kind', 'reason']);
+    if (input.reason === 'active-work' || input.reason === 'changing') return { kind: 'deferred', reason: input.reason };
+  } else if (input.kind === 'failed') {
     record(input, ['kind', 'failure', 'recovery']);
     if (input.failure === 'cleanup' && input.recovery === 'restart') return { kind: 'failed', failure: 'cleanup', recovery: 'restart' };
     if ((input.failure === 'load' || input.failure === 'authorization' || input.failure === 'activation' || input.failure === 'discovery') && input.recovery === 'replace') {
@@ -42,19 +62,19 @@ export function parseBootOutcome(value: unknown): BootOutcome {
   throw new Error('Invalid selection outcome');
 }
 export type OperationSummary = { readonly id: string; readonly revision: number; readonly receiptDigest: string; readonly artifacts: number;
-  readonly bootId: string | null; readonly outcome: BootOutcome | { readonly kind: 'staged' | 'superseded' } };
+  readonly attemptId: string | null; readonly outcome: AttemptOutcome | { readonly kind: 'staged' | 'superseded' } };
 export function parseOperationSummary(value: unknown): OperationSummary {
-  const input = record(value, ['id', 'revision', 'receiptDigest', 'artifacts', 'bootId', 'outcome']);
+  const input = record(value, ['id', 'revision', 'receiptDigest', 'artifacts', 'attemptId', 'outcome']);
   const outcome = record(input.outcome);
   let parsed: OperationSummary['outcome'];
   if (outcome.kind === 'staged' || outcome.kind === 'superseded') {
     record(outcome, ['kind']); parsed = { kind: outcome.kind };
-  } else parsed = parseBootOutcome(outcome);
+  } else parsed = parseAttemptOutcome(outcome);
   return { id: identifier(input.id, 96), revision: count(input.revision), receiptDigest: hex(input.receiptDigest, 64),
-    artifacts: count(input.artifacts), bootId: input.bootId === null ? null : identifier(input.bootId), outcome: parsed };
+    artifacts: count(input.artifacts), attemptId: input.attemptId === null ? null : identifier(input.attemptId), outcome: parsed };
 }
 export type SelectionRuntime = { readonly kind: 'withheld' | 'closed' | 'uncertain' }
-  | { readonly kind: 'active' | 'applied-empty'; readonly id: string; readonly revision: number; readonly bootId: string };
+  | { readonly kind: 'active' | 'applied-empty'; readonly id: string; readonly revision: number; readonly attemptId: string };
 export type SelectionStatus = { readonly kind: 'journal-invalid' } | { readonly kind: 'ready'; readonly desiredRevision: number;
   readonly desired: OperationSummary; readonly operation: OperationSummary; readonly lastApplied: OperationSummary | null; readonly runtime: SelectionRuntime };
 export function parseSelectionStatus(value: unknown): SelectionStatus {
@@ -65,8 +85,8 @@ export function parseSelectionStatus(value: unknown): SelectionStatus {
   const runtime = record(input.runtime);
   let parsed: SelectionRuntime;
   if (runtime.kind === 'active' || runtime.kind === 'applied-empty') {
-    record(runtime, ['kind', 'id', 'revision', 'bootId']);
-    parsed = { kind: runtime.kind, id: identifier(runtime.id, 96), revision: count(runtime.revision), bootId: identifier(runtime.bootId) };
+    record(runtime, ['kind', 'id', 'revision', 'attemptId']);
+    parsed = { kind: runtime.kind, id: identifier(runtime.id, 96), revision: count(runtime.revision), attemptId: identifier(runtime.attemptId) };
   } else {
     record(runtime, ['kind']);
     if (runtime.kind !== 'withheld' && runtime.kind !== 'closed' && runtime.kind !== 'uncertain') throw new Error('Invalid runtime');
@@ -86,11 +106,12 @@ export function parseReceiptChunk(value: unknown): ReceiptChunk {
 
 export interface SelectionControl {
   select(command: SelectionCommand): Promise<OperationSummary>;
-  status(id?: string): SelectionStatus;
+  live(request: LiveRequest): Promise<OperationSummary>;
+  status(query?: SelectionQuery): SelectionStatus;
   receipt(digest: string, offset: number): ReceiptChunk;
 }
 export class SelectionRefusal extends Error {
-  constructor(reason: 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset') {
+  constructor(reason: 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset' | 'attempt-conflict' | 'uncertain') {
     super(reason === 'ownership' ? 'Selection requires durable artifact ownership' : `Selection ${reason}`);
   }
 }
