@@ -3,7 +3,6 @@ import { ROOT_CONTEXT, SpanKind, SpanStatusCode } from '@opentelemetry/api';
 import { resourceFromAttributes } from '@opentelemetry/resources';
 import { AlwaysOnSampler, BatchSpanProcessor, TracerProvider } from '@opentelemetry/sdk-trace';
 import type { ServiceFailureKind, ServiceRequest } from '@agentui/contracts/service';
-import type { CredentialClass } from './access.js';
 import { createAgentObservations } from './agent-observations.js';
 import type { AgentObservations } from './agent-observations.js';
 import { createOtlpExporter } from './otlp-exporter.js';
@@ -14,9 +13,11 @@ export type ObservabilityConfiguration =
   | { readonly kind: 'otlp'; readonly endpoint: string; readonly headers: Readonly<Record<string, string>>; readonly serviceName: string;
       readonly datadogLlmObservability: boolean };
 
+export type ClientKind = 'browser-development' | 'native';
+
 export type RequestObservation = {
   readonly operation: ServiceRequest['op'] | 'admission';
-  readonly credentialClass: CredentialClass;
+  readonly client: ClientKind;
   readonly outcome: 'ok' | ServiceFailureKind;
   readonly startTime: number;
   readonly statusCode: number | null;
@@ -84,7 +85,7 @@ export function createHostObservability(configuration: ObservabilityConfiguratio
     record(observation) {
       if (closed) return;
       const span = tracer.startSpan('agentui.host.request', { kind: SpanKind.SERVER, startTime: observation.startTime,
-        attributes: { 'agentui.operation': observation.operation, 'agentui.credential_class': observation.credentialClass,
+        attributes: { 'agentui.operation': observation.operation, 'agentui.credential_class': observation.client,
           'agentui.outcome': observation.outcome, ...(observation.statusCode === null ? {} : { 'http.response.status_code': observation.statusCode }) } }, ROOT_CONTEXT);
       if (observation.outcome !== 'ok') span.setStatus({ code: SpanStatusCode.ERROR });
       span.end(performance.timeOrigin + performance.now());

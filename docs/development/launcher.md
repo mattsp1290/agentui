@@ -119,7 +119,7 @@ If a port is already in use, stop the launcher using that port or choose another
 
 Use the same chosen port on later launches to keep the same client origin and local drafts. The launcher uses that port on both ends of the tunnel.
 
-For a missing Pi key, open **Settings**, then **Open secure Pi setup** in the Mac app. If setup cannot reach the host, check that the launcher terminal is still running and the SSH connection is active. If the Pi runtime is unavailable, rebuild with `./agentui` and retry. AgentUI pairing codes are not required by the launcher.
+For a missing Pi key, open **Settings**, then **Open secure Pi setup** in the Mac app. If setup cannot reach the host, check that the launcher terminal is still running and the SSH connection is active. If the Pi runtime is unavailable, rebuild with `./agentui` and retry. The launcher connects without any access setup.
 
 ## Verify local and remote chat
 
@@ -135,7 +135,7 @@ With your OpenCode Go key available to the launcher, run:
 node scripts/verify-agentui-launch.mjs
 ```
 
-The verifier runs Pi with GLM 5.3 on the local Mac and all three example SSH machines. It creates a real conversation, waits for a completed reply, sends a follow-up, restarts the launcher, and reopens the saved conversation in a fresh browser context. It verifies that both replies survived and that no pairing form or cookie appeared. It then asks Pi to recall the first token, so the check also exercises the saved provider session after restart. These checks send subscription requests and leave their verification chats in history.
+The verifier runs Pi with GLM 5.3 on the local Mac and all three example SSH machines. It creates a real conversation, waits for a completed reply, sends a follow-up, restarts the launcher, and reopens the saved conversation in a fresh browser context. It verifies that both replies survived and that no connection form or cookie appeared. It then asks Pi to recall the first token, so the check also exercises the saved provider session after restart. These checks send subscription requests and leave their verification chats in history.
 
 To check one target, run:
 

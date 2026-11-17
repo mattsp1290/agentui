@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -11,7 +11,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createRecordedDriver, openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import { Access } from '../../../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../../../apps/host/build/tsc/feed-registry.js';
@@ -48,9 +47,9 @@ export function cli(args, input = '') {
     child.once('exit', code => resolve({ code, stdout, stderr }));
   });
 }
-export async function connect(t, path) {
+export async function connect(t, origin) {
   const client = new Client({ name: 'agentui-read-test', version: '1' });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [main, 'serve', path], stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [main, 'serve', origin], stderr: 'pipe' });
   let stderr = '';
   transport.stderr.on('data', data => { stderr += data; });
   t.after(() => client.close());
@@ -62,18 +61,13 @@ export function data(result) {
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
   return result.structuredContent;
 }
-export function writeProfile(directory, value, name = 'profile.json') {
-  const path = join(directory, name);
-  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
-  return path;
-}
 export async function fixture(t) {
   let releasePending, enteredPending, pendingSubmission;
   const pendingGate = new Promise(resolve => { releasePending = resolve; });
   const pendingEntered = new Promise(resolve => { enteredPending = resolve; });
   t.after(async () => { releasePending(); await pendingSubmission; });
   const directory = privateDirectory(t), database = join(directory, 'host.sqlite'), backendPath = join(directory, 'recorded.jsonl');
-  const access = new Access(openAccessDatabase(database));
+  const access = openAccessDatabase(database);
   const scope = { hostId: access.hostId, conversationId: 'conversation-a' };
   const counts = { dispatch: 0, lookup: 0 };
   const recorded = createRecordedDriver({ installation: installed, backendPath, cancel: { kind: 'supported' }, decodeEvent: transcriptProjection.decodeEvent,
@@ -89,14 +83,14 @@ export async function fixture(t) {
   };
   const host = openLocalHost({ path: database, projection: transcriptProjection, driver, authorize: () => true });
   const feeds = new FeedRegistry();
-  const api = createApi({ access, host, feeds, compatibility, agentSelection: { kind: 'native', defaultInstallation: installed, agents: [{ installation: installed, availability: { kind: 'ready' } },
+  const api = createApi({ host, feeds, compatibility, agentSelection: { kind: 'native', defaultInstallation: installed, agents: [{ installation: installed, availability: { kind: 'ready' } },
     { installation: { ...installed, installationId: 'unavailable' }, availability: { kind: 'unavailable', reason: 'offline' } }] },
-    credentialClass: 'native', isClosing: () => false });
+    isClosing: () => false });
   const operations = [];
-  const endpoint = serviceEndpoint({ access, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },
-    credentialClass: 'native', isClosing: () => false, observability: NO_OBSERVABILITY });
+  const endpoint = serviceEndpoint({ hostId: access.hostId, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },
+    client: 'native', isClosing: () => false, observability: NO_OBSERVABILITY });
   const origin = await listen(t, (request, response) => { void endpoint(request, response).catch(() => response.destroy()); });
-  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); });
+  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.database.close(); });
   host.createConversation(scope, installed);
   host.createConversation({ ...scope, conversationId: 'conversation-b' }, installed);
   const nativeRun = run(scope);
@@ -119,12 +113,5 @@ export async function fixture(t) {
       return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
     } finally { db.close(); }
   };
-  const invitation = () => JSON.stringify({ ok: true, value: { hostId: access.hostId, code: access.invite('native') } });
-  const pair = async () => {
-    const path = join(directory, 'paired.json');
-    const result = await cli(['pair', origin, path], invitation());
-    assert.deepEqual(result, { code: 0, stdout: '', stderr: '' });
-    return { path, record: JSON.parse(readFileSync(path, 'utf8')) };
-  };
-  return { directory, access, host, counts, feeds, operations, scope, origin, durable, invitation, pair };
+  return { directory, access, host, counts, feeds, operations, scope, origin, durable };
 }

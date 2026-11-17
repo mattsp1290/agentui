@@ -174,13 +174,8 @@ else {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const ready = await startup(host);
   assert.equal(ready.kind, 'ready', host.stderr);
-  const invitation = launch(['invite-native']);
-  await exitWithin(invitation);
-  const code = JSON.parse(invitation.stdout).value.code;
-  const call = (path, body, secret) => new Promise((resolve, reject) => {
-    const outgoing = request(`${ready.origin}${path}`, { method: 'POST', headers: {
-      'Content-Type': 'application/json', ...(secret ? { Authorization: `Bearer ${secret}` } : {}),
-    } }, incoming => {
+  const native = body => new Promise((resolve, reject) => {
+    const outgoing = request(`${ready.origin}/native/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json' } }, incoming => {
       let text = '';
       incoming.setEncoding('utf8').on('data', chunk => { text += chunk; });
       incoming.once('error', reject);
@@ -195,8 +190,6 @@ else {
     outgoing.setTimeout(5000, () => outgoing.destroy(new Error('Native request timed out')));
     outgoing.end(JSON.stringify(body));
   });
-  const credentials = await call('/native/v1/pair', { version: 1, hostId: ready.hostId, code });
-  const native = body => call('/native/v1', body, credentials.secret);
   const metadata = await native({ op: 'metadata' });
   const conversation = { hostId: ready.hostId, conversationId: 'private-otlp-conversation-d0ae87' };
   await native({ op: 'create', scope: conversation, agentId: metadata.defaultAgentId });
@@ -265,8 +258,8 @@ else {
     assert.equal(environment.pathPresent, true, 'native executable lookup remains available');
   }
   const payload = JSON.stringify(received.map(batch => batch.body));
-  for (const value of [directory, workspace, prompt, ready.hostId, conversation.conversationId, code,
-    credentials.secret, credentials.principalId, first, second, third, 'fixture-thread', 'Hello from the fixture.',
+  for (const value of [directory, workspace, prompt, ready.hostId, conversation.conversationId,
+    first, second, third, 'fixture-thread', 'Hello from the fixture.',
     'private-host-general-credential', 'private-host-trace-credential', 'private-native-provider-credential', 'private-host-resource']) {
     assert.equal(payload.includes(value), false, `Private native value leaked ${value}`);
   }

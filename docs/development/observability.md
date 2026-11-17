@@ -30,7 +30,7 @@ For Datadog LLM Observability, enable that product on the Agent and set `AGENTUI
 
 ## Configure export
 
-These variables apply only when starting the host. Control commands such as `invite`, `devices`, and `revoke` do not create a telemetry exporter.
+These variables apply only when starting the host. Control commands do not create a telemetry exporter.
 
 | Variable | Behavior |
 | --- | --- |
@@ -57,9 +57,9 @@ Each request span has kind `SERVER` and these attributes:
 
 | Attribute | Values |
 | --- | --- |
-| `agentui.operation` | The admitted service operation, including `pair`. Failures before admission use `admission`. |
-| `agentui.credential_class` | `browser-development` or `native`. |
-| `agentui.outcome` | `ok`, `unauthorized`, `forbidden`, `invalid`, `unavailable`, or `create-rejected`. |
+| `agentui.operation` | The admitted service operation. Failures before admission use `admission`. |
+| `agentui.credential_class` | The client kind: `browser-development` or `native`. No credential is involved. The attribute keeps its old name so existing queries and dashboards continue to work. |
+| `agentui.outcome` | `ok`, `forbidden`, `invalid`, `unavailable`, `create-rejected`, or an image failure: `invalid-image`, `image-scope`, `image-upload-conflict`, `image-unsupported`, `image-capacity`, or `image-integrity`. |
 | `http.response.status_code` | The response code actually written. Omitted if no response headers were sent. |
 
 Duration covers admission, dispatch, and response serialization. It ends when the endpoint writes the response. It does not measure client delivery or the lifetime of a provider run. Failures have OpenTelemetry status `ERROR` without an error description.

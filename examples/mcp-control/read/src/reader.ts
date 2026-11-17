@@ -3,8 +3,7 @@ import type { ConversationScope } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { parseServiceRequest, parseServiceResponse, SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
-import { boundedJson, ReadError } from './access.js';
-import type { Access } from './access.js';
+import { boundedJson, ReadError } from './host.js';
 
 type ReadRequest =
   | { readonly op: 'metadata' }
@@ -15,43 +14,54 @@ type ReadRequest =
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: null }
   | { readonly op: 'close'; readonly feedId: string };
 
+async function requestHost<R extends ReadRequest>(origin: string, request: R, signal: AbortSignal): Promise<ServiceValueMap[R['op']]> {
+  const wire = request satisfies ServiceRequest;
+  parseServiceRequest(wire);
+  const response = await fetch(`${origin}/native/v1`, {
+    method: 'POST', redirect: 'error', credentials: 'omit',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(wire), signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
+  });
+  if (!response.ok) {
+    await response.body?.cancel();
+    throw new ReadError('Host unavailable');
+  }
+  const result = parseServiceResponse<R['op']>(request, await boundedJson(response, SERVICE_MAX_RESPONSE_BYTES));
+  if (!result.ok) throw new ReadError('Host refused read');
+  return result.value;
+}
+
 export class Reader {
   private inspections = 0;
-  constructor(private readonly access: Access) {}
-  private async request<R extends ReadRequest>(request: R, signal: AbortSignal): Promise<ServiceValueMap[R['op']]> {
-    const wire = request satisfies ServiceRequest;
-    parseServiceRequest(wire);
-    const response = await fetch(`${this.access.origin}/native/v1`, {
-      method: 'POST', redirect: 'error', credentials: 'omit',
-      headers: { 'content-type': 'application/json', authorization: `Bearer ${this.access.secret}` },
-      body: JSON.stringify(wire), signal: AbortSignal.any([signal, AbortSignal.timeout(5000)]),
-    });
-    if (!response.ok) {
-      await response.body?.cancel();
-      throw new ReadError(response.status === 401 || response.status === 403 ? 'Host authorization refused' : 'Host unavailable');
-    }
-    const result = parseServiceResponse<R['op']>(request, await boundedJson(response, SERVICE_MAX_RESPONSE_BYTES));
-    if (!result.ok) throw new ReadError(result.error.kind === 'unauthorized' || result.error.kind === 'forbidden' ? 'Host authorization refused' : 'Host refused read');
-    return result.value;
+  private constructor(private readonly origin: string, private readonly hostId: string) {}
+  /** Reads host metadata once and pins its host identity for the life of this reader. */
+  static async connect(origin: string, signal: AbortSignal): Promise<Reader> {
+    const request = { op: 'metadata' } as const;
+    parseServiceRequest(request);
+    const metadata = await requestHost(origin, request, signal);
+    return new Reader(origin, metadata.hostId);
   }
-  async authorize(signal: AbortSignal) {
+  private request<R extends ReadRequest>(request: R, signal: AbortSignal): Promise<ServiceValueMap[R['op']]> {
+    return requestHost(this.origin, request, signal);
+  }
+  private async verify(signal: AbortSignal) {
     const metadata = await this.request({ op: 'metadata' }, signal);
-    if (metadata.hostId !== this.access.hostId) throw new ReadError('Host identity mismatch');
+    if (metadata.hostId !== this.hostId) throw new ReadError('Host identity changed. Restart the MCP server to reconnect.');
     return metadata;
   }
   async agents(signal: AbortSignal) {
-    const metadata = await this.authorize(signal);
+    const metadata = await this.verify(signal);
     return { agents: metadata.agents, defaultAgentId: metadata.defaultAgentId };
   }
   async conversations(after: string | null, limit: number, signal: AbortSignal) {
-    await this.authorize(signal);
+    await this.verify(signal);
     const items = await this.request({ op: 'catalog', after, limit }, signal);
-    if (items.some(item => item.scope.hostId !== this.access.hostId)) throw new ReadError('Host scope mismatch');
+    if (items.some(item => item.scope.hostId !== this.hostId)) throw new ReadError('Host scope mismatch');
     return { items, after: items.length === limit ? items.at(-1)?.scope.conversationId ?? null : null };
   }
   async receipt(conversationId: string, clientCommandId: string, signal: AbortSignal) {
-    await this.authorize(signal);
-    const scope = { hostId: this.access.hostId, conversationId };
+    await this.verify(signal);
+    const scope = { hostId: this.hostId, conversationId };
     const receipt = await this.request({ op: 'receipt', scope, id: clientCommandId }, signal);
     if (receipt && (receipt.scope.hostId !== scope.hostId || receipt.scope.conversationId !== conversationId || receipt.clientCommandId !== clientCommandId)) {
       throw new ReadError('Host receipt mismatch');
@@ -63,8 +73,8 @@ export class Reader {
     this.inspections++;
     let feedId: string | undefined;
     try {
-      await this.authorize(signal);
-      const scope = { hostId: this.access.hostId, conversationId };
+      await this.verify(signal);
+      const scope = { hostId: this.hostId, conversationId };
       const agent = await this.request({ op: 'conversation-agent', scope }, signal);
       const feed = await this.request({ op: 'watch', scope, after: null, projectionVersion: transcriptProjection.version }, signal);
       feedId = feed.feedId;

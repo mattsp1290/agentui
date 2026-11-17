@@ -7,8 +7,6 @@
 .action-row { display: flex; flex-wrap: wrap; gap: .6rem; margin-top: 1rem; }
 .application-alert, .creation-recovery { padding: 1rem; margin: 1rem 0; border: 1px solid var(--aui-color-border); border-left: 3px solid var(--aui-color-accent); border-radius: .5rem; overflow-wrap: anywhere; }
 .application-alert p:last-child { margin-bottom: 0; }
-.pair-form { display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; margin: 1.25rem 0; }
-.pair-form input { padding: .65rem; border: 1px solid var(--aui-color-border); border-radius: .5rem; font: inherit; background: transparent; color: inherit; }
 .conversation-catalog { display: flex; gap: .5rem; overflow-x: auto; margin-top: 1rem; padding-bottom: .25rem; }
 .eyebrow { font-size: .7rem; letter-spacing: .12em; color: var(--aui-color-accent); }
 .scope-label { color: var(--aui-color-muted); font-size: .75rem; overflow-wrap: anywhere; }

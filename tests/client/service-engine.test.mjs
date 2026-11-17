@@ -5,50 +5,45 @@ import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { projection, events, scope as textScope, snapshot as textSnapshot } from './support.mjs';
 import { createServiceConnection } from '../../packages/client/dist/service-engine.js';
-import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
+import { ServiceConnectionLost, ServiceError, ServiceProtocolError } from '@agentui/client/service';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 4, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const reply = value => Response.json({ ok: true, value });
-const unauthorized = () => Response.json({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }, { status: 401 });
 const until = async predicate => {
   for (let attempt = 0; attempt < 100; attempt++) { if (predicate()) return; await setImmediate(); }
   assert.fail('Expected asynchronous operation did not complete');
 };
 
-test('shared engine bounds an executor that ignores abort and ignores its late unauthorized reply', async () => {
+test('shared engine bounds an executor that ignores abort', async () => {
   const pending = Promise.withResolvers();
-  let signal, notifications = 0;
+  let signal;
   const connection = createServiceConnection(async (_body, context) => {
     signal = context.signal;
     return pending.promise;
-  }, transcriptProjection, { requestTimeoutMs: 10, onUnauthorized: () => notifications++ });
+  }, transcriptProjection, { requestTimeoutMs: 10 });
   await assert.rejects(connection.metadata(), error => error instanceof ServiceError && /timed out/.test(error.message));
   assert.equal(signal.aborted, true);
-  pending.resolve(unauthorized());
+  pending.resolve(reply(null));
   await setImmediate();
-  assert.equal(notifications, 0);
 });
 
-test('shared engine fences old unauthorized envelopes and adapter errors across pairing', async () => {
-  for (const adapterError of [false, true]) {
-    const pending = Promise.withResolvers();
-    let notifications = 0, calls = 0;
-    const connection = createServiceConnection(async encoded => {
-      const request = JSON.parse(encoded);
-      if (request.op === 'pair') return reply(null);
-      return ++calls === 1 ? pending.promise : unauthorized();
-    }, transcriptProjection, { onUnauthorized: () => notifications++ });
-    const old = connection.metadata();
-    await connection.pair('replacement');
-    if (adapterError) pending.reject(new ServiceError('unauthorized', 'Expired'));
-    else pending.resolve(unauthorized());
-    await assert.rejects(old, error => error.kind === 'unauthorized');
-    assert.equal(notifications, 0);
-    await assert.rejects(connection.metadata(), error => error.kind === 'unauthorized');
-    assert.equal(notifications, 1);
-  }
+test('shared engine reports a lost connection once through its option for every operation, including feeds', async () => {
+  const lost = [], failure = new ServiceConnectionLost('The local host connection changed. Reconnect before continuing.');
+  let mode = 'lost';
+  const connection = createServiceConnection(async () => {
+    if (mode === 'lost') throw failure;
+    throw new ServiceError('unavailable', 'Down');
+  }, transcriptProjection, { onConnectionLost: error => lost.push(error) });
+  await assert.rejects(connection.metadata(), error => error === failure);
+  await assert.rejects(connection.conversationPermissions(scope), error => error === failure);
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: transcriptProjection.version }, async () => {});
+  assert.equal((await feed.ended).kind, 'failed');
+  assert.deepEqual(lost, [failure, failure, failure]);
+  mode = 'other';
+  await assert.rejects(connection.metadata(), /Down/);
+  assert.equal(lost.length, 3);
 });
 
 test('shared engine validates before execution and never retries a failed command', async () => {
@@ -157,15 +152,12 @@ for (const [name, mutate, kind] of [
 }
 
 for (const [name, response, kind] of [
-  ['malformed unauthorized', () => new Response('{', { status: 401, headers: { 'Content-Type': 'application/json' } }), 'unauthorized'],
   ['non-OK success', () => Response.json({ ok: true, value: null }, { status: 503 }), 'unavailable'],
   ['classified failure', () => Response.json({ ok: false, error: { kind: 'forbidden', message: 'Denied' } }, { status: 403 }), 'forbidden'],
 ]) {
   test(`shared engine classifies ${name}`, async () => {
-    let notifications = 0;
-    const connection = createServiceConnection(response, transcriptProjection, { onUnauthorized: () => notifications++ });
+    const connection = createServiceConnection(response, transcriptProjection);
     await assert.rejects(connection.reconcile(scope, 'command'), error => error instanceof ServiceError && error.kind === kind);
-    assert.equal(notifications, kind === 'unauthorized' ? 1 : 0);
   });
 }
 

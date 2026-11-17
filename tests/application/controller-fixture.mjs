@@ -5,9 +5,9 @@ export const scope = { hostId: 'host', conversationId: 'conversation' };
 export const empty = () => ({ version: 2, route: null, pendingCreation: null });
 export const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
 export function fixture() {
-  const images = new Map(), loads = [], selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
+  const images = new Map(), loads = [], selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
     observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
@@ -36,7 +36,6 @@ export function fixture() {
   }
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: behavior.frontendOffers, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
-    pair: code => behavior.pair(code),
     frontendBinding: request => behavior.binding(request),
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: behavior.principalId, agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: behavior.wireVersion ?? SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,
@@ -55,9 +54,10 @@ export function fixture() {
       async receipt() { return null; },
       watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
   };
-  const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
+  let connectionOptions;
+  const app = createApplicationController({ createConnection: options => { connectionOptions = options; return connection; },
     ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => behavior.uuids ? `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` : `id-${++nextId}` });
-  return { app, views, drafts, loads, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
-    host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
+  return { app, views, drafts, loads, selected, captured, descriptor, leases, created, submitted, cursors, feeds, behavior,
+    host: value => { hostId = value; }, connectionLost: error => connectionOptions.onConnectionLost(error), feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
 

@@ -1,33 +1,15 @@
 # Inspect an AgentUI host through MCP
 
-This example gives an MCP client four read tools for an existing authenticated AgentUI host. It reads recorded state without submitting commands or reconciling with a provider. It supports the repository's Node 24 runtime on macOS and Linux.
+This example gives an MCP client four read tools for a running AgentUI host. It reads recorded state without submitting commands or reconciling with a provider. It supports the repository's Node 24 runtime.
 
-## Build and pair
+## Build and start
 
 1. Run `npm ci` and `npm run build` at the repository root.
-2. Start your AgentUI host with its usual configuration. Keep its data directory and loopback origin available for the next command.
-3. Create a private directory outside the checkout. Pairing requires an existing directory owned by your user with no group or other permissions.
-
-   ```sh
-   mkdir -m 700 "$HOME/.agentui-mcp"
-   ```
-
-4. Pipe the host's native invitation directly into the pairing command. Replace the host directory, checkout path, and port with your actual values.
-
-   ```sh
-   node /absolute/agentui/apps/host/dist/main.js invite-native \
-     --data-dir /absolute/private/host-directory |
-     node /absolute/agentui/examples/mcp-control/read/dist/main.js \
-       pair http://127.0.0.1:7140 "$HOME/.agentui-mcp/access.json"
-   ```
-
-   Success exits with code 0 and prints nothing. The command creates a new profile with mode `0600`. It refuses to overwrite an existing file. The invitation and credential never appear in shell arguments or stdout. Do not save the invitation in a checked-in file or enable shell tracing around secret handling.
-
-Pairing sends one enrollment request. An interrupted or failed exchange can consume the invitation and leave a registered device without a saved profile. The helper never retries automatically. Inspect the host's devices, revoke the unwanted device if needed, and issue a new invitation before repeating setup.
+2. Start your AgentUI host with its usual configuration and note its loopback port.
 
 ## Connect an MCP client
 
-Configure your MCP client to run the built executable with the `serve` command and the absolute profile path. For example, use this entry in a client that accepts an `mcpServers` configuration.
+Configure your MCP client to run the built executable with the `serve` command and the host's origin. For example, use this entry in a client that accepts an `mcpServers` configuration.
 
 ```json
 {
@@ -37,16 +19,18 @@ Configure your MCP client to run the built executable with the `serve` command a
       "args": [
         "/absolute/agentui/examples/mcp-control/read/dist/main.js",
         "serve",
-        "/absolute/private/agentui-mcp/access.json"
+        "http://127.0.0.1:7140"
       ]
     }
   }
 }
 ```
 
-The configuration contains a file path, not the credential. There is no credential environment variable or secret flag. Serve validates the private file and the live host and principal identities before connecting stdio. It rejects symlink profiles, non-regular files, malformed or oversized profiles, loose permissions, and profiles inside the checkout. It makes no profile writes.
+The origin must be exactly `http://127.0.0.1:<port>`, with no path, userinfo, query, or fragment. Redirects fail. You can point this origin at a local tunnel only if the tunnel's local port equals the host's port, because the host checks the `Host` header against the port of the socket it accepted the request on. Serve reads the host's metadata once before connecting stdio and exits with code 1 if the host is unreachable. A host from before pairing was removed answers with HTTP 401 and is reported the same way; after upgrading, restart the host. Stdout contains only MCP messages. Fixed diagnostics use stderr.
 
-The native origin must be exactly `http://127.0.0.1:<port>`, with no path, userinfo, query, or fragment. Redirects fail. You can point this origin at a local tunnel. Every data tool checks live native authorization. Revoked or expired access returns an error without cached data. Stdout contains only MCP messages. Fixed diagnostics use stderr.
+## Host identity
+
+On startup the adapter records the host ID from the host's metadata and pins it for the life of the process. Every tool call reads metadata again. If the host ID differs, for example because another host now answers on the same port, the call fails with "Host identity changed. Restart the MCP server to reconnect." and returns no data. Catalog and receipt results are also checked against the pinned host ID.
 
 ## Available reads
 
@@ -65,17 +49,6 @@ Inspection reports stored host knowledge at the returned cursor. It does not ref
 
 Each inspection opens one snapshot observation and closes it in a `finally` path with a fresh cleanup deadline. Four inspections can run concurrently. Tool calls have an eight-second overall deadline and five-second request deadlines. Cleanup gets one additional second. If the close fails or a watch reply is lost before the feed ID arrives, the host's idle sweep remains the fallback. Independent host background work can change recorded state while you inspect it.
 
-## Protect and revoke access
+## Access
 
-The profile contains an owner-scoped native bearer credential. The adapter restricts its own operations to reads. The credential itself can authorize writes through another native client. Keep the private directory outside source control, protect backups, and do not copy the profile into MCP configuration or logs. Another process running as your user can read this file. This example does not use the desktop app's protected credential storage.
-
-Use the existing host commands to list devices and revoke this profile's principal.
-
-```sh
-node /absolute/agentui/apps/host/dist/main.js devices \
-  --data-dir /absolute/private/host-directory
-node /absolute/agentui/apps/host/dist/main.js revoke \
-  --data-dir /absolute/private/host-directory --id PRINCIPAL_ID
-```
-
-Deleting the local file does not revoke host access. Restart the MCP process with a newly paired profile after credential rotation. Windows is outside this example's supported runtime because POSIX permission bits do not establish Windows ACL protection.
+The host's native endpoint has no authentication. It treats any loopback caller as the owner on a private, single-user network. The adapter restricts its own operations to reads, but the endpoint itself accepts writes from any process that can reach it, including through a tunnel you point this origin at. To stop access, stop the MCP process or the host. Windows is outside this example's supported runtime.

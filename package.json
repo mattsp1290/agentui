@@ -41,10 +41,6 @@
     "desktop:dev": "npm run tauri:dev --workspace=@agentui/desktop",
     "desktop:bundle": "npm run tauri:bundle --workspace=@agentui/desktop",
     "host:browser-dev": "node apps/host/dist/main.js browser-dev",
-    "host:invite": "node apps/host/dist/main.js invite",
-    "host:invite-native": "node apps/host/dist/main.js invite-native",
-    "host:devices": "node apps/host/dist/main.js devices",
-    "host:revoke": "node apps/host/dist/main.js revoke",
     "ios:prepare": "bash apps/ios/native/prepare.sh",
     "ios:run": "bash apps/ios/native/run.sh",
     "ios:verify": "bash apps/ios/native/verify.sh"

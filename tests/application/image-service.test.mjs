@@ -14,7 +14,6 @@ import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@
 import { recordedInstallation } from '@agentui/host/recorded';
 import { openLocalHost, createRecordedDriver } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../apps/host/build/tsc/feed-registry.js';
@@ -24,7 +23,7 @@ import { png, chunk, screenshotPng, screenshotJpeg } from '../host/image-fixture
 
 async function fixture(t, { imageInput = true, model } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-images-')), path = join(directory, 'host.sqlite');
-  const access = new Access(openAccessDatabase(path)), feeds = new FeedRegistry();
+  const access = openAccessDatabase(path), feeds = new FeedRegistry();
   const driver = { ...createRecordedDriver({ installation: recordedInstallation, backendPath: join(directory, 'recorded.jsonl'),
     decodeEvent: transcriptProjection.decodeEvent, resolve: async command => ({ kind: 'completed', output: {
       events: command.body.kind === 'send' ? [{ kind: 'message-updated', messageId: command.clientCommandId, revision: 1,
@@ -35,11 +34,10 @@ async function fixture(t, { imageInput = true, model } = {}) {
   host.createConversation(scope, recordedInstallation);
   const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
-  const handlers = Object.fromEntries(['native', 'browser-development'].map(credentialClass => {
-    const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => false,
-      agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, ...(model ? { model } : {}), availability: { kind: 'ready' } }] } });
-    return [credentialClass, serviceEndpoint({ access, api, credentialClass, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })];
-  }));
+  const api = createApi({ host, feeds, compatibility, isClosing: () => false,
+    agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, ...(model ? { model } : {}), availability: { kind: 'ready' } }] } });
+  const handlers = Object.fromEntries(['native', 'browser-development'].map(client =>
+    [client, serviceEndpoint({ hostId: access.hostId, api, client, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })]));
   const incoming = [], responses = [];
   const server = createServer((request, response) => {
     incoming.push(request); responses.push(response);
@@ -56,7 +54,7 @@ async function fixture(t, { imageInput = true, model } = {}) {
   };
   const clients = {
     'browser-development': createBrowserConnection({ fetch: (path, init) => fetch(origin + path, { ...init, headers: headers('browser-development') }) }),
-    native: createMacConnection({ kind: 'ready', observation: 'fixture', hostId: access.hostId, principalId: 'trusted-owner' }, async command => {
+    native: createMacConnection({ observation: 'fixture' }, async command => {
       assert.equal(command.kind, 'execute');
       assert.equal(command.observation, 'fixture');
       assert.deepEqual(Object.keys(command).sort(), ['kind', 'observation', 'request']);
@@ -69,7 +67,7 @@ async function fixture(t, { imageInput = true, model } = {}) {
   const count = () => database.prepare('SELECT COUNT(*) AS count FROM images').get().count;
   t.after(async () => {
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-    feeds.dispose(); host.close(); await host.drained; database.close(); access.close(); rmSync(directory, { recursive: true, force: true });
+    feeds.dispose(); host.close(); await host.drained; database.close(); access.database.close(); rmSync(directory, { recursive: true, force: true });
   });
   const start = (kind, options = {}) => {
     const outgoing = httpRequest(origin + route(kind), { method: 'POST', headers: { ...headers(kind), ...options.headers } });

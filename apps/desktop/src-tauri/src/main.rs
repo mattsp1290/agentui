@@ -36,16 +36,7 @@ async fn native_access(
         let owner = {
             let mut guard = owners.lock().map_err(|_| "profile-unavailable")?;
             if guard.is_none() {
-                let handle = security_framework::os::macos::keychain::SecKeychain::default()
-                    .map_err(|_| "keychain-unavailable")?;
-                let owner = native::Owner::new(
-                    &directory,
-                    "http://127.0.0.1:7140".into(),
-                    keychain::Keychain {
-                        handle,
-                        service: "homes.birb.agentui.native.v1".into(),
-                    },
-                )?;
+                let owner = native::Owner::new(&directory, "http://127.0.0.1:7140".into())?;
                 *guard = Some(std::sync::Arc::new(std::sync::Mutex::new(owner)));
             }
             guard.clone().ok_or("profile-unavailable")?
@@ -53,7 +44,7 @@ async fn native_access(
         native::run(&owner, command)
     })
     .await
-    .map_err(|_| "keychain-unavailable")?
+    .map_err(|_| "profile-unavailable")?
 }
 
 #[tauri::command]

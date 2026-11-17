@@ -7,6 +7,9 @@ import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMa
 import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
 
 export class ServiceProtocolError extends Error {}
+export class ServiceConnectionLost extends ServiceError {
+  constructor(message: string) { super('unavailable', message); }
+}
 class ServiceRequestRejected extends Error {}
 export async function readServiceResponseBody(response: Response, limit = SERVICE_MAX_RESPONSE_BYTES): Promise<unknown> {
   const announced = response.headers.get('content-length');
@@ -41,7 +44,7 @@ export async function readServiceResponseBody(response: Response, limit = SERVIC
 }
 export interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
-  readonly onUnauthorized?: () => void;
+  readonly onConnectionLost?: (error: ServiceConnectionLost) => void;
 }
 export type ServiceExecutor = (body: string, context: {
   readonly op: ServiceRequest['op'];
@@ -50,7 +53,6 @@ export type ServiceExecutor = (body: string, context: {
 export function createServiceConnection<E, P>(execute: ServiceExecutor,
   projection: Pick<Projection<E, P>, 'version' | 'decodeState' | 'decodeEvent'>,
   options: ServiceConnectionOptions = {}): ServiceConnection<E, P> {
-  let credentialGeneration = 0;
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
   async function requestResult<K extends keyof ServiceValueMap, Result>(value: ServiceRequest & { readonly op: K },
@@ -64,7 +66,6 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
     if (signal?.aborted) throw new ServiceError('unavailable', 'Service request interrupted');
     const controller = new AbortController();
-    const requestedGeneration = credentialGeneration;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abort = (): void => {};
     const interrupted = new Promise<never>((_resolve, reject) => {
@@ -73,17 +74,16 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       signal?.addEventListener('abort', abort, { once: true });
     });
     const perform = async (): Promise<Result> => {
-      const response = await execute(body, { op: value.op, signal: controller.signal });
-      let result: ServiceResponse<ServiceValueMap[K]>;
-      try {
-        const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
-        try { result = parseServiceResponse<K>(value, raw); }
-        catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
-      } catch (error) {
-        if (response.status === 401) throw new ServiceError('unauthorized', 'Pair this device with the host');
+      let response: Response;
+      try { response = await execute(body, { op: value.op, signal: controller.signal }); }
+      catch (error) {
+        if (error instanceof ServiceConnectionLost && !signal?.aborted) options.onConnectionLost?.(error);
         throw error;
       }
-      if (response.status === 401) throw new ServiceError('unauthorized', result.ok ? 'Pair this device with the host' : result.error.message);
+      const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
+      let result: ServiceResponse<ServiceValueMap[K]>;
+      try { result = parseServiceResponse<K>(value, raw); }
+      catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
       if (!result.ok && result.error.kind === 'create-rejected' && response.status !== 409) throw new ServiceProtocolError('Invalid creation refusal status');
       if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
@@ -94,11 +94,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       return completed;
     };
     try { return await Promise.race([perform(), interrupted]); }
-    catch (error) {
-      if (error instanceof ServiceError && error.kind === 'unauthorized' && value.op !== 'pair' &&
-        requestedGeneration === credentialGeneration && !controller.signal.aborted) options.onUnauthorized?.();
-      throw error;
-    } finally {
+    finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
     }
@@ -188,7 +184,6 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       if (!sameScope(result.scope, scope) || result.attachment.imageId !== imageId) throw new ServiceProtocolError('Image read response mismatch');
       return { attachment: result.attachment, bytes: Uint8Array.from(atob(result.base64), character => character.charCodeAt(0)) };
     },
-    async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
     catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
     search: (query, after = null) => request({ op: 'search', query, after }),

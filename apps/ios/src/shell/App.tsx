@@ -30,7 +30,7 @@ function DisconnectedScreen() {
           <View style={[styles.divider, { backgroundColor: theme.colors.border }]} />
           <Text variant="label">This developer build</Text>
           <Text>
-            The iOS app is installed and ready to open. Host pairing and conversations are not available in this build yet.
+            The iOS app is installed and ready to open. Host connection and conversations are not available in this build yet.
           </Text>
         </Surface>
         <Text variant="muted">No host is connected. No credentials are stored.</Text>

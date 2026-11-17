@@ -41,15 +41,6 @@ async function fixture(t) {
     host.exited.then(() => { throw new Error(`Host failed to start ${host.stderr}`); }),
   ]);
   lines.close();
-  const control = async (op, id) => {
-    const child = cli([op, ...(id ? ['--id', id] : [])]);
-    let stdout = '';
-    child.child.stdout.setEncoding('utf8').on('data', value => { stdout += value; });
-    assert.equal((await child.exited).code, 0, child.stderr);
-    const result = JSON.parse(stdout);
-    assert.equal(result.ok, true);
-    return result.value;
-  };
   const call = (path, body, headers = {}, method = 'POST') => new Promise((resolve, reject) => {
     const outgoing = request(`${ready.origin}${path}`, { method, headers: { 'Content-Type': 'application/json', ...headers } }, incoming => {
       let text = '';
@@ -61,7 +52,7 @@ async function fixture(t) {
     outgoing.setTimeout(12_000, () => outgoing.destroy(new Error('Native HTTP timeout')));
     outgoing.end(typeof body === 'string' ? body : JSON.stringify(body));
   });
-  return { ...ready, directory, host, launch, control, call };
+  return { ...ready, directory, host, launch, call };
 }
 function denied(response, status = 400) {
   assert.equal(response.status, status);
@@ -78,6 +69,9 @@ test('native loopback route admits the owner directly and rejects noncanonical r
   assert.equal(metadata.headers['cache-control'], 'no-store');
   assert.equal(metadata.body.value.hostId, f.hostId);
   assert.equal(metadata.body.value.principalId, 'trusted-owner');
+  const staleBearer = await f.call('/native/v1', { op: 'metadata' }, { Authorization: 'Bearer stale-device-secret' });
+  assert.equal(staleBearer.status, 200);
+  assert.equal(staleBearer.body.value.principalId, 'trusted-owner');
   for (const headers of [
     { Cookie: 'agentui=1' }, { Origin: '' }, { Origin: f.origin }, { Cookie: '' },
     { Host: 'foreign.example' }, { Host: 'localhost' }, { 'Content-Type': 'application/json; charset=utf-8' }, { 'Content-Type': 'text/plain' },
@@ -97,7 +91,6 @@ test('native loopback route admits the owner directly and rejects noncanonical r
   const { feedId } = (await f.call('/native/v1', { op: 'watch', scope, after: null, projectionVersion: 4 })).body.value;
   const page = (await f.call('/native/v1', { op: 'pull', feedId, ack: null })).body.value;
   assert.equal(page.item.kind, 'snapshot');
-  assert.deepEqual(await f.control('devices'), []);
 });
 
 test('separate native engine processes recover one original command after client exit while the bundled host lives', { timeout: 20_000 }, async t => {
