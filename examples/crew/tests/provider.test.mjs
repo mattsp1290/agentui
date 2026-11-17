@@ -243,18 +243,15 @@ for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} d
     await baseline.promise;
     assert.equal(remote.streams.size, 1);
     assert.equal(credentialUses, 1);
-    let discovery;
     if (trigger === 'discovery failure') {
       failDiscovery = true;
-      discovery = assert.rejects(f.running.discoverProviders(), /Provider discovery failed/);
-      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual((await f.running.discoverProviders()).map(item => item.cause), ['invalid-installation']);
     }
     const closing = f.running.close().then(() => { closed = true; });
     release.resolve();
     await creating;
     await until(() => closed);
     await closing;
-    await discovery;
     assert.equal(observations, 0);
     assert.equal(credentialUses, 0);
     await until(() => remote.streams.size === 0);
@@ -1034,3 +1031,44 @@ for (const field of ['scope', 'conversationId', 'memberId', 'grantId']) {
     assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 1);
   });
 }
+
+test('Crew maps HTTP, transport and contract failures to typed provider failures without leaking details', async t => {
+  let mode = { at: 'capabilities', status: 401 };
+  const server = createServer((request, response) => {
+    const path = new URL(request.url, 'http://localhost').pathname, json = (status, body) => {
+      response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body));
+    };
+    if (path === '/v1/capabilities' && mode.at !== 'capabilities') return json(200, { apiVersion: '1', requestContract: 'sql-admission-temporal-queue-v1',
+      observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'] });
+    if (mode.status === 'protocol') return json(200, { apiVersion: '9' });
+    if (mode.status === 'reset') { response.destroy(); return; }
+    return json(mode.status, { error: 'PRIVATE_CREW_FAILURE' });
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => { server.closeAllConnections(); server.close(); });
+  const instance = { namespace: 'crew', installationId: 'test', generation: 'one', protocolVersion: '1' };
+  const { entry } = crewProvider({ service: `http://127.0.0.1:${server.address().port}`, memberId, instance });
+  const activate = async use => {
+    let provider;
+    await entry.activate({ namespace: 'crew', providers: { add(_id, backend) { provider = backend; } }, credentials: { use } });
+    return provider;
+  };
+  const provider = await activate((_request, action) => action('private-crew-test'));
+  const credential = { kind: 'credential-handle', instance, hostId: 'test-host', opaqueHandle: 'test-handle' };
+  const connect = (target = provider) => target.connect({ apiVersion: 1, instance, credential });
+  for (const [status, kind] of [[401, 'authentication-failed'], [403, 'unauthorized'], [404, 'version-unsupported'], [429, 'unavailable'],
+    [500, 'unavailable'], [503, 'unavailable'], ['reset', 'unavailable'], ['protocol', 'version-unsupported']]) {
+    mode = { at: 'capabilities', status };
+    const refused = await connect();
+    assert.equal(refused.kind, kind, `capabilities ${status}`); assert.doesNotMatch(refused.reason, /PRIVATE/);
+    mode = { at: 'members', status };
+    const connection = await connect();
+    assert.equal(connection.kind, 'connected');
+    const discovered = await connection.backend.discover();
+    assert.equal(discovered.kind, kind, `members ${status}`); assert.doesNotMatch(discovered.reason, /PRIVATE/);
+    await connection.backend.close();
+  }
+  assert.equal((await provider.connect({ apiVersion: 1, instance, credential: null })).kind, 'authentication-failed');
+  const withoutSecret = await activate(async () => { throw new Error('Provider credential use refused'); });
+  assert.equal((await connect(withoutSecret)).kind, 'authentication-failed');
+});

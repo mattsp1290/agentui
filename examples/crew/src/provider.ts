@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CrewClient, CrewHttpError, type Capabilities } from '@birbcrew/client';
+import { CrewClient, CrewHttpError, CrewProtocolError, type Capabilities } from '@birbcrew/client';
 import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
@@ -16,6 +16,19 @@ export interface CrewProviderOptions {
 }
 const uncertain = () => ({ kind: 'uncertain', reason: 'Crew outcome is unresolved. Recover the original operation.', evidence: null } as const);
 const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable or authorization was refused.' } as const);
+type Failure = { readonly kind: 'unavailable' | 'authentication-failed' | 'unauthorized' | 'version-unsupported'; readonly reason: string };
+const credentialRefused = (): Failure => ({ kind: 'authentication-failed', reason: 'The Crew credential is unavailable.' });
+function crewFailure(error: unknown): Failure {
+  if (error instanceof CrewHttpError) {
+    if (error.status === 401) return { kind: 'authentication-failed', reason: 'Crew rejected the credential.' };
+    if (error.status === 403) return { kind: 'unauthorized', reason: 'Crew refused access for this credential.' };
+    if (error.status >= 400 && error.status < 500 && error.status !== 408 && error.status !== 429) {
+      return { kind: 'version-unsupported', reason: 'Crew does not support this request.' };
+    }
+  }
+  if (error instanceof CrewProtocolError) return { kind: 'version-unsupported', reason: 'Crew returned an unsupported response.' };
+  return { kind: 'unavailable', reason: 'Crew is offline or unreachable.' };
+}
 function negative(error: unknown): ReturnType<typeof uncertain> | { kind: 'rejected'; reason: string; evidence: null } {
   if (error instanceof CrewHttpError && [400, 401, 403, 422].includes(error.status)) {
     return { kind: 'rejected', reason: 'Crew refused this operation.', evidence: null };
@@ -32,8 +45,9 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
     entries: [{ kind: 'server', module: './provider.js' }] };
   const entry: ServerExtensionEntry = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
     const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
-      if (request.apiVersion !== 1 || canonicalJson(request.instance) !== canonicalJson(instance) || !request.credential ||
-        canonicalJson(request.credential.instance) !== canonicalJson(instance)) return unavailable();
+      if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
+      if (!request.credential) return credentialRefused();
+      if (canonicalJson(request.instance) !== canonicalJson(instance) || canonicalJson(request.credential.instance) !== canonicalJson(instance)) return unavailable();
       const credential = request.credential;
       let capabilities: Capabilities;
       let closed = false;
@@ -109,8 +123,12 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         }
         return current;
       }
-      try { capabilities = await use(client => client.capabilities({ signal: AbortSignal.timeout(10000) })); }
-      catch { return unavailable(); }
+      const probe = await use(async client => {
+        try { return { kind: 'available', capabilities: await client.capabilities({ signal: AbortSignal.timeout(10000) }) } as const; }
+        catch (error) { return crewFailure(error); }
+      }).catch(credentialRefused);
+      if (probe.kind !== 'available') return probe;
+      capabilities = probe.capabilities;
       const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
       const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
         standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
@@ -156,7 +174,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
           decide: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' } },
         async discover() {
-          try { return await use(async client => {
+          return use(async client => { try {
             let after: string | undefined;
             const seen = new Set<string>();
             do {
@@ -169,7 +187,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
               seen.add(page.next); after = page.next;
             } while (after);
             return { kind: 'unauthorized', reason: 'Configured Crew member is not available to this owner.' } as const;
-          }); } catch { return unavailable(); }
+          } catch (error) { return crewFailure(error); } }).catch(credentialRefused);
         },
         create: operation => confirm(operation, true), reconcileCreation: operation => confirm(operation, false),
         submit: operation => command(operation, true), reconcileCommand: operation => command(operation, false),
