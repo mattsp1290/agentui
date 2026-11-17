@@ -13,7 +13,7 @@ async function setup(t, waitMs) {
   let promotions = 0;
   const original = owner.selection.select;
   owner.selection.select = async (...args) => { promotions++; return original(...args); };
-  const control = await startControl(join(copy.root, 'control.sock'), {}, {}, () => false, owner.selection, async () => [], owner);
+  const control = await startControl(join(copy.root, 'control.sock'), () => false, owner.selection, async () => [], owner);
   t.after(() => control.close());
   const connection = await client(t, copy.entry, copy.root, waitMs);
   return { ...f, ...copy, ...connection, owner, promotions: () => promotions };
