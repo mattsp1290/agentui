@@ -6,6 +6,7 @@ import { useConversation } from '@agentui/client/react';
 import type { ConversationActions, OpenConversation, ConversationObservation, PermissionState } from './application-controller.js';
 import { ConversationPermissions } from './ConversationPermissions.js';
 import { CommandRecovery } from './CommandRecovery.js';
+import { recoveryModel } from './recovery.js';
 import { AGENT_PRESENTATION, agentPresentation } from './agent-presentation.js';
 import { conversationResponding } from './responding.js';
 import { FileActivity } from './FileActivity.js';
@@ -125,7 +126,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
           onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Checking for updates…' : 'Check for updates'}</button>
       </>}
     </div>}
-    {permissionState && <ConversationPermissions outbox={view.outbox} state={permissionState} actions={actions} enabled={connected} />}
+    {permissionState && <ConversationPermissions outbox={recoveryModel(view).retained} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationTranscript selection={transcript}
       conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
       context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}

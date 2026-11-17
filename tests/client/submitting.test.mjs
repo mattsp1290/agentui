@@ -34,3 +34,22 @@ test('submission snapshots identify concurrent commands and clear each independe
   assert.ok(published.some(ids => ids.length === 2));
   assert.deepEqual(published.at(-1), []);
 });
+
+test('a new command is never published as retained before its submission starts', async () => {
+  const { store, port } = await connected();
+  const started = deferred(), result = deferred();
+  let sent;
+  port.submit = command => { sent = command; started.resolve(); return result.promise; };
+  const retained = [];
+  store.subscribe(() => {
+    const view = store.getSnapshot();
+    retained.push(view.outbox.filter(entry => !view.submitting.includes(entry.command.clientCommandId)).length);
+  });
+  const revoke = store.revokePermission('permission', 'conversation');
+  await started.promise;
+  result.resolve({ kind: 'receipt', receipt: receipt(sent, 'completed') });
+  await revoke;
+  assert.deepEqual(store.getSnapshot().outbox, []);
+  assert.ok(retained.length > 0);
+  assert.deepEqual([...new Set(retained)], [0]);
+});

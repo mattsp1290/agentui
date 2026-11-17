@@ -161,12 +161,14 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     previous?.close();
     publish();
   }
-  async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
-    requireCompatible();
-    const id = entry.command.clientCommandId;
+  function reserve(id: string): void {
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
+  }
+  async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
+    const id = entry.command.clientCommandId;
     try {
+      requireCompatible();
       publish();
       const result = await port.submit(entry.command);
       if (result.kind === 'rejected') {
@@ -193,7 +195,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? composerBody() }));
       if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
       const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
-      await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
+      // Reserved before the outbox publish so observers never see a new command as an unresolved retained one.
+      reserve(command.clientCommandId);
+      try { await persist(immutable({ ...local, outbox: [...local.outbox, created] })); }
+      catch (error) { inFlight.delete(command.clientCommandId); throw error; }
       publish();
       return created;
     });
@@ -258,6 +263,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         const found = local.outbox.find(value => value.command.clientCommandId === clientCommandId);
         if (!found) throw new Error('Command is not in the outbox');
         await requireWritableRetryStorage();
+        reserve(clientCommandId);
         return found;
       });
       return dispatch(entry, 'unknown-or-observed');
