@@ -30,7 +30,7 @@ export async function openReportExample(options: { hostPath: string; scope: Conv
         },
         async outputs() { return host.conversationOutputs(options.scope); },
         async read(outputId: OutputId) { return host.readOutput(options.scope, outputId); },
-        async close() { host.close(); await host.drained; await registry.close(); },
+        async close() { try { host.close(); await host.drained; } finally { await registry.close(); } },
       };
     } catch (error) { host.close(); await host.drained; throw error; }
   } catch (error) { await registry.close(); throw error; }

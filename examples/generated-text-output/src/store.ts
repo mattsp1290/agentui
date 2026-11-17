@@ -68,7 +68,7 @@ export class ReportStore {
       const value = operation.parse(JSON.parse(receipt.request));
       if (value.kind !== 'send' || row.scope !== canonicalJson(value.binding.creation.scope) || metadata.name !== 'response.txt' ||
           row.metadata !== canonicalJson(metadata) || metadata.byteLength !== row.bytes.length || metadata.sha256 !== hash(row.bytes) ||
-          new TextDecoder('utf-8', { fatal: true }).decode(row.bytes) !== value.request.text) throw new Error('Invalid payload');
+          new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(row.bytes) !== value.request.text) throw new Error('Invalid payload');
     }
   }
   settle(input: unknown, lookup = false) {
