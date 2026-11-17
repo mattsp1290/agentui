@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { assertBoundedRequestSpans, attributes, receiver } from './support/observability.mjs';
-import { browserRequest, control, exitWithin, hostRequest, launchProcess, pairBrowser, startup, within } from './support/host-process.mjs';
+import { browserRequest, control, exitWithin, hostRequest, launchProcess, startup, within } from './support/host-process.mjs';
 
 async function fixture(t, environment = {}, direct = false) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-'));
@@ -49,7 +49,6 @@ async function fixture(t, environment = {}, direct = false) {
   const browser = (body, cookie, headers) => browserRequest(address.origin, body, cookie, headers);
   return { ...address, host, call, browser,
     control: (op, env = environment) => control(t, cliArgs([op]), env),
-    pair: () => pairBrowser(t, address.origin, cliArgs(['invite']), environment),
     stop: async () => { host.process.kill('SIGTERM'); await exitWithin(host); } };
 }
 
@@ -75,26 +74,15 @@ test('host OTLP export contains only bounded request facts and ignores incoming 
       'agentui.outcome': outcome, 'http.response.status_code': status });
     return response;
   };
-  check(await f.browser({ op: 'metadata' }, '', headers), 'admission', 'browser-development', 'unauthorized', 401);
-  const browser = await f.pair();
-  canaries.push(browser.code, browser.cookie, browser.cookie.slice(browser.cookie.indexOf('=') + 1));
-  expected.push({ 'agentui.operation': 'pair', 'agentui.credential_class': 'browser-development',
-    'agentui.outcome': 'ok', 'http.response.status_code': 200 });
-  const metadata = check(await f.browser({ op: 'metadata' }, browser.cookie, headers), 'metadata', 'browser-development', 'ok', 200);
+  const metadata = check(await f.browser({ op: 'metadata' }, '', headers), 'metadata', 'browser-development', 'ok', 200);
   canaries.push(metadata.body.value.principalId);
-  check(await f.browser({ op: 'search', query: canaries[0], after: null }, browser.cookie, headers), 'search', 'browser-development', 'ok', 200);
-  check(await f.browser({ op: canaries[4] }, browser.cookie, headers), 'admission', 'browser-development', 'invalid', 400);
-  check(await f.browser('{', browser.cookie, headers), 'admission', 'browser-development', 'invalid', 400);
-  check(await f.browser(`{"private":"${canaries[4]}${'x'.repeat(410_000)}"}`, browser.cookie, headers), 'admission', 'browser-development', 'invalid', 400);
-  const invitation = await f.control('invite-native', { OTEL_TRACES_EXPORTER: 'invalid-control-command-ignored' });
-  canaries.push(invitation.code);
-  const native = check(await f.call('/native/v1/pair', { version: 1, hostId: f.hostId, code: invitation.code }, headers), 'pair', 'native', 'ok', 200);
-  const credential = native.body.value;
-  canaries.push(credential.principalId, credential.secret);
-  const authorization = { ...headers, Authorization: `Bearer ${credential.secret}` };
-  check(await f.call('/native/v1', { op: 'metadata' }, authorization), 'metadata', 'native', 'ok', 200);
-  check(await f.call('/native/v1', { op: 'metadata' }, headers), 'admission', 'native', 'unauthorized', 401);
-  check(await f.call(`/native/v1?private=${canaries[3]}`, { op: 'metadata' }, authorization), 'admission', 'native', 'invalid', 400);
+  check(await f.browser({ op: 'search', query: canaries[0], after: null }, '', headers), 'search', 'browser-development', 'ok', 200);
+  check(await f.browser({ op: canaries[4] }, '', headers), 'admission', 'browser-development', 'invalid', 400);
+  check(await f.browser('{', '', headers), 'admission', 'browser-development', 'invalid', 400);
+  check(await f.browser(`{"private":"${canaries[4]}${'x'.repeat(410_000)}"}`, '', headers), 'admission', 'browser-development', 'invalid', 400);
+  check(await f.call('/native/v1', { op: 'metadata' }, headers), 'metadata', 'native', 'ok', 200);
+  check(await f.call('/native/v1', { op: 'metadata' }, { ...headers, Origin: f.origin }), 'admission', 'native', 'invalid', 400);
+  check(await f.call(`/native/v1?private=${canaries[3]}`, { op: 'metadata' }, headers), 'admission', 'native', 'invalid', 400);
   await f.call(`/?private=${canaries[3]}`, undefined, {}, 'GET');
   assert.equal((await f.call('/favicon.ico', undefined, { Host: 'wrong-host.invalid' }, 'GET')).status, 400);
   await f.stop();
@@ -111,7 +99,7 @@ test('signal-specific OTLP endpoint is used verbatim with the default service id
     OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: 'http://127.0.0.1:1/ignored',
     OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: `${collector.endpoint}/custom/trace-intake`,
   });
-  assert.equal((await f.browser({ op: 'metadata' })).status, 401);
+  assert.equal((await f.browser({ op: 'metadata' })).status, 200);
   await f.stop();
   assert.equal(collector.received.length, 1);
   assert.equal(collector.received[0].path, '/custom/trace-intake');
@@ -121,7 +109,7 @@ test('signal-specific OTLP endpoint is used verbatim with the default service id
 test('enabled tracing releases failed startup and memoizes successful host shutdown', { timeout: 15_000 }, async t => {
   const collector = await receiver(t);
   const f = await fixture(t, { OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint }, 'lifecycle');
-  assert.equal((await f.browser({ op: 'metadata' })).status, 401);
+  assert.equal((await f.browser({ op: 'metadata' })).status, 200);
   await f.stop();
   assert.equal(collector.received.length, 1);
   const spans = collector.received.flatMap(value => value.body.resourceSpans.flatMap(resource => resource.scopeSpans.flatMap(scope => scope.spans)));
@@ -137,7 +125,6 @@ test('response serialization failure exports a sanitized unavailable outcome aft
   ]);
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-framing-'));
   const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
-  const paired = access.pair(access.invite('native'), 'native');
   const privateDiagnostic = 'private-serialization-diagnostic-e88e24';
   const observability = createHostObservability({ kind: 'otlp', endpoint: `${collector.endpoint}/v1/traces`, headers: {}, serviceName: 'agentui-host', datadogLlmObservability: false });
   const handler = serviceEndpoint({ credentialClass: 'native', access, observability, isClosing: () => false,
@@ -152,7 +139,7 @@ test('response serialization failure exports a sanitized unavailable outcome aft
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const response = await fetch(`http://127.0.0.1:${server.address().port}/native/v1`, {
-    method: 'POST', signal: AbortSignal.timeout(5000), headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${paired.secret}` },
+    method: 'POST', signal: AbortSignal.timeout(5000), headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op: 'metadata' }),
   });
   assert.equal(response.status, 503);
@@ -165,7 +152,7 @@ test('response serialization failure exports a sanitized unavailable outcome aft
   assert.deepEqual(attributes(spans[0].attributes), { 'agentui.operation': 'metadata', 'agentui.credential_class': 'native',
     'agentui.outcome': 'unavailable', 'http.response.status_code': 503 });
   assert.equal(spans[0].status.code, 2);
-  for (const privateValue of [privateDiagnostic, paired.secret, paired.principal.id, access.hostId]) {
+  for (const privateValue of [privateDiagnostic, 'trusted-owner', access.hostId]) {
     assert.equal(JSON.stringify(collector.received).includes(privateValue), false);
   }
 });
@@ -180,8 +167,7 @@ test('tracing stays disabled by default, by explicit opt out and for direct host
   ]) {
     await t.test(name, async t => {
       const f = await fixture(t, { ...environment, OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint }, direct);
-      const paired = await f.pair();
-      assert.equal((await f.browser({ op: 'metadata' }, paired.cookie)).status, 200);
+      assert.equal((await f.browser({ op: 'metadata' })).status, 200);
       await f.stop();
       assert.deepEqual(collector.received, []);
     });
@@ -195,12 +181,11 @@ for (const [mode, respond] of [
   test(`a ${mode} OTLP receiver cannot fail requests or retain the host process`, { timeout: 20_000 }, async t => {
     const collector = await receiver(t, respond);
     const f = await fixture(t, { OTEL_TRACES_EXPORTER: 'otlp', OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint });
-    const paired = await f.pair();
-    assert.equal((await f.browser({ op: 'metadata' }, paired.cookie)).status, 200);
+    assert.equal((await f.browser({ op: 'metadata' })).status, 200);
     await within(Promise.race([collector.firstRequest, f.host.exited.then(() => {
       throw new Error(`Host exited before attempting export. ${f.host.stderr}`);
     })]), 'First export', 6000, () => f.host.process.kill('SIGKILL'));
-    assert.equal((await f.browser({ op: 'metadata' }, paired.cookie)).status, 200);
+    assert.equal((await f.browser({ op: 'metadata' })).status, 200);
     await f.stop();
     assert.ok(collector.received.length > 0, 'the failing receiver was reached before shutdown');
   });

@@ -20,7 +20,7 @@ test('saved history search scans past empty pages and searches only current tran
   const api = createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, credentialClass: 'browser-development', isClosing: () => false,
     compatibility: { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } });
-  const principal = access.pair(access.invite('browser-development'), 'browser-development').principal;
+  const principal = access.owner('browser-development');
   const scopes = Array.from({ length: 105 }, (_, index) => ({ hostId: access.hostId, conversationId: `chat-${String(index).padStart(3, '0')}` }));
   for (const scope of scopes) host.createConversation(scope, recordedInstallation);
   const append = (scope, messageId, text, revision = 1, complete = true, role = 'assistant') => host.append(scope, {
@@ -69,6 +69,4 @@ test('saved history search scans past empty pages and searches only current tran
   for (const query of ['private-receipt-marker', privateOperation, 'approval-v1']) {
     assert.deepEqual((await search(query)).items, [], 'private receipt, native reference and continuation fields are excluded');
   }
-  access.revoke(principal.id);
-  await assert.rejects(api(principal, { op: 'search', query: 'garden', after: null }), error => error.kind === 'unauthorized');
 });

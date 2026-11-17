@@ -143,7 +143,6 @@ test('real browser selection and send render a growing reply, completion, and pe
   const remote = await providerService(t), a = remote.extension(), f = await fixture(t, [a]);
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   let page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: /Harness,/ }).click();
   await page.getByRole('button', { name: 'Provider', exact: true }).click();

@@ -189,8 +189,7 @@ test('browser preserves draft, Stop authority and raw running state while Check 
   const binding = remote.conversations.get('chat').snapshot.binding;
   remote.emit(remote.makeEvent(binding, 'Readable partial reply', 1)); await until(() => document(f).domain.messages.length === 2);
   const browser = await chromium.launch(); t.after(() => browser.close());
-  const context = await browser.newContext(), [name, value] = f.cookie.split('=');
-  await context.addCookies([{ name, value, url: f.running.origin }]);
+  const context = await browser.newContext();
   const page = await context.newPage(); page.setDefaultTimeout(7000);
   await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: /Open conversation chat$/ }).click();

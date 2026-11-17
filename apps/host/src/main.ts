@@ -12,7 +12,7 @@ import { parseControlRequest, formatControlResponse, requestControl } from './co
 import type { ControlRequest } from './control.js';
 import { readObservabilityConfiguration } from './observability.js';
 
-const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred', 'trusted'], serve: ['port', 'assets', 'config', 'extensions', 'trusted'], 'browser-dev': ['port', 'assets', 'trusted'], codex: ['port', 'workspace', 'assets', 'executable', 'trusted'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable', 'trusted'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable', 'trusted'], pi: ['port', 'workspace', 'assets', 'trusted'], invite: [], 'invite-native': [], 'providers-refresh': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
+const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred'], serve: ['port', 'assets', 'config', 'extensions'], 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets', 'executable'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], 'providers-refresh': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
 function selectionFile(path: string | undefined): unknown {
   try { return JSON.parse(readFileSync(path ?? '', 'utf8')); }
   catch { throw new Error('Invalid artifact selection file'); }
@@ -22,7 +22,7 @@ async function main(): Promise<void> {
     'data-dir': { type: 'string' }, port: { type: 'string' }, id: { type: 'string' }, after: { type: 'string' },
     config: { type: 'string' }, extensions: { type: 'string' }, executable: { type: 'string' }, model: { type: 'string' }, workspace: { type: 'string' }, assets: { type: 'string' },
     request: { type: 'string' }, attempt: { type: 'string' }, 'after-attempt': { type: 'string' }, operation: { type: 'string' }, 'expected-revision': { type: 'string' }, selection: { type: 'string' }, receipt: { type: 'string' },
-    trusted: { type: 'boolean' }, preferred: { type: 'string' },
+    preferred: { type: 'string' },
   } });
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
@@ -59,7 +59,6 @@ async function main(): Promise<void> {
     const setupCapability = process.env.AGENTUI_SETUP_CAPABILITY ?? '';
     delete process.env.AGENTUI_SETUP_CAPABILITY;
     const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
-      accessMode: values.trusted ? 'trusted' : 'paired',
       ...(extensions === undefined ? {} : { extensions }),
       ...(command === 'desktop' ? { setupCapability } : {}),
       agentStartup: command === 'desktop' ? { kind: 'desktop', configuration: { default: values.preferred ?? 'codex', agents: desktopAgents } } : values.config !== undefined ? { kind: 'configured', configuration: readAgentConfiguration(resolve(values.config)) }

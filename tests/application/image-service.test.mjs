@@ -26,10 +26,9 @@ async function fixture(t) {
   const host = openRecordedHost({ path, backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId });
   const scope = { hostId: access.hostId, conversationId: 'images' };
   host.createConversation(scope, recordedInstallation);
-  const paired = Object.fromEntries(['native', 'browser-development'].map(kind => [kind, access.pair(access.invite(kind), kind)]));
   const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
-  const handlers = Object.fromEntries(Object.keys(paired).map(credentialClass => {
+  const handlers = Object.fromEntries(['native', 'browser-development'].map(credentialClass => {
     const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => false,
       agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] } });
     return [credentialClass, serviceEndpoint({ access, api, credentialClass, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })];
@@ -41,8 +40,7 @@ async function fixture(t) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const headers = (kind, secret = paired[kind].secret) => ({ 'Content-Type': 'application/json',
-    ...(kind === 'native' ? { Authorization: `Bearer ${secret}` } : { Origin: origin, Cookie: `agentui_device_${access.hostId}=${secret}` }) });
+  const headers = kind => ({ 'Content-Type': 'application/json', ...(kind === 'native' ? {} : { Origin: origin }) });
   const route = kind => kind === 'native' ? '/native/v1/images' : '/api/v1/images';
   const call = async (kind, value, options = {}) => {
     const response = await fetch(origin + (options.path ?? route(kind)), { method: 'POST', headers: options.headers ?? headers(kind),
@@ -51,7 +49,7 @@ async function fixture(t) {
   };
   const clients = {
     'browser-development': createBrowserConnection({ fetch: (path, init) => fetch(origin + path, { ...init, headers: headers('browser-development') }) }),
-    native: createMacConnection({ kind: 'ready', observation: 'fixture', hostId: access.hostId, principalId: paired.native.principal.id }, async command => {
+    native: createMacConnection({ kind: 'ready', observation: 'fixture', hostId: access.hostId, principalId: 'trusted-owner' }, async command => {
       assert.equal(command.kind, 'execute');
       assert.equal(command.observation, 'fixture');
       assert.deepEqual(Object.keys(command).sort(), ['kind', 'observation', 'request']);
@@ -80,7 +78,7 @@ async function fixture(t) {
     outgoing.flushHeaders();
     return { outgoing, result };
   };
-  return { access, host, scope, paired, clients, call, count, headers, incoming, start, responses };
+  return { access, host, scope, clients, call, count, headers, incoming, start, responses };
 }
 const upload = (scope, bytes = png(), changes = {}) => ({ op: 'image-upload', scope, uploadId: randomUUID(), name: 'Screen.png',
   byteLength: bytes.length, base64: bytes.toString('base64'), ...changes });
@@ -112,33 +110,22 @@ for (const kind of ['browser-development', 'native']) {
       await assert.rejects(client.readImage(scope, recovered.imageId), error => ['forbidden', 'image-scope'].includes(error.kind));
     }
     await assert.rejects(client.uploadImage({ scope: { ...f.scope, conversationId: 'missing' }, uploadId: randomUUID(), name: 'Screen', bytes: png() }), error => error.kind === 'image-scope');
-    const next = f.access.pair(f.access.invite(kind), kind);
-    const read = await f.call(kind, { op: 'image-read', scope: f.scope, imageId: recovered.imageId }, { headers: f.headers(kind, next.secret) });
-    assert.equal(read.status, 200);
-    const newOwnerUpload = await f.call(kind, lost, { headers: f.headers(kind, next.secret) });
-    assert.notEqual(newOwnerUpload.body.value.attachment.imageId, recovered.imageId);
-    f.access.revoke(f.paired[kind].principal.id);
-    await assert.rejects(client.readImage(f.scope, recovered.imageId), error => error.kind === 'unauthorized');
-    await assert.rejects(client.uploadImage({ scope: f.scope, uploadId: randomUUID(), name: 'Screen', bytes: png() }), error => error.kind === 'unauthorized');
-    assert.equal(f.count(), 4);
+    const otherClass = await f.call(kind === 'native' ? 'browser-development' : 'native', lost);
+    assert.equal(otherClass.body.value.attachment.imageId, recovered.imageId);
+    assert.equal(f.count(), 3);
     assert.equal(f.host.inspect(f.scope).snapshot.cursor, 0);
   });
 
-  test(`${kind} authenticates before large bodies and rejects revoked in-flight uploads`, async t => {
+  test(`${kind} admits one image transfer at a time across credential classes`, async t => {
     const f = await fixture(t);
-    const unauth = f.start(kind, { headers: { ...f.headers(kind, 'invalid'), 'Content-Length': String(IMAGE_TRANSFER_MAX_BYTES) } });
-    assert.equal((await unauth.result).status, 401);
-    assert.equal(f.incoming.at(-1).complete, false);
-    unauth.outgoing.destroy();
     const waiting = f.start(kind);
     waiting.outgoing.write('{');
     await new Promise(resolve => setTimeout(resolve, 20));
     assert.equal((await f.call(kind === 'native' ? 'browser-development' : 'native', upload(f.scope))).status, 503);
     const body = JSON.stringify(upload(f.scope));
-    f.access.revoke(f.paired[kind].principal.id);
     waiting.outgoing.end(body.slice(1));
-    assert.equal((await waiting.result).status, 401);
-    assert.equal(f.count(), 0);
+    assert.equal((await waiting.result).status, 200);
+    assert.equal(f.count(), 1);
   });
 
   test(`${kind} rejects invalid framing, encoded bounds and corrupt input without a reference`, async t => {

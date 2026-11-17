@@ -15,16 +15,24 @@ function directory(t) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
+test('every credential class resolves to the fixed owner principal on this host only', t => {
+  const access = openAccess(join(directory(t), 'host.sqlite'));
+  t.after(() => access.close());
+  for (const credentialClass of ['browser-development', 'native']) {
+    const owner = access.owner(credentialClass);
+    assert.deepEqual(owner, { id: 'trusted-owner', hostId: access.hostId, credentialClass });
+    assert.equal(access.authorized(owner, credentialClass), true);
+    assert.equal(access.authorized({ ...owner, hostId: 'other-host' }, credentialClass), false);
+    assert.equal(access.authorized({ ...owner, id: 'paired-device' }, credentialClass), false);
+  }
+  assert.equal(access.authorized(access.owner('native'), 'browser-development'), false);
+});
 test('pairing invitations are one use, expire, remain process-local and never store device secrets', t => {
   const path = join(directory(t), 'host.sqlite');
   let access = openAccess(path);
   const hostId = access.hostId;
   const code = access.invite('browser-development', 1000);
   const { principal, secret } = access.pair(code, 'browser-development', 1000);
-  assert.deepEqual(access.authenticate(secret, 'browser-development', 1000), principal);
-  assert.equal(access.authorized({ ...principal, hostId: 'other-host' }, 'browser-development', 1000), false);
-  assert.equal(access.authenticate(secret, 'native', 1000), null);
-  assert.equal(access.authenticate(secret, 'browser-development', 3601000), null);
   assert.throws(() => access.pair(code, 'browser-development', 1001));
   const expired = access.invite('browser-development', 1000);
   assert.throws(() => access.pair(expired, 'browser-development', 301000));
@@ -37,24 +45,9 @@ test('pairing invitations are one use, expire, remain process-local and never st
   access = openAccess(path);
   t.after(() => access.close());
   assert.equal(access.hostId, hostId);
-  assert.deepEqual(access.authenticate(secret, 'browser-development', 1000), principal);
   assert.throws(() => access.pair(old, 'browser-development'));
   access.revoke(principal.id);
-  assert.equal(access.authenticate(secret, 'browser-development', 1000), null);
-  assert.equal(access.authorized(principal, 'browser-development', 1000), false);
   assert.deepEqual(access.devices(), [{ id: principal.id, revoked: true, expires: 3601000, active: false }]);
-});
-test('native enrollment lasts thirty days while old native rows and browser lifetime stay unchanged', t => {
-  const path = join(directory(t), 'host.sqlite'), state = openAccessDatabase(path), access = new Access(state);
-  t.after(() => access.close());
-  const start = 1000, lifetime = 30 * 24 * 3_600_000;
-  const native = access.pair(access.invite('native', start), 'native', start);
-  const browser = access.pair(access.invite('browser-development', start), 'browser-development', start);
-  assert.deepEqual(access.authenticate(native.secret, 'native', start + lifetime - 1), native.principal);
-  assert.equal(access.authenticate(native.secret, 'native', start + lifetime), null);
-  assert.equal(access.authenticate(browser.secret, 'browser-development', start + 3_600_000), null);
-  state.database.prepare('UPDATE service_devices SET expires=? WHERE id=?').run(start + 3_600_000, native.principal.id);
-  assert.equal(access.authenticate(native.secret, 'native', start + 3_600_000), null, 'existing hourly records are not extended');
 });
 
 test('outstanding invitations are bounded and invalid guesses do not consume a valid invitation', t => {

@@ -6,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { assertBoundedRequestSpans, receiver } from '../../../tests/application/support/observability.mjs';
-import { browserRequest, exitWithin, launchProcess, pairBrowser, startup } from '../../../tests/application/support/host-process.mjs';
+import { browserRequest, exitWithin, launchProcess, startup } from '../../../tests/application/support/host-process.mjs';
 
 const token = 'private-launcher-crew-token-718dad';
 
@@ -46,7 +46,6 @@ async function fixture(t, collector, settings) {
     return match && { origin: match[1] };
   });
   return { calls, host, started, environment,
-    inviteArgs: ['apps/host/dist/main.js', 'invite', '--data-dir', hostDirectory],
     secrets: [token, directory, hostDirectory, tokenFile, installationId, generation, memberId, 'private-remote-profile-7f83'] };
 }
 
@@ -63,8 +62,7 @@ test('Crew launcher exports bounded request spans and keeps collector credential
   assert.equal(ready.kind, 'ready', f.host.stderr);
   assert.ok(f.calls.some(call => call.path === '/v1/capabilities'), 'launcher activates Crew discovery');
   assert.ok(f.calls.some(call => call.path === '/v1/members'), 'launcher discovers the configured Crew member');
-  const paired = await pairBrowser(t, ready.origin, f.inviteArgs, f.environment);
-  const browser = (body, headers) => browserRequest(ready.origin, body, paired.cookie, headers);
+  const browser = (body, headers) => browserRequest(ready.origin, body, '', headers);
   const headers = { 'x-private': privateHeader, baggage: `private=${privateHeader}`, traceparent: `00-${traceId}-${parentId}-01` };
   const metadata = await browser({ op: 'metadata' }, headers);
   assert.equal(metadata.status, 200, JSON.stringify(metadata.body));
@@ -75,10 +73,9 @@ test('Crew launcher exports bounded request spans and keeps collector credential
   assertBoundedRequestSpans(collector.received, {
     serviceName: 'agentui-crew-launcher-test',
     collectorHeaders: { 'x-collector-token': 'private collector=token', 'x-general-token': 'general token' },
-    expected: ['pair', 'metadata', 'search'].map(operation => ({ 'agentui.operation': operation,
+    expected: ['metadata', 'search'].map(operation => ({ 'agentui.operation': operation,
       'agentui.credential_class': 'browser-development', 'agentui.outcome': 'ok', 'http.response.status_code': 200 })),
-    canaries: [...f.secrets, paired.code, paired.cookie, paired.cookie.slice(paired.cookie.indexOf('=') + 1),
-      metadata.body.value.hostId, metadata.body.value.principalId, privateSearch, privateHeader, resourceCanary,
+    canaries: [...f.secrets, metadata.body.value.hostId, metadata.body.value.principalId, privateSearch, privateHeader, resourceCanary,
       traceId, parentId, 'private collector=token', 'general token'],
   });
   for (const call of f.calls) {
@@ -94,8 +91,7 @@ test('Crew launcher keeps tracing disabled by default', { timeout: 20_000 }, asy
   assert.equal(ready.kind, 'ready', f.host.stderr);
   assert.ok(f.calls.some(call => call.path === '/v1/capabilities'), 'launcher activates Crew discovery');
   assert.ok(f.calls.some(call => call.path === '/v1/members'), 'launcher discovers the configured Crew member');
-  const paired = await pairBrowser(t, ready.origin, f.inviteArgs, f.environment);
-  assert.equal((await browserRequest(ready.origin, { op: 'metadata' }, paired.cookie)).status, 200);
+  assert.equal((await browserRequest(ready.origin, { op: 'metadata' })).status, 200);
   f.host.process.kill('SIGTERM');
   await exitWithin(f.host);
   assert.deepEqual(collector.received, []);

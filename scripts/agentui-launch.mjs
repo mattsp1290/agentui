@@ -113,7 +113,7 @@ function checkArtifacts(host, browser, nodeVersion) {
 }
 
 function sessionArguments(setup, directory, workspace, dataDir, agent, port) {
-  return [setup.node, join(directory, 'host', 'main.js'), 'desktop', '--preferred', agent, '--trusted', '--workspace', workspace,
+  return [setup.node, join(directory, 'host', 'main.js'), 'desktop', '--preferred', agent, '--workspace', workspace,
     '--data-dir', dataDir, '--assets', join(directory, 'browser'), '--port', String(port),
     ...(agent === 'codex' ? ['--executable', setup.codex] : [])];
 }
@@ -243,7 +243,7 @@ export async function launch(options) {
       const script = `export PATH=${shellQuote(`${dirname(setup.node)}:`)}"$PATH"; exec ${args.map(shellQuote).join(' ')}`;
       session = command('ssh', [...sshOptions, '-o', 'ExitOnForwardFailure=yes', '-L', `${port}:127.0.0.1:${port}`, options.destination, script], { ...lifecycle, lease: true });
     } else {
-      const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--trusted', '--workspace', workspace,
+      const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--workspace', workspace,
         '--data-dir', dataDir, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port),
         ...(options.agent === 'codex' ? ['--executable', setup.codex] : [])];
       session = command(setup.node, [join(root, 'scripts/agentui-launch-session.mjs'), ...args],

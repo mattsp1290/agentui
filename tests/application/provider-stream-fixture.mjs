@@ -162,21 +162,16 @@ export async function providerService(t, { native = false } = {}) {
 }
 export async function fixture(t, extensions, { shutdownFailure = false } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-stream-'));
-  let running, cookie, port;
+  let running, port;
   const control = op => new Promise((resolve, reject) => {
     const socket = createConnection(join(directory, 'control.sock')); let output = '';
     socket.once('error', reject); socket.once('connect', () => socket.end(`${JSON.stringify(op)}\n`));
     socket.on('data', data => { output += data; }); socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
   });
-  const client = createBrowserConnection({ fetch: async (url, init) => {
-    const response = await fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Connection: 'close', Origin: running.origin, ...(cookie ? { Cookie: cookie } : {}) } });
-    if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
-    return response;
-  } });
+  const client = createBrowserConnection({ fetch: (url, init) => fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Connection: 'close', Origin: running.origin } }) });
   const start = async values => {
     running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: port ?? 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), extensions: { kind: 'transient', entries: values.map(item => item.value) } });
     port = Number(new URL(running.origin).port);
-    if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
   t.after(async () => {
@@ -185,7 +180,7 @@ export async function fixture(t, extensions, { shutdownFailure = false } = {}) {
     rmSync(directory, { recursive: true, force: true });
   });
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
-  return { client, directory, inspect, control, get running() { return running; }, get cookie() { return cookie; },
+  return { client, directory, inspect, control, get running() { return running; },
     scope: id => ({ hostId: running.hostId, conversationId: id }),
     async create(id = 'chat') { const scope = { hostId: running.hostId, conversationId: id }; const agent = (await client.metadata()).agents.find(value => value.kind === 'provider'); await client.create(scope, agent.id); return scope; },
     async restart(values) { await running.close(); await start(values); },

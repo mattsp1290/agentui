@@ -3,7 +3,6 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { registerHooks } from 'node:module';
-import { createConnection } from 'node:net';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
@@ -61,26 +60,15 @@ function extension({ native = false, create, lookup, service = 'http://127.0.0.1
 }
 async function fixture(t, extensions) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-provider-create-'));
-  let running, cookie;
-  const control = op => new Promise((resolve, reject) => {
-    const socket = createConnection(join(directory, 'control.sock')); let output = '';
-    socket.once('error', reject); socket.once('connect', () => socket.end(`${JSON.stringify(op)}\n`));
-    socket.on('data', data => { output += data; });
-    socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
-  });
-  const client = createBrowserConnection({ fetch: async (url, init) => {
-    const response = await fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Origin: running.origin, ...(cookie ? { Cookie: cookie } : {}) } });
-    if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
-    return response;
-  } });
+  let running;
+  const client = createBrowserConnection({ fetch: (url, init) => fetch(`${running.origin}${url}`, { ...init, headers: { ...init.headers, Origin: running.origin } }) });
   const start = async values => {
     running = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: fileURLToPath(new URL('../../apps/desktop/web-dist-browser/', import.meta.url)), extensions: { kind: 'transient', entries: values.map(item => item.value) } });
-    if (!cookie) await client.pair((await control({ op: 'invite' })).code);
   };
   await start(extensions);
   t.after(async () => { await running.close(); rmSync(directory, { recursive: true, force: true }); });
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
-  return { client, directory, inspect, get running() { return running; }, get cookie() { return cookie; },
+  return { client, directory, inspect, get running() { return running; },
     scope: id => ({ hostId: running.hostId, conversationId: id }),
     async restart(values) { await running.close(); await start(values); },
   };
@@ -248,7 +236,6 @@ test('browser chooser opens an empty provider conversation, disables Send, and r
   const f = await fixture(t, [a]);
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  await context.addCookies([{ name: f.cookie.split('=')[0], value: f.cookie.split('=')[1], url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000);
   await page.goto(`${f.running.origin}/browser.html`);
   const agent = await selected(f);

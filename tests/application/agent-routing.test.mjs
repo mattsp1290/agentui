@@ -36,8 +36,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
     ], runs: [], decisions: [] } }; } }), installation });
   let host = openLocalHost({ path, projection: transcriptProjection, driver: [driver(a, 'codex'), driver(b, 'sonnet'), driver(d, 'other-codex')], authorize: scope => scope.hostId === access.hostId });
   t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); rmSync(directory, { recursive: true, force: true }); });
-  const paired = access.pair(access.invite('browser-development'), 'browser-development');
-  const { principal } = paired;
+  const principal = access.owner('browser-development');
   const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
     compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
@@ -90,7 +89,6 @@ test('authorized agent API and browser route two recorded agents and retain unav
   const browser = await chromium.launch();
   t.after(async () => { await browser.close(); await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }); });
   const context = await browser.newContext();
-  await context.addCookies([{ name: `agentui_device_${access.hostId}`, value: paired.secret, url: origin }]);
   const page = await context.newPage();
   page.setDefaultTimeout(5000);
   await page.goto(`${origin}/browser.html`);

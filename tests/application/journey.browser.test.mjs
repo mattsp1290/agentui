@@ -3,12 +3,11 @@ import test from 'node:test';
 import { readFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { build } from 'esbuild';
-import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { preview } from 'vite';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { root, wait, fixture, connected, draft, revealRecovery, customRuntime } from './browser-support.mjs';
 
-test('desktop connection action opens the paired host app and keeps conversations on return', { timeout: 45_000 }, async t => {
+test('desktop connection action opens the host app directly and keeps conversations on return', { timeout: 45_000 }, async t => {
   const host = await fixture(t);
   const desktop = join(root, 'apps/desktop');
   const config = JSON.parse(await readFile(join(desktop, 'src-tauri/tauri.conf.json'), 'utf8'));
@@ -35,9 +34,7 @@ test('desktop connection action opens the paired host app and keeps conversation
     await page.waitForURL(`${host.origin}/browser.html`);
   };
   await connect();
-  await page.getByLabel('Pairing code').fill((await host.control({ op: 'invite' })).code);
-  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
-  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'paired host');
+  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'connected host');
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   const conversation = await page.locator('.scope-label').textContent();
@@ -58,7 +55,7 @@ test('desktop connection action opens the paired host app and keeps conversation
   assert.deepEqual(errors, []);
 });
 
-test('built browser app pairs two views, streams, races approval and recovers original intents after restart', { timeout: 90_000 }, async t => {
+test('built browser app opens two views, streams, races approval and recovers original intents after restart', { timeout: 90_000 }, async t => {
   const host = await fixture(t);
   const alice = await host.page(), bob = await host.page();
   assert.equal(await alice.evaluate(() => document.cookie), '');
@@ -247,7 +244,7 @@ test('custom content failure keeps host controls and restores the same connected
   assert.equal(watches, before);
 });
 
-test('explicit reconciliation recovers a crashed host and revocation blocks the open browser', { timeout: 45_000 }, async t => {
+test('explicit reconciliation recovers a crashed host', { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
@@ -266,12 +263,6 @@ test('explicit reconciliation recovers a crashed host and revocation blocks the 
   await wait(async () => await page.getByRole('button', { name: 'Retry original command', exact: true }).count() === 0, 'reconciled outbox cleared without submission');
   assert.equal((await host.entries()).length, 1, 'reconciliation does not repeat the effect');
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Newer draft before reconciliation');
-  const principalId = await page.evaluate(async () => (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })).json()).value.principalId);
-  await host.control({ op: 'revoke', id: principalId });
-  await page.getByLabel('Pairing code').waitFor();
-  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isEnabled(), false);
-  assert.equal(await page.getByRole('button', { name: 'approve', exact: true }).isEnabled(), false);
-  assert.equal((await host.entries()).length, 1);
 });
 
 test('incompatible metadata and unsupported draft storage block commands without discarding saved records', { timeout: 45_000 }, async t => {
@@ -536,7 +527,7 @@ test('committed custom artifact sends one exact prompt, retains drafts and resto
     window.__TAURI_INTERNALS__ = { invoke() { throw new Error('Browser entry used native authority'); } };
   });
   await page.goto(`${host.origin}/`);
-  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'cookie pairing restored at host root');
+  await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'connected at host root');
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   const prompt = 'Review our current plan. Identify the next useful step and any unresolved decision.';
@@ -742,38 +733,4 @@ test('managed restore retries a failed default conversation boundary', { timeout
   assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Recover the default composer');
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByRole('heading', { name: 'Approval required', exact: true }).waitFor();
-});
-
-test('revoked extension commands retain the visible access explanation', { timeout: 45_000 }, async t => {
-  const host = await fixture(t), page = await host.page();
-  await page.getByRole('button', { name: 'New recorded conversation' }).click();
-  await connected(page);
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '${EXTENSION_SDK_VERSION}', activate() {
-    return { modules: [{ id: 'commands', label: 'Commands', component({ commands }) {
-      window.capturedCommands = commands;
-      return React.createElement('span', null, 'Captured extension commands');
-    } }], dispose() {} };
-  } } })`);
-  await page.getByText('Captured extension commands', { exact: true }).waitFor();
-  await draft(page, 'Keep the unsent draft');
-  const principalId = await page.evaluate(async () => (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })).json()).value.principalId);
-  await host.control({ op: 'revoke', id: principalId });
-  await page.getByLabel('Pairing code').waitFor();
-  const alert = page.locator('.application-alert');
-  const explanation = await alert.textContent();
-  assert.match(explanation, /previous access may have been revoked/);
-  for (const kind of ['send', 'approve', 'cancel']) {
-    const rejected = await page.evaluate(async kind => {
-      try {
-        if (kind === 'send') await window.capturedCommands.send('refused');
-        if (kind === 'approve') await window.capturedCommands.approve('refused', 'allow');
-        if (kind === 'cancel') await window.capturedCommands.cancel('refused');
-        return false;
-      } catch { return true; }
-    }, kind);
-    assert.equal(rejected, true);
-    assert.equal(await alert.textContent(), explanation);
-  }
-  assert.equal((await host.entries()).length, 0);
-  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep the unsent draft');
 });

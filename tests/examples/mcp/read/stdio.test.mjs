@@ -57,7 +57,7 @@ test('official SDK stdio tools preserve recorded uncertainty and leave durable s
   assert.equal(mcp.stderr, '');
 });
 
-test('every live data tool rejects revoked access and inputs cannot select mutations or another host', { timeout: 15_000 }, async t => {
+test('live data tool inputs cannot select mutations or another host', { timeout: 15_000 }, async t => {
   const f = await fixture(t), paired = await f.pair(), mcp = await connect(t, paired.path);
   for (const [name, args] of [
     ['agentui_agents', { op: 'reconcile' }], ['agentui_conversations', { limit: 0 }],
@@ -65,28 +65,13 @@ test('every live data tool rejects revoked access and inputs cannot select mutat
     ['agentui_receipt', { conversationId: f.scope.conversationId, clientCommandId: 'x', secret: 'sentinel' }],
   ]) assert.equal((await mcp.client.callTool({ name, arguments: args })).isError, true);
   assert.equal((await mcp.client.callTool({ name: 'reconcile', arguments: {} })).isError, true);
-  f.access.revoke(paired.record.principalId);
-  for (const name of tools) {
-    const result = await mcp.client.callTool({ name, arguments: name === 'agentui_agents' || name === 'agentui_conversations' ? {}
-      : { conversationId: f.scope.conversationId, ...(name === 'agentui_receipt' ? { clientCommandId: 'uncertain-original' } : {}) } });
-    assert.equal(result.isError, true);
-    assert.equal(result.structuredContent, undefined);
-    assert.match(result.content[0].text, /authorization refused/);
-  }
   assert.ok(!mcp.stderr.includes(paired.record.secret));
 });
 
-test('startup refuses missing, malformed, insecure, symlinked, unpaired, browser and identity-mismatched profiles without secret output', { timeout: 20_000 }, async t => {
+test('startup refuses missing, malformed, insecure, symlinked and host-mismatched profiles without secret output', { timeout: 20_000 }, async t => {
   const f = await fixture(t), paired = await f.pair(), privateDir = privateDirectory(t);
-  const profiles = [join(privateDir, 'missing'), writeProfile(privateDir, { ...paired.record, secret: 'a'.repeat(43) }, 'unpaired'),
-    writeProfile(privateDir, { ...paired.record, hostId: 'other' }, 'host'),
-    writeProfile(privateDir, { ...paired.record, principalId: 'other' }, 'principal'),
+  const profiles = [join(privateDir, 'missing'), writeProfile(privateDir, { ...paired.record, hostId: 'other' }, 'host'),
     writeProfile(privateDir, { ...paired.record, unexpected: true }, 'malformed')];
-  const expiredAt = Date.now() - 31 * 24 * 3_600_000;
-  const expired = f.access.pair(f.access.invite('native', expiredAt), 'native', expiredAt);
-  profiles.push(writeProfile(privateDir, { ...paired.record, principalId: expired.principal.id, secret: expired.secret }, 'expired'));
-  const browser = f.access.pair(f.access.invite('browser-development'), 'browser-development');
-  profiles.push(writeProfile(privateDir, { ...paired.record, principalId: browser.principal.id, secret: browser.secret }, 'browser'));
   const insecure = writeProfile(privateDir, paired.record, 'insecure');
   chmodSync(insecure, 0o644); profiles.push(insecure);
   const link = join(privateDir, 'link'); symlinkSync(paired.path, link); profiles.push(link);

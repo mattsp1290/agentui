@@ -158,7 +158,6 @@ test('browser labels submit exact IDs once, reservations disable both views afte
   });
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   let page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: /Harness,/ }).click();
   await page.getByRole('button', { name: 'Provider', exact: true }).click();
