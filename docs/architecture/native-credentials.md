@@ -31,7 +31,7 @@ Errors are `profile-in-use`, `profile-unavailable`, `network-failed`, `stale`, `
 
 ## Interface
 
-The UI shows only connecting, connected, and offline. Until the first connection succeeds, a **Connect this Mac** screen shows the error and a **Reconnect** button. After that the normal app opens. **Settings** also offers **Reconnect**. **Reconnect** opens a new connection session after local storage drains and never resubmits an effectful command. The chat UI keeps saved-history search, agent selection, streaming, approvals, Stop, drafts, and original-command recovery. A stable `native-mac-default` view retains the saved route, drafts, outbox, and pending creation across same-build restarts.
+The connection UI has no access setup: it is either connecting, connected, or offline with a fixed error and a **Reconnect** button. Until the first connection succeeds, a **Connect this Mac** screen shows the error and a **Reconnect** button. After that the normal app opens. **Settings** also offers **Reconnect**. **Reconnect** opens a new connection session after local storage drains and never resubmits an effectful command. The chat UI keeps saved-history search, agent selection, streaming, approvals, Stop, drafts, and original-command recovery. A stable `native-mac-default` view retains the saved route, drafts, outbox, and pending creation across same-build restarts.
 
 Only the bundled local main document can call the native commands. External navigation and new windows are denied in normal native mode. `--host-url` remains an explicit browser development route with no native command authority.
 

@@ -1,6 +1,6 @@
 # Chat with GLM 5.3 through OpenCode Go
 
-For automatic local or SSH setup, run `./agentui --agent pi`. The Mac app opens without a key and offers protected key entry in **Settings**, then **Open secure Pi setup**. See [launcher setup](launcher.md) for Keychain storage and remote workspaces. The instructions below run an independently managed host with browser pairing.
+For automatic local or SSH setup, run `./agentui --agent pi`. The Mac app opens without a key and offers protected key entry in **Settings**, then **Open secure Pi setup**. See [launcher setup](launcher.md) for Keychain storage and remote workspaces. The instructions below run an independently managed host that the browser reaches directly.
 
 Use your OpenCode Go subscription key with the Pi SDK host. This host uses Pi 1.5.2 with provider `opencode-go` and model `glm-5.3`. It provides text chat without tools, commands, or file access.
 

@@ -19,7 +19,7 @@ Build the repository with its pinned Node 24 runtime using `npm ci && npm run bu
 }
 ```
 
-Run `node examples/crew/run.mjs /absolute/private/crew-provider.json`. Pair the browser with `node apps/host/dist/main.js invite --data-dir /absolute/private/agentui-crew`. Select **Provider**, select the Crew member, and start a new chat. Set `nativeConfig` to an existing AgentUI agent configuration path to keep native agents available in the same host.
+Run `node examples/crew/run.mjs /absolute/private/crew-provider.json`. Open the printed origin with `/browser.html` appended. Select **Provider**, select the Crew member, and start a new chat. Set `nativeConfig` to an existing AgentUI agent configuration path to keep native agents available in the same host.
 
 Keep the installation, generation, credential revision, member, and service stable when reopening. The token is read only through the host's configured credential resolver. The provider uses the original creation UUID as the remote conversation UUID and the original send operation UUID as the remote request UUID. Recovery uses GET for those original identities. Missing status and conflicting admission remain uncertain. When a new Send is blocked by an accepted earlier send, the host checks that earlier request through its original status route before retrying admission once. A confirmed terminal result permits the follow-up; a pending, unknown or failed lookup preserves the refusal and saved draft. **Check pending command** remains available for explicit recovery. Completed, failed, and cancelled requests settle the send receipt; their transcript outcomes remain distinct. Confirmed native termination also settles the send command and ends the visible run as interrupted. The saved request status can still be uncertain, and cancellation effects remain unassessed. Settling the command does not prove that a protected action did or did not occur. Missing or unconfirmed termination evidence leaves an uncertain request active.
 
@@ -46,7 +46,7 @@ OTEL_SERVICE_NAME=agentui-host \
 node examples/crew/run.mjs /absolute/private/crew-provider.json
 ```
 
-Pair the browser, select the Crew member, and send a message. The `agentui-host` service records admitted host requests. Tracing is disabled unless `OTEL_TRACES_EXPORTER=otlp` is set. Invalid enabled settings stop the launcher before host startup. Collector failure does not change a command result.
+Open the printed origin with `/browser.html` appended, select the Crew member, and send a message. The `agentui-host` service records admitted host requests. Tracing is disabled unless `OTEL_TRACES_EXPORTER=otlp` is set. Invalid enabled settings stop the launcher before host startup. Collector failure does not change a command result.
 
 Configure the remote Crew worker separately using [the Crew tracing guide](../../docs/development/observability.md#configure-the-crew-worker). AgentUI does not start that worker or forward its collector settings. Crew owns actual native invocation spans. Remote conversation snapshots do not produce AgentUI `invoke_agent` spans. The two services have separate traces, without propagated trace headers or shared exported identifiers.
 
