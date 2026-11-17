@@ -1,3 +1,4 @@
+import type { ObservationMapper } from './provider-observations.js';
 import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
@@ -95,7 +96,7 @@ interface BoundProvider {
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
-  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui'): BoundProvider {
+  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui', observations?: ObservationMapper<M, I>): BoundProvider {
   type Attempt = { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> }
     | { readonly kind: 'refused'; readonly cause: RetryableCause }
     | { readonly kind: 'invalid'; readonly backend: ConnectedProvider<M, I> | undefined };
@@ -189,7 +190,6 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         record(result, ['kind', 'reason']);
         const cause = failureCause(result.kind);
         if (cause === 'invalid-installation') throw new Error('Invalid discovery');
-        // Capabilities are probed at connect, so an upgraded service is only seen through a fresh connection.
         if (cause === 'version-unsupported' && state.kind === 'connected' && state.backend === current) release({ kind: 'idle' });
         return unavailable(cause);
       }
@@ -252,7 +252,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       authorize();
       if (!capability(connected.capabilities.observe)) throw new ObservationFailure('unsupported');
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
-        credential: original.credential }, binding, authorize, store, freshSnapshot);
+        credential: original.credential }, binding, authorize, store, freshSnapshot, observations);
     },
     async readPermissions(original) {
       const authorize = () => {
@@ -302,7 +302,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
         const decoded = presentation.decodeRequest(copyJson(request));
         if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui' } : {}) });
+        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui', ...(observations ? { observationProtocol: 'ag-ui-v1' } : {}) } : {}) });
         if (canonicalJson(original.credential) !== canonicalJson(validate(original.installation).credential)) throw new Error('Original credentials unavailable');
         return captured;
       } else {
@@ -441,7 +441,6 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     catalog = results;
     return structuredClone(catalog);
   }
-  // Reads never wait on backend I/O; the catalog is rediscovered behind the response at most once per interval, so outages that begin after a healthy discovery also surface.
   function rediscover(): void {
     if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
     background = refresh().catch(() => {}).finally(() => { background = undefined; });
@@ -455,7 +454,6 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     const draining = new Set(streams);
     retiring = draining;
     const authorities: Promise<void>[] = [];
-    // Cleanup can reenter close(), so publish first. The microtask reads authorityResults after initialization.
     closing = Promise.resolve().then(async () => {
       await Promise.allSettled([...pending, background]);
       for (const stream of draining) stop(stream);
@@ -493,24 +491,25 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
             let lifetime: ExtensionLifetime;
             try {
               const register = <M extends ProviderModel, I extends string>(mode: 'generic' | 'ag-ui', id: string,
-                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void => {
+                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>, observations?: ObservationMapper<M, I>): void => {
                 try {
                   if (!registering || phase !== 'activating') throw new Error('Registration closed');
                   text(id);
                   const identity = providerIdentity(presentation.instance), key = identityKey(identity);
                   if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
+                    (observations !== undefined && (mode !== 'ag-ui' || typeof observations.event !== 'function' || typeof observations.snapshot !== 'function')) ||
                     backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
                     [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
                       presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
                     throw new Error('Invalid provider registration');
                   }
                   ids.add(id); identities.add(key);
-                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode));
+                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode, observations));
                 } catch { invalid = true; throw new Error('Invalid provider registration'); }
               };
               lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials,
                 providers: { add: (id, backend, presentation) => register('generic', id, backend, presentation),
-                  addAgui: (id, backend, presentation) => register('ag-ui', id, backend, presentation) },
+                  addAgui: (id, backend, presentation, observations) => register('ag-ui', id, backend, presentation, observations) },
               });
             } finally { registering = false; }
             validateExtensionLifetime(lifetime);

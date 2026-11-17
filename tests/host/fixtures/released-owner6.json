@@ -1,0 +1,29 @@
+{
+  "sourceHead": "a0fe011740666a0714614a7fd317fb77f3e732a6",
+  "releaseMerge": "c8bacc72c76f1c33d7c5667dfa02bb29ce9a162c",
+  "sourceTree": "d82f97518f0201ac7ddb06022c97db9d54947ae3",
+  "schemaVersion": 6,
+  "wireVersion": 9,
+  "extensionSdkVersion": "0.7.0",
+  "projectionVersion": 4,
+  "sha256": "3f9107217766bbabd129c37932b037c79f61b7bbd1ca852640c3eb9cb5d104d4",
+  "bytes": 176128,
+  "counters": {
+    "creates": 1,
+    "submits": 1,
+    "snapshots": 1,
+    "observes": 1,
+    "feedItems": 1,
+    "feedCloses": 1,
+    "backendCloses": 1,
+    "authorityCloses": 1,
+    "extensionDisposes": 1,
+    "frontendHandlers": 0,
+    "nativeDispatches": 0
+  },
+  "qualification": "Public local host, provider registry snapshot/feed receive, command/binding, coordinator canonical-input fixture. No provider-to-frontend observation bridge, real frontend handler, native/provider network execution, service authentication or product acceptance claimed.",
+  "databaseSha256": "3f9107217766bbabd129c37932b037c79f61b7bbd1ca852640c3eb9cb5d104d4",
+  "compressedSha256": "9e5f3a0741ca9539fd85e0368793a8b26864f8286b696c5707163f82de910d64",
+  "openerSha256": "7990c58a22f06d1203e37ab77ff997d3e3e4a8dce81f6e91a55ad347b3882223",
+  "publicReaderSha256": "51f7729eb08d740ca02936f30c87397ca2e44c27740a3cf4392259f3ac55422d"
+}

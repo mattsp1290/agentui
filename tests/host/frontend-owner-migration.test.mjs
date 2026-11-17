@@ -8,6 +8,7 @@ import { openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { frontendToolsFor } from '@agentui/host/frontend-tools';
 import { openDatabase as openOriginal5 } from './fixtures/sqlite-format5.ts';
+import { openDatabase as openOriginal6 } from './fixtures/sqlite-format6.ts';
 import { fixture } from './fixture.mjs';
 
 const provenance = JSON.parse(readFileSync(new URL('./fixtures/released-owner5.json', import.meta.url)));
@@ -29,7 +30,7 @@ function snapshot(path) {
 }
 function open(path) { return openLocalHost({ path, projection: transcriptProjection, driver: [], authorize: () => true }); }
 
-test('authentic released owner5 upgrades to6 and reopens with every original row and image byte intact', async t => {
+test('authentic released owner5 upgrades to7 and reopens with every original row and image byte intact', async t => {
   const f = original(t), before = snapshot(f.path); assert.equal(before.version, 5);
   for (let attempt = 0; attempt < 2; attempt++) {
     const host = open(f.path);
@@ -53,11 +54,15 @@ test('authentic released owner5 upgrades to6 and reopens with every original row
         assert.equal(view.status, owner.state === 'available' ? 'ready' : 'blocked');
       }
     } finally { host.close(); await host.drained; }
-    assert.deepEqual(snapshot(f.path), { ...before, version: 6 });
+    const after = snapshot(f.path);
+    assert.equal(after.version, 7);
+    for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
+    assert.deepEqual(after.schema.filter(row => !row.name.includes('frontend_observation')), before.schema);
+    assert.deepEqual(after.tables.frontend_observation_runs, []); assert.deepEqual(after.tables.frontend_observation_events, []);
   }
 });
 
-test('the unchanged genuine5 opener refuses6 before file or WAL mutation', async t => {
+test('the unchanged genuine5 opener refuses7 before file or WAL mutation', async t => {
   assert.equal(digest(readFileSync(new URL('./fixtures/sqlite-format5.ts', import.meta.url))), provenance.openerSha256);
   const f = original(t), old = openOriginal5(f.path); old.close();
   const host = open(f.path); host.close(); await host.drained;
@@ -77,7 +82,7 @@ for (const damage of ['owner-schema', 'history-index', 'image-schema']) test(`ge
   assert.deepEqual(snapshot(f.path), before); assert.equal(before.version, 5);
 });
 
-test('genuine5 permits keep their original receipt after6 withdrawal while untouched calls refuse', async t => {
+test('genuine5 permits keep their original receipt after7 withdrawal while untouched calls refuse', async t => {
   const f = original(t), before = snapshot(f.path);
   const owner = before.tables.frontend_send_owners.find(owner => owner.state === 'available');
   const scope = { hostId: owner.host, conversationId: owner.conversation }, key = { threadId: owner.thread_id, runId: owner.run_id };
@@ -94,4 +99,51 @@ test('genuine5 permits keep their original receipt after6 withdrawal while untou
     assert.equal(client.receipt(key, permitted.state.permitId, { kind: 'completed', output: 'injected original fixture receipt' }), 'duplicate');
     assert.equal(client.claim(key, untouched.id, activationId).kind, 'unavailable');
   } finally { host.close(); await host.drained; }
+});
+
+const provenance6 = JSON.parse(readFileSync(new URL('./fixtures/released-owner6.json', import.meta.url)));
+function original6(t) {
+  const f = fixture(t), compressed = readFileSync(new URL('./fixtures/released-owner6.sqlite.gz', import.meta.url));
+  assert.equal(digest(compressed), provenance6.compressedSha256);
+  const data = gunzipSync(compressed); assert.equal(digest(data), provenance6.databaseSha256); writeFileSync(f.path, data);
+  return f;
+}
+test('genuine released6 migrates and reopens7 preserving every old row, public transcript, image, receipt and permit', async t => {
+  const f = original6(t), before = snapshot(f.path); assert.equal(before.version, 6);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const host = open(f.path);
+    try {
+      for (const row of before.tables.conversations) {
+        const scope = { hostId: row.host, conversationId: row.conversation };
+        assert.deepEqual(host.inspect(scope).snapshot.document, JSON.parse(row.document));
+      }
+      for (const row of before.tables.commands) assert.deepEqual(await host.conversation({ hostId: row.host, conversationId: row.conversation }, { ...actor, id: before.tables.frontend_send_owners.find(owner => owner.command_id === row.id)?.actor_id ?? actor.id }).receipt(row.id), JSON.parse(row.receipt));
+      for (const row of before.tables.images) assert.deepEqual(host.readImage({ hostId: row.host, conversationId: row.conversation }, row.id).bytes, Buffer.from(row.payload));
+      for (const row of before.tables.frontend_runs) {
+        const run = JSON.parse(row.data), scope = { hostId: row.host, conversationId: row.conversation }, key = { threadId: row.thread, runId: row.run };
+        const client = frontendToolsFor(host).client(scope, { ...actor, id: before.tables.frontend_send_owners.find(owner => owner.run_id === key.runId)?.actor_id ?? actor.id });
+        const view = client.inspect(key); assert.equal(view.status, run.status);
+        for (const call of run.calls.filter(call => call.state.kind === 'permitted')) assert.equal(client.claim(key, call.id, call.state.activationId).kind, 'uncertain');
+      }
+    } finally { host.close(); await host.drained; }
+    const after = snapshot(f.path); assert.equal(after.version, 7);
+    for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
+  }
+  for (const [openOld, filename, provenance] of [[openOriginal5, 'sqlite-format5.ts', JSON.parse(readFileSync(new URL('./fixtures/released-owner5.json', import.meta.url)))], [openOriginal6, 'sqlite-format6.ts', provenance6]]) {
+    assert.equal(digest(readFileSync(new URL('./fixtures/' + filename, import.meta.url))), provenance.openerSha256);
+    const bytes = readFileSync(f.path);
+    assert.throws(() => openOld(f.path), /Unsupported database version/); assert.deepEqual(readFileSync(f.path), bytes);
+    assert.equal(existsSync(f.path + '-wal'), false); assert.equal(existsSync(f.path + '-shm'), false);
+  }
+});
+for (const damage of ['missing', 'changed']) test(`format7 observation schema ${damage} refuses reopen without recreating evidence`, async t => {
+  const f = original6(t), host = open(f.path); host.close(); await host.drained;
+  const db = new DatabaseSync(f.path);
+  db.exec(damage === 'missing' ? 'DROP TABLE frontend_observation_events' : 'ALTER TABLE frontend_observation_events ADD COLUMN unexpected TEXT'); db.close();
+  const before = snapshot(f.path); assert.throws(() => open(f.path), /Invalid frontend observation schema/); assert.deepEqual(snapshot(f.path), before);
+});
+
+test('genuine6 journal migration failure rolls back schema creation and preserves format6 rows',t=>{
+  const f=original6(t),db=new DatabaseSync(f.path);db.exec('CREATE TABLE frontend_observation_events (sentinel TEXT)');db.close();
+  const before=snapshot(f.path);assert.throws(()=>open(f.path),/already exists/);assert.deepEqual(snapshot(f.path),before);assert.equal(before.version,6);
 });
