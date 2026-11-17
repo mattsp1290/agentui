@@ -8,7 +8,7 @@ import type { AccessDatabase } from './access-database.js';
 import { normalizeGrantPool, publicGrantBinding } from './provider-credentials.js';
 import { verifyArtifactPins } from './provider-extensions.js';
 import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
-import { SelectionRefusal, REFRESH_SELECTION_PREFIX, RECEIPT_LIMIT, parseAttemptOutcome, parseLiveRequest, parseSelection, parseSelectionCommand } from './selection-protocol.js';
+import { chunkReceipt, SelectionRefusal, REFRESH_SELECTION_PREFIX, RECEIPT_LIMIT, parseAttemptOutcome, parseLiveRequest, parseSelection, parseSelectionCommand } from './selection-protocol.js';
 import type { RefreshAdmission, LiveRequest, AttemptOutcome, OperationSummary, SelectionCommand, SelectionQuery, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -422,9 +422,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       if (invalid) throw new Error('Invalid selection journal');
       const selection = [...selections.values()].find(value => value.receiptDigest === hash);
       if (!selection) throw new SelectionRefusal('unknown-receipt');
-      const bytes = selection.receipt, next = Math.min(bytes.length, offset + 8192);
-      if (offset >= bytes.length) throw new SelectionRefusal('invalid-offset');
-      return { digest: hash, offset, next, total: bytes.length, base64: bytes.subarray(offset, next).toString('base64') };
+      return chunkReceipt(selection.receipt, hash, offset);
     },
     async close() { closed = true; await busy?.catch(() => {}); },
   };

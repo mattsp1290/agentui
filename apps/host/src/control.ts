@@ -1,9 +1,12 @@
+import { createHash } from 'node:crypto';
 import { chmodSync, existsSync, unlinkSync } from 'node:fs';
 import { createConnection, createServer } from 'node:net';
 import type { Socket } from 'node:net';
 import { record, identifier, count, hex } from '@agentui/contracts/decode';
-import { SelectionRefusal, parseLiveRequest, parseSelectionQuery, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk } from './selection-protocol.js';
+import { SelectionRefusal, parseLiveRequest, parseSelectionQuery, parseSelectionCommand, parseOperationSummary, parseSelectionStatus, parseReceiptChunk, chunkReceipt, RECEIPT_LIMIT, operationId } from './selection-protocol.js';
 import type { SelectionControl, SelectionCommand, LiveRequest, SelectionQuery, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import { parseRefreshReceipt, parseRefreshRequest, RefreshRefusal } from './refresh-jobs.js';
+import type { RefreshController, RefreshRequest, RefreshReceipt } from './refresh-jobs.js';
 import { isProviderUnavailableCause, providerUnavailableReasons } from '@agentui/host';
 import type { ProviderStatus, ProviderUnavailableCause } from '@agentui/host';
 
@@ -27,13 +30,17 @@ export type ControlRequest = { readonly op: 'extensions-select'; readonly comman
   | { readonly op: 'extensions-live'; readonly request: LiveRequest }
   | { readonly op: 'extensions-status'; readonly query: SelectionQuery | null }
   | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
+  | { readonly op: 'extensions-refresh-request'; readonly request: RefreshRequest }
+  | { readonly op: 'extensions-refresh-status' | 'extensions-refresh-promote'; readonly id: string }
   | { readonly op: 'providers-refresh' };
-type ControlValue = readonly ProviderRefreshStatus[] | readonly ProviderRefreshEntry[] | OperationSummary | SelectionStatus | ReceiptChunk;
+type ControlValue = readonly ProviderRefreshStatus[] | readonly ProviderRefreshEntry[] | OperationSummary | SelectionStatus | ReceiptChunk | RefreshReceipt | null;
 type ControlResponse = { readonly ok: true; readonly value: ControlValue } | { readonly ok: false; readonly error: string };
 export function parseControlRequest(value: unknown): ControlRequest {
   const input = record(value);
   switch (input.op) {
     case 'providers-refresh': record(input, ['op']); return { op: input.op };
+    case 'extensions-refresh-request': record(input, ['op', 'request']); return { op: input.op, request: parseRefreshRequest(input.request) };
+    case 'extensions-refresh-status': case 'extensions-refresh-promote': record(input, ['op', 'id']); return { op: input.op, id: operationId(input.id) };
     case 'extensions-select': record(input, ['op', 'command']); return { op: input.op, command: parseSelectionCommand(input.command) };
     case 'extensions-live': {
       record(input, ['op', 'request']);
@@ -50,6 +57,7 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
   record(input, ['ok', 'value']);
   if (input.ok !== true) throw new Error('Invalid control response');
   switch (request.op) {
+    case 'extensions-refresh-request': case 'extensions-refresh-status': case 'extensions-refresh-promote': return { ok: true, value: parseRefreshReceipt(input.value) };
     case 'extensions-live': case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
     case 'extensions-status': return { ok: true, value: parseSelectionStatus(input.value) };
     case 'extensions-receipt': return { ok: true, value: parseReceiptChunk(input.value) };
@@ -63,7 +71,7 @@ export function formatControlResponse(response: ControlResponse): string {
   if (Buffer.byteLength(line) > 16_000) throw new Error('Host control message too large');
   return line;
 }
-function readLine(socket: Socket, limit: number): Promise<unknown> {
+function readLine(socket: Socket, limit: number, requestFrame = false): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
     let bytes = 0;
@@ -75,20 +83,87 @@ function readLine(socket: Socket, limit: number): Promise<unknown> {
       if (!chunk.includes(10)) return;
       socket.off('data', data);
       socket.setTimeout(0);
-      try { resolve(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)))); } catch (error) { reject(error); }
+      try {
+        const value: unknown = JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(Buffer.concat(chunks)));
+        if (requestFrame && bytes > requestLimit(value)) { socket.destroy(new Error('Host control message too large')); return; }
+        resolve(value);
+      } catch (error) {
+        if (requestFrame && bytes > 4096) socket.destroy(new Error('Host control message too large'));
+        else reject(error);
+      }
     };
     socket.on('data', data);
     socket.once('error', reject);
     socket.once('end', () => reject(new Error('Incomplete host control message')));
   });
 }
+function isRefresh(request: ControlRequest): boolean {
+  return request.op === 'extensions-refresh-request' || request.op === 'extensions-refresh-status' || request.op === 'extensions-refresh-promote';
+}
+function requestLimit(value: unknown): number {
+  const { op } = record(value);
+  return op === 'extensions-refresh-request' || op === 'extensions-refresh-status' || op === 'extensions-refresh-promote' ? 8192 : 4096;
+}
+async function readRefreshReceipt(socket: Socket): Promise<unknown> {
+  socket.setTimeout(5000, () => socket.destroy(new Error('Host control request timed out')));
+  let pending = Buffer.alloc(0), transfer: { digest: string; total: number; offset: number } | undefined;
+  let refusal: { ok: false; error: string } | undefined;
+  const chunks: Buffer[] = [];
+  for await (const incoming of socket) {
+    socket.setTimeout(5000);
+    if (!Buffer.isBuffer(incoming)) throw new Error('Invalid host control bytes');
+    let start = 0;
+    while (start < incoming.length) {
+      const newline = incoming.indexOf(10, start), end = newline < 0 ? incoming.length : newline + 1;
+      if (pending.length + end - start > 16_000) throw new Error('Host control message too large');
+      pending = Buffer.concat([pending, incoming.subarray(start, end)]); start = end;
+      if (newline < 0) break;
+      if (refusal || (transfer && transfer.offset === transfer.total)) throw new Error('Trailing refresh receipt frame');
+      const value = record(JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(pending)));
+      pending = Buffer.alloc(0);
+      if (value.ok === false && !transfer) {
+        record(value, ['ok', 'error']); refusal = { ok: false, error: identifier(value.error) }; continue;
+      }
+      record(value, ['ok', 'value']);
+      if (value.ok !== true) throw new Error('Invalid refresh receipt frame');
+      const chunk = parseReceiptChunk(value.value);
+      transfer ??= { digest: chunk.digest, total: chunk.total, offset: 0 };
+      if (chunk.offset !== transfer.offset || chunk.digest !== transfer.digest || chunk.total !== transfer.total) throw new Error('Refresh receipt changed');
+      chunks.push(Buffer.from(chunk.base64, 'base64')); transfer.offset = chunk.next;
+    }
+  }
+  if (pending.length) throw new Error('Incomplete host control message');
+  if (refusal) return refusal;
+  if (!transfer || transfer.offset !== transfer.total) throw new Error('Incomplete refresh receipt');
+  const bytes = Buffer.concat(chunks, transfer.total);
+  if (createHash('sha256').update(bytes).digest('hex') !== transfer.digest) throw new Error('Refresh receipt digest mismatch');
+  return { ok: true, value: JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(bytes)) };
+}
+async function sendRefreshReceipt(socket: Socket, receipt: RefreshReceipt): Promise<void> {
+  if (socket.destroyed) return;
+  const bytes = Buffer.from(JSON.stringify(receipt));
+  if (bytes.length > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
+  const digest = createHash('sha256').update(bytes).digest('hex');
+  const expire = () => socket.destroy(new Error('Host control transfer timed out'));
+  let deadline = setTimeout(expire, 5000);
+  socket.once('close', () => clearTimeout(deadline));
+  for (let offset = 0; offset < bytes.length;) {
+    if (socket.destroyed) return;
+    const chunk = chunkReceipt(bytes, digest, offset);
+    await new Promise<void>((resolve, reject) => socket.write(formatControlResponse({ ok: true, value: chunk }), error => error ? reject(error) : resolve()));
+    offset = chunk.next;
+    clearTimeout(deadline); deadline = setTimeout(expire, 5000);
+  }
+  socket.end();
+}
+
 export async function requestControl(path: string, request: ControlRequest): Promise<ControlResponse> {
   const line = `${JSON.stringify(request)}\n`;
-  if (Buffer.byteLength(line) > 4096) throw new Error('Host control message too large');
+  if (Buffer.byteLength(line) > requestLimit(request)) throw new Error('Host control message too large');
   const socket = createConnection(path);
-  const response = readLine(socket, 16_000);
+  const response = isRefresh(request) ? readRefreshReceipt(socket) : readLine(socket, 16_000);
   socket.once('connect', () => {
-    if (request.op === 'extensions-live' || request.op === 'extensions-select' || request.op === 'providers-refresh') socket.setTimeout(0);
+    if (request.op === 'extensions-live' || request.op === 'extensions-select' || request.op === 'providers-refresh' || request.op === 'extensions-refresh-request' || request.op === 'extensions-refresh-promote') socket.setTimeout(0);
     socket.write(line);
   });
   try { return parseControlResponse(request, await response); }
@@ -98,15 +173,22 @@ const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); 
 export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, live: refuseSelection, status: refuseSelection, receipt: refuseSelection };
 
 export async function startControl(path: string, isClosing: () => boolean, selection: SelectionControl,
-  refreshProviders: () => Promise<readonly ProviderStatus[]>) {
+  refreshProviders: () => Promise<readonly ProviderStatus[]>, refresh?: Pick<RefreshController, 'request' | 'inspect' | 'promote'>) {
   if (existsSync(path)) unlinkSync(path);
   const server = createServer(socket => {
     void (async () => {
       try {
-        const request = parseControlRequest(await readLine(socket, 4096));
+        const request = parseControlRequest(await readLine(socket, 8192, true));
         if (isClosing()) throw new Error('Host is shutting down');
         let value: ControlValue;
         switch (request.op) {
+          case 'extensions-refresh-request': case 'extensions-refresh-status': case 'extensions-refresh-promote': {
+            if (!refresh) throw new RefreshRefusal('unavailable');
+            const receipt = await (request.op === 'extensions-refresh-request' ? refresh.request(request.request)
+              : request.op === 'extensions-refresh-status' ? refresh.inspect(request.id) : refresh.promote(request.id));
+            await sendRefreshReceipt(socket, receipt);
+            return;
+          }
           case 'extensions-select': value = await selection.select(request.command); break;
           case 'extensions-live': value = await selection.live(request.request); break;
           case 'extensions-status': value = selection.status(request.query ?? undefined); break;
@@ -119,7 +201,7 @@ export async function startControl(path: string, isClosing: () => boolean, selec
           }
         }
         socket.end(formatControlResponse({ ok: true, value }));
-      } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: error instanceof SelectionRefusal && error.reason !== 'invalid-artifact' ? error.message : 'Control operation refused' })); }
+      } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: (error instanceof RefreshRefusal || error instanceof SelectionRefusal && error.reason !== 'invalid-artifact') ? error.message : 'Control operation refused' })); }
     })();
   });
   await new Promise<void>((resolve, reject) => {

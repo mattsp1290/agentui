@@ -1,0 +1,10 @@
+{
+  "name": "@agentui/example-generated-text-output",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": ["dist"],
+  "exports": {".": "./dist/consumer.js", "./server": "./dist/server.js", "./provider": "./dist/provider.js"},
+  "scripts": {"build": "tsc -p tsconfig.json", "check": "tsc -p tsconfig.json --noEmit"},
+  "dependencies": {"@agentui/contracts": "0.0.0", "@agentui/host": "0.0.0", "@agentui/sdk": "0.0.0", "zod": "4.6.6"}
+}
