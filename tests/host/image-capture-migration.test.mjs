@@ -36,7 +36,7 @@ test('authentic released image4 upgrades once preserving raw rows, image replay 
   for (let attempt = 0; attempt < 2; attempt++) {
     const store = new SqliteStore(f.path, transcriptProjection, budgets());
     try {
-      assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 5);
+      assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
       assert.deepEqual(rows(store.db), before);
       for (const table of ['frontend_send_owners', 'frontend_send_tombstones']) assert.equal(store.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
       assert.deepEqual(store.snapshot(scope).document, original);
@@ -75,7 +75,7 @@ test('failed released image4 migration leaves every original row, image byte and
   } finally { reader.close(); }
 });
 
-test('the exact released main opener refuses joint format5 before changing database bytes', t => {
+test('the exact released main opener refuses joint format6 before changing database bytes', t => {
   assert.equal(digest(readFileSync(new URL('./fixtures/sqlite-format4.ts', import.meta.url))), provenance.openerSha256);
   const f = released(t), old = openReleasedMain(f.path); old.close();
   const store = new SqliteStore(f.path, transcriptProjection, budgets()); store.close();

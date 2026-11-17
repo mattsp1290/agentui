@@ -22,7 +22,7 @@ for (const format of [2, 3]) test(`format ${format} upgrade builds tagged index 
   const before = saved(db); db.close();
   const store = new SqliteStore(f.path, projection, budgets());
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
     assert.deepEqual(saved(store.db), before);
     assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'missing', 'missing'), undefined);
     assert.equal(store.db.prepare("SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE " + predicate).get().n, 0);
@@ -48,7 +48,7 @@ for (const format of [2, 3]) test(`format ${format} index failure rolls back own
   } finally { reader.close(); }
 });
 
-test('existing format five refuses a missing or unusable required history index', t => {
+test('existing current format refuses a missing or unusable required history index', t => {
   const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); store.close();
   const db = new DatabaseSync(f.path); db.exec('DROP INDEX commands_tagged_send_key'); db.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), /no such index/);
@@ -114,14 +114,14 @@ for (const [name, mutation, error] of [
   ['private mixed owner schema', db => {
     db.exec('DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; CREATE TABLE frontend_sends(host TEXT, conversation TEXT, command_id TEXT, actor_id TEXT, platform TEXT, state TEXT, thread_id TEXT, run_id TEXT)');
   }, /Invalid frontend ownership schema/],
-]) test(`format five refuses ${name} damage without repairing its schema`, t => {
+]) test(`current format refuses ${name} damage without repairing its schema`, t => {
   const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); store.close();
   const db = new DatabaseSync(f.path); mutation(db);
   const schema = db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(); db.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), error);
   const reader = new DatabaseSync(f.path);
   try {
-    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 6);
     assert.deepEqual(reader.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
   } finally { reader.close(); }
 });
