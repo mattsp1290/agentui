@@ -15,7 +15,7 @@ node apps/host/dist/main.js codex \
   --assets /absolute/custom-desktop
 ```
 
-The existing `pi` and `browser-dev` commands also accept `--assets`. Without it, startup uses the ordinary installed browser artifact. Open the host's browser address, pair, and select a conversation. Plan review and its nested Review guidance section appear beside the transcript, or below it in a narrow content area. Both share the content scrollbar. The host renders the declared Review the plan action and reports its result. Click **Review the plan** to submit the committed prompt. An accepted receipt means submitted, not completed. Uncertain outcomes use the existing conversation recovery controls.
+The existing `pi` and `browser-dev` commands also accept `--assets`. Without it, startup uses the ordinary installed browser artifact. Open the host's browser address and select a conversation. Plan review and its nested Review guidance section appear beside the transcript, or below it in a narrow content area. Both share the content scrollbar. The host renders the declared Review the plan action and reports its result. Click **Review the plan** to submit the committed prompt. An accepted receipt means submitted, not completed. Uncertain outcomes use the existing conversation recovery controls.
 
 To remove the panel, open Settings, expand View options, and choose Restore default view. The current conversation and draft remain available. Reloading the artifact enables the panel again.
 
@@ -34,11 +34,11 @@ node scripts/package-native-customization.mjs \
   --out /absolute/custom-native-build
 ```
 
-The command verifies the selected artifact and stages its retained bytes. It disables the stock frontend rebuild and embeds the native entry with the existing protected pairing flow. It prints the actual `.app` path after Tauri succeeds. Open that app normally without `--host-url`. The output has its own Cargo target directory, so packaging preserves existing apps and the input artifact. Failed builds remove their own output.
+The command verifies the selected artifact and stages its retained bytes. It disables the stock frontend rebuild and embeds the native entry, which connects directly to the local host. It prints the actual `.app` path after Tauri succeeds. Open that app normally without `--host-url`. The output has its own Cargo target directory, so packaging preserves existing apps and the input artifact. Failed builds remove their own output.
 
 Selecting this artifact gives its code full trust inside the protected app. Hashes verify the selected bytes, not the safety of that code. The manifest continues to describe the browser-development asset build; it does not certify a Mac build, distribution signing, or notarization.
 
-When updating a local development build, keep the old app until the new package builds successfully. Before opening a different local build, use the current app's Settings → Forget local pairing → Forget pairing, quit it, then open and pair the new build. Chats and drafts are retained, and relaunching the same build keeps its pairing.
+When updating a local development build, keep the old app until the new package builds successfully. Quit the current app before opening a different local build. The new build connects to the same local host, and chats and drafts are retained.
 
 ## Supported inputs
 
