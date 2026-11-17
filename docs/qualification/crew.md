@@ -38,7 +38,7 @@ The controlled tests drive the extension through its public HTTP and SSE boundar
 [`examples/crew/tests/provider.test.mjs`](../../examples/crew/tests/provider.test.mjs) covers the Crew extension:
 
 - Creation, streaming, approval, Stop and SQLite reopen: `Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen`.
-- No external history: `Crew discovery and creation touch only the member, owned conversation and its observation, never a listing`. It records every request path. Discovery and creation call only `GET /v1/capabilities`, `GET /v1/members`, `POST /v1/conversations` and `POST /v1/conversations/{owned}/events`. They never call the excluded listing route `GET /v1/conversations` or any foreign conversation path.
+- No external history: `Crew discovery, creation and host restart touch only the member, owned conversation and its observation, never a listing`. It records every request path. Connection, discovery and creation call exactly `GET /v1/capabilities`, `GET /v1/members`, `POST /v1/conversations` and `POST /v1/conversations/{owned}/events`. After a host restart the calls are exactly `GET /v1/capabilities`, `GET /v1/members` and `POST /v1/conversations/{owned}/events`. The fixture serves the excluded listing route `GET /v1/conversations` with a foreign conversation in it, so a listing call or any foreign conversation path fails the assertion.
 - Follow-up sends: `Crew follow-up confirms the original completed request before admitting its own send once`.
 - Lost replies and uncertainty: `Crew lost submit remains original-only GET recovery and does not turn missing lookup into rejection`, `Crew missing original GET remains uncertain and foreign binding refuses before HTTP` and `Crew conflicting admission remains uncertain without retry or replacement identity`.
 - Observation integrity: `Crew same-source handoff awaits admitted callbacks and close drains without remote cancellation` and `Crew invalid remote content drains and retains only the last acknowledged cursor`.
@@ -59,10 +59,12 @@ The generic provider host tests in `tests/application/provider-*.test.mjs` cover
 
 - **No exact-choice decision lookup.** Crew exposes no GET receipt for an exact decision choice. A lost or mismatched decision reply stays uncertain.
 - **Cold worker replacement is unqualified.** No run replaced the Crew gateway or worker during a request.
-- **Frontend tools are unavailable.** Crew accepts no client tool definitions or results. Switchboard has an app-chosen restore contract. Its native adapters are pending. See [frontend tools](../development/frontend-tools.md).
+- **Frontend tools are unavailable.** Crew accepts no client tool definitions or results. They need Switchboard adapter delivery, tracked as `agentui-9xfk` and `switchboard-5py2`. Switchboard's app-chosen restore contract is [frontend tool restore](https://github.com/mattsp1290/switchboard/blob/main/docs/architecture/frontend-restore.md), merged in Switchboard PR 60.
 - **Observation is capped at 8 MiB per connection.** Reaching the cap ends observation. Restart the host for a fresh baseline.
 - **There is no remote replay cursor.** The public observer exposes no `after` cursor. Each reopen takes a fresh Crew snapshot as its baseline. The saved cursor is local.
 - **Member-wide grants are deferred.** The extension offers only the conversation standing choice. It filters member-wide grant creation.
+- **Crew handoffs are unused.** The vendored client exposes `createHandoff`, `handoff` and the `HandoffsCapability` metadata. The extension never calls them.
+- **Subagent child transcripts are hidden.** The observation drops messages that carry a `subagentRunId`. Discovery accepts members that declare subagents.
 - **Receipts are not settled automatically.** A send receipt stays `accepted` until a follow-up send or **Check pending command** reads the original request status. This is `agentui-ulb5`.
 
 ## Verification
@@ -77,5 +79,7 @@ npm run lint
 node --test examples/crew/tests/provider.test.mjs
 npm test
 ```
+
+`node --test examples/crew/tests/provider.test.mjs` passed 94 of 94 tests. `npm test` passed 3225 of 3230 tests, with 5 skipped and none failed.
 
 The real run above is the live evidence. It is recorded in the `agentui-osyo` log. No logs from it are committed.
