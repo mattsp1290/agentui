@@ -89,6 +89,6 @@ test('committed custom artifact qualifies the original single-use CSS guard', { 
   f.write('desktop/style.css', '.guard { color: red; }');
   f.write('desktop/index.tsx', `import style from './style.css?url';
     if(!style) throw new Error('valid CSS URL became falsy');
-    export default {kind:'desktop',sdkVersion:'0.5.0',activate(){return {modules:[],dispose(){}}}};`);
+    export default {kind:'desktop',sdkVersion:'0.6.0',activate(){return {modules:[],dispose(){}}}};`);
   buildCustom(f, f.commit());
 });
