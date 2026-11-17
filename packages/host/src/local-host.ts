@@ -1,3 +1,4 @@
+import { randomUUID } from 'node:crypto';
 import { assertFrontendSendActor, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
@@ -7,7 +8,8 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, ContinuationRefusal, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { ContinuationAction, ContinuationView } from '@agentui/contracts/service';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -20,6 +22,8 @@ import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
 import { registerFrontendToolsHost } from './frontend-tools-context.js';
 
+/** Only a confirmed, concluded provider conversation without frontend observations can be continued. */
+export class ContinuationUnavailable extends Error {}
 export interface LocalHostOptions<E, P> {
   readonly path: string;
   readonly projection: Projection<E, P>;
@@ -38,6 +42,8 @@ export interface LocalHost<E, P> {
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations,
     predecessor?: ConversationScope): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
+  /** `read` touches only the store, `check` only looks up unsettled successor attempts, and `start` posts at most one new attempt per predecessor at a time. */
+  continuation(scope: ConversationScope, action: ContinuationAction, providers?: ProviderCreationOperations): Promise<ContinuationView>;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
   readOutput(scope: ConversationScope, id: OutputId): Promise<OutputRead>;
@@ -69,6 +75,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   let active = 0;
   const dispatching = new Set<string>();
   const creating = new Map<string, Promise<CreationObservation>>();
+  const continuing = new Map<string, Promise<boolean>>();
   type Observation = { state:
     | { readonly kind: 'starting'; readonly task: Promise<void> }
     | { readonly kind: 'live'; readonly stream: ProviderStream }
@@ -207,6 +214,50 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     }
     return { from: { scope: source.intent.scope, binding: source.observation.binding.authority.binding }, credential: canonicalJson(source.credential) };
   };
+  const unsettled = (creation: StoredCreation) => !creation.observation || creation.observation.kind === 'pending' || creation.observation.kind === 'uncertain';
+  const refusal = (creation: StoredCreation): ContinuationRefusal => {
+    const outcome = creation.observation?.kind === 'rejected' ? options.providers?.continuation?.(creation) : null;
+    return outcome && 'refused' in outcome ? outcome.refused : 'unavailable';
+  };
+  const continuationView = (scope: ConversationScope, unrecorded = false): ContinuationView => {
+    const original = store.creation(scope), attempts = store.successors(scope);
+    const outcome = original?.intent.from && original.observation?.kind === 'confirmed' ? options.providers?.continuation?.(original) : null;
+    const confirmed = attempts.find(creation => creation.observation?.kind === 'confirmed');
+    const refused = attempts.findLast(creation => creation.observation?.kind === 'rejected' || creation.observation?.kind === 'not-dispatched');
+    let successor: ContinuationView['successor'] = null;
+    if (confirmed) successor = { kind: 'confirmed', scope: confirmed.intent.scope };
+    else if (continuing.has(canonicalJson(scope))) successor = { kind: 'starting' };
+    else if (attempts.some(creation => creation.observation?.kind === 'pending')) successor = { kind: 'pending' };
+    else if (attempts.some(unsettled)) successor = { kind: 'unconfirmed' };
+    else if (unrecorded) successor = { kind: 'refused', refusal: 'unavailable' };
+    else if (refused) successor = { kind: 'refused', refusal: refusal(refused) };
+    return { predecessor: original?.intent.from?.scope ?? null, carried: outcome && !('refused' in outcome) ? outcome : null,
+      closure: closure(original), successor };
+  };
+  // Lookups only: an attempt that already left the host is never posted again.
+  const checkSuccessors = async (scope: ConversationScope, providers: ProviderCreationOperations): Promise<void> => {
+    await Promise.allSettled(store.successors(scope).filter(unsettled).map(creation =>
+      host.createProviderConversation(creation.intent.scope, creation.installation, providers)));
+  };
+  const continuable = (scope: ConversationScope): StoredCreation => {
+    const predecessor = store.creation(scope);
+    if (predecessor?.observation?.kind !== 'confirmed' || !closure(predecessor) || store.hasFrontendObservations(scope)) {
+      throw new ContinuationUnavailable('Conversation cannot be continued');
+    }
+    return predecessor;
+  };
+  /** Resolves true when the host refused the new attempt before recording it. */
+  const startSuccessor = async (scope: ConversationScope, predecessor: StoredCreation, providers: ProviderCreationOperations): Promise<boolean> => {
+    await checkSuccessors(scope, providers);
+    // An uncertain attempt does not block a deliberate new one: Crew's seal lets only one handoff of the source succeed.
+    if (store.successors(scope).some(creation => !creation.observation || creation.observation.kind === 'confirmed' ||
+      creation.observation.kind === 'pending' || creating.has(canonicalJson(creation.intent.scope)))) return false;
+    const next = { hostId: scope.hostId, conversationId: randomUUID() };
+    const result = await host.createProviderConversation(next, predecessor.installation, providers, scope);
+    const recorded = store.creation(next);
+    if (recorded && result.kind === 'rejected' && refusal(recorded) === 'continued-elsewhere') await checkSuccessors(scope, providers);
+    return !recorded;
+  };
   const host: LocalHost<E, P> = {
     imageInput,
     uploadImage: (scope, uploader, uploadId, name, bytes) => {
@@ -242,6 +293,23 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       });
     },
     creation(scope) { return store.creation(authorized(scope)); },
+    async continuation(value, action, providers) {
+      const scope = authorized(value);
+      if (action === 'read') return continuationView(scope);
+      if (!providers) throw new Error('Provider unavailable');
+      if (action === 'check') {
+        await inFlight(() => checkSuccessors(scope, providers));
+        return continuationView(authorized(scope));
+      }
+      const predecessor = continuable(scope), key = canonicalJson(scope);
+      let lease = continuing.get(key);
+      if (!lease) {
+        lease = inFlight(() => startSuccessor(scope, predecessor, providers)).finally(() => continuing.delete(key));
+        continuing.set(key, lease);
+      }
+      const unrecorded = await lease;
+      return continuationView(authorized(scope), unrecorded);
+    },
     async createProviderConversation(scope, target, providers, predecessor) {
       authorized(scope);
       const prior = store.creation(scope);

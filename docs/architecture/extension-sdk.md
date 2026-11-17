@@ -52,7 +52,7 @@ This contract does not add browser consent, execution or continuation. Existing 
 
 SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 12, and transcript projection version is 4.
+Workspace package versions are `0.0.0`, service wire version is 13, and transcript projection version is 4.
 
 Desktop contributions may arrange transcript and module presentation with `contentLayout`.
 The composer, approvals, Stop, recovery, agent selection and protected navigation remain host-owned.

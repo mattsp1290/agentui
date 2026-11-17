@@ -1,5 +1,5 @@
 import { frontendToolsFor } from '@agentui/host/frontend-tools';
-import { imageFailure, providerUnavailableReasons } from '@agentui/host';
+import { ContinuationUnavailable, imageFailure, providerUnavailableReasons } from '@agentui/host';
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
@@ -37,7 +37,7 @@ export function createApi(options: {
   function requestScope(request: ServiceRequest): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'continuation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -97,6 +97,14 @@ export function createApi(options: {
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
       case 'conversation-permissions': return host.conversationPermissions(request.scope);
       case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);
+      case 'continuation': {
+        if (request.action !== 'read' && !options.providers) throw new ServiceError('unavailable', 'The original provider is unavailable.');
+        try { return await host.continuation(request.scope, request.action, options.providers); }
+        catch (error) {
+          if (error instanceof ContinuationUnavailable) throw new ServiceError('invalid', 'Only a concluded provider conversation without frontend tool activity can be continued.');
+          throw error;
+        }
+      }
       case 'conversation-agent': {
         const providerAgents = providerCatalog().choices;
         const installation = host.creation(request.scope)?.installation ?? host.installation(request.scope);

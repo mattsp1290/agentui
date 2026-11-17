@@ -124,6 +124,7 @@ export function createServerExtensions() {
   const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
   const observe: ProviderConversationOperations['observe'] = (...args) => current().observe(...args);
   const closure: NonNullable<ProviderConversationOperations['closure']> = (...args) => current().closure(...args);
+  const continuation: NonNullable<ProviderConversationOperations['continuation']> = (...args) => current().continuation(...args);
   function close(): Promise<void> {
     if (closing) return closing;
     const previous = state;
@@ -156,5 +157,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, status, close };
+  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, continuation, status, close };
 }
