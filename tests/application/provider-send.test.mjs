@@ -548,26 +548,6 @@ test('offered send binds the actual HTTP input to its authenticated original own
 });
 
 
-test('offered owner identity fences admission, receipt, recovery, reconciliation and tombstones across paired principals', async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
-  const command = offered(scope);
-  await other.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
-  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
-  for (const action of ['recover', 'unavailable']) await unavailable(other.frontendBinding({ scope, id: command.clientCommandId, action }));
-  await unavailable(other.reconcile(scope, command.clientCommandId));
-  await unavailable(other.conversation(scope).receipt(command.clientCommandId));
-  assert.equal((await other.conversation(scope).submit(command)).kind, 'rejected');
-  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'bound');
-  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM frontend_send_owners WHERE state='available'").get().n), 1);
-  const late = offered(scope, 'late');
-  f.loseNext('frontend-binding');
-  await assert.rejects(f.client.frontendBinding({ scope, id: late.clientCommandId, action: 'unavailable' }));
-  assert.equal((await f.client.frontendBinding({ scope, id: late.clientCommandId, action: 'unavailable' })).kind, 'unavailable');
-  assert.equal((await f.client.conversation(scope).submit(late)).kind, 'rejected');
-  assert.equal(a.calls.translations, 1);
-  assert.equal(a.calls.submits.length, 1);
-});
-
 test('offered recovery survives lost replies and registration crash gaps using only original durable bytes', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
   f.loseNext('submit');
@@ -604,8 +584,8 @@ test('offered conflicts cannot alter original text, definitions, activations, or
   assert.equal(a.calls.translations, 1); assert.equal(a.calls.submits.length, 1);
 });
 
-test('offered delayed recovery cannot revive a released owner or return evidence to a revoked actor', async t => {
-  for (const revoke of [false, true]) {
+test('offered delayed recovery cannot revive a released owner', async t => {
+  {
     const entered = Promise.withResolvers(), release = Promise.withResolvers();
     const a = aguiExtension({ submit: () => ({ kind: 'pending', evidence: {} }), reconcile: async (operation, { effect }) => {
       entered.resolve(); await release.promise; return effect(operation, 'completed', operation.request.runId);
@@ -615,29 +595,24 @@ test('offered delayed recovery cannot revive a released owner or return evidence
     const recovery = f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' });
     const observed = recovery.then(value => ({ value }), error => ({ error }));
     await entered.promise;
-    if (revoke) f.inspect(db => db.exec('UPDATE service_devices SET revoked=1'));
-    else await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
+    await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
     release.resolve();
     const result = await observed;
-    if (revoke) assert.ok(result.error);
-    else {
-      assert.equal(result.value.kind, 'unavailable');
-      assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
-    }
+    assert.equal(result.value.kind, 'unavailable');
+    assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
     assert.equal(a.calls.submits.length, 1);
   }
 });
 
-for (const authority of ['actor', 'provider']) test(`offered ${authority} revocation after admission and during awaited connection prevents dispatch`, async t => {
+test('offered provider revocation after admission and during awaited connection prevents dispatch', async t => {
   let f;
   const a = aguiExtension({ request(text) {
-    queueMicrotask(() => f.inspect(db => db.exec(`UPDATE ${authority === 'actor' ? 'service_devices' : 'service_provider_credentials'} SET revoked=1`)));
+    queueMicrotask(() => f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1')));
     return actualInput(text);
   } });
   f = await fixture(t, [a]);
   const scope = await create(f), command = offered(scope);
-  if (authority === 'actor') await assert.rejects(f.client.conversation(scope).submit(command));
-  else assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'not-dispatched');
+  assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'not-dispatched');
   assert.equal(a.calls.submits.length, 0);
   assert.equal(JSON.parse(stored(f, 'chat').receipt).state.kind, 'not-dispatched');
 });
@@ -667,21 +642,6 @@ for (const fault of ['generic', 'collision', 'duplicate', 'invalid-input', 'deco
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners').get().n), 0);
   assert.equal(a.calls.submits.length, 0);
 });
-
-test('offered reentrant provider decoding cannot revoke its actor after the final authority check', async t => {
-  let f, admittedDecodes = 0;
-  const a = aguiExtension({ decode(value) {
-    if (f && f.inspect(db => db.prepare('SELECT 1 FROM commands').get()) && ++admittedDecodes === 1) {
-      f.inspect(db => db.exec('UPDATE service_devices SET revoked=1'));
-    }
-    return value;
-  } });
-  f = await fixture(t, [a]);
-  const scope = await create(f);
-  await assert.rejects(f.client.conversation(scope).submit(offered(scope)));
-  assert.equal(a.calls.submits.length, 0);
-});
-
 
 test('offered recovery rejects forged restored run evidence and ownerless commands', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);

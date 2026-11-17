@@ -23,8 +23,6 @@ for (const changed of [false, true]) test(`offered run reservation rejects ${cha
   assert.deepEqual((await f.client.conversation(scope).submit(first)).receipt, receipt);
   const changedBody = structuredClone(first); changedBody.body.text = 'Changed';
   assert.deepEqual(await f.client.conversation(scope).submit(changedBody), { kind: 'rejected', reason: 'command-id-conflict' });
-  const other = await f.anotherClient();
-  assert.equal((await other.conversation(scope).submit(first)).reason, 'frontend-owner-mismatch');
   assert.equal(a.calls.translations, 2);
   assert.equal(a.calls.submits.length, 1);
 });
@@ -84,17 +82,6 @@ test('generic completed sends can reuse a run without an offered reservation', a
   for (const id of ['first', 'second']) assert.equal((await f.client.conversation(scope).submit(send(scope, id))).receipt.state.kind, 'completed');
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 0);
   assert.equal(a.calls.submits.length, 2);
-});
-
-test('keyless tombstones do not reserve another actor command or capture key', async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
-  await other.frontendBinding({ scope, id: 'first', action: 'unavailable' });
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_tombstones').get().n), 1);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 0);
-  assert.throws(() => f.inspect(db => db.prepare('SELECT thread_id,run_id FROM frontend_send_tombstones')), /no such column/);
-  assert.equal((await f.client.conversation(scope).submit(offered(scope, 'first'))).receipt.state.kind, 'completed');
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 1);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_tombstones').get().n), 1);
 });
 
 test('schema rejects keyless owners and reads refuse owner key corruption', async t => {

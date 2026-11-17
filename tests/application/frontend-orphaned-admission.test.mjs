@@ -99,23 +99,6 @@ for (const outcome of ['completed', 'rejected', 'pending']) test(`crash admissio
   assert.equal(a.calls.submits.length, outcome === 'pending' ? 1 : 2);
 });
 
-test('crash admission persists authentic completion before refusing revoked new sender', async t => {
-  const entered = Promise.withResolvers(), release = Promise.withResolvers();
-  const { a, f, scope } = await orphan(t, { async reconcile(operation, { effect }) {
-    entered.resolve(); await release.promise; return effect(operation, 'completed', operation.request.runId);
-  } });
-  const other = await f.anotherClient(), principal = (await other.metadata()).principalId;
-  const next = other.conversation(scope).submit(send(scope, 'next', 'Next')).then(value => ({ value }), error => ({ error }));
-  await Promise.race([entered.promise, next.then(() => { throw new Error('Lookup was not entered'); })]);
-  f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(principal)); release.resolve();
-  assert.ok((await next).error);
-  const saved = durable(f);
-  assert.equal(saved.commands.length, 1);
-  assert.equal(JSON.parse(saved.commands[0].receipt).state.kind, 'completed');
-  assert.equal(a.calls.submits.length, 1);
-  assert.deepEqual(a.calls.reconciles, a.calls.submits);
-});
-
 test('inconclusive lookup returns latest persisted receipt after concurrent authentic completion', async t => {
   const entered = Promise.withResolvers(), release = Promise.withResolvers(); let lookups = 0;
   const { a, f, scope } = await orphan(t, { async reconcile(operation, { effect }) {
@@ -172,15 +155,11 @@ test('untagged AG-UI-shaped captures permit offered claim and later generic reus
   assert.equal(generic.calls.submits.length, 2); assert.equal(tagged.calls.submits.length, 1);
 });
 
-for (const owner of ['released', 'revoked']) test(`crash admission ${owner} old owner permits private authentic completion`, async t => {
+test('crash admission released owner permits authentic completion', async t => {
   const { a, f, scope } = await orphan(t);
-  const other = await f.anotherClient(), principal = (await f.client.metadata()).principalId;
-  if (owner === 'released') await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' });
-  else f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(principal));
-  assert.equal((await other.conversation(scope).submit(send(scope, 'next', 'Next'))).receipt.state.kind, 'completed');
-  for (const action of ['recover', 'unavailable']) await unavailable(other.frontendBinding({ scope, id: 'offered', action }));
-  await unavailable(other.conversation(scope).receipt('offered')); await unavailable(other.reconcile(scope, 'offered'));
-  if (owner === 'released') assert.equal((await f.client.frontendBinding({ scope, id: 'offered', action: 'recover' })).reason, 'closures-unavailable');
+  await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' });
+  assert.equal((await f.client.conversation(scope).submit(send(scope, 'next', 'Next'))).receipt.state.kind, 'completed');
+  assert.equal((await f.client.frontendBinding({ scope, id: 'offered', action: 'recover' })).reason, 'closures-unavailable');
   assert.deepEqual(a.calls.reconciles, [a.calls.submits[0]]);
   assert.equal(a.calls.submits.length, 2);
 });

@@ -4,7 +4,6 @@ import { readFileSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createServer } from 'node:http';
-import { createConnection } from 'node:net';
 import { registerHooks } from 'node:module';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright';
@@ -55,16 +54,10 @@ async function setup(t) {
     } }, installations: [{ id: 'service', instance, service: origin, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: '1', resolve: async () => 'fixture-secret' } }] };
   const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, directory, port: 0, assetsDirectory: join(custom.directory, 'browser'), extensions: { kind: 'transient', entries: [extension] } });
   t.after(() => host.close());
-  const control = op => new Promise((resolve, reject) => {
-    const socket = createConnection(join(directory, 'control.sock')); let output = '';
-    socket.once('error', reject); socket.once('connect', () => socket.end(`${JSON.stringify(op)}\n`)); socket.on('data', data => { output += data; });
-    socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
-  });
   const browser = await chromium.launch(); t.after(() => browser.close()); const context = await browser.newContext(), page = await context.newPage();
   page.setDefaultTimeout(15_000);
-  await page.goto(`${host.origin}/browser.html`); await page.getByLabel('Pairing code').fill((await control({ op: 'invite' })).code);
-  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
-  await wait(() => page.getByRole('button', { name: 'New recorded conversation', exact: true }).isEnabled(), 'pairing');
+  await page.goto(`${host.origin}/browser.html`);
+  await wait(() => page.getByRole('button', { name: 'New recorded conversation', exact: true }).isEnabled(), 'connected host');
   const inspect = action => { const db = new DatabaseSync(join(directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
   const create = async (target = page) => {
     const previous = (await records(target)).find(row => row.route)?.route.conversationId;
@@ -78,7 +71,7 @@ async function setup(t) {
     await wait(async () => (await records(target)).some(row => row.route && row.route.conversationId !== previous), 'new conversation route');
     await connected(target);
   };
-  return { page, context, browser, host, control, inputs, operations, confirmed, inspect, create, translations: () => translations };
+  return { page, context, browser, host, inputs, operations, confirmed, inspect, create, translations: () => translations };
 }
 
 test('committed production browser captures both actual send paths and retains original A across confirmation, replacement, navigation and release', { timeout: 90_000 }, async t => {
@@ -177,44 +170,6 @@ test('actual browser release precedes a delayed submission and repeats lost unav
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_tombstones WHERE command_id=? AND actor_id=?').get(reference.command.clientCommandId, reference.ownerId).n), 1);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners WHERE command_id=?').get(reference.command.clientCommandId).n), 0);
   assert.equal(f.operations.length, 0); assert.equal(f.translations(), 0); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
-});
-
-test('32 actual A captures release on revocation and B can send before and after reload without adopting A', { timeout: 120_000 }, async t => {
-  const f = await setup(t), { page } = f, unavailable = [];
-  await page.route('**/api/v1', async route => { const request = route.request().postDataJSON(); if (request.op === 'frontend-binding' && request.action === 'unavailable') unavailable.push(request); await route.continue(); });
-  for (let index = 0; index < 32; index++) {
-    await f.create(); await draft(page, `Original principal ${index}`); await page.getByRole('button', { name: 'Send', exact: true }).click();
-    await wait(() => f.inputs.length === index + 1, 'original dispatch');
-  }
-  const originals = (await records(page)).flatMap(row => row.frontendSends ?? []), reference = originals[0];
-  assert.equal(originals.length, 32);
-  await page.getByRole('button', { name: 'Settings', exact: true }).click(); await page.getByLabel('Enable customizations', { exact: true }).uncheck();
-  assert.deepEqual(await page.evaluate(() => window.captureFixture.disposed), []);
-  f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(reference.ownerId));
-  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
-  await page.getByLabel('Pairing code').waitFor(); await wait(() => page.evaluate(() => window.captureFixture.disposed.length === 1), 'revoked owner disposal');
-  await page.getByLabel('Pairing code').fill((await f.control({ op: 'invite' })).code); await page.getByRole('button', { name: 'Pair host', exact: true }).click();
-  await wait(() => page.getByRole('button', { name: 'Reconnect', exact: true }).isEnabled(), 'new principal pairing');
-  for (const action of ['recover', 'unavailable']) {
-    const result = await page.evaluate(async request => (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(request) })).json(),
-      { op: 'frontend-binding', scope: reference.command.scope, id: reference.command.clientCommandId, action });
-    assert.equal(result.ok, false);
-  }
-  assert.equal(unavailable.length, 1, 'only the explicit forbidden probe attempts an old-owner tombstone');
-  assert.equal((await records(page)).flatMap(row => row.frontendSends ?? [])[0].ownerId, reference.ownerId);
-  assert.equal((await records(page)).flatMap(row => row.frontendSends ?? [])[0].state, 'unavailable-pending');
-  await page.getByLabel('Enable customizations', { exact: true }).check();
-  await f.create(); await draft(page, 'B after pairing'); await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await wait(() => f.inputs.length === 33, 'B captures after pairing');
-  await page.reload(); await connected(page);
-  await f.create(); await draft(page, 'B after reload'); await page.getByRole('button', { name: 'Send', exact: true }).click();
-  await wait(() => f.inputs.length === 34, 'B captures after reload');
-  const retained = (await records(page)).flatMap(row => row.frontendSends ?? []), ids = new Set(originals.map(row => row.command.clientCommandId));
-  assert.deepEqual(retained.filter(row => ids.has(row.command.clientCommandId)).map(({ command, ownerId }) => ({ command, ownerId })), originals.map(({ command, ownerId }) => ({ command, ownerId })));
-  assert.equal(unavailable.filter(request => ids.has(request.id)).length, 1, 'A notifications are limited to the deliberate forbidden probe');
-  assert.ok(retained.filter(row => !ids.has(row.command.clientCommandId)).every(row => row.ownerId !== reference.ownerId));
-  assert.equal(f.operations.length, 34); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
-  for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
 });
 
 for (const phase of ['admission', 'release']) test(`production browser ${phase} storage failure releases captures and blocks effects`, { timeout: 60_000 }, async t => {

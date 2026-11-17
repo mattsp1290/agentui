@@ -37,24 +37,6 @@ test('owner insertion failure rolls back pending event and every admission row',
   assert.equal((await f.client.conversation(scope).submit(offered(scope))).receipt.state.kind, 'completed');
 });
 
-test('multiple actor tombstones remain isolated before and after original owner admission', async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
-  const others = [await f.anotherClient(), await f.anotherClient()];
-  for (const other of others) assert.equal((await other.frontendBinding({ scope, id: 'shared', action: 'unavailable' })).reason, 'closures-unavailable');
-  for (const other of others) {
-    assert.equal((await other.frontendBinding({ scope, id: 'shared', action: 'recover' })).reason, 'closures-unavailable');
-    assert.equal((await other.conversation(scope).submit(offered(scope, 'shared'))).reason, 'frontend-closures-unavailable');
-  }
-  assert.equal((await f.client.frontendBinding({ scope, id: 'shared', action: 'recover' })).kind, 'pending');
-  assert.equal((await f.client.conversation(scope).submit(offered(scope, 'shared'))).receipt.state.kind, 'completed');
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners').get().n), 1);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_tombstones').get().n), 2);
-  for (const other of others) await unavailable(other.frontendBinding({ scope, id: 'shared', action: 'recover' }));
-  await f.restart([a]);
-  assert.equal((await f.client.frontendBinding({ scope, id: 'shared', action: 'recover' })).kind, 'bound');
-  assert.equal(a.calls.submits.length, 1);
-});
-
 async function localProviderHost(t, a, assertAuthorized = () => {}) {
   const registry = createProviderRegistry([{ ...a.value, authority: { credentials: {}, issue: () => ({ credential: null,
     expectedAuthority: 'remote-provider', assertAuthorized }), async close() {} } }]);

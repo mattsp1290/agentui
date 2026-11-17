@@ -3,7 +3,6 @@ import test from 'node:test';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createConnection } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright';
 import { startBrowserHost } from '../../apps/host/build/tsc/server.js';
@@ -50,21 +49,13 @@ for (const suspendedTranscript of [false, true]) test(`committed layout keeps se
   writeFileSync(executable, `#!${process.execPath}\nif (process.argv[2] === '--version') console.log('codex-cli 0.167.2'); else { process.argv = [process.execPath, 'fixture', ${JSON.stringify(log)}, 'images']; await import(${JSON.stringify(implementation)}); }\n`, { mode: 0o700 });
   host = await startBrowserHost({ agentStartup: { kind: 'provider', provider: { kind: 'codex', cwd: directory, executable } },
     directory, port: 0, hostArtifactDirectory: join(root, 'apps/host/dist'), assetsDirectory: join(custom.directory, 'browser') });
-  const control = op => new Promise((resolve, reject) => {
-    const socket = createConnection(join(directory, 'control.sock')); let output = '';
-    socket.once('error', reject); socket.once('connect', () => socket.end(JSON.stringify(op) + '\n'));
-    socket.on('data', part => { output += part; });
-    socket.once('end', () => { const value = JSON.parse(output); if (value.ok) resolve(value.value); else reject(new Error(value.error)); });
-  });
   browser = await chromium.launch();
   const page = await browser.newPage(); page.setDefaultTimeout(15_000);
   const operations = [], errors = [];
   page.on('pageerror', error => errors.push(error.message));
   page.on('request', request => { if (request.method() === 'POST' && request.url().includes('/api/')) operations.push({ path: new URL(request.url()).pathname, body: request.postDataJSON() }); });
   await page.goto(`${host.origin}/browser.html`);
-  await page.getByLabel('Pairing code').fill((await control({ op: 'invite' })).code);
-  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
-  await wait(() => page.getByRole('button', { name: 'New conversation', exact: true }).isEnabled(), 'paired fixture host');
+  await wait(() => page.getByRole('button', { name: 'New conversation', exact: true }).isEnabled(), 'connected fixture host');
   await page.getByRole('button', { name: 'New conversation', exact: true }).click(); await connected(page);
   const layoutTranscript = page.getByRole('main', { name: 'Layout transcript', exact: true });
   const transcriptRegion = layoutTranscript.getByRole('region', { name: 'Committed transcript', exact: true });
