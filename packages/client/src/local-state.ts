@@ -49,7 +49,7 @@ export function restore(value: unknown, scope: ConversationScope): LocalRecords 
   const outbox: OutboxEntry[] = input.outbox.map(value => {
     const entry = record(value, ['command', 'draftRevision']);
     const command = parseCommand(entry.command);
-    if (input.version !== 3 && (command.version !== 1 || (input.version === 1 && 'imageId' in command.body))) throw new Error('Unsupported historical local command');
+    if (input.version !== 3 && (command.version !== 1 || (input.version === 1 && 'imageId' in command.body))) throw new Error('Unsupported saved command version for this local format');
     if (!sameScope(command.scope, scope)) throw new Error('Outbox scope mismatch');
     if (ids.has(command.clientCommandId)) throw new Error('Duplicate outbox command ID');
     ids.add(command.clientCommandId);
