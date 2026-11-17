@@ -69,6 +69,22 @@ export type ProviderStoredCommand = MatchedProviderCommand & {
 export type OfferedStoredCommand = Extract<ProviderStoredCommand, { readonly command: OfferedCommand }>;
 export type StoredCommand = NativeStoredCommand | ProviderStoredCommand;
 export function isOffered(stored: StoredCommand): stored is OfferedStoredCommand { return stored.command.version === 2; }
+export type InstallationKind = 'native' | 'provider';
+/** How an earlier send in the same conversation affects a new send. */
+export type SendBlock = 'none' | 'blocked-reconcilable' | 'blocked-waiting';
+/**
+ * A native driver records an unknown outcome without freezing the conversation. A provider may still be running an
+ * uncertain send unless its stored observation is conclusive: the provider reported it finished and only local
+ * projection failed, so nothing remote remains to wait for.
+ */
+export function sendBlock(kind: InstallationKind, stored: StoredCommand): SendBlock {
+  const state = stored.receipt.state.kind;
+  if (kind === 'native') return state === 'pending' || state === 'accepted' ? 'blocked-waiting' : 'none';
+  if (state === 'pending') return isOffered(stored) ? 'blocked-reconcilable' : 'blocked-waiting';
+  if (state === 'accepted') return 'blocked-reconcilable';
+  if (state === 'uncertain') return stored.observation?.kind === 'conclusive' ? 'none' : 'blocked-reconcilable';
+  return 'none';
+}
 export interface HostBudgets {
   readonly maxCommandBytes: number;
   readonly maxEventBytes: number;

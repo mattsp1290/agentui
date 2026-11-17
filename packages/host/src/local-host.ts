@@ -194,7 +194,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const settleEndedSend = (scope: ConversationScope): void => {
     try {
       if (closed || store.projection !== (transcriptProjection as unknown)) return;
-      const stored = store.blockingSend(scope);
+      const stored = store.blockingSend(scope, 'provider')?.stored;
       if (!stored || !('kind' in stored) || isOffered(stored) || stored.receipt.state.kind !== 'accepted') return;
       const key = commandKey(scope, stored.command.clientCommandId);
       const run = stored.observation && 'evidence' in stored.observation ? stored.observation.evidence.source.run : null;
@@ -207,17 +207,17 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     } catch { /* A failed check leaves the receipt for explicit reconciliation. */ }
   };
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
-    const blocker = store.blockingSend(scope);
-    if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
-    if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
+    const found = store.blockingSend(scope, 'provider');
+    if (found?.block !== 'blocked-reconcilable' || dispatching.has(commandKey(scope, found.stored.command.clientCommandId))) return false;
+    const blocker = found.stored;
     const assertRequester = () => {
       store.frontendSends.authorize('settle', blocker, actor);
       authorized(scope);
     };
     assertRequester();
-    const receipt = await reconcileStored(blocker, assertRequester);
+    await reconcileStored(blocker, assertRequester);
     assertRequester();
-    return receipt.state.kind === 'completed' || receipt.state.kind === 'rejected';
+    return store.blockingSend(scope, 'provider') === null;
   };
   const host: LocalHost<E, P> = {
     imageInput,

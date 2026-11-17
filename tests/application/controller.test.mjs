@@ -512,6 +512,15 @@ test('a closed conversation refusal is shown as a sentence while SDK commands ke
   assert.equal(f.app.getSnapshot().error, 'This conversation ended. Start a new chat to keep going.');
 });
 
+test('a send refused behind an unconfirmed earlier send names the recovery actions while SDK commands keep the reason', async t => {
+  const f = await openCommands(t);
+  f.behavior.submit = async () => ({ kind: 'rejected', reason: 'send-awaiting-confirmation' });
+  assert.deepEqual(await f.actions.commands.send('behind an unconfirmed send'), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+  assert.equal(f.app.getSnapshot().error, 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
+    + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it, '
+    + 'or start a new chat if it stays unconfirmed.');
+});
+
 
 test('SDK busy refusal does not persist another command or release the running operation', async t => {
   const f = await openCommands(t), entered = deferred(), reply = deferred();

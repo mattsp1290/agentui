@@ -113,6 +113,49 @@ for (const row of providers) {
     assert.deepEqual(peer.effects(), none);
   });
 
+  test(`${row.name}: an uncertain send blocks a new send at the host until reconciliation settles it`, options, async t => {
+    const { subject, peer, f } = await setup(t, row);
+    const scope = await f.create(subject.namespace), port = f.client.conversation(scope), store = await f.store(scope);
+    await until(() => subject.subscriptions() === 1, 'provider subscription');
+    subject.loseSendReplies(true);
+    assert.equal((await port.submit(sendCommand(scope, 'lost-send', 'Lost reply'))).receipt.state.kind, 'uncertain');
+    subject.loseSendReplies(false);
+    const lookups = subject.counts.lookups;
+    assert.deepEqual(await port.submit(sendCommand(scope, 'behind-uncertain', 'Behind an uncertain send')),
+      { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+    assert.deepEqual(subject.effects(), { ...none, creates: 1, sends: 1 }, 'the refused send reaches no provider');
+    assert.equal(subject.counts.lookups - lookups, 1, 'the refusal looked up the earlier send once');
+    assert.equal((await port.receipt('lost-send')).state.kind, 'accepted');
+    await until(() => runOf(store)?.kind === 'running', 'run started');
+    subject.reply('Reply to the lost send');
+    await ended(store);
+    const admitted = await port.submit(sendCommand(scope, 'after-settled', 'After the earlier send settled'));
+    assert.equal(admitted.kind, 'receipt', JSON.stringify(admitted));
+    assert.equal((await port.receipt('lost-send')).state.kind, 'completed');
+    assert.deepEqual(subject.effects(), { ...none, creates: 1, sends: 2 });
+    assert.deepEqual(peer.effects(), none);
+  });
+
+  test(`${row.name}: a send that never reached the provider keeps its conversation blocked, and a new chat can send`, options, async t => {
+    const { subject, peer, f } = await setup(t, row);
+    const scope = await f.create(subject.namespace), port = f.client.conversation(scope);
+    await until(() => subject.subscriptions() === 1, 'provider subscription');
+    subject.dropSends(true);
+    assert.equal((await port.submit(sendCommand(scope, 'never-sent', 'Never reached the provider'))).receipt.state.kind, 'uncertain');
+    subject.dropSends(false);
+    assert.deepEqual(subject.effects(), { ...none, creates: 1 });
+    assert.equal((await f.client.reconcile(scope, 'never-sent')).state.kind, 'uncertain', 'a missing record is not proof of nonacceptance');
+    assert.deepEqual(await port.submit(sendCommand(scope, 'behind-unknown', 'Behind an unknown send')),
+      { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+    assert.equal((await port.receipt('never-sent')).state.kind, 'uncertain');
+    const fresh = await f.create(subject.namespace);
+    await until(() => subject.subscriptions() === 2, 'second provider subscription');
+    const admitted = await f.client.conversation(fresh).submit(sendCommand(fresh, 'new-chat', 'In a new chat'));
+    assert.equal(admitted.kind, 'receipt', JSON.stringify(admitted));
+    assert.deepEqual(subject.effects(), { ...none, creates: 2, sends: 1 });
+    assert.deepEqual(peer.effects(), none);
+  });
+
   if (row.supports.cancel) {
     test(`${row.name}: cancel reaches the provider once`, options, async t => {
       const { subject, peer, f } = await setup(t, row);
