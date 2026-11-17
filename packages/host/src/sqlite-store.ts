@@ -25,7 +25,7 @@ import type { HostBudgets, HostOutput, Installation, StoredCommand } from './dur
 import { scopeKey as key } from './durable-model.js';
 
 type AdmissionTarget =
-  | { readonly kind: 'provider'; readonly installation: ProviderInstallation; readonly command: ClientCommand }
+  | { readonly kind: 'provider'; readonly installation: ProviderInstallation }
   | { readonly kind: 'native'; readonly installation: Installation; readonly command: V1Command };
 type Observation = NonNullable<StoredCommand['observation']>;
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
@@ -339,7 +339,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
       let admissionTarget: AdmissionTarget;
-      if ('kind' in installed) admissionTarget = { kind: 'provider', installation: installed, command };
+      if ('kind' in installed) admissionTarget = { kind: 'provider', installation: installed };
       else if (command.version === 1) admissionTarget = { kind: 'native', installation: installed, command };
       else return { kind: 'rejected', reason: 'frontend-offers-unsupported' };
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
@@ -373,10 +373,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       let stored: StoredCommand;
       let providerPending: ProviderDecision | null = null;
       if (admissionTarget.kind === 'provider') {
-        const installed = admissionTarget.installation;
+        const providerInstallation = admissionTarget.installation;
         const original = this.creation(scope);
         if (!original || original.observation?.kind !== 'confirmed' || !captureProvider ||
-          canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
+          canonicalJson(original.installation) !== canonicalJson(providerInstallation)) throw new AdmissionError('provider-creation-unavailable');
         let action: ProviderAction;
         if (command.body.kind === 'revoke-permission') action = command.body;
         else if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text,
@@ -385,12 +385,12 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           if (command.body.kind === 'approve') {
             const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);
             if (!row || row.status !== 'open') throw new AdmissionError('decision-unavailable');
-            providerPending = providerDecision(json(row.data), original.observation.binding, installed);
+            providerPending = providerDecision(json(row.data), original.observation.binding, providerInstallation);
           }
           const runId = command.body.kind === 'cancel' ? command.body.runId : providerPending?.visible.runId;
           const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId ?? '');
           if (!row) throw new AdmissionError('unknown-run');
-          const saved = object(json(row.data)), run = providerRun(saved.reference, original.observation.binding, installed);
+          const saved = object(json(row.data)), run = providerRun(saved.reference, original.observation.binding, providerInstallation);
           if (canonicalJson(saved) !== canonicalJson(run) || run.identity.runId !== runId) throw new AdmissionError('provider-run-mismatch');
           if (command.body.kind === 'cancel') action = { kind: 'cancel', run: run.reference };
           else {
@@ -403,7 +403,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         try { capture = matchProviderCommand(parseProviderCapture(captureProvider(original, operation, action), scope), command); }
         catch { throw new AdmissionError('provider-command-unavailable'); }
         const target = capture.target;
-        if (canonicalJson(target.installation) !== canonicalJson(installed) || canonicalJson(target.credential) !== canonicalJson(original.credential) ||
+        if (canonicalJson(target.installation) !== canonicalJson(providerInstallation) || canonicalJson(target.credential) !== canonicalJson(original.credential) ||
           canonicalJson(target.operation.binding) !== canonicalJson(original.observation.binding) || target.operation.operationId !== operation) throw new AdmissionError('provider-target-mismatch');
         const encodedTarget = canonicalJson(target);
         if (Buffer.byteLength(encodedTarget) > this.limits.maxCommandBytes) throw new AdmissionError('command-too-large');
