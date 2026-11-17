@@ -1,0 +1,42 @@
+# Persisted text reports
+
+This in-process SDK 0.9 example registers a normal server extension. Each accepted send produces `response.txt` containing exactly its valid UTF-8 request text. Use Node 24 and build the workspace before importing it.
+
+Set `AGENTUI_REPORT_DATABASE` to an absolute path in an existing private directory. The report provider owns this SQLite database exclusively until it closes. Keep it separate from the LocalHost database. The example needs no provider credentials.
+
+```js
+import { randomUUID } from 'node:crypto';
+import { openReportExample } from '@agentui/example-generated-text-output';
+
+process.env.AGENTUI_REPORT_DATABASE = '/private/reports.sqlite';
+const example = await openReportExample({
+  hostPath: '/private/host.sqlite',
+  scope: { hostId: 'my-host', conversationId: 'reports' },
+});
+try {
+  await example.send('A report.\n', randomUUID());
+  const listing = await example.outputs();
+  if (listing.kind === 'available') {
+    for (const output of listing.outputs) {
+      const result = await example.read(output.outputId);
+      if (result.kind === 'available') console.log(new TextDecoder().decode(result.bytes));
+    }
+  }
+} finally {
+  await example.close();
+}
+```
+
+The consumer loads the installed server entry with `loadServerExtension`, discovers its provider, creates the conversation through LocalHost, and uses the public output APIs. Reopen with the same database paths and logical scope to recover the original creation, receipts and output IDs. Reusing a command ID with changed text conflicts. Empty ordinary host sends remain rejected.
+
+The provider retains the latest 32 payloads per conversation. Its immutable receipts outlive eviction. Exact submit replay and reconciliation return the original completed run without encoding, restoring bytes or changing retention. Reads never generate bytes. Valid provider outputs can contain zero through 65,536 UTF-8 bytes; LocalHost command size limits still apply to ordinary sends.
+
+Creation refuses contexts whose complete 32-descriptor listing could exceed the host's 65,536-byte limit. Admission measures canonical UTF-8 bytes, including escaped scope characters, UUID references and maximum-payload metadata. Every accepted conversation can retain and list all 32 payloads. Startup enforces the same restriction without migrating existing storage.
+
+One transaction admits capacity, encodes text, publishes bytes, evicts old payloads and persists the completed receipt. The provider confirms only after commit. Limits are 128 creations, 4,096 total receipts, 73,728 canonical request bytes per receipt, 16,384 canonical reply bytes per receipt and 64 MiB of combined request/reply bytes. Admission reserves a full 16,384-byte reply before encoding. Historical replay works at capacity. Capacity has no automatic cleanup or receipt deletion.
+
+Startup rejects incompatible schemas or malformed persisted rows. This example has no migrations or recovery repair. Close the owner before inspecting its database. Keep database files private because requests and report bytes are stored as plaintext.
+
+Run the focused checks after building with `node --test examples/generated-text-output/tests/*.test.mjs`. Capacity tests label directly seeded historical rows as fixtures. Fault tests inject failure after SQL eviction and after commit; they do not simulate a power failure. The packed test copies five exact first-party package archives and the third-party packages used by this runtime into an isolated consumer. It verifies that the final run resolves no files from the checkout. It does not claim an npm installation of the complete declared dependency closure.
+
+HTTP/client transport, browser download, native Save and external backend outputs are separate work.
