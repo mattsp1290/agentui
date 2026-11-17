@@ -173,7 +173,7 @@ test('Crew lost submit remains original-only GET recovery and does not turn miss
   assert(remote.calls.some(call => call.method === 'GET' && call.path.endsWith(before[0].input.requestId)));
 });
 
-async function direct(remote) {
+async function connected(remote) {
   const { value } = remote.extension(), installation = value.installations[0];
   let provider, presentation;
   await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
@@ -181,7 +181,12 @@ async function direct(remote) {
   const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
     credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
   assert.equal(result.kind, 'connected');
-  const backend = result.backend, operation = { kind: 'create', operationId: randomUUID(), scope: { hostId: 'test-host', conversationId: 'chat' },
+  return { backend: result.backend, presentation, installation };
+}
+
+async function direct(remote) {
+  const { backend, presentation } = await connected(remote);
+  const operation = { kind: 'create', operationId: randomUUID(), scope: { hostId: 'test-host', conversationId: 'chat' },
     agent: (await backend.discover()).agents[0].ref };
   const created = await backend.create(operation);
   assert.equal(created.kind, 'confirmed');
@@ -191,15 +196,9 @@ async function direct(remote) {
 test('Crew discovery resolves a member that declares named subagents', async t => {
   const remote = await service(t, { subagents: { mode: 'named', targets: [{ role: 'analyst', engine: 'claude', profile: 'review',
     model: 'claude-test', providerHost: 'api.example.test', accountDigest: 'a'.repeat(64), availability: 'executable' }] } });
-  const { value } = remote.extension(), installation = value.installations[0];
-  let provider;
-  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend) { provider = backend; } },
-    credentials: { use: (_request, action) => action('private-crew-test') } });
-  const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
-    credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
-  assert.equal(result.kind, 'connected');
-  t.after(() => result.backend.close());
-  assert.deepEqual(await result.backend.discover(), { kind: 'available', agents: [
+  const { backend, installation } = await connected(remote);
+  t.after(() => backend.close());
+  assert.deepEqual(await backend.discover(), { kind: 'available', agents: [
     { ref: { instance: installation.instance, kind: 'agent', opaqueId: memberId }, name: 'Crew · codex · test' }] });
   assert.equal(remote.calls.filter(call => call.path === '/v1/members').length, 1);
 });
