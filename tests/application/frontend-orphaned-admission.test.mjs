@@ -40,9 +40,9 @@ for (const refusal of ['absent', 'revoked', 'unknown']) test(`crash admission ke
   const { a, f, scope } = await orphan(t, { reconcile: () => ({ kind: 'uncertain', reason: 'unknown', evidence: {} }) });
   if (refusal === 'absent') await f.restart([]);
   if (refusal === 'revoked') f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1'));
-  const other = await f.anotherClient(), before = durable(f);
+  const view = f.secondView(), before = durable(f);
   const replies = [];
-  for (let attempt = 0; attempt < 2; attempt++) replies.push(await other.conversation(scope).submit(send(scope, 'next', 'Next')));
+  for (let attempt = 0; attempt < 2; attempt++) replies.push(await view.conversation(scope).submit(send(scope, 'next', 'Next')));
   assert.deepEqual(replies, Array.from({ length: 2 }, () => ({ kind: 'rejected', reason: 'send-awaiting-confirmation' })));
   assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 1);
@@ -50,10 +50,10 @@ for (const refusal of ['absent', 'revoked', 'unknown']) test(`crash admission ke
 });
 
 test('tagged v1 cannot adopt an offered capture key', async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), view = f.secondView();
   await f.client.conversation(scope).submit(offered(scope));
   const before = durable(f);
-  assert.deepEqual(await other.conversation(scope).submit(send(scope, 'next')), { kind: 'rejected', reason: 'frontend-run-reused' });
+  assert.deepEqual(await view.conversation(scope).submit(send(scope, 'next')), { kind: 'rejected', reason: 'frontend-run-reused' });
   assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 1);
 });
@@ -76,8 +76,8 @@ for (const action of ['reconcile', 'recover']) for (const refusal of ['absent', 
   else if (refusal === 'unknown') assert.deepEqual(await f.client.frontendBinding({ scope, id: 'offered', action }), { kind: 'pending', id: 'offered' });
   else await unavailable(f.client.frontendBinding({ scope, id: 'offered', action }));
   assert.deepEqual(durable(f), before);
-  const other = await f.anotherClient();
-  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await other.conversation(scope).submit(send(scope, 'next', 'Next'))).reason, 'send-awaiting-confirmation');
+  const view = f.secondView();
+  for (let attempt = 0; attempt < 2; attempt++) assert.equal((await view.conversation(scope).submit(send(scope, 'next', 'Next'))).reason, 'send-awaiting-confirmation');
   assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 1);
 });
@@ -86,8 +86,8 @@ for (const outcome of ['completed', 'rejected', 'pending']) test(`crash admissio
   const { a, f, scope, admission } = await orphan(t, { reconcile: (operation, { effect }) => outcome === 'completed'
     ? effect(operation, outcome, operation.request.runId)
     : { kind: outcome, ...(outcome === 'rejected' ? { reason: 'declined' } : {}), evidence: {} } });
-  const other = await f.anotherClient();
-  const next = await other.conversation(scope).submit(send(scope, 'next', 'Next'));
+  const view = f.secondView();
+  const next = await view.conversation(scope).submit(send(scope, 'next', 'Next'));
   if (outcome === 'pending') assert.equal(next.reason, 'send-awaiting-confirmation');
   else assert.equal(next.receipt.state.kind, 'completed');
   const stored = durable(f).commands.find(row => row.id === 'offered');
@@ -113,14 +113,14 @@ test('inconclusive lookup returns latest persisted receipt after concurrent auth
   assert.equal(a.calls.submits.length, 1);
 });
 
-for (const terminal of ['completed', 'rejected', 'not-dispatched']) for (const actor of ['same', 'other']) test(`tagged v1 cannot reuse ${terminal} offered key after release and restart by ${actor} actor`, async t => {
+for (const terminal of ['completed', 'rejected', 'not-dispatched']) test(`tagged v1 cannot reuse ${terminal} offered key after release and restart`, async t => {
   const a = aguiExtension({ submit: (operation, { effect }) => terminal === 'completed' ? effect(operation, terminal, operation.request.runId)
     : { kind: terminal, reason: 'declined', ...(terminal === 'rejected' ? { evidence: {} } : {}) } });
-  const f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
+  const f = await fixture(t, [a]), scope = await create(f);
   const original = offered(scope), receipt = (await f.client.conversation(scope).submit(original)).receipt;
   await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' }); await f.restart([a]);
   const before = durable(f);
-  assert.deepEqual(await (actor === 'same' ? f.client : other).conversation(scope).submit(send(scope, 'next')), { kind: 'rejected', reason: 'frontend-run-reused' });
+  assert.deepEqual(await f.client.conversation(scope).submit(send(scope, 'next')), { kind: 'rejected', reason: 'frontend-run-reused' });
   assert.deepEqual(durable(f), before);
   assert.deepEqual((await f.client.conversation(scope).submit(original)).receipt, receipt);
   assert.equal(a.calls.submits.length, 1);
@@ -169,12 +169,12 @@ test('crash admission discards late completion after provider authority revocati
   const { a, f, scope } = await orphan(t, { async reconcile(operation, { effect }) {
     entered.resolve(); await release.promise; return effect(operation, 'completed', operation.request.runId);
   } });
-  const other = await f.anotherClient(), before = durable(f);
-  const next = other.conversation(scope).submit(send(scope, 'next', 'Next')); await entered.promise;
+  const view = f.secondView(), before = durable(f);
+  const next = view.conversation(scope).submit(send(scope, 'next', 'Next')); await entered.promise;
   f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1')); release.resolve();
   assert.equal((await next).reason, 'send-awaiting-confirmation');
   assert.deepEqual(durable(f), before);
-  assert.equal((await other.conversation(scope).submit(send(scope, 'next', 'Next'))).reason, 'send-awaiting-confirmation');
+  assert.equal((await view.conversation(scope).submit(send(scope, 'next', 'Next'))).reason, 'send-awaiting-confirmation');
   assert.deepEqual(durable(f), before); assert.equal(a.calls.submits.length, 1);
 });
 

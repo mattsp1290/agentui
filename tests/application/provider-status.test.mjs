@@ -100,7 +100,6 @@ test('browser chooser lists an offline provider as a disabled choice with its fi
   const f = await fixture(t, [extension, healthy()]);
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  await context.addCookies([{ name: f.cookie.split('=')[0], value: f.cookie.split('=')[1], url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000);
   await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: /^Harness,/ }).click();

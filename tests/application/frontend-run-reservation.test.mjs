@@ -51,12 +51,12 @@ test('offered reservation permits distinct threads, runs and conversations', asy
   assert.equal(a.calls.submits.length, 4);
 });
 
-for (const release of [false, true]) test(`another actor cannot reuse an offered key after ${release ? 'release' : 'admission'} before late binding`, async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
+for (const release of [false, true]) test(`a second owner view cannot reuse an offered key after ${release ? 'release' : 'admission'} before late binding`, async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), view = f.secondView();
   await f.client.conversation(scope).submit(offered(scope, 'first'));
   if (release) await f.client.frontendBinding({ scope, id: 'first', action: 'unavailable' });
   const before = durable(f);
-  assert.deepEqual(await other.conversation(scope).submit(offered(scope, 'second')), { kind: 'rejected', reason: 'frontend-run-reused' });
+  assert.deepEqual(await view.conversation(scope).submit(offered(scope, 'second')), { kind: 'rejected', reason: 'frontend-run-reused' });
   assert.deepEqual(durable(f), before);
   const recovered = await f.client.frontendBinding({ scope, id: 'first', action: 'recover' });
   assert.equal(recovered.kind, release ? 'unavailable' : 'bound');

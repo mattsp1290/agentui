@@ -203,6 +203,24 @@ test('real client applies a feed page before ACK and the host retains lost repli
   assert.equal((await feed.ended).kind, 'closed');
 });
 
+test('an open HTTP pull stays pending while another request completes', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  const scope = { hostId: f.hostId, conversationId: 'open-pull' };
+  await f.ok({ op: 'create', agentId: recordedAgentId, scope });
+  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 4 });
+  const first = await f.ok({ op: 'pull', feedId, ack: null });
+  let settled = false;
+  const pending = f.begin({ op: 'pull', feedId, ack: first.page });
+  void pending.response.then(() => { settled = true; }, () => { settled = true; });
+  await pending.sent;
+  assert.equal((await f.ok({ op: 'metadata' })).hostId, f.hostId);
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }), [{ scope, preview: null }]);
+  assert.equal(settled, false);
+  const response = await pending.response;
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.ok, true);
+});
+
 test('fixed-port process restart preserves device identity, catalog and evidence with one acceptance on exact-ID retry', { timeout: 20_000 }, async t => {
   const f = await fixture(t), alice = await f.client();
   const origin = f.origin, hostId = f.hostId;
