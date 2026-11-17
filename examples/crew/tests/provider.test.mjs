@@ -19,28 +19,20 @@ test('Crew public entry creates, observes actual SSE text, approves, stops and r
   const creation = f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations').get().original));
   assert.equal(conversationId, creation.intent.operationId);
   assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
-  const [requestId, receipt] = [...remote.receipts][0], conversation = remote.conversations.get(conversationId);
+  const [requestId] = [...remote.receipts][0];
   await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
-  const card = { conversationId, memberId, requestId, invocationId: requestId, approvalId: randomUUID(), version: 1,
-    toolName: 'record_work_item', argumentsComplete: true, summary: 'Record one work item', choices: ['approve', 'deny'] };
-  conversation.messages.push({ id: 'tool-message', role: 'assistant', content: '', toolCalls: [{ id: card.approvalId, type: 'function', function: { name: 'record_work_item', arguments: JSON.stringify({ operation_id: requestId }) } }] });
-  conversation.state.pendingApprovals = [card]; remote.emit(conversationId);
+  const card = remote.pend(conversationId);
   await until(() => saved(f).decisions.length === 1);
   const decision = JSON.parse(saved(f).decisions[0].data);
   const result = await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'approve',
     body: { kind: 'approve', pendingId: decision.visible.pendingId, choiceId: decision.choices[0].id } });
   assert.equal(result.receipt.state.kind, 'completed');
   assert.equal(remote.calls.find(call => call.path.endsWith('/human')).input.requestId, requestId);
-  conversation.state.pendingApprovals = []; remote.emit(conversationId);
+  remote.withdraw(conversationId, card.approvalId);
   const runId = JSON.parse(saved(f).conversation.document).domain.currentRun.runId;
   const stopped = await f.client.conversation(scope).submit({ version: 1, scope, clientCommandId: 'stop', body: { kind: 'cancel', runId } });
   assert.equal(stopped.receipt.state.kind, 'accepted');
-  remote.emit(conversationId, [{ type: 'TEXT_MESSAGE_START', messageId: `${requestId}/item/0`, role: 'assistant' },
-    { type: 'TEXT_MESSAGE_CONTENT', messageId: `${requestId}/item/0`, delta: 'Public Crew reply' },
-    { type: 'TEXT_MESSAGE_END', messageId: `${requestId}/item/0` }]);
-  conversation.messages.push({ id: `${requestId}/item/0`, role: 'assistant', content: 'Public Crew reply' });
-  receipt.status = 'completed'; receipt.result = { text: 'Public Crew reply' }; remote.receipts.set(requestId, receipt);
-  conversation.state.phase = 'idle'; remote.emit(conversationId);
+  remote.reply(conversationId, 'Public Crew reply');
   await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.outcome === 'completed');
   const before = JSON.parse(saved(f).checkpoint.data).cursor;
   await f.restart([remote.extension()]);

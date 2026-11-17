@@ -157,11 +157,37 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
       stream.response.end();
     }
   }
+  const latestRequest = conversation => conversation.messages.filter(message => message.role === 'user').at(-1).id;
+  /** Completes the latest request with one streamed assistant message, the way Crew settles a finished turn. */
+  function reply(conversationId, text) {
+    const conversation = conversations.get(conversationId), requestId = latestRequest(conversation), messageId = `${requestId}/item/0`;
+    emit(conversationId, [{ type: 'TEXT_MESSAGE_START', messageId, role: 'assistant' },
+      { type: 'TEXT_MESSAGE_CONTENT', messageId, delta: text }, { type: 'TEXT_MESSAGE_END', messageId }]);
+    conversation.messages.push({ id: messageId, role: 'assistant', content: text });
+    receipts.set(requestId, { ...receipts.get(requestId), status: 'completed', result: { text } });
+    conversation.state.phase = 'idle'; emit(conversationId);
+  }
+  /** Raises one `record_work_item` approval card on the latest request, with its complete tool call, and returns it. */
+  function pend(conversationId, overrides = {}) {
+    const conversation = conversations.get(conversationId), requestId = overrides.requestId ?? latestRequest(conversation);
+    const card = { conversationId, memberId, requestId, invocationId: requestId, approvalId: randomUUID(), version: 1,
+      toolName: 'record_work_item', argumentsComplete: true, summary: 'Record one work item', choices: ['approve', 'deny'], ...overrides };
+    conversation.messages.push({ id: `${card.approvalId}/call`, role: 'assistant', content: '', toolCalls: [{ id: card.approvalId,
+      type: 'function', function: { name: card.toolName, arguments: JSON.stringify({ operation_id: card.requestId }) } }] });
+    conversation.state.pendingApprovals = [card];
+    emit(conversationId);
+    return card;
+  }
+  function withdraw(conversationId, approvalId) {
+    const conversation = conversations.get(conversationId);
+    conversation.state.pendingApprovals = conversation.state.pendingApprovals.filter(row => row.approvalId !== approvalId);
+    emit(conversationId);
+  }
   const origin = `http://127.0.0.1:${server.address().port}`;
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => token } }] } });
-  return { origin, token, calls, streams, conversations, receipts, details, emit, end, extension, grants, handoffs, commitHandoff, admit,
+  return { origin, token, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants, handoffs, commitHandoff, admit,
     replyHandoffs(...replies) { handoffReplies.push(...replies); },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },

@@ -331,13 +331,18 @@ test('original fixed grants are required for explicit retry of a grant mismatch'
   await host.stop();
 });
 
-test('an actual archived v1 bundled reader refuses database format 6 before importing', { timeout: 120000, skip: !process.env.AGENTUI_OLD_SELECTION_CLI }, async t => {
+test('an actual archived v1 bundled reader refuses database format 7 before importing', { timeout: 120000, skip: !process.env.AGENTUI_OLD_SELECTION_CLI }, async t => {
   const f = await fixture(t);
   let host = f.launch(); await host.ready; await f.select('build-b', 0); await host.stop();
   const imported = await readFile(f.marker, 'utf8');
   assert.equal(f.database(db => db.prepare('SELECT count(*) AS n FROM conversations').get().n), 0);
   assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 8);
   assert.equal(f.database(db => db.prepare('SELECT version FROM service_extension_selection_schema').get().version), 2);
+  // The archived access schema must pass before its conversation format guard can run.
+  f.database(db => db.exec(`UPDATE service_schema SET version=1 WHERE singleton=1;
+    CREATE TABLE service_devices (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
+      credential_class TEXT NOT NULL CHECK(credential_class IN ('browser-development','native')), expires INTEGER NOT NULL,
+      policy TEXT NOT NULL CHECK(policy='owner'), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)));`));
   const database = join(f.directory, 'host.sqlite'), before = await readFile(database);
   host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI, process.env.AGENTUI_OLD_SELECTION_ASSETS);
   const refused = await host.exited;
