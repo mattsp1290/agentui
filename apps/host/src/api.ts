@@ -28,11 +28,11 @@ export function createApi(options: {
   const selection = options.agentSelection;
   const configured = selection.kind === 'native' ? selection.agents : [];
   const agents = () => new Map(configured.map(entry => {
-    const descriptor = describeAgent(entry.installation, entry.availability, entry.model);
+    const descriptor = describeAgent(entry.installation, entry.availability, host.imageInput(entry.installation), entry.model);
     return [canonicalJson(entry.installation), { ...descriptor, label: entry.name ? `${entry.name} · ${descriptor.label}` : descriptor.label }];
   }));
-  const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability).id));
-  const nativeDefault = selection.kind === 'native' ? describeAgent(selection.defaultInstallation, { kind: 'ready' }).id : null;
+  const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability, host.imageInput(entry.installation)).id));
+  const nativeDefault = selection.kind === 'native' ? describeAgent(selection.defaultInstallation, { kind: 'ready' }, host.imageInput(selection.defaultInstallation)).id : null;
   if (agents().size !== configured.length || (nativeDefault !== null && !selectable.has(nativeDefault))) throw new Error('Invalid configured agents');
   function requestScope(request: ServiceRequest): ConversationScope | null {
     switch (request.op) {
@@ -51,7 +51,7 @@ export function createApi(options: {
       const installation: ProviderInstallation = { kind: 'provider', contributionId: provider.contributionId,
         instance: provider.instance, agent, presentationVersion: 1, expectedAuthority: provider.expectedAuthority };
       const descriptor = describeProviderAgent(installation, provider.capabilities.create ? { kind: 'ready' }
-        : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, provider.capabilities.reconcile ? [
+        : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, host.imageInput(installation), provider.capabilities.reconcile ? [
           ...(provider.capabilities.send ? ['send' as const] : []), ...(provider.capabilities.cancel ? ['cancel' as const] : []),
           ...(provider.capabilities.decide ? ['approve' as const] : []),
         ] : [], provider.frontendOffers);
@@ -60,14 +60,14 @@ export function createApi(options: {
   }
   function describe(installation: ConversationInstallation, providerAgents: ReturnType<typeof providerChoices>) {
     if ('kind' in installation) {
-      const choice = providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor;
+      const choice = providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }, host.imageInput(installation)).id)?.descriptor;
       if (choice) return choice;
       const status = options.providers?.statusOf(installation);
       return describeProviderAgent(installation, { kind: 'unavailable',
-        reason: status?.kind === 'unavailable' ? providerUnavailableReasons[status.cause] : 'This conversation’s provider is no longer configured.' });
+        reason: status?.kind === 'unavailable' ? providerUnavailableReasons[status.cause] : 'This conversation’s provider is no longer configured.' }, host.imageInput(installation));
     }
     return agents().get(canonicalJson(installation)) ?? describeAgent(installation,
-      { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
+      { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' }, host.imageInput(installation));
   }
   async function apply(principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> {
     const actor = { id: principal.id, platform: 'desktop' as const,
@@ -83,7 +83,7 @@ export function createApi(options: {
         const { choices: providerAgents, unavailable } = providerCatalog();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
           descriptor.availability.kind === 'ready' && (selected === null || descriptor.id < selected) ? descriptor.id : selected, null);
-        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(describeUnavailableProvider)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(provider => describeUnavailableProvider(provider, host.imageInput(null)))], defaultAgentId } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
@@ -101,7 +101,7 @@ export function createApi(options: {
         const original = host.creation(request.scope);
         const provider = original?.installation ?? providerAgents.get(request.agentId)?.installation;
         if (provider) {
-          if (describeProviderAgent(provider, { kind: 'ready' }).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
+          if (describeProviderAgent(provider, { kind: 'ready' }, host.imageInput(provider)).id !== request.agentId) throw new ServiceError('invalid', 'Conversation already belongs to another agent.');
           if (original?.observation?.kind === 'confirmed') return request.scope;
           if (original?.observation?.kind === 'rejected' || original?.observation?.kind === 'not-dispatched') {
             throw new ServiceError('create-rejected', 'The provider did not create this conversation. You can start a new conversation.');

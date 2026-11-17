@@ -53,6 +53,9 @@ export class FrontendSends {
     if (owner.run.threadId !== stored.agui.threadId || owner.run.runId !== stored.agui.runId) throw new FrontendAccessError('frontend-owner-corrupt');
     return owner;
   }
+  observationState(stored: OfferedStoredCommand): 'available' | 'unavailable' {
+    return this.admittedOwner(stored).state;
+  }
   ownerState(target: Identity | OfferedStoredCommand, value: FrontendSendActor | undefined): OwnerState {
     const actor = assertFrontendSendActor(value);
     const owner = 'command' in target ? this.admittedOwner(target) : this.owner(target);

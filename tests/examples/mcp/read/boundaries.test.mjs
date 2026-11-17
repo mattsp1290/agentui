@@ -8,7 +8,7 @@ import { compatibility, connect, data, listen } from './support.mjs';
 
 const identity = { hostId: 'host-a', principalId: 'trusted-owner' };
 const metadata = { ...identity, compatibility, agents: [{ id: 'agent-a', label: 'Recorded', runtime: compatibility.nativeRuntime,
-  frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } }], defaultAgentId: 'agent-a' };
+  imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } }], defaultAgentId: 'agent-a' };
 const scope = { hostId: identity.hostId, conversationId: 'conversation-a' };
 const snapshot = () => ({ kind: 'page', page: 1, item: { kind: 'snapshot', snapshot: { scope,
   projectionVersion: transcriptProjection.version, cursor: 0, document: { domain: { messages: [], currentRun: null }, receipts: {}, decisions: {} } } } });

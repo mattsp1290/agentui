@@ -1,3 +1,7 @@
+import { parseProviderObservations } from './provider-observations.js';
+import type { ObservationMapper, ProviderObservations } from './provider-observations.js';
+import type { AguiOriginalRun } from '@agentui/sdk';
+import type { FrontendObservations, PreparedProviderObservations } from './frontend-observations.js';
 import { canonicalJson, copyJson, parseDecision } from '@agentui/contracts';
 import type { Json, PendingDecision, ObservationStopReason } from '@agentui/contracts';
 import { count, identifier, record } from '@agentui/contracts/decode';
@@ -46,9 +50,13 @@ export interface ProviderChange {
     | { readonly kind: 'events'; readonly events: readonly TranscriptEvent[] };
 }
 export interface ProviderStreamStore {
+  hasFrontendObservations?(scope: ProviderCreation['intent']['scope']): boolean;
+  prepareProviderObservations?<I extends string>(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
+    factory: typeof FrontendObservations, describe: (original: AguiOriginalRun<string>) => AguiOriginalRun<I>, map: (originals: readonly AguiOriginalRun<I>[]) => ProviderObservations):
+    { readonly kind: 'duplicate'; readonly checkpoint: ProviderCheckpoint } | { readonly kind: 'prepared'; readonly value: PreparedProviderObservations };
   providerCheckpoint(original: ProviderCreation): ProviderCheckpoint | null;
   commitProvider(original: ProviderCreation, expected: number | null,
-    event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange): ProviderCheckpoint;
+    event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange, prepared?: PreparedProviderObservations): ProviderCheckpoint;
 }
 export interface ProviderStream { close(): void; readonly drained: Promise<ObservationStopReason | 'closed'> }
 export class ObservationFailure extends Error {
@@ -66,7 +74,9 @@ export function providerCheckpoint(value: unknown): ProviderCheckpoint {
 
 export async function observeProvider<M extends ProviderModel, I extends string>(connected: ConnectedProvider<M, I>,
   presentation: ProviderPresentation<M, I>, original: ProviderCreation, binding: ProviderConversation<I>,
-  authorize: () => void, store: ProviderStreamStore, freshSnapshot = false): Promise<ProviderStream> {
+  authorize: () => void, store: ProviderStreamStore, freshSnapshot = false, observations?: ObservationMapper<M, I>): Promise<ProviderStream> {
+  const observationFactory = observations || store.hasFrontendObservations?.(original.intent.scope)
+    ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
   const storedBinding = creationBinding(binding, original.intent, original.installation);
   let committed: ProviderCheckpoint | null;
   try { committed = store.providerCheckpoint(original); }
@@ -103,6 +113,25 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     record(item, item.kind === 'snapshot' ? ['kind', 'snapshot'] : ['kind', 'cursor', 'eventId', 'event']);
     const event = item.kind === 'event' ? { id: identifier(item.eventId), payload: canonicalJson(item) } : null;
     const revision = committed?.revision ?? null;
+    let prepared: { kind: 'snapshot'; state: M['state'] } | { kind: 'event'; event: M['event'] } | undefined;
+    const mapped = observationFactory ? store.prepareProviderObservations?.(original, event, observationFactory,
+      value => ({ ...value, run: { binding, ref: { ...value.run.ref, instance: binding.creation.agent.instance } } }), originals => {
+      if (!observations) return { kind: 'absent' };
+      let mapped: unknown;
+      if (item.kind === 'snapshot') {
+        const input = record(item.snapshot, ['binding', 'cursor', 'projectionVersion', 'state', 'decisions']);
+        prepared = { kind: 'snapshot', state: decode(presentation.decodeState, input.state) };
+        mapped = observations.snapshot(structuredClone(prepared.state), structuredClone(originals));
+      } else {
+        prepared = { kind: 'event', event: decode(presentation.decodeEvent, item.event) };
+        mapped = observations.event(structuredClone(prepared.event));
+      }
+      const parsed: ProviderObservations = prepared.kind === 'snapshot' ? { kind: 'snapshot', value: mapped, binding: storedBinding }
+        : parseProviderObservations(mapped, storedBinding, original.installation);
+      ensureRunning();
+      return parsed;
+    }) : undefined;
+    if (mapped?.kind === 'duplicate') { committed = mapped.checkpoint; restore(); return false; }
     committed = store.commitProvider(original, revision, event, () => {
       const runs = new Map<string, ProviderRun>();
       const run = (value: unknown) => {
@@ -117,7 +146,7 @@ export async function observeProvider<M extends ProviderModel, I extends string>
         if (canonicalJson(input.binding) !== canonicalJson(binding) || !Array.isArray(input.decisions)) throw new Error('Foreign provider snapshot');
         const projectionVersion = count(input.projectionVersion);
         if (projectionVersion < 1 || (committed && committed.projectionVersion !== projectionVersion)) throw new Error('Incompatible provider projection');
-        const state = decode(presentation.decodeState, input.state), nextCursor = cursor(input.cursor);
+        const state = prepared?.kind === 'snapshot' ? structuredClone(prepared.state) : decode(presentation.decodeState, input.state), nextCursor = cursor(input.cursor);
         const decisions = input.decisions.map(value => {
           const decision = record(value, ['ref', 'run', 'prompt', 'choices']);
           const reference = providerReference(decision.ref, storedBinding, original.installation, 'decision');
@@ -137,16 +166,16 @@ export async function observeProvider<M extends ProviderModel, I extends string>
           output: { kind: 'snapshot', transcript, decisions } };
       } else {
         if (!committed) throw new Error('Provider baseline missing');
-        const nextCursor = cursor(item.cursor), event = decode(presentation.decodeEvent, item.event);
+        const nextCursor = cursor(item.cursor), event = prepared?.kind === 'event' ? structuredClone(prepared.event) : decode(presentation.decodeEvent, item.event);
         const result = record(bounded(presentation.apply(decode(presentation.decodeState, committed.state), event, refs)), ['state', 'events']);
         if (!Array.isArray(result.events)) throw new Error('Invalid provider events');
         const state = decode(presentation.decodeState, result.state);
         change = { checkpoint: { projectionVersion: committed.projectionVersion, state: bounded(decode(presentation.decodeState, state)), cursor: bounded(nextCursor) }, runs: [],
           output: { kind: 'events', events: result.events.map(parseTranscriptEvent) } };
       }
-      if (source === 'snapshot') ensureRunning();
+      if (source === 'snapshot' || observationFactory) ensureRunning();
       return { ...change, runs: [...runs.values()] };
-    });
+    }, mapped?.value);
     restore();
     return event !== null && committed.revision > (revision ?? 0);
   };

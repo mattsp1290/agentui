@@ -34,7 +34,7 @@ export function fixture() {
     leases.push(owner);
     return owner;
   }
-  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, frontendOffers: behavior.frontendOffers, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
+  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: behavior.frontendOffers, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
     frontendBinding: request => behavior.binding(request),
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: behavior.principalId, agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: behavior.wireVersion ?? SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,

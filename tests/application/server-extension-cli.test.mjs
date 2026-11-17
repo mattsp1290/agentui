@@ -11,7 +11,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import { CODEX_RUNTIME } from '@agentui/contracts/compatibility';
+import { CODEX_RUNTIME, SERVICE_WIRE_VERSION } from '@agentui/contracts/compatibility';
 import { createCrewFixture } from '../extensions/providers/contracts/crew.ts';
 import { setup as setupServerArtifact, extension as artifactExtension, write as writeArtifactSource, resigned } from '../customization/build/server-support.mjs';
 
@@ -279,7 +279,7 @@ test('bundled extension-only serve creates and sends with direct browser and nat
   }
   const metadata = (await call({ op: 'metadata' })).value;
   assert.equal(metadata.compatibility.nativeRuntime, null);
-  assert.equal(metadata.compatibility.wireVersion, 9);
+  assert.equal(metadata.compatibility.wireVersion, SERVICE_WIRE_VERSION);
   assert.ok(metadata.agents.length); assert.ok(metadata.agents.every(agent => agent.kind === 'provider'));
   assert.equal(metadata.defaultAgentId, metadata.agents.filter(agent => agent.availability.kind === 'ready').map(agent => agent.id).sort()[0]);
   const scope = { hostId: info.hostId, conversationId: 'extension-browser' };

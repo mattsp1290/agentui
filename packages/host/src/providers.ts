@@ -1,17 +1,20 @@
+import { copyOutputBytes, outputFailure, parseProviderOutputList, prepareOutputBinding } from './provider-outputs.js';
+import type { OriginalOutputBinding } from './provider-outputs.js';
+import type { ObservationMapper } from './provider-observations.js';
 import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, copyJson, parseConversationPermissions } from '@agentui/contracts';
+import { canonicalJson, copyJson, isOutputId, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility } from '@agentui/contracts';
+import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
-  ProviderCommand, ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
+  ProviderCommand, ProviderInstance, ProviderModel, ProviderOutputs, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
 export { providerIdentity } from './provider-creation.js';
 export type { ProviderIdentity } from './provider-creation.js';
@@ -82,7 +85,13 @@ function capability(value: unknown): boolean {
   if (input.kind === 'unsupported') { record(value, ['kind', 'reason']); text(input.reason); return false; }
   throw new Error('Invalid provider capability');
 }
+const outputsUnavailable = Object.freeze({ kind: 'unavailable', reason: 'outputs-unavailable' } as const);
+const outputsInvalid = Object.freeze({ kind: 'invalid', reason: 'outputs-invalid' } as const);
+const outputsUnsupported = Object.freeze({ kind: 'unsupported', reason: 'outputs-unsupported' } as const);
+const outputMissing = Object.freeze({ kind: 'missing', reason: 'output-missing' } as const);
 interface BoundProvider {
+  outputs(original: StoredCreation): Promise<OutputListing>;
+  outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
   assertFrontendInput(target: ProviderTarget): void;
   discover(): Promise<ProviderStatus>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
@@ -95,7 +104,7 @@ interface BoundProvider {
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
-  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui'): BoundProvider {
+  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui', observations?: ObservationMapper<M, I>): BoundProvider {
   type Attempt = { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> }
     | { readonly kind: 'refused'; readonly cause: RetryableCause }
     | { readonly kind: 'invalid'; readonly backend: ConnectedProvider<M, I> | undefined };
@@ -189,7 +198,6 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         record(result, ['kind', 'reason']);
         const cause = failureCause(result.kind);
         if (cause === 'invalid-installation') throw new Error('Invalid discovery');
-        // Capabilities are probed at connect, so an upgraded service is only seen through a fresh connection.
         if (cause === 'version-unsupported' && state.kind === 'connected' && state.backend === current) release({ kind: 'idle' });
         return unavailable(cause);
       }
@@ -227,7 +235,56 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     if (canonicalJson(presentation.decodeRequest(copyJson(operation.request))) !== canonicalJson(operation.request)) throw new Error('Provider request changed');
     assertFrontendTarget(target);
   }
+  function outputs(original: StoredCreation): Promise<OutputListing>;
+  function outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
+  async function outputs(original: StoredCreation, id?: OutputId): Promise<OutputListing | OutputRead> {
+    if (original.observation?.kind !== 'confirmed') return outputsUnavailable;
+    if (id !== undefined && !isOutputId(id)) return outputsInvalid;
+    let prepared: OriginalOutputBinding<I>;
+    try { prepared = prepareOutputBinding(original, instance); }
+    catch { return outputsInvalid; }
+    const authorize = () => {
+      const granted = validate(prepared.original.installation);
+      if (canonicalJson(prepared.original.credential) !== canonicalJson(granted.credential)) throw new Error('Original credentials unavailable');
+    };
+    let connected: ConnectedProvider<M, I>;
+    try { authorize(); connected = await acquire(); authorize(); }
+    catch { return outputsUnavailable; }
+    let owner: ProviderOutputs<I>;
+    try {
+      const capability = connected.outputs;
+      if (capability === undefined) return outputsUnsupported;
+      if (!capability || typeof capability.list !== 'function' || typeof capability.read !== 'function') return outputsInvalid;
+      owner = capability;
+    } catch { return outputsInvalid; }
+    let listing: unknown;
+    try { authorize(); listing = await owner.list(structuredClone(prepared.binding)); authorize(); }
+    catch { return outputsUnavailable; }
+    let entries;
+    try {
+      if (record(listing).kind !== 'complete') return outputFailure(listing);
+      entries = parseProviderOutputList(listing, prepared);
+    } catch { return outputsInvalid; }
+    try { authorize(); } catch { return outputsUnavailable; }
+    if (id === undefined) return { kind: 'available', outputs: entries.map(entry => entry.output) };
+    const entry = entries.find(entry => entry.output.outputId === id);
+    if (!entry) return outputMissing;
+    let result: unknown;
+    try { authorize(); result = await owner.read(structuredClone(entry.reference)); authorize(); }
+    catch { return outputsUnavailable; }
+    let bytes: Uint8Array;
+    try {
+      const input = record(result);
+      if (input.kind === 'missing') { record(input, ['kind']); return outputMissing; }
+      if (input.kind !== 'available') return outputFailure(input);
+      record(input, ['kind', 'bytes']);
+      bytes = copyOutputBytes(input.bytes, entry.output);
+    } catch { return outputsInvalid; }
+    try { authorize(); } catch { return outputsUnavailable; }
+    return { kind: 'available', output: entry.output, bytes };
+  }
   return {
+    outputs,
     assertFrontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
@@ -252,7 +309,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       authorize();
       if (!capability(connected.capabilities.observe)) throw new ObservationFailure('unsupported');
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
-        credential: original.credential }, binding, authorize, store, freshSnapshot);
+        credential: original.credential }, binding, authorize, store, freshSnapshot, observations);
     },
     async readPermissions(original) {
       const authorize = () => {
@@ -302,7 +359,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
         const decoded = presentation.decodeRequest(copyJson(request));
         if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui' } : {}) });
+        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui', ...(observations ? { observationProtocol: 'ag-ui-v1' } : {}) } : {}) });
         if (canonicalJson(original.credential) !== canonicalJson(validate(original.installation).credential)) throw new Error('Original credentials unavailable');
         return captured;
       } else {
@@ -413,6 +470,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
 export function createProviderRegistry(extensions: readonly ProviderExtension[]) {
   const bindings: BoundProvider[] = [], lifetimes: ExtensionLifetime[] = [];
   const pending = new Set<Promise<unknown>>();
+  let outputOperations = 0;
   const streams = new Set<ProviderStream>();
   let retiring: Set<ProviderStream> | undefined;
   let cleanupFailed = false;
@@ -434,6 +492,23 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
   }
+  function outputOperation<T extends OutputListing | OutputRead>(original: StoredCreation,
+    read: (binding: BoundProvider, snapshot: StoredCreation) => Promise<T>): Promise<T | typeof outputsUnavailable | typeof outputsInvalid> {
+    if (phase !== 'active' || outputOperations >= 4) return Promise.resolve(outputsUnavailable);
+    outputOperations++;
+    let snapshot: StoredCreation;
+    try { snapshot = structuredClone(original); }
+    catch { outputOperations--; return Promise.resolve(outputsInvalid); }
+    return track(async () => {
+      try {
+        const binding = bindings.find(binding => binding.matches(snapshot.installation));
+        if (phase !== 'active' || !binding) return outputsUnavailable;
+        const result = await read(binding, snapshot);
+        return phase === 'active' ? result : outputsUnavailable;
+      } catch { return outputsUnavailable; }
+      finally { outputOperations--; }
+    });
+  }
   async function refresh(): Promise<readonly ProviderStatus[]> {
     discoveredAt = Date.now();
     const results = await Promise.all(bindings.map(binding => binding.discover()));
@@ -441,7 +516,6 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     catalog = results;
     return structuredClone(catalog);
   }
-  // Reads never wait on backend I/O; the catalog is rediscovered behind the response at most once per interval, so outages that begin after a healthy discovery also surface.
   function rediscover(): void {
     if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
     background = refresh().catch(() => {}).finally(() => { background = undefined; });
@@ -455,7 +529,6 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     const draining = new Set(streams);
     retiring = draining;
     const authorities: Promise<void>[] = [];
-    // Cleanup can reenter close(), so publish first. The microtask reads authorityResults after initialization.
     closing = Promise.resolve().then(async () => {
       await Promise.allSettled([...pending, background]);
       for (const stream of draining) stop(stream);
@@ -493,24 +566,25 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
             let lifetime: ExtensionLifetime;
             try {
               const register = <M extends ProviderModel, I extends string>(mode: 'generic' | 'ag-ui', id: string,
-                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void => {
+                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>, observations?: ObservationMapper<M, I>): void => {
                 try {
                   if (!registering || phase !== 'activating') throw new Error('Registration closed');
                   text(id);
                   const identity = providerIdentity(presentation.instance), key = identityKey(identity);
                   if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
+                    (observations !== undefined && (mode !== 'ag-ui' || typeof observations.event !== 'function' || typeof observations.snapshot !== 'function')) ||
                     backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
                     [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
                       presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
                     throw new Error('Invalid provider registration');
                   }
                   ids.add(id); identities.add(key);
-                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode));
+                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode, observations));
                 } catch { invalid = true; throw new Error('Invalid provider registration'); }
               };
               lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials,
                 providers: { add: (id, backend, presentation) => register('generic', id, backend, presentation),
-                  addAgui: (id, backend, presentation) => register('ag-ui', id, backend, presentation) },
+                  addAgui: (id, backend, presentation, observations) => register('ag-ui', id, backend, presentation, observations) },
               });
             } finally { registering = false; }
             validateExtensionLifetime(lifetime);
@@ -561,6 +635,12 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
       return binding.captureCommand(original, action, operationId);
     },
+    conversationOutputs(original: StoredCreation): Promise<OutputListing> {
+      return outputOperation(original, (binding, snapshot) => binding.outputs(snapshot));
+    },
+    readOutput(original: StoredCreation, id: OutputId): Promise<OutputRead> {
+      return outputOperation(original, (binding, snapshot) => isOutputId(id) ? binding.outputs(snapshot, id) : Promise.resolve(outputsInvalid));
+    },
     readPermissions(original: StoredCreation): Promise<ConversationPermissions> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
@@ -603,4 +683,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>;

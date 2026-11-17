@@ -76,13 +76,15 @@ test('shipped Plan review template typechecks against the actual receipt and com
 test('slot selection requires a ready owner with its captured component', () => assertCompileCases({
   config: 'apps/desktop/tsconfig.json',
   prefix: `
-import type { ContentLayoutSelection, TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
+import type { ActivitySelection, ContentLayoutSelection, TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
 declare const generation: import('@agentui/sdk/tools').FrontendToolGeneration;
 export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, generation, fail(_error: unknown) {},
-  presentation: { modules: [], transcript: () => null, contentLayout: undefined } } as const;
+  presentation: { modules: [], transcript: () => null, activity: undefined, contentLayout: undefined } } as const;
 export const selection: TranscriptSelection = { kind: 'claimed', owner };
-export const layoutOwner = { ...owner, presentation: { modules: [], transcript: undefined, contentLayout: () => null } } as const;
+export const layoutOwner = { ...owner, presentation: { modules: [], transcript: undefined, activity: undefined, contentLayout: () => null } } as const;
 export const layout: ContentLayoutSelection = { kind: 'claimed', owner: layoutOwner };
+export const activityOwner = { ...owner, presentation: { ...owner.presentation, activity: () => null } } as const;
+export const activity: ActivitySelection = { kind: 'claimed', owner: activityOwner };
 export function component(value: TranscriptSelection) { if (value.kind === 'claimed') return value.owner.presentation.transcript; return null; }
 export function layoutComponent(value: ContentLayoutSelection) { if (value.kind === 'claimed') return value.owner.presentation.contentLayout; return null; }
 `,
@@ -93,5 +95,7 @@ export function layoutComponent(value: ContentLayoutSelection) { if (value.kind 
     ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner };", /not assignable/u],
     ["export const bad: ContentLayoutSelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
     ["export const bad: TranscriptSelection = { kind: 'claimed', owner: layoutOwner };", /not assignable/u],
+    ["export const bad: ActivitySelection = { kind: 'claimed', owner };", /not assignable/u],
+    ["export const bad: ActivitySelection = { kind: 'claimed', owner: { kind: 'loading', namespace: 'notes' } };", /not assignable/u],
   ],
 }));

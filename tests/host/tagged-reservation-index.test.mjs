@@ -18,11 +18,11 @@ for (const format of [2, 3]) test(`format ${format} upgrade builds tagged index 
   await host.conversation(scope).submit(command('uncertain'));
   host.close(); await host.drained;
   const db = new DatabaseSync(f.path);
-  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}`);
+  db.exec(`DROP TABLE frontend_observation_events; DROP TABLE frontend_observation_runs; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}`);
   const before = saved(db); db.close();
   const store = new SqliteStore(f.path, projection, budgets());
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 7);
     assert.deepEqual(saved(store.db), before);
     assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'missing', 'missing'), undefined);
     assert.equal(store.db.prepare("SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE " + predicate).get().n, 0);
@@ -35,7 +35,7 @@ for (const format of [2, 3]) test(`format ${format} index failure rolls back own
   assert.equal(store.admit(command('saved'), { kind: 'supported' }).kind, 'owned');
   store.close();
   const db = new DatabaseSync(f.path);
-  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}; UPDATE commands SET target='invalid json'`);
+  db.exec(`DROP TABLE frontend_observation_events; DROP TABLE frontend_observation_runs; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}; UPDATE commands SET target='invalid json'`);
   const before = saved(db); db.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), /malformed JSON/);
   const reader = new DatabaseSync(f.path);
@@ -121,7 +121,7 @@ for (const [name, mutation, error] of [
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), error);
   const reader = new DatabaseSync(f.path);
   try {
-    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 6);
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 7);
     assert.deepEqual(reader.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
   } finally { reader.close(); }
 });
@@ -148,7 +148,7 @@ test('owners require real unique keys while keyless tombstones remain actor-spec
 
 test('private capture-only format four is refused rather than guessed or repaired', t => {
   const f = fixture(t), store = new SqliteStore(f.path, projection, budgets());
-  store.db.exec('DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=4'); store.close();
+  store.db.exec('DROP TABLE frontend_observation_events; DROP TABLE frontend_observation_runs; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=4'); store.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), /Incomplete database schema version 4: missing images/);
   const reader = new DatabaseSync(f.path);
   try {

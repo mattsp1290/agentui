@@ -83,8 +83,12 @@ A failed namespace is disposed once. Restore default view removes all presentati
 
 ### Arrange transcript and modules
 
+To replace only command and file presentation, return `overrides: { activity: MyActivity }`.
+Its `ConversationActivityProps` adds readonly `updates` with `connected`, `reconnecting` or `paused` to the ordinary module context.
+Native messages, Markdown and sent images remain host-owned. A selected whole transcript takes precedence over this activity slot.
+
 The template returns `contentLayout: ReviewLayout`. Its `ConversationContentLayoutProps` contains only the host-created `transcript` and `modules` nodes.
 The transcript includes any selected transcript override. Render each node once with ordinary React and CSS.
 This desktop arrangement keeps permissions, approvals, the composer, Stop, and recovery under their existing host owners.
 Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom transcript and module views, actions, and namespace diagnostics wait.
-SDK compatibility is `0.6.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.
+SDK compatibility is `0.9.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.

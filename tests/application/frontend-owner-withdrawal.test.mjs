@@ -260,8 +260,12 @@ for (const excess of [0, 1]) test(`public observation constructs the ${1000000 +
   for (const [index, event] of f.events.slice(0, -1).entries()) assert.equal(f.producer.observe(f.key, index + 1, event), 'accepted');
   const before = rows(f.path);
   if (excess) {
-    assert.throws(() => f.producer.observe(f.key, f.events.length, f.events.at(-1)), /capacity/);
-    assert.deepEqual(rows(f.path), before);
+    const expected = rows(f.path);
+    expected.frontend_runs[0].data = canonicalJson({ ...JSON.parse(before.frontend_runs[0].data), status: 'faulted' });
+    assert.equal(f.producer.observe(f.key, f.events.length, f.events.at(-1)), 'faulted');
+    assert.deepEqual(rows(f.path), expected);
+    f.host.close(); await f.host.drained;
+    assert.equal(frontendToolsFor(f.open()).producer(scope).inspect(f.key).status, 'faulted');
   } else {
     assert.equal(f.producer.observe(f.key, f.events.length, f.events.at(-1)), 'accepted');
     assert.equal(Buffer.byteLength(rows(f.path).frontend_runs[0].data), 1000000);

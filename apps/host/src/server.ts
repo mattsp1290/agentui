@@ -33,8 +33,12 @@ import type { InstalledAgent } from './agents.js';
 import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
 import { directCodexEnvironment } from './native-environment.js';
-import { assertNoSelectionJournal, createServerSelection } from './server-selection.js';
-import type { ExtensionStartup, ServerSelection } from './server-selection.js';
+import { assertNoSelectionJournal } from './server-selection.js';
+import { createInstalledRefreshBuilder } from './installed-refresh-builder.js';
+import { serverArtifactExpectation } from './server-artifact-runtime.js';
+import { createRefreshController } from './refresh-jobs.js';
+import type { RefreshBuilder, RefreshController } from './refresh-jobs.js';
+import type { ExtensionStartup } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import type { ServerExtensionReplacement } from '@agentui/host/extensions';
 import type { SelectionControl } from './selection-protocol.js';
@@ -51,6 +55,7 @@ export interface BrowserHostOptions {
   readonly agentStartup: HostAgentStartup;
   readonly observability?: ObservabilityConfiguration;
   readonly extensions?: ExtensionStartup;
+  readonly refreshBuilder?: string;
   readonly setupCapability?: string;
 }
 function piApiKey(): string {
@@ -93,7 +98,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let feeds: FeedRegistry | undefined;
   const providers = createServerExtensions();
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
-  let selection: ServerSelection | undefined;
+  let refresh: RefreshController | undefined;
   let resolveFatal!: () => void;
   const fatal = new Promise<void>(resolve => { resolveFatal = resolve; });
   let closePromise: Promise<void> | undefined;
@@ -101,13 +106,12 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const http = createServer();
   function close(): Promise<void> {
     if (closePromise) return closePromise;
-    // Cleanup can reenter close(), so publish first. The microtask reads shutdown after initialization.
     closePromise = Promise.resolve().then(() => shutdown);
     const shutdown = (async () => {
       closing = true;
       feeds?.dispose();
       const drainResults = await Promise.allSettled([
-        selection?.close(),
+        refresh?.close(),
         providers.close(),
         ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
       ]);
@@ -118,7 +122,6 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           new Promise<void>(done => { http.close(() => done()); http.closeIdleConnections(); }),
           Promise.resolve().then(() => control?.close()),
           Promise.resolve().then(() => {
-            // Failed cleanup can leave writers that still need the host database.
             if (drainFailed) return;
             host?.close();
             return host?.drained;
@@ -158,19 +161,27 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       return replacement;
     }
     const extensions = options.extensions ?? { kind: 'transient', entries: [] };
+    if (options.refreshBuilder !== undefined && extensions.kind !== 'durable-artifacts') throw new Error('Refresh builder requires durable extensions');
     let boot: (readyHost: LocalHost<TranscriptEvent, Transcript>) => Promise<void>;
     let directReplace: (readyHost: LocalHost<TranscriptEvent, Transcript>, entries: readonly BrowserProviderExtension[]) => Promise<ServerExtensionReplacement>;
     let selectionControl: SelectionControl;
     switch (extensions.kind) {
       case 'durable-artifacts': {
-        const durable = await createServerSelection({ database: accessDatabase, entries: extensions.entries,
+        let builder: RefreshBuilder = { kind: 'unavailable' };
+        if (options.refreshBuilder !== undefined) {
+          const { artifactId: _artifactId, ...expected } = serverArtifactExpectation('');
+          builder = await createInstalledRefreshBuilder({ entry: options.refreshBuilder, expected });
+        }
+        const composed = await createRefreshController({ database: accessDatabase, artifactRoot: join(owner.directory, 'refresh-artifacts'),
+          builder, selection: { entries: extensions.entries,
           runtime: providers.status, isClosing: () => closing,
           replace: selected => {
             if (!host) throw new Error('Selection host unavailable');
             return replaceExtensions(host, selected);
           },
-          stopRuntime: () => { void close().catch(() => {}); resolveFatal(); } });
-        selection = durable;
+          stopRuntime: () => { void close().catch(() => {}); resolveFatal(); } } });
+        refresh = composed;
+        const durable = composed.selection;
         boot = () => durable.activate();
         directReplace = async () => { throw new Error('Durable extensions require selection commands'); };
         selectionControl = durable;
@@ -297,7 +308,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const registry = new FeedRegistry();
     feeds = registry;
     const nativeRuntime = startup.kind === 'extensions' ? null : configured
-      ? describeAgent(defaultInstallation, { kind: 'ready' }).runtime : artifact.compatibility.nativeRuntime;
+      ? describeAgent(defaultInstallation, { kind: 'ready' }, host.imageInput(defaultInstallation)).runtime : artifact.compatibility.nativeRuntime;
     const compatibility = { ...artifact.compatibility, nativeRuntime };
     const agentSelection: Parameters<typeof createApi>[0]['agentSelection'] = startup.kind === 'extensions'
       ? { kind: 'extensions' }

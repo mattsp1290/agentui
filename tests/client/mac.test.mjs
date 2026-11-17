@@ -60,7 +60,7 @@ test('connect sends only the connect command and returns the host binding', asyn
 
 test('Mac adapter uses immutable native observations through the real shared engine including search and chooser', async () => {
   const scope = { hostId: 'host', conversationId: 'chat' }, calls = [];
-  const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, frontendOffers: 'unsupported', commands: ['send', 'approve'], availability: { kind: 'ready' } };
+  const descriptor = { id: 'agent', label: 'Recorded', runtime: RECORDED_RUNTIME, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [descriptor], defaultAgentId: 'agent', hostId: 'host', principalId: 'principal', compatibility: {
     wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' },
@@ -93,7 +93,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
 
 test('native bridge transports provider descriptors and accepts creation refusal only with create HTTP 409', async () => {
   const scope = { hostId: 'host', conversationId: 'chat' };
-  const descriptor = { kind: 'provider', id: 'provider', label: 'Remote', namespace: 'example', protocolVersion: '1', frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
+  const descriptor = { kind: 'provider', id: 'provider', label: 'Remote', namespace: 'example', protocolVersion: '1', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   let status = 409, mode = 'negative';
   const connection = createMacConnection(access, async command => {
     assert.equal(command.kind, 'execute');

@@ -7,7 +7,7 @@ import { parseServiceRequest, parseServiceResponse, parseServicePull, SERVICE_MA
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 4, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
-const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
+const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
 const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
   extensionSdkVersion: '1', nativeRuntime: { engine: 'engine', version: '1', format: '1' },
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } } };
@@ -262,10 +262,10 @@ test('HTTP status interpretation retains classified failures and refuses a non-O
 });
 
 test('provider descriptors have a strict independent shape and retain native descriptor bytes', () => {
-  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
   assert.deepEqual(parse(provider), provider);
-  assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ frontendOffers: agent.frontendOffers, id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
+  assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ imageInput: agent.imageInput, frontendOffers: agent.frontendOffers, id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
   for (const invalid of [{ ...provider, runtime: agent.runtime }, { ...provider, kind: 'remote' },
     { ...provider, namespace: '' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
 });
@@ -278,4 +278,23 @@ test('native model metadata retains host labels and rejects malformed selections
   for (const invalid of [null, {}, { id: '', label: 'Remote Astra' }, { id: 'remote-astra', label: 1 }, { ...model, extra: true }]) {
     assert.throws(() => parse({ ...agent, model: invalid }));
   }
+});
+
+test('both descriptor variants require exact bounded image capability and reject legacy public modalities', () => {
+  const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1',
+    frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
+  const { imageInput: _imageInput, ...native } = agent;
+  for (const base of [native, provider]) {
+    assert.throws(() => parse(base));
+    for (const imageInput of [
+      { kind: 'supported', format: 'png-jpeg-v1' }, { kind: 'unsupported', reason: 'Image input unavailable.' },
+    ]) assert.deepEqual(parse({ ...base, imageInput }).imageInput, imageInput);
+    for (const imageInput of [null, {}, true, { kind: 'supported' }, { kind: 'supported', format: 'all-files' },
+      { kind: 'supported', format: 'png-jpeg-v1', reason: 'extra' }, { kind: 'unsupported' },
+      { kind: 'unsupported', reason: '' }, { kind: 'unsupported', reason: ' ' }, { kind: 'unsupported', reason: 'x'.repeat(257) },
+      { kind: 'unsupported', reason: 'é'.repeat(129) }, { kind: 'unsupported', reason: 'bad\nreason' },
+      { kind: 'unsupported', reason: 'No', format: 'png-jpeg-v1' }]) assert.throws(() => parse({ ...base, imageInput }));
+  }
+  assert.throws(() => parse({ ...agent, model: { id: 'image', label: 'Image', inputModalities: ['image'] } }));
 });

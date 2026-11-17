@@ -119,7 +119,7 @@ export async function startControl(path: string, isClosing: () => boolean, selec
           }
         }
         socket.end(formatControlResponse({ ok: true, value }));
-      } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: error instanceof SelectionRefusal ? error.message : 'Control operation refused' })); }
+      } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: error instanceof SelectionRefusal && error.reason !== 'invalid-artifact' ? error.message : 'Control operation refused' })); }
     })();
   });
   await new Promise<void>((resolve, reject) => {

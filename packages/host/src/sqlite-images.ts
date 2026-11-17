@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import type { ConversationScope } from '@agentui/contracts';
 import { IMAGE_HOST_MAX_BYTES, IMAGE_HOST_MAX_COUNT, IMAGE_MAX_AXIS, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS, parseImageAttachment, parseImageId } from '@agentui/contracts/image';
-import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
+import type { ImageAttachment, ImageId, ImageInputCapability, UploadId } from '@agentui/contracts/image';
 import { readDatabaseFormat } from './sqlite-schema.js';
 import { ImageInputError } from './image-input.js';
 import type { verifyImageUpload } from './image-input.js';
@@ -57,7 +57,7 @@ function storedImage(row: Record<string, SQLOutputValue>): { attachment: ImageAt
 }
 
 export function insertImage(db: DatabaseSync, scope: ConversationScope, uploader: string, upload: UploadId,
-  verified: ReturnType<typeof verifyImageUpload>): ImageAttachment {
+  verified: ReturnType<typeof verifyImageUpload>, imageInput: ImageInputCapability): ImageAttachment {
   requireScope(db, scope);
   const existing = db.prepare('SELECT * FROM images WHERE host=? AND conversation=? AND uploader=? AND upload=?')
     .get(scope.hostId, scope.conversationId, uploader, upload);
@@ -68,6 +68,7 @@ export function insertImage(db: DatabaseSync, scope: ConversationScope, uploader
     }
     return stored.attachment;
   }
+  if (imageInput.kind === 'unsupported') throw new ImageInputError('image-unsupported', imageInput.reason);
   const totals = db.prepare('SELECT COUNT(*) AS count, COALESCE(SUM(byte_length),0) AS bytes FROM images WHERE host=?').get(scope.hostId);
   if (!totals || typeof totals.count !== 'number' || typeof totals.bytes !== 'number') throw new ImageInputError('image-integrity', 'Image storage totals are unavailable');
   if (totals.count >= IMAGE_HOST_MAX_COUNT || totals.bytes + verified.bytes.length > IMAGE_HOST_MAX_BYTES) {

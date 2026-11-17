@@ -1,7 +1,7 @@
 import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
 import { describeAgent } from '../../apps/host/build/tsc/agents.js';
 import { recordedInstallation } from '@agentui/host/recorded';
-const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
+const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }, { kind: 'unsupported', reason: 'Recorded text-only fixture.' }).id;
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';

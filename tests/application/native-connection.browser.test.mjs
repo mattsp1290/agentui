@@ -10,7 +10,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   import { NativeApplication } from './apps/desktop/src/application/NativeApplication.tsx';
   import { BrowserViewStorage } from './apps/desktop/src/application/browser-storage.ts';
   import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-  const agent = { id: 'recorded', label: 'Recorded', runtime: RECORDED_RUNTIME, frontendOffers: 'unsupported', commands: ['send', 'approve'], availability: { kind: 'ready' } };
+  const agent = { id: 'recorded', label: 'Recorded', runtime: RECORDED_RUNTIME, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send', 'approve'], availability: { kind: 'ready' } };
   const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'trusted-owner', compatibility: {
     wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME, desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   globalThis.nativeCalls = [];

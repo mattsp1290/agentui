@@ -30,14 +30,27 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.6.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.9.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.6.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.9.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
+SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
+
+SDK 0.8.0 adds an optional fourth `providers.addAgui` argument, `AguiObservations<Model, Installation>`.
+Its `event(event)` callback returns ordered `AguiRunBatch` values. Its `snapshot(state, originals)` callback returns complete prefixes or explicit unavailable histories for the supplied original operations.
+Both callbacks are synchronous. A batch identifies the original operation, thread and fully scoped run reference. Positions begin at one within that run; every AG-UI event counts.
+A snapshot prefix includes all events through its provider cursor. An empty prefix asserts that no events occurred. Omitting a relevant original makes its history permanently unavailable.
+Both mapping results have a 128-entry limit. Snapshot callbacks receive at most 128 originals. Their canonical unavailable replies, which contain the exact public descriptors, and compact host membership records share a 128,000-byte selection budget. Originals excluded by count or bytes become permanently unavailable. The host continues scanning after an oversized descriptor, so a later smaller original can still fit.
+Event mappings retain a strict 1,000,000-byte aggregate limit. Snapshot preparation has a separate 1,000,000-byte bound that includes metadata and encoded frame storage. Complete histories that exceed the remaining preparation budget become unavailable after every frame is validated. The host retains at most 4096 events and 1,000,000 raw event bytes per original, with 64,000 bytes per event. Capacity loss permits canonical snapshot progress; invalid mapper data rejects it.
+A send captures its observation opt-in permanently. Installing a mapper later does not reinterpret an older request-only send.
+Observations can arrive before the submit response. The host acknowledges their journal and provider checkpoint atomically, then registers frontend calls only after exact original command confirmation.
+This contract does not add browser consent, execution or continuation. Existing three-argument `addAgui` registrations retain capture-and-bind behavior. Actual Crew and Switchboard adapters require separate qualification.
+
+SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 9, and transcript projection version is 4.
+Workspace package versions are `0.0.0`, service wire version is 10, and transcript projection version is 4.
 
 Desktop contributions may arrange transcript and module presentation with `contentLayout`.
 The composer, approvals, Stop, recovery, agent selection and protected navigation remain host-owned.
@@ -228,7 +241,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.6.0",
+			"sdkVersion": "0.9.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -314,6 +327,15 @@ return { modules: [], overrides: { transcript: MyTranscript }, dispose() {} };
 
 The desktop activates each namespace once for its contributions.
 The override changes only transcript presentation. The ordinary composer, approvals, Stop, and command recovery keep their owners.
+An activity override replaces command and file presentation while native messages, Markdown and sent images remain visible.
+It receives `ConversationActivityProps`, which extends `ConversationModuleProps` with readonly `updates` equal to `connected`, `reconnecting` or `paused`.
+Stopped provider observation takes precedence over the local conversation connection when deriving `updates`.
+`connected` describes that connection, not whether the provider is producing events.
+The canonical `activity.domain.activities` data retains unknown and terminal outcomes, revisions and truncation facts. The author controls their presentation.
+Return `overrides: { activity: MyActivity }` to claim this combined command and file slot.
+A claimed whole transcript takes precedence over selective activity, including its native fallback during loading or failure.
+Activity loading, conflict or failure uses native activity without replacing messages or the protected composer.
+An outer content layout fallback is fully native and does not mount another activity override.
 The default transcript stays visible while any selected activation is pending or a lazy override is loading.
 If multiple ready namespaces claim the transcript after all activations settle, the host reports their sorted names and keeps the default transcript.
 A failed namespace releases its claim and disposes once; other namespaces remain available.

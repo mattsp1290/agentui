@@ -121,7 +121,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 9, SDK compatibility 0.6.0, package versions 0.0 and transcript projection 4.
+The current integration uses wire version 10, SDK compatibility 0.9.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Captured frontend offers
@@ -203,7 +203,7 @@ The tagged history index derives its keys from immutable saved targets. Admissio
 Formats 5 and 6 require both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
-Wire 9 and SDK 0.6.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
+Wire 10 and SDK 0.9.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
 There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
@@ -261,7 +261,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 9, transcript projection 4, SDK compatibility 0.6.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 10, transcript projection 4, SDK compatibility 0.9.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -408,6 +408,34 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.6.0 and wire 9 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.9.0 and wire 10 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.
+
+### Original frontend observation journal
+
+An explicit fourth `addAgui` argument maps provider events and complete snapshots into original AG-UI run history. Database format 7 stores the captured opt-in and a bounded retained positional journal separately from the coordinator. Provider commits atomically persist that journal, canonical transcript, checkpoint and source event ID. Command settlement materializes confirmed originals inside its existing transaction through the same coordinator reducer.
+
+The journal retains faulting events and their suffix even when the coordinator cannot accept them. Duplicate positions require identical canonical JSON. Gaps, conflicting bytes and exceeded per-run limits permanently block eligibility. Missing, shorter or unavailable snapshot history also blocks eligibility; omitted terminal runs retain their disposition. Explicit contradictory terminal history can reduce eligibility.
+
+For fourth-argument mapper registrations, incoming snapshot-state or event decoding runs during read-only preparation before the provider transaction. The mapper receives detached values. Preparation precedes canonical snapshot binding, projection and missing-baseline checks. Canonical `presentation.snapshot` and `presentation.apply` run inside the transaction. `decodeState` also runs for rendering inputs, canonical output/checkpoint validation, and restore. Restore runs outside the commit transaction. Incoming event decoding is reused from preparation. Three-argument registrations retain their existing callback timing.
+
+Snapshot selection hashes every eligible original, including originals excluded from the callback by count or bytes. Commit compares the complete selection after rendering and rechecks ownership, creation association, feed liveness and checkpoint revision. A changed selection rejects preparation for retry. ID-ordered pages close before omission writes. An excluded original cannot regain eligibility by returning an unsolicited complete history.
+
+Snapshot preparation reserves every unavailable marker before admitting complete histories. The 1,000,000-byte preparation limit includes membership, identities, metadata and encoded frame strings. A valid history can become unavailable even when its raw events total less than that limit. Capacity loss is sticky frontend unavailability and permits canonical snapshot progress. All frames remain subject to JSON and schema validation, including suffixes after capacity loss. Invalid data and SQLite failures still abort the whole item.
+
+The coordinator checks candidate state capacity before persistence. Capacity faults preserve the pre-event cursor, calls, permits and receipts while the provider journal and canonical checkpoint advance. SQL failures, including fault persistence, still roll back the entire transaction.
+
+Genuine released formats 5 and 6 migrate through the public host opener to format 7 without rewriting old command, image, transcript, permit or receipt rows. Their frozen old openers refuse the migrated file before changing WAL state. Core contract 1, projection 4, wire 10 and backend provider contract 1 remain unchanged.
+
+## Provider text outputs
+
+SDK 0.9.0 adds optional `ConnectedProvider.outputs`. Providers return a complete listing of retained `ProviderTextOutput` descriptors and read existing bytes by `ConversationRef<I, 'output'>`. A provider may omit the capability. Output references remain distinct from command run, decision, choice, and permission references.
+
+`LocalHost.conversationOutputs(scope)` returns public descriptors. `LocalHost.readOutput(scope, outputId)` performs a fresh scoped listing before each read. The branded host ID covers the original confirmed creation, full provider instance, opaque reference, and immutable metadata. It excludes credentials. Public descriptors contain only the ID, safe ASCII `.txt` name, `text/plain` media type, length, SHA-256 digest, and `provider-retained` lifetime. Retention belongs to the provider; a later read may return `missing`.
+
+Payloads contain valid UTF-8 and may be empty. The host accepts at most 65,536 payload bytes, 32 descriptors, 512 UTF-8 bytes per opaque identity, 1,024 canonical metadata bytes, 8,192 canonical original-binding bytes, and 65,536 canonical bytes for the complete listing. Names contain 5 through 128 ASCII bytes. Invalid or incomplete listings fail as a whole. Reads copy provider-owned bytes and verify length, digest, and fatal UTF-8 decoding. Shared buffers are rejected.
+
+Each registry admits four total output operations, counting a read and its listing as one operation. Excess work returns unavailable without a queue. Pending provider work defers extension replacement and drains during close. Scope and original provider authorization must still hold after asynchronous work. Public failures use fixed reasons; provider reasons and exceptions remain private.
+
+These APIs are in-process contracts. They add no output storage, wire operation, browser download, or native Save behavior. Wire 10, core DB 7, transcript projection 4, and backend provider contract 1 remain unchanged.

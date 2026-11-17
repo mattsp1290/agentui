@@ -853,4 +853,11 @@ mod tests {
             &response
         ));
     }
+
+    #[test]
+    fn image_unsupported_failure_is_forwarded_to_the_typed_client_parser() {
+        let request = json!({"op":"image-upload", "scope":scope(), "name":"Screen", "byteLength":1});
+        let response = json!({"ok":false, "error":{"kind":"image-unsupported", "message":"This model cannot read images."}});
+        assert!(image_response(&request, &response));
+    }
 }

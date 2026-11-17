@@ -1,3 +1,5 @@
+import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { budgets } from '../../packages/host/dist/durable-model.js';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -32,7 +34,7 @@ function fixture(t, mode = 'stream', readImage) {
     for (const session of sessions) session.close();
     rmSync(directory, { recursive: true, force: true });
   });
-  return { open, records,
+  return { open, records, path: join(directory, 'host.sqlite'),
     finish(id) { writeFileSync(`${logPath}.complete-${id}`, ''); },
     async ended(port) {
       for (let attempt = 0; attempt < 200; attempt++) {
@@ -132,7 +134,12 @@ test('a Codex model without image input refuses image sends before storing a com
   const f = fixture(t, 'images', true), session = await f.open();
   const astra = session.choices.find(choice => choice.model.id === 'gpt-9.1-astra');
   session.host.createConversation(scope, astra.driver.installation);
-  const attachment = session.host.uploadImage(scope, 'owner', randomUUID(), 'Screen.png', png());
+  assert.throws(() => session.host.uploadImage(scope, 'owner', randomUUID(), 'Screen.png', png()), { code: 'image-unsupported' });
+  const store = new SqliteStore(f.path, transcriptProjection, budgets());
+  let attachment;
+  try { attachment = store.uploadImage(scope, 'retained-fixture', randomUUID(), 'Screen.png', png(), { kind: 'supported', format: 'png-jpeg-v1' }); }
+  finally { store.close(); }
+
   assert.deepEqual(await session.port.submit(command('image', { kind: 'send', text: 'Look', imageId: attachment.imageId })), { kind: 'rejected', reason: 'This model cannot read images.' });
   assert.equal(await session.port.receipt('image'), null);
   assert.equal(f.records().some(value => value.direction === 'in' && (value.method === 'thread/start' || value.method === 'turn/start')), false);

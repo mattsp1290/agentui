@@ -2,12 +2,12 @@ import { assertFrontendSendActor, FrontendAccessError } from './frontend-sends.j
 import type { FrontendSendActor } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
 import type { FrontendToolProducer } from './frontend-tools/index.js';
-import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
+import type { ImageAttachment, ImageId, ImageInputCapability, UploadId } from '@agentui/contracts/image';
 import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -29,6 +29,7 @@ export interface LocalHostOptions<E, P> {
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
+  imageInput(target: ConversationInstallation | null): ImageInputCapability;
   uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array): ImageAttachment;
   readImage(scope: ConversationScope, imageId: ImageId): { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
   readonly drained: Promise<void>;
@@ -36,6 +37,8 @@ export interface LocalHost<E, P> {
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
+  conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
+  readOutput(scope: ConversationScope, id: OutputId): Promise<OutputRead>;
   observeProvider(scope: ConversationScope): Promise<void>;
   observationStatus(scope: ConversationScope): ProviderObservationStatus;
   retryObservation(scope: ConversationScope): Promise<ProviderObservationStatus>;
@@ -54,6 +57,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const drivers = new Map(configured.map(driver => [canonicalJson(driver.installation), driver]));
   if (drivers.size !== configured.length) { store.close(); throw new Error('Duplicate agent installation'); }
   const driverFor = (target: Installation) => drivers.get(canonicalJson(target));
+  const imageInput = (target: ConversationInstallation | null): ImageInputCapability =>
+    target && !('kind' in target) && driverFor(target)?.imageInput === true
+      ? { kind: 'supported', format: 'png-jpeg-v1' }
+      : { kind: 'unsupported', reason: 'This model cannot read images.' };
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
   let closed = false, observationCleanupFailed = false;
@@ -87,6 +94,23 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (closed) throw new Error('Host is closed');
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
+  };
+  const outputOperation = <T extends OutputListing | OutputRead>(value: ConversationScope,
+    read: (providers: ProviderConversationOperations, original: StoredCreation) => Promise<T>): Promise<T | OutputFailure> => {
+    const scope = authorized(value), original = store.creation(scope);
+    if (!original) {
+      const installed = store.findInstallation(scope);
+      return Promise.resolve(installed && 'kind' in installed
+        ? { kind: 'unavailable', reason: 'outputs-unavailable' }
+        : { kind: 'unsupported', reason: 'outputs-unsupported' });
+    }
+    if (original.observation?.kind !== 'confirmed' || !options.providers) return Promise.resolve({ kind: 'unavailable', reason: 'outputs-unavailable' });
+    const providers = options.providers;
+    return inFlight(async () => {
+      const result = await read(providers, original);
+      authorized(scope);
+      return result;
+    });
   };
   const observationStatus = (scope: ConversationScope): ProviderObservationStatus => {
     authorized(scope);
@@ -143,7 +167,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
-    if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation);
+    const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
+      ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
+    if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation, observations);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
       ? await options.providers?.executeCommand(stored, false, () => effectFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
@@ -153,7 +179,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (!current) throw new Error('Unknown command');
       return current.receipt;
     }
-    return store.settle(scope, id, observed);
+    return store.settle(scope, id, observed, observations);
   });
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const blocker = store.blockingSend(scope);
@@ -169,7 +195,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     return receipt.state.kind === 'completed' || receipt.state.kind === 'rejected';
   };
   const host: LocalHost<E, P> = {
-    uploadImage: (scope, uploader, uploadId, name, bytes) => store.uploadImage(authorized(scope), uploader, uploadId, name, bytes),
+    imageInput,
+    uploadImage: (scope, uploader, uploadId, name, bytes) => {
+      const target = authorized(scope);
+      return store.uploadImage(target, uploader, uploadId, name, bytes, imageInput(store.findInstallation(target)));
+    },
     readImage: (scope, imageId) => store.readImage(authorized(scope), imageId),
     drained,
     observeProvider,
@@ -182,6 +212,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
+    conversationOutputs: scope => outputOperation(scope, (providers, original) => providers.conversationOutputs(original)),
+    readOutput: (scope, id) => outputOperation(scope, (providers, original) => providers.readOutput(original, id)),
     conversationPermissions(value) {
       const scope = authorized(value), original = store.creation(scope);
       if (!original) {
@@ -258,8 +290,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const registry = options.providers;
           const assertSubmitter = () => { authorized(scope); if (actor) assertFrontendSendActor(actor); };
           const image = command.version === 1 && command.body.kind === 'send' && command.body.imageId !== undefined;
-          const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
-            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.version === 2
+          const inputCapability = imageInput(target);
+          const admit = () => store.admit(command, image && inputCapability.kind === 'unsupported'
+            ? inputCapability : provider ? { kind: 'supported' } : command.version === 2
             ? { kind: 'unsupported', reason: 'frontend-offers-unsupported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
@@ -285,7 +318,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
               const observed = 'kind' in stored
                 ? await registry?.executeCommand(stored, true, () => dispatchFence(stored, actor)) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
-              const receipt = store.settle(scope, command.clientCommandId, observed);
+              const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
+                ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
+              const receipt = store.settle(scope, command.clientCommandId, observed, observations);
               assertMayReceiveEvidence(stored, actor);
               return { kind: 'receipt' as const, receipt };
             } finally { dispatching.delete(key); }
@@ -375,10 +410,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     },
   };
   registerFrontendToolsHost(host, {
-    db: store.db,
-    transaction: (work, write) => store.transaction(work, write),
-    frontendSends: store.frontendSends,
-    findInstallation: scope => store.findInstallation(scope),
+    frontendTools: (factory, authorize) => store.frontendTools(factory, authorize),
     authorized,
   });
   return host;
