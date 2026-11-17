@@ -88,12 +88,12 @@ A thrown error is recorded as uncertainty, never as rejection.
 An uncertain send stays uncertain until a client `reconcile` request settles it through `reconcileCommand`.
 Before admitting a new send to a provider conversation, the host looks for the oldest previous send whose receipt is `pending`, `accepted` or `uncertain`.
 An `uncertain` send whose saved observation is conclusive does not block: the provider reported it finished and only the host's projection of the result failed (`output-rejected`). An `uncertain` send quarantined for `capacity-exhausted` still blocks, because the provider may still be running it.
-The host first tries to settle an `accepted` or `uncertain` blocker once through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
+The host first tries to settle an `accepted` or `uncertain` blocker once through `reconcileCommand`. If no send blocks after that, under the same rule, the new send is admitted.
 Otherwise it refuses with `send-awaiting-confirmation` and the new send reaches no provider. While the provider is offline the blocker cannot be settled, so the refusal is `send-awaiting-confirmation`, not `provider-command-unavailable`.
 A lost send reply therefore blocks the conversation until reconciliation settles the earlier send. A conversation with a built-in agent driver (Codex, Claude SDK, Pi) records an unknown outcome without blocking later sends.
 
 The block can be permanent. When a send never reached the provider, its lookup finds no record and stays `uncertain`, so Reconcile cannot settle it, and cancel is refused with `unknown-run` because no run exists. Start a new chat to keep going. An action to stop waiting on such a send is tracked as bean `agentui-b9oy`.
-After upgrading to a host with this rule, a provider conversation that already holds an `uncertain` send starts refusing new sends the same way, until Reconcile settles that send or the user starts a new chat.
+After upgrading to a host with this rule, a provider conversation that already holds a non-conclusive `uncertain` send starts refusing new sends the same way, until Reconcile settles that send or the user starts a new chat.
 
 ## Observation
 
