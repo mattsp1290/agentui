@@ -87,7 +87,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let owner: ReturnType<typeof ownDirectory>;
   try { owner = ownDirectory(options.directory); }
   catch (error) { await observability.close(); throw error; }
-  let openedAccess: AccessDatabase | undefined;
+  let database: AccessDatabase;
+  try { database = openAccessDatabase(join(owner.directory, 'host.sqlite')); }
+  catch (error) { owner.close(); await observability.close(); throw error; }
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
   const drivers: Driver[] = [];
@@ -132,7 +134,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       } finally {
         clearTimeout(deadline);
       }
-      openedAccess?.database.close();
+      database.database.close();
       owner.close();
     })().finally(() => observability.close());
     return closePromise;
@@ -140,16 +142,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   try {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
-    const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    openedAccess = accessDatabase;
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
-      const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
+      const replacement = await providers.replace(providerExtensionSource(database, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
       const generation = replacement.generation;
       const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
       let after: string | null = null;
       while (current()) {
-        const page = readyHost.listConversations(accessDatabase.hostId, after, 100);
+        const page = readyHost.listConversations(database.hostId, after, 100);
         for (const scope of page) {
           if (!current()) return replacement;
           if ('kind' in readyHost.inspect(scope).installation) await readyHost.observeProvider(scope);
@@ -172,7 +172,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           const { artifactId: _artifactId, ...expected } = serverArtifactExpectation('');
           builder = await createInstalledRefreshBuilder({ entry: options.refreshBuilder, expected });
         }
-        const composed = await createRefreshController({ database: accessDatabase, artifactRoot: join(owner.directory, 'refresh-artifacts'),
+        const composed = await createRefreshController({ database, artifactRoot: join(owner.directory, 'refresh-artifacts'),
           builder, selection: { entries: extensions.entries,
           runtime: providers.status, isClosing: () => closing,
           replace: selected => {
@@ -188,7 +188,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         break;
       }
       case 'transient':
-        assertNoSelectionJournal(accessDatabase);
+        assertNoSelectionJournal(database);
         boot = async readyHost => {
           const replacement = await replaceExtensions(readyHost, { kind: 'entries', entries: extensions.entries });
           if (replacement.kind === 'failed') {
@@ -281,7 +281,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         }
       }
     }
-    const hostId = accessDatabase.hostId;
+    const hostId = database.hostId;
     const readyHost = startup.kind === 'recorded'
       ? openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) })

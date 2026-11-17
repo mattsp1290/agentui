@@ -52,7 +52,7 @@ This changes the build process's tool lookup without changing your system instal
 
 1. Stop the Vite development process.
 2. Open the production `.app` with `./agentui`.
-3. Confirm that the native window says **No host connected** and explains that host connection and conversations are unavailable.
+3. With no host running, confirm that the native window shows **Connect this Mac**, says to start the AgentUI host on this Mac, and offers **Reconnect**. Start the local host on `127.0.0.1:7140`, select **Reconnect**, and confirm that the chats view opens.
 4. Click **Restore default view**. Confirm that the built-in landing page remains visible.
 5. Click **Reload app**. Confirm that the same page returns.
 6. Quit the app and open the same bundle again.
@@ -70,7 +70,7 @@ The checks build the production web assets, preserve package exports, and exerci
 
 ## Security boundary
 
-The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Production styles use `style-src 'self'`. The shared theme sets CSS custom properties through the CSSOM without an inline-style allowance. Both browser tests fail on CSP violations. The app stores no credentials. The stock Mac app's host connection is described in the [native connection](../architecture/native-credentials.md) document.
+The package declares two application IPC commands: `native_access`, which connects to the host on this Mac and forwards service requests to it, and `provider_setup`, which stores the Pi and OpenCode Go provider key. It declares no native plugins, sidecars, or other capabilities. Production CSP denies webview network connections and loads bundled scripts. Production styles use `style-src 'self'`. The shared theme sets CSS custom properties through the CSSOM without an inline-style allowance. Both browser tests fail on CSP violations. The app stores no host credential. The Pi and OpenCode setup key and the stock Mac app's host connection are described in the [native connection](../architecture/native-credentials.md) document.
 
 ## Local qualification record
 

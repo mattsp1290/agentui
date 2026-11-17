@@ -26,7 +26,7 @@ Configure your MCP client to run the built executable with the `serve` command a
 }
 ```
 
-The origin must be exactly `http://127.0.0.1:<port>`, with no path, userinfo, query, or fragment. Redirects fail. You can point this origin at a local tunnel. Serve reads the host's metadata once before connecting stdio and exits with code 1 if the host is unreachable. Stdout contains only MCP messages. Fixed diagnostics use stderr.
+The origin must be exactly `http://127.0.0.1:<port>`, with no path, userinfo, query, or fragment. Redirects fail. You can point this origin at a local tunnel only if the tunnel's local port equals the host's port, because the host checks the `Host` header against the port of the socket it accepted the request on. Serve reads the host's metadata once before connecting stdio and exits with code 1 if the host is unreachable. A host from before pairing was removed answers with HTTP 401 and is reported the same way; after upgrading, restart the host. Stdout contains only MCP messages. Fixed diagnostics use stderr.
 
 ## Host identity
 
