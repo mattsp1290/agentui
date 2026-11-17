@@ -13,7 +13,7 @@ function fixture(t) {
 }
 test('catalog sources have locale-independent code-unit order', () => {
   const node = { identity: 'root', commit: 'commit', subdirectory: '', inputs: [], npm: {}, repositoryDirectory: '/tmp/root', directory: '/tmp/root', extensions: [],
-    customization: { local: { manifest: { sdkVersion: '0.4.0', namespace: 'example', entries: [] }, sources: new Map([['./z.js', 'z'], ['./t.js', 't'], ['./s.js', 's'], ['./B.js', 'B']]) } } };
+    customization: { local: { manifest: { sdkVersion: '0.5.0', namespace: 'example', entries: [] }, sources: new Map([['./z.js', 'z'], ['./t.js', 't'], ['./s.js', 's'], ['./B.js', 'B']]) } } };
   assert.deepEqual(desktopPlan(node).identity.packages[0].local.sources.map(source => source.module), ['./B.js', './s.js', './t.js', './z.js']);
 });
 
@@ -183,7 +183,7 @@ test('builds every committed desktop entry in graph order and changes identity w
 
 for (const [name, source] of [
   ['missing default', 'export const value = 1;'],
-  ['wrong kind', "export default { kind: 'server', sdkVersion: '0.4.0', activate() {} };"],
+  ['wrong kind', "export default { kind: 'server', sdkVersion: '0.5.0', activate() {} };"],
   ['wrong SDK', "export default { kind: 'desktop', sdkVersion: 'wrong', activate() {} };"],
   ['import exception', "throw new Error('entry failed'); export default {};"],
 ]) test(`browser qualification rejects ${name} without publishing`, { timeout: 30_000 }, t => {
@@ -197,7 +197,7 @@ for (const [name, source] of [
 test('normal Vite raw assets remain available to prepared modules', { timeout: 30_000 }, t => {
   const f = fixture(t);
   f.write('desktop/index.tsx', `import prompt from '../shared/prompts.ts?raw';
-    export default { kind: 'desktop', sdkVersion: '0.4.0', activate() { return { modules: [], dispose() {}, prompt }; } };`);
+    export default { kind: 'desktop', sdkVersion: '0.5.0', activate() { return { modules: [], dispose() {}, prompt }; } };`);
   buildCustom(f);
   const artifact = readArtifactBytes(join(f.directory, 'browser'), 'browser-development');
   assert.match([...artifact.files.values()].map(bytes => bytes.toString()).join('\n'), /Review our current plan/);
@@ -210,7 +210,7 @@ test('literal dynamic imports and CSS URLs build from contained sources', { time
   f.write('desktop/index.tsx', `import style from './style.css?url';
     const lazy = () => import('./lazy.js');
     if (new URL(style).pathname.endsWith('.css') === false) throw new Error('asset failed');
-    export default { kind: 'desktop', sdkVersion: '0.4.0', async activate() {
+    export default { kind: 'desktop', sdkVersion: '0.5.0', async activate() {
       const loaded = await lazy();
       const response = await fetch(style);
       if (loaded.default !== 'lazy loaded marker' || !response.ok || !(await response.text()).includes('#010203')) throw new Error('asset loading failed');

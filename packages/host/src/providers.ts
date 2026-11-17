@@ -1,12 +1,13 @@
+import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationPermissions, ConversationScope, RunAuthority } from '@agentui/contracts';
-import { providerTarget, providerOutcome, providerReference } from './provider-commands.js';
-import type { ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
+import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility } from '@agentui/contracts';
+import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
+import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
@@ -33,6 +34,7 @@ export interface ProviderExtension {
 }
 export interface DiscoveredProvider {
   readonly kind: 'available';
+  readonly frontendOffers: FrontendEligibility;
   readonly contributionId: string;
   readonly instance: ProviderIdentity;
   readonly expectedAuthority: RunAuthority['kind'];
@@ -81,18 +83,19 @@ function capability(value: unknown): boolean {
   throw new Error('Invalid provider capability');
 }
 interface BoundProvider {
+  assertFrontendInput(target: ProviderTarget): void;
   discover(): Promise<ProviderStatus>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
   readPermissions(original: StoredCreation): Promise<ConversationPermissions>;
   captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
-  executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
+  executeCommand(capture: ProviderCapture, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
   observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream>;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
-  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority): BoundProvider {
+  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, mode: 'generic' | 'ag-ui'): BoundProvider {
   type Attempt = { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> }
     | { readonly kind: 'refused'; readonly cause: RetryableCause }
     | { readonly kind: 'invalid'; readonly backend: ConnectedProvider<M, I> | undefined };
@@ -200,7 +203,8 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         seen.add(opaqueId);
         return { opaqueId, name: text(agent.name) };
       });
-      return { kind: 'available', contributionId: id, instance: identity, expectedAuthority, capabilities: normalized, agents };
+      return { kind: 'available', frontendOffers: mode === 'ag-ui' && normalized.send && normalized.reconcile ? 'ag-ui-capture-and-bind' : 'unsupported',
+        contributionId: id, instance: identity, expectedAuthority, capabilities: normalized, agents };
     } catch {
       if (state.kind !== 'retired') release({ kind: 'retired' });
       return unavailable('invalid-installation');
@@ -213,7 +217,18 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     }
     return granted;
   }
+  function assertFrontendTarget(target: ProviderTarget) {
+    const granted = validate(target.installation);
+    if (mode !== 'ag-ui' || target.operation.kind !== 'send' || canonicalJson(target.credential) !== canonicalJson(granted.credential)) throw new Error('Original AG-UI provider unavailable');
+    return target.operation;
+  }
+  function assertFrontendInput(target: ProviderTarget): void {
+    const operation = assertFrontendTarget(target);
+    if (canonicalJson(presentation.decodeRequest(copyJson(operation.request))) !== canonicalJson(operation.request)) throw new Error('Provider request changed');
+    assertFrontendTarget(target);
+  }
   return {
+    assertFrontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
       const granted = validate(selected);
@@ -273,18 +288,23 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       if (original.observation?.kind !== 'confirmed' || canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
       const intent = creationIntent(original.intent, original.installation, instance);
       const binding = creationBinding(original.observation.binding, intent, original.installation);
-      const target = (operation: unknown) => providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential, operation }, intent.scope);
+      const target = (operation: unknown) => parseProviderCapture({ kind: 'provider', installation: original.installation, credential: original.credential, operation }, intent.scope).target;
       if (action.kind === 'revoke-permission') {
         if (state.kind !== 'connected' || !state.backend.permissions) throw new Error('Permission management unavailable');
         return target({ kind: action.kind, operationId, binding, scope: action.scope,
           permission: { binding, ref: { kind: 'permission', instance, opaqueId: action.permissionId } } });
       }
       if (action.kind === 'send') {
-        const request = copyJson(presentation.request(action.text, binding));
+        if (action.frontend && mode !== 'ag-ui') throw new Error('Frontend offers unsupported');
+        const raw = copyJson(presentation.request(action.text, binding));
+        const request = action.frontend ? offerInput(raw, action.frontend) : raw;
+        if (mode === 'ag-ui') aguiInput(request);
         if (canonicalJson(binding) !== canonicalJson(original.observation.binding)) throw new Error('Provider binding changed');
         const decoded = presentation.decodeRequest(copyJson(request));
         if (canonicalJson(decoded) !== canonicalJson(request)) throw new Error('Provider request changed');
-        return target({ kind: 'send', operationId, binding, request });
+        const captured = target({ kind: 'send', operationId, binding, request, ...(mode === 'ag-ui' ? { protocol: 'ag-ui' } : {}) });
+        if (canonicalJson(original.credential) !== canonicalJson(validate(original.installation).credential)) throw new Error('Original credentials unavailable');
+        return captured;
       } else {
         const run = providerReference(action.run, binding, original.installation, 'run');
         return target(action.kind === 'cancel' ? { kind: 'cancel', operationId, binding, run }
@@ -293,7 +313,8 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
             choice: providerReference(action.choice, binding, original.installation, 'choice') });
       }
     },
-    async executeCommand(original, fresh, beforeEffect) {
+    async executeCommand(capture, fresh, beforeEffect) {
+      const original = capture.target;
       let entered = false;
       const authorize = () => {
         const granted = validate(original.installation);
@@ -316,11 +337,12 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
           entered = true;
           const result = await (fresh ? manager.revoke(operation) : manager.reconcileRevoke(operation));
           authorize();
-          return providerOutcome(result, original, fresh);
+          return providerOutcome(result, capture, fresh);
         }
         let operation: ProviderCommand<M, I>;
         const operationId = captured.operationId;
         if (captured.kind === 'send') {
+          if (capture.agui !== null) assertFrontendTarget(original);
           const request = presentation.decodeRequest(copyJson(captured.request));
           if (canonicalJson(request) !== canonicalJson(captured.request)) throw new Error('Provider request changed');
           operation = { kind: 'send', operationId, binding, request };
@@ -338,7 +360,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         entered = true;
         const result = await (fresh ? connected.submit(operation) : connected.reconcileCommand(operation));
         authorize();
-        return providerOutcome(result, original, fresh);
+        return providerOutcome(result, capture, fresh);
       } catch {
         return fresh && !entered ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
       }
@@ -470,22 +492,25 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
             let invalid = false;
             let lifetime: ExtensionLifetime;
             try {
+              const register = <M extends ProviderModel, I extends string>(mode: 'generic' | 'ag-ui', id: string,
+                backend: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void => {
+                try {
+                  if (!registering || phase !== 'activating') throw new Error('Registration closed');
+                  text(id);
+                  const identity = providerIdentity(presentation.instance), key = identityKey(identity);
+                  if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
+                    backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
+                    [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
+                      presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
+                    throw new Error('Invalid provider registration');
+                  }
+                  ids.add(id); identities.add(key);
+                  bindings.push(bindProvider(id, backend, presentation, extension.authority, mode));
+                } catch { invalid = true; throw new Error('Invalid provider registration'); }
+              };
               lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials,
-                providers: { add(id, backend, presentation) {
-                  try {
-                    if (!registering || phase !== 'activating') throw new Error('Registration closed');
-                    text(id);
-                    const identity = providerIdentity(presentation.instance), key = identityKey(identity);
-                    if (identity.namespace !== manifest.namespace || ids.has(id) || identities.has(key) ||
-                      backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
-                      [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
-                        presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
-                      throw new Error('Invalid provider registration');
-                    }
-                    ids.add(id); identities.add(key);
-                    bindings.push(bindProvider(id, backend, presentation, extension.authority));
-                  } catch { invalid = true; throw new Error('Invalid provider registration'); }
-                } },
+                providers: { add: (id, backend, presentation) => register('generic', id, backend, presentation),
+                  addAgui: (id, backend, presentation) => register('ag-ui', id, backend, presentation) },
               });
             } finally { registering = false; }
             validateExtensionLifetime(lifetime);
@@ -521,6 +546,12 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
     },
+    assertFrontendInput(target: ProviderTarget): void {
+      const binding = bindings.find(binding => binding.matches(target.installation));
+      if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
+      binding.assertFrontendInput(target);
+      if (phase !== 'active') throw new Error('Original AG-UI provider unavailable');
+    },
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const selected = original.installation;
@@ -549,12 +580,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         return stream;
       });
     },
-    executeCommand(original: ProviderTarget, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+    executeCommand(capture: MatchedProviderCommand, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
       return track(async () => {
         if (phase !== 'active') return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
+        const original = capture.target;
         const binding = bindings.find(binding => binding.matches(original.installation));
         if (!binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
-        return binding.executeCommand(original, fresh, beforeEffect);
+        return binding.executeCommand(capture, fresh, () => {
+          if (capture.command.version === 2 && phase !== 'active') throw new Error('Original AG-UI provider unavailable');
+          beforeEffect();
+        });
       });
     },
     execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation> {
@@ -568,4 +603,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput'>;

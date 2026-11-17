@@ -112,6 +112,8 @@ Confirmed history and existing receipts remain readable when their provider is u
 The authenticated submit route captures provider sends in the existing command ledger after exact-ID retry detection.
 The stored target contains the original installation, configured authority, credential handle, confirmed binding and translated request.
 Translation runs once for a new admitted command. Admission bounds the translated target and commits it with the pending receipt before submission.
+The command and complete target have separate size limits.
+A wire-valid offer can still be refused when its translated target, including saved history, exceeds its limit.
 Retries return the saved receipt. Explicit reconciliation decodes the original request without translation and calls only `reconcileCommand`.
 A changed decoder, credential or generation cannot replace the original operation.
 
@@ -119,8 +121,83 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 8, SDK compatibility 0.4.0, package versions 0.0 and transcript projection 4.
+The current integration uses wire version 9, SDK compatibility 0.5.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
+
+## Captured frontend offers
+
+An `addAgui` provider advertises `frontendOffers: 'ag-ui-capture-and-bind'` only when send and reconciliation are supported.
+Generic and native providers advertise `unsupported`. This does not change AG-UI executable-tool capabilities.
+The paired service accepts a version-2 text send containing a desktop offer of definitions and original activation IDs.
+Version-1 text and image sends keep their exact shapes. Version 2 rejects `imageId`; no provider currently supports an offered image send.
+Version-1 commands retain their existing shape and canonical identity.
+The offer definition type follows its parsed wire shape, with optional object-valued parameters and metadata.
+The SDK tool type remains derived from the pinned AG-UI package; the host still validates definitions with its schemas.
+Packed contracts and client consumers need no AG-UI package or checkout-specific dependency override.
+
+Admission binds the authenticated principal, command, original provider installation and credentials in one durable transaction.
+The host validates the actual AG-UI input, appends noncolliding captured definitions, and saves the complete raw request.
+Schema defaults and state transforms do not rewrite that request. Retry and reconciliation use only its saved bytes.
+New AG-UI send targets carry a private `protocol: 'ag-ui'` tag, including version-1 sends.
+The target parser validates the raw request and derives the expected run ID without adding schema defaults.
+Both fresh and restored confirmation evidence for tagged targets must name that saved run ID.
+The tag never enters the public provider operation. A generic live provider cannot execute a tagged target.
+Historical untagged targets and their evidence correlations stay byte-identical.
+Version-2 commands require the tag and the exact authored offer suffix.
+Untagged version-1 requests remain generic, including after registration through `addAgui`.
+Admission permanently reserves each offered host, conversation, thread and run for its original command.
+For each independent offered send, an `addAgui` provider must allocate a fresh run ID in its actual input.
+An exact retry retains the original run ID and saved command.
+Another tagged send using that identity is rejected with `frontend-run-reused` before dispatch, including after release or terminal settlement.
+A new offered command also rejects a key captured by any earlier tagged send.
+Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic run-key reuse is unchanged.
+
+Provider dispatch, including generic sends, rechecks the authenticated actor before the effect. These actor fences do not change native driver dispatch. A follow-up send does not reconcile a provider blocker while its original dispatch is still running locally.
+An exact command retry returns its existing receipt without translating or dispatching again.
+Native driver capability, dispatch and lookup accept only version-1 commands. Native version-2 sends still pass through durable admission so exact retry and conflict checks keep their precedence.
+Before a provider effect, the host checks current authority, conversation access and the saved intent after request decoding.
+If decoding starts registry shutdown, offered effects stop. In-flight generic and tagged version-1 effects retain their existing credential-based policy.
+Binding recovery rechecks the owner after reconciliation, provider input decoding and producer registration.
+This reservation does not qualify frontend handler execution ownership.
+
+`connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
+Pending does not prove host admission. Retain the original closures and exact saved command ID and body for submission retry.
+A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
+Command receipts remain visible to devices that can read the conversation.
+The owner checks protect direct receipt lookup and the captured offer association.
+Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
+The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
+It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.
+Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive lookup evidence keep the blocker.
+The blocker can remain indefinitely until conclusive authoritative evidence arrives. Restoring credentials alone does not clear it.
+There is no manual abandon action for an unresolved offered send.
+Public reconciliation and binding recovery also retain the latest persisted offered receipt and observation on an inconclusive lookup, including pending admission with no observation.
+An authorized original owner can still reconcile its receipt after releasing closures.
+A terminal rejection without a retained run returns `unavailable` with `provider-rejected`; not-dispatched returns `not-dispatched`.
+Both final no-run results work offline and need no coordinator. Explicit closure release takes precedence as `closures-unavailable`.
+A prior confirmed run retained through later rejection remains a binding. Command settlement does not finish the run.
+`action: 'unavailable'` irreversibly releases host availability. Before admission it records an owner-specific tombstone that cannot reserve another principal's command ID.
+After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
+Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
+`frontendToolsFor` requires the exact handle returned by `openLocalHost` or `openRecordedHost`. A copy or wrapper has a different identity and is not registered.
+
+Database format 5 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
+The joint format-5 release preserves released format-4 images. Earlier hosts refuse format 5.
+Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
+Format 5 stores keyed admitted owners in `frontend_send_owners` and keyless actor-specific tombstones in `frontend_send_tombstones`.
+Each owner has one command and a unique host, conversation, thread and run key. Both available and unavailable owners retain that key.
+The command foreign key is deferred until commit so admission authorization callbacks keep their existing position before command insertion.
+An admitted owner stores the original run key as a permanent reservation. The saved target retains the provider request used for evidence and retry.
+The host requires these records to agree when it reads an offered command. A missing owner, unreadable capture or disagreement is corruption and fails closed.
+The host does not reconstruct the reservation from whichever record still parses. Releasing closures changes availability and retains the original reservation.
+An admitted owner takes precedence over foreign actor tombstones for the same command. Tombstones never reserve a run key.
+The tagged history index derives its keys from immutable saved targets. Admission checks that those raw JSON keys agree with the parsed capture.
+Existing format 5 requires both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
+Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
+Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
+Wire 9 and SDK 0.5.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
+This service increment executes no frontend handlers. Desktop captured-closure admission, retention across views and recovery are the next increment.
+Consent, claiming, durable execution receipts and continuation remain separate work.
 
 ## Durable response streams
 
@@ -153,7 +230,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 8, transcript projection 4, SDK compatibility 0.4.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 9, transcript projection 4, SDK compatibility 0.5.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -300,6 +377,6 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.4.0 and wire 8 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.5.0 and wire 9 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.

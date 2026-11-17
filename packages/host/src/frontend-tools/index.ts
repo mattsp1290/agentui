@@ -74,6 +74,7 @@ function validResult(value: FrontendReceipt): FrontendReceipt {
   if (value.kind === 'refused' && ['released', 'unknown-tool', 'activation-mismatch', 'invalid-arguments', 'decode-failed'].includes(value.code)) return { kind: 'refused', code: value.code };
   throw new Error('Invalid frontend receipt');
 }
+/** Requires the exact handle returned by openLocalHost or openRecordedHost. Copied or wrapped handles are not registered. */
 export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
   const store = frontendToolsContext(host), authorized = store.authorized;
   const keyParts = (scope: ConversationScope, key: FrontendRunKey) => [scope.hostId, scope.conversationId, nonempty(key.threadId), nonempty(key.runId)] as const;

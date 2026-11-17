@@ -3,18 +3,18 @@ import type { DatabaseSync, SQLOutputValue } from 'node:sqlite';
 import type { ConversationScope } from '@agentui/contracts';
 import { IMAGE_HOST_MAX_BYTES, IMAGE_HOST_MAX_COUNT, IMAGE_MAX_AXIS, IMAGE_MAX_BYTES, IMAGE_MAX_PIXELS, parseImageAttachment, parseImageId } from '@agentui/contracts/image';
 import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
+import { readDatabaseFormat } from './sqlite-schema.js';
 import { ImageInputError } from './image-input.js';
 import type { verifyImageUpload } from './image-input.js';
 
 export function migrateImages(db: DatabaseSync): void {
-  const version = db.prepare('PRAGMA user_version').get()?.user_version;
-  if (version === 4) {
+  const version = readDatabaseFormat(db, 2);
+  if (version >= 4) {
     for (const table of ['images', 'command_images']) {
-      if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table)) throw new Error(`Incomplete database schema version 4: missing ${table}`);
+      if (!db.prepare("SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?").get(table)) throw new Error(`Incomplete database schema version ${version}: missing ${table}`);
     }
     return;
   }
-  if (version !== 2 && version !== 3) throw new Error('Unsupported database version');
   db.exec(`CREATE TABLE images (
     id TEXT PRIMARY KEY NOT NULL,
     host TEXT NOT NULL, conversation TEXT NOT NULL, uploader TEXT NOT NULL, upload TEXT NOT NULL,
@@ -31,8 +31,7 @@ export function migrateImages(db: DatabaseSync): void {
     host TEXT NOT NULL, conversation TEXT NOT NULL, command TEXT NOT NULL, image TEXT NOT NULL,
     PRIMARY KEY(host,conversation,command),
     FOREIGN KEY(host,conversation,command) REFERENCES commands(host,conversation,id),
-    FOREIGN KEY(image) REFERENCES images(id));
-    PRAGMA user_version=4;`);
+    FOREIGN KEY(image) REFERENCES images(id));`);
 }
 
 function requireScope(db: DatabaseSync, scope: ConversationScope): void {

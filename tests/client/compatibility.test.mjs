@@ -87,3 +87,15 @@ test('provider observation wire 5 requires matching artifacts and rejects wire 4
   assert.equal(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, { ...current, wireVersion: 4 }).kind, 'incompatible');
   assert.equal(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [4] }, current).kind, 'incompatible');
 });
+
+
+test('joint image and capture release requires wire 9 and SDK 0.5.0', () => {
+  assert.equal(SERVICE_WIRE_VERSION, 9);
+  assert.equal(EXTENSION_SDK_VERSION, '0.5.0');
+  const current = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
+  for (const [changes, dimension] of [[{ supportedWireVersions: [8] }, 'wire'], [{ supportedExtensionSdkVersions: ['0.4.0'] }, 'extension-sdk']]) {
+    const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, ...changes }, current);
+    assert.equal(result.kind, 'incompatible');
+    assert.deepEqual(result.issues.map(issue => issue.dimension), [dimension]);
+  }
+});

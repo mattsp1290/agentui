@@ -1,6 +1,6 @@
 import { parsePermissionScope } from './permissions.js';
 import type { PermissionScope } from './permissions.js';
-import { record, nonempty, count, identifier, exact } from './decode.js';
+import { record, nonempty, count, identifier, exact, utf8Bytes } from './decode.js';
 import type { ConversationScope, ProviderBinding, RunAuthority, RunIdentity } from './index.js';
 import { parseImageId } from './image.js';
 import type { ImageId } from './image.js';
@@ -14,7 +14,19 @@ export type CommandBody =
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }
   | { readonly kind: 'cancel'; readonly runId: string }
   | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope };
-export interface ClientCommand {
+export type FrontendDefinition = ReturnType<typeof parseFrontendDefinition>;
+export interface FrontendOffer {
+  readonly platform: 'desktop';
+  readonly tools: readonly { readonly definition: FrontendDefinition; readonly activationId: string }[];
+}
+export interface OfferedCommand {
+  readonly version: 2;
+  readonly scope: ConversationScope;
+  readonly clientCommandId: string;
+  readonly body: { readonly kind: 'send'; readonly text: string; readonly frontend: FrontendOffer };
+}
+export type ClientCommand = LegacyCommand | OfferedCommand;
+export interface LegacyCommand {
   readonly version: 1;
   readonly scope: ConversationScope;
   readonly clientCommandId: string;
@@ -35,7 +47,7 @@ export interface Receipt {
   readonly sequence: number;
   readonly state: ReceiptState;
 }
-/** Rejections are not persisted and leave the command id available.
+/** Rejections leave the command id available, except an owner-specific frontend unavailability tombstone.
  * A full host snapshot budget returns conversation-capacity. Storage faults, settlement conflicts and
  * invalid driver results reject the promise; admitted receipts remain persisted. */
 export type SubmitResult =
@@ -162,7 +174,8 @@ export function parseRunIdentity(value: unknown): RunIdentity {
 }
 /**
  * Local scope and command IDs are limited to 1024 UTF-16 units. Approval and cancel targets preserve
- * nonempty provider-owned IDs. Semantic parsing does not enforce host resource budgets.
+ * nonempty provider-owned IDs. Version 2 parsing enforces the fixed DEFAULT_MAX_COMMAND_BYTES ceiling
+ * for offered commands. Semantic parsing otherwise does not enforce host resource budgets.
  * New host admission checks canonical command bytes and event and snapshot capacity before durable
  * persistence and dispatch. Earlier driver capability calls and application-owned draft storage are
  * outside those host limits.
@@ -170,8 +183,16 @@ export function parseRunIdentity(value: unknown): RunIdentity {
 export function parseCommand(value: unknown): ClientCommand {
   const input = record(value);
   exact(input, ['version', 'scope', 'clientCommandId', 'body']);
-  if (input.version !== 1) throw new Error('Unsupported command version');
   const body = record(input.body);
+  if (input.version === 2) {
+    exact(body, ['kind', 'text', 'frontend']);
+    if (body.kind !== 'send') throw new Error('Invalid offered command');
+    const command: OfferedCommand = { version: 2, scope: parseScope(input.scope), clientCommandId: identifier(input.clientCommandId),
+      body: { kind: 'send', text: nonempty(body.text), frontend: parseFrontendOffer(body.frontend) } };
+    if (utf8Bytes(canonicalJson(command)) > DEFAULT_MAX_COMMAND_BYTES) throw new Error('Command too large');
+    return command;
+  }
+  if (input.version !== 1) throw new Error('Unsupported command version');
   let parsed: CommandBody;
   switch (body.kind) {
     case 'send':
@@ -357,4 +378,29 @@ function serializeJson(value: unknown, budget: JsonBudget, sortKeys: boolean): s
     } finally { ancestors.delete(value); }
   };
   return encode(value, 0);
+}
+
+export function parseFrontendOffer(value: unknown): FrontendOffer {
+  const input = record(copyJson(value), ['platform', 'tools']);
+  if (input.platform !== 'desktop' || !Array.isArray(input.tools) || input.tools.length < 1 || input.tools.length > 128) throw new Error('Invalid frontend offer');
+  const names = new Set<string>();
+  const tools = input.tools.map(value => {
+    const item = record(value, ['definition', 'activationId']), definition = parseFrontendDefinition(item.definition);
+    if (names.has(definition.name)) throw new Error('Invalid frontend definition');
+    names.add(definition.name);
+    return { definition, activationId: identifier(item.activationId) };
+  });
+  return { platform: 'desktop', tools };
+}
+
+function parseFrontendDefinition(value: unknown) {
+  const raw = record(value);
+  record(raw, ['name', 'description', ...(['parameters', 'metadata'].filter(key => Object.hasOwn(raw, key)))]);
+  const name = identifier(raw.name, 64);
+  if (!/^[a-z][a-z0-9-]{0,31}__[A-Za-z][A-Za-z0-9_-]*$/u.test(name) || typeof raw.description !== 'string') throw new Error('Invalid frontend definition');
+  const parameters = Object.hasOwn(raw, 'parameters') ? record(raw.parameters) : undefined;
+  const metadata = Object.hasOwn(raw, 'metadata') ? record(raw.metadata) : undefined;
+  if (metadata && Object.hasOwn(metadata, 'ag-ui')) throw new Error('Reserved tool metadata');
+  return { name, description: raw.description, ...(parameters === undefined ? {} : { parameters }),
+    ...(metadata === undefined ? {} : { metadata }) };
 }

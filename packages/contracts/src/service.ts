@@ -1,3 +1,5 @@
+import { parseFrontendBinding } from './frontend-sends.js';
+import type { FrontendBinding, FrontendBindingRequest, FrontendEligibility } from './frontend-sends.js';
 import { IMAGE_FAILURE_KINDS, parseImageAttachment, parseImageBase64, parseImageId, parseImageName, parseUploadId } from './image.js';
 import type { ImageAttachment, ImageId, UploadId } from './image.js';
 import { parseConversationPermissions } from './permissions.js';
@@ -9,7 +11,7 @@ import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
 import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
-import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope } from './durable.js';
+import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
@@ -30,6 +32,7 @@ export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
 }
 export type ServiceRequest =
+  | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest)
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
   | { readonly op: 'image-read'; readonly scope: ConversationScope; readonly imageId: ImageId }
@@ -46,6 +49,7 @@ export type ServiceRequest =
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string };
 interface AgentDescription {
+  readonly frontendOffers: FrontendEligibility;
   readonly id: string;
   readonly label: string;
   readonly commands: readonly ('send' | 'cancel' | 'approve')[];
@@ -82,6 +86,7 @@ export interface ConversationSearchPage {
   readonly after: string | null;
 }
 export interface ServiceValueMap {
+  readonly 'frontend-binding': FrontendBinding;
   readonly 'image-upload': { readonly scope: ConversationScope; readonly attachment: ImageAttachment };
   readonly 'image-read': { readonly scope: ConversationScope; readonly attachment: ImageAttachment; readonly base64: string };
   readonly pair: null;
@@ -106,6 +111,7 @@ export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
  * A resolved rejection concerns this attempt and cannot rule out an earlier same-ID attempt.
  * Preserve previously uncertain commands until authoritative receipt settlement. */
 export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
+  frontendBinding(input: FrontendBindingRequest): Promise<FrontendBinding>;
   uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
   readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
   pair(code: string): Promise<void>;
@@ -128,6 +134,10 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
   canonicalJson(value);
   const input = record(value);
   switch (input.op) {
+    case 'frontend-binding':
+      exact(input, ['op', 'scope', 'id', 'action']);
+      if (input.action !== 'recover' && input.action !== 'unavailable') throw new Error('Invalid binding action');
+      return { op: 'frontend-binding', scope: parseScope(input.scope), id: identifier(input.id), action: input.action };
     case 'image-upload': {
       exact(input, ['op', 'scope', 'uploadId', 'name', 'byteLength', 'base64']);
       const byteLength = count(input.byteLength);
@@ -180,8 +190,8 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
 }
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
-  exact(input, input.kind === 'provider' ? ['id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
-    : ['id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
+  exact(input, input.kind === 'provider' ? ['frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
+    : ['frontendOffers', 'id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
   if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
@@ -195,7 +205,8 @@ function agentDescriptor(value: unknown): AgentDescriptor {
     if (command !== 'send' && command !== 'cancel' && command !== 'approve') throw new Error('Invalid agent command');
     return command;
   });
-  const common = { id: identifier(input.id), label: identifier(input.label), commands, availability };
+  if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
+  const common: AgentDescription = { frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
@@ -251,7 +262,25 @@ export function parseServicePull(value: unknown): ServicePull {
     default: throw new Error('Invalid service pull');
   }
 }
-const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) => ServiceValueMap[K] } = {
+function catalogEntries(value: unknown) {
+  if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
+  return value.map(value => {
+    const entry = record(value, ['scope', 'preview']);
+    if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
+      entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
+      throw new Error('Invalid conversation preview');
+    }
+    return { scope: parseScope(entry.scope), preview: entry.preview };
+  });
+}
+type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, 'frontend-binding'> } | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest);
+type RequestFor<K extends keyof ServiceValueMap> = ResponseRequest & { readonly op: K };
+const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, request: RequestFor<K>) => ServiceValueMap[K] } = {
+  'frontend-binding'(value, request) {
+    const binding = parseFrontendBinding(value);
+    if (binding.kind === 'bound' ? binding.command.clientCommandId !== request.id || !sameScope(binding.command.scope, request.scope) : binding.id !== request.id) throw new Error('Foreign frontend binding');
+    return binding;
+  },
   'image-upload'(value) {
     const input = record(value, ['scope', 'attachment']);
     return { scope: parseScope(input.scope), attachment: parseImageAttachment(input.attachment) };
@@ -268,23 +297,13 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
     if (defaultAgentId === null ? agents.some(agent => agent.availability.kind === 'ready') : !agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
     return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
   },
-  catalog(value) {
-    if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
-    return value.map(value => {
-      const entry = record(value, ['scope', 'preview']);
-      if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
-        entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
-        throw new Error('Invalid conversation preview');
-      }
-      return { scope: parseScope(entry.scope), preview: entry.preview };
-    });
-  },
+  catalog: catalogEntries,
   search(value) {
     const input = record(value, ['items', 'after']);
     if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
     const entries = input.items.map(value => {
       const entry = record(value, ['scope', 'preview', 'excerpt']);
-      const [catalog] = valueParsers.catalog([{ scope: entry.scope, preview: entry.preview }]);
+      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview }]);
       if (!catalog) throw new Error('Missing search entry');
       if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
         entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');
@@ -308,12 +327,12 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown) =>
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
 };
-export function parseServiceResponse<K extends keyof ServiceValueMap>(request: { readonly op: K }, value: unknown): ServiceResponse<ServiceValueMap[K]> {
+export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);
   const input = record(value);
   if (input.ok === true) {
     exact(input, ['ok', 'value']);
-    return { ok: true, value: valueParsers[request.op](input.value) };
+    return { ok: true, value: valueParsers[request.op](input.value, request) };
   }
   exact(input, ['ok', 'error']);
   const error = record(input.error, ['kind', 'message']);

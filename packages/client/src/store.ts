@@ -30,7 +30,7 @@ function settle(local: LocalRecords, receipt: Receipt): LocalRecords {
   // The sent image leaves the composer even when the user kept typing, so it is never sent twice. Settlement is not an
   // edit, so draftRevision stays put: a later capture of the same edit still clears its text, and any newer edit
   // already advanced the revision past older captures. A different image has a different imageId and is kept.
-  const clearImage = sent && body.imageId !== undefined && local.image?.attachment?.imageId === body.imageId;
+  const clearImage = sent && 'imageId' in body && body.imageId !== undefined && local.image?.attachment?.imageId === body.imageId;
   return immutable({ ...local, draft: clearDraft ? '' : local.draft, image: clearImage ? null : local.image,
     outbox: local.outbox.filter(value => value.command.clientCommandId !== receipt.clientCommandId) });
 }

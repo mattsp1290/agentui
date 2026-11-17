@@ -28,18 +28,18 @@ export function describeAgent(installation: Installation, availability: AgentDes
   const modelId = codexInstallationModel(installation);
   const selectedModel = model ?? (modelId ? { id: modelId, label: modelId } : known?.model);
   return { ...(selectedModel ? { model: selectedModel } : {}), id: `agent-v1-${createHash('sha256').update(canonicalJson(installation)).digest('hex')}`, runtime,
-    label: model?.label ?? modelId ?? known?.label ?? 'Unavailable agent', commands: known?.commands ?? [],
+    frontendOffers: 'unsupported', label: model?.label ?? modelId ?? known?.label ?? 'Unavailable agent', commands: known?.commands ?? [],
     availability: known ? availability : { kind: 'unavailable', reason: 'This agent runtime is unsupported.' } };
 }
 
-export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], commands: AgentDescriptor['commands'] = []): AgentDescriptor {
+export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], commands: AgentDescriptor['commands'] = [], frontendOffers: AgentDescriptor['frontendOffers'] = 'unsupported'): AgentDescriptor {
   return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(providerInstallationKey(installation)).digest('hex')}`,
     label: installation.agent.name, namespace: installation.instance.namespace, protocolVersion: installation.instance.protocolVersion,
-    commands, availability };
+    commands, availability, frontendOffers };
 }
 
 export function describeUnavailableProvider(provider: UnavailableProvider): AgentDescriptor {
   return { kind: 'provider', id: `provider-installation-v1-${createHash('sha256').update(canonicalJson({ contributionId: provider.contributionId, instance: provider.instance })).digest('hex')}`,
     label: `${provider.instance.namespace} · ${provider.instance.installationId}`, namespace: provider.instance.namespace, protocolVersion: provider.instance.protocolVersion,
-    commands: [], availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
+    commands: [], frontendOffers: 'unsupported', availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
 }

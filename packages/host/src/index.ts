@@ -25,3 +25,5 @@ export { codexInstallationModel, codexInstallation, codexSdkInstallation, claude
 
 export type { ConversationInstallation, ProviderInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 export { providerInstallationKey } from './provider-creation.js';
+
+export type { FrontendSendActor } from './frontend-sends.js';

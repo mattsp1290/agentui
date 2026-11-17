@@ -124,13 +124,13 @@ test('version three migration preserves all preexisting tables and exact row val
   access.database.close();
   const store = new SqliteStore(f.path, projection, budgets());
   const savedScope = { hostId, conversationId: 'saved' }; store.create(savedScope, installed);
-  store.db.exec("CREATE TABLE selection_sentinel (data BLOB); INSERT INTO selection_sentinel VALUES (x'0001ff'); DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3");
+  store.db.exec("CREATE TABLE selection_sentinel (data BLOB); INSERT INTO selection_sentinel VALUES (x'0001ff'); DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3");
   const tables = store.db.prepare("SELECT name FROM sqlite_schema WHERE type='table' ORDER BY name").all().map(row => row.name);
   const before = tables.map(table => [table, store.db.prepare(`SELECT * FROM ${table}`).all()]);
   store.close();
   const reopened = new SqliteStore(f.path, projection, budgets()); t.after(() => reopened.close());
   for (const [table, rows] of before) assert.deepEqual(reopened.db.prepare(`SELECT * FROM ${table}`).all(), rows);
-  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 4);
+  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 5);
   assert.ok(upload(reopened, png(), { scope: savedScope }));
   assert.equal(reopened.db.prepare('SELECT version FROM service_schema').get().version, 1);
 });
@@ -138,7 +138,7 @@ test('version three migration preserves all preexisting tables and exact row val
 test('invalid pre-image database is refused before image migration changes its bytes', t => {
   const f = storeFixture(t); f.store.close();
   const db = new DatabaseSync(f.path);
-  db.exec("DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; UPDATE conversations SET document='invalid JSON'"); db.close();
+  db.exec("DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; UPDATE conversations SET document='invalid JSON'"); db.close();
   const before = createHash('sha256').update(readFileSync(f.path)).digest('hex');
   assert.throws(() => f.open(), /Corrupt stored JSON/);
   assert.equal(createHash('sha256').update(readFileSync(f.path)).digest('hex'), before);
@@ -186,7 +186,7 @@ test('simultaneous new uploads cannot exceed the final retained row slot', async
 
 test('failed additive migration rolls back image table creation and format advancement', t => {
   const f = storeFixture(t);
-  f.store.db.exec("DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; CREATE TRIGGER images_no_update BEFORE UPDATE ON conversations BEGIN SELECT 1; END");
+  f.store.db.exec("DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=3; CREATE TRIGGER images_no_update BEFORE UPDATE ON conversations BEGIN SELECT 1; END");
   f.store.close();
   assert.throws(() => f.open(), /trigger images_no_update already exists/);
   const db = new DatabaseSync(f.path); t.after(() => db.close());
@@ -220,4 +220,18 @@ test('image sends admit only through image-capable drivers and imageIds in the s
   assert.equal((await textOnly.conversation(scope).submit(command('text'))).kind, 'receipt');
   assert.deepEqual(rows().commands, ['image', 'text']);
   assert.equal(rows().links.length, 1);
+});
+
+test('a failed image link rolls back its command, receipt, snapshot and event together', t => {
+  const f = storeFixture(t), image = upload(f.store);
+  const tables = ['commands', 'command_images', 'events', 'conversations', 'frontend_send_owners', 'frontend_send_tombstones'];
+  const rows = () => tables.map(table => [table, f.store.db.prepare(`SELECT * FROM ${table}`).all()]);
+  const before = rows(), send = command('image-link', { kind: 'send', text: '', imageId: image.imageId });
+  f.store.db.exec("CREATE TRIGGER reject_link AFTER INSERT ON command_images BEGIN SELECT RAISE(ABORT,'late-image-link'); END");
+  assert.throws(() => f.store.admit(send, { kind: 'supported' }), /late-image-link/);
+  assert.deepEqual(rows(), before);
+  assert.deepEqual(f.store.readImage(scope, image.imageId).attachment, image);
+  f.store.db.exec('DROP TRIGGER reject_link');
+  assert.equal(f.store.admit(send, { kind: 'supported' }).kind, 'owned');
+  assert.equal(f.store.db.prepare('SELECT COUNT(*) n FROM command_images').get().n, 1);
 });
