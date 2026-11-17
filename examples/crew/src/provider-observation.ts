@@ -4,7 +4,7 @@ import { createCrewObserver } from '@birbcrew/client/agui';
 import type { CrewClient } from '@birbcrew/client';
 import type { BaseEvent } from '@ag-ui/core';
 import type { ProviderConversation, ProviderFeed, ProviderItem, ProviderSnapshot } from '@agentui/sdk';
-import { approvalKey, choiceLabels, cursorSchema, reference, remoteSchema, stateSchema } from './provider-model.js';
+import { approvalKey, choiceLabels, closureCause, cursorSchema, reference, remoteSchema, stateSchema } from './provider-model.js';
 import type { CrewModel, CrewCursor, CrewState } from './provider-model.js';
 
 const toolSchema = z.object({ id: z.string(), function: z.object({ name: z.string(), arguments: z.string().max(16384) }) });
@@ -14,6 +14,7 @@ const textFrame = z.object({ messageId: z.string(), delta: z.string().optional()
   subagentRunId: z.string().optional() });
 const workItemArguments = z.strictObject({ operation_id: z.uuid() });
 const questionArguments = z.strictObject({});
+const errorFrame = z.object({ code: z.string().optional() });
 export function observation(binding: ProviderConversation<string>, memberId: string,
   use: <T>(action: (client: CrewClient, token: string) => Promise<T>) => Promise<T>, baseUrl: string,
   previous: CrewCursor | null, ownerDetails: boolean, standingPermissions: boolean) {
@@ -71,15 +72,16 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     tail = task.catch(() => { closed = true; stop?.(); gate.resolve(); });
     return task;
   };
-  async function refresh(client: CrewClient) {
+  async function refresh(client: CrewClient): Promise<boolean> {
     const requestId = cursor.requests.at(-1);
-    if (!requestId) return;
+    if (!requestId) return true;
     try {
       const receipt = await client.requestStatus({ conversationId: binding.authority.binding.opaqueSessionId, requestId },
         { signal: AbortSignal.timeout(10000) });
       state = { ...state, run: { requestId, status: receipt.status,
         cancellation: receipt.cancellation ?? null } };
-    } catch { /* Missing or unavailable status is not proof of completion. */ }
+      return true;
+    } catch { /* Missing or unavailable status is not proof of completion. */ return false; }
   }
   async function publish(snapshot: ProviderSnapshot<CrewModel, string>) {
     if (closed || !receiver) return;
@@ -90,7 +92,10 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   }
   async function reduce(event: BaseEvent, client: CrewClient) {
     if (closed) return;
-    if (event.type === 'RUN_ERROR') throw new Error('Crew observation failed');
+    if (event.type === 'RUN_ERROR') {
+      if (errorFrame.parse(event).code === 'MEMBER_FAILED' && state.closure?.cause === 'failed') return;
+      throw new Error('Crew observation failed');
+    }
     if (event.type === 'STATE_DELTA') throw new Error('Crew state requires a fresh snapshot');
     if (event.type === 'MESSAGES_SNAPSHOT') {
       const publicMessages = messagesFrame.parse(event).messages;
@@ -110,7 +115,10 @@ export function observation(binding: ProviderConversation<string>, memberId: str
         throw new Error('Crew observation identity mismatch');
       }
       remote = next;
-      await refresh(client);
+      const read = await refresh(client);
+      // A closure ends observation for good, so it must not freeze a run whose receipt could not be read.
+      const cause = closureCause(next.phase);
+      if (cause && read && !state.closure) state = { ...state, closure: { cause } };
     } else if (event.type === 'TOOL_CALL_START' || event.type === 'TOOL_CALL_ARGS') {
       const tool = z.object({ toolCallId: z.string(), toolCallName: z.string().optional(), delta: z.string().optional() }).parse(event);
       const current = tools.get(tool.toolCallId);

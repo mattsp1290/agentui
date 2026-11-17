@@ -37,7 +37,7 @@ export function createApi(options: {
   function requestScope(request: ServiceRequest): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -73,6 +73,12 @@ export function createApi(options: {
     const actor = { id: principal.id, platform: 'desktop' as const,
       authorized: () => !options.isClosing() };
     switch (request.op) {
+      case 'output-list': return { scope: request.scope, result: await host.conversationOutputs(request.scope) } satisfies ServiceValueMap['output-list'];
+      case 'output-read': {
+        const result = await host.readOutput(request.scope, request.outputId);
+        return { scope: request.scope, outputId: request.outputId, result: result.kind === 'available'
+          ? { kind: result.kind, output: result.output, base64: Buffer.from(result.bytes).toString('base64') } : result } satisfies ServiceValueMap['output-read'];
+      }
       case 'frontend-binding': return host.frontendBinding(request, actor, scope => frontendToolsFor(host).producer(scope));
       case 'image-upload': return { scope: request.scope, attachment: host.uploadImage(request.scope, principal.id, request.uploadId, request.name, Buffer.from(request.base64, 'base64')) };
       case 'image-read': {

@@ -634,4 +634,5 @@ mod tests {
         server.join().unwrap();
         assert!(locked(&fixture.owner).unwrap().guard(&replacement).is_ok());
     }
+    include!("native_output_tests.rs");
 }

@@ -505,6 +505,14 @@ test('SDK rejects transport failures while the UI submission stays caught', asyn
   }
 });
 
+test('a closed conversation refusal is shown as a sentence while SDK commands keep the reason', async t => {
+  const f = await openCommands(t);
+  f.behavior.submit = async () => ({ kind: 'rejected', reason: 'conversation-closed' });
+  assert.deepEqual(await f.actions.commands.send('after closure'), { kind: 'rejected', reason: 'conversation-closed' });
+  assert.equal(f.app.getSnapshot().error, 'This conversation ended. Start a new chat to keep going.');
+});
+
+
 test('SDK busy refusal does not persist another command or release the running operation', async t => {
   const f = await openCommands(t), entered = deferred(), reply = deferred();
   f.behavior.submit = async command => { entered.resolve(); await reply.promise; return resultFor(command, { kind: 'accepted' }); };

@@ -37,9 +37,11 @@ function failure(error: unknown): Failure {
     case 'transient': return { kind: 'unavailable', reason: 'Crew is offline or unreachable.' };
   }
 }
-function negative(error: unknown): ReturnType<typeof uncertain> | { kind: 'rejected'; reason: string; evidence: null } {
+const handoffRefusals = ['handed_off', 'handoff_pending'];
+function negative(error: unknown, submit: boolean): ReturnType<typeof uncertain> | { kind: 'rejected'; reason: string; evidence: null } {
   const kind = classify(error);
-  return kind === 'credential' || kind === 'forbidden' || kind === 'invalid-request'
+  return kind === 'credential' || kind === 'forbidden' || kind === 'invalid-request' ||
+    (submit && error instanceof CrewHttpError && error.status === 409 && handoffRefusals.includes(error.code))
     ? { kind: 'rejected', reason: 'Crew refused this operation.', evidence: null } : uncertain();
 }
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
@@ -63,8 +65,8 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         if (closed) return Promise.reject(new Error('Crew provider closed'));
         return context.credentials.use({ credential, service: service.origin }, token => action(new CrewClient({ baseUrl: service.origin, token }), token));
       };
-      const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean): Promise<ProviderOutcome<T>> =>
-        use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error) : uncertain(); } }).catch(() => uncertain());
+      const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean, submit = false): Promise<ProviderOutcome<T>> =>
+        use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error, submit) : uncertain(); } }).catch(() => uncertain());
       function creation(operation: CreationIntent<string>): ProviderConversation<string> {
         if (operation.agent.opaqueId !== memberId || operation.agent.kind !== 'agent' ||
           canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
@@ -115,7 +117,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
           return { kind: 'confirmed', value: { kind: 'send', run: reference(operation.binding, 'run', requestId),
             state: runOutcome(receipt) ? 'completed' : 'accepted' },
             evidence: { requestId, status: receipt.status, ...(receipt.cancellation && { cancellation: receipt.cancellation }) } };
-        }, fresh);
+        }, fresh, operation.kind === 'send');
       };
       function source(binding: ProviderConversation<string>, after: CrewModel['cursor'] | null) {
         validate(binding);

@@ -1,3 +1,4 @@
+import { finishOutputRead } from './output-read.js';
 import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope, sameScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
@@ -54,8 +55,9 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
   options: ServiceConnectionOptions = {}): ServiceConnection<E, P> {
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
-  async function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
-    timeoutMs = requestTimeoutMs): Promise<ServiceValueMap[K]> {
+  async function requestResult<K extends keyof ServiceValueMap, Result>(value: ServiceRequest & { readonly op: K },
+    complete: (value: ServiceValueMap[K]) => Result, signal?: AbortSignal, timeoutMs = requestTimeoutMs): Promise<Result> {
+    const deadline = performance.now() + timeoutMs;
     const imageOperation = value.op === 'image-upload' || value.op === 'image-read';
     let body: string;
     try {
@@ -71,7 +73,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       timer = setTimeout(() => { controller.abort(); reject(new ServiceError('unavailable', 'Service request timed out')); }, timeoutMs);
       signal?.addEventListener('abort', abort, { once: true });
     });
-    const perform = async (): Promise<ServiceValueMap[K]> => {
+    const perform = async (): Promise<Result> => {
       let response: Response;
       try { response = await execute(body, { op: value.op, signal: controller.signal }); }
       catch (error) {
@@ -85,13 +87,21 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       if (!result.ok && result.error.kind === 'create-rejected' && response.status !== 409) throw new ServiceProtocolError('Invalid creation refusal status');
       if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
-      return result.value;
+      let completed: Result;
+      try { completed = complete(result.value); }
+      catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service completion'); }
+      if (controller.signal.aborted || performance.now() >= deadline) throw new ServiceError('unavailable', 'Service request interrupted');
+      return completed;
     };
     try { return await Promise.race([perform(), interrupted]); }
     finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
     }
+  }
+  function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
+    timeoutMs = requestTimeoutMs): Promise<ServiceValueMap[K]> {
+    return requestResult<K, ServiceValueMap[K]>(value, result => result, signal, timeoutMs);
   }
   function watch(scope: ConversationScope, input: { readonly after: number | null; readonly projectionVersion: number },
     receive: (item: FeedItem<E, P>) => Promise<void>): Feed {
@@ -154,6 +164,14 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     return { ended, close: () => finish({ kind: 'closed', cursor, reason: 'Client closed the feed' }) };
   }
   return {
+    async conversationOutputs(value) {
+      const scope = parseScope(value);
+      return requestResult({ op: 'output-list', scope }, result => result.result);
+    },
+    async readOutput(value, outputId) {
+      const scope = parseScope(value);
+      return requestResult({ op: 'output-read', scope, outputId }, finishOutputRead);
+    },
     async uploadImage({ scope, uploadId, name, bytes }) {
       const result = await request({ op: 'image-upload', scope, uploadId, name, byteLength: bytes.byteLength, base64: encodeImageBytes(bytes) });
       if (!sameScope(result.scope, scope) || result.attachment.name !== name || result.attachment.byteLength !== bytes.byteLength) {

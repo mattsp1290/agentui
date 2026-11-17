@@ -135,6 +135,9 @@ function message(error: unknown): string { return error instanceof Error ? error
 export function applicationEnabled(state: ApplicationSnapshot): boolean {
   return state.host.kind === 'ready' && !state.storageFailure && !state.busy;
 }
+export function refusalMessage(reason: string): string {
+  return reason === 'conversation-closed' ? 'This conversation ended. Start a new chat to keep going.' : reason;
+}
 
 export function createApplicationController(deps: {
   readonly createConnection: (options: ServiceConnectionOptions) => ServiceConnection;
@@ -147,6 +150,7 @@ export function createApplicationController(deps: {
   const listeners = new Set<() => void>();
   const recovery = createFrontendRecovery();
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
+  const concludedScopes = new Map<string, Extract<ProviderObservationStatus, { readonly kind: 'concluded' }>>();
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW,
@@ -269,17 +273,24 @@ export function createApplicationController(deps: {
     let timer: ReturnType<typeof setTimeout> | undefined, stopped = false;
     let pending: Promise<void> | null = null, retrying = false;
     const current = () => !stopped && session === owner && state.active?.store === target.store && state.host.kind === 'ready';
-    publish({ observation: null });
+    const key = JSON.stringify([target.scope.hostId, target.scope.conversationId]), concluded = concludedScopes.get(key);
+    publish({ observation: concluded ? { status: concluded, retrying: false } : null });
     function schedule(): void {
-      if (current() && !retrying && state.observation?.status.kind !== 'not-applicable') timer = setTimeout(() => { void read('read'); }, 2_000);
+      const kind = state.observation?.status.kind;
+      if (current() && !retrying && kind !== 'not-applicable' && kind !== 'concluded') timer = setTimeout(() => { void read('read'); }, 2_000);
+    }
+    function observed(status: ConversationObservation['status']): void {
+      if (status.kind === 'concluded') concludedScopes.set(key, status);
+      // The host never clears a closure, so a later failed read or a stopped status during an extension change is transient.
+      publish({ observation: { status: concludedScopes.get(key) ?? status, retrying } });
     }
     function read(action: 'read' | 'retry'): Promise<void> {
       const task = (async () => {
         try {
           const status = await owner.connection.providerObservation({ scope: target.scope, action });
-          if (current()) publish({ observation: { status, retrying } });
+          if (current()) observed(status);
         } catch {
-          if (current()) publish({ observation: { status: { kind: 'unknown' }, retrying } });
+          if (current()) observed({ kind: 'unknown' });
         }
       })();
       pending = task;
@@ -433,7 +444,7 @@ export function createApplicationController(deps: {
     try {
       if (target.agent.availability.kind !== 'ready') throw new Error(target.agent.availability.reason);
       const result = await current(owner, operation());
-      if (result.kind === 'rejected') publish({ error: result.reason });
+      if (result.kind === 'rejected') publish({ error: refusalMessage(result.reason) });
       else if (result.receipt.state.kind === 'rejected') publish({ error: result.receipt.state.reason });
       return result;
     } catch (cause) {

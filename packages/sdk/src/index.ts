@@ -1,5 +1,5 @@
 export { contractVersion } from '@agentui/contracts';
-export type { ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity, TextMetadata, TextOutput, OutputId, OutputFailure, OutputListing, OutputRead } from '@agentui/contracts';
+export type { ConversationClosure, ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity, TextMetadata, TextOutput, OutputId, OutputFailure, OutputListing, OutputRead } from '@agentui/contracts';
 export type { SecretProvider } from './secrets.js';
 
 export { EXTENSION_SDK_VERSION, parseExtensionManifest, checkExtensionEntrypoint, validateExtensionLifetime } from './extensions.js';

@@ -190,6 +190,13 @@ enum ObservationAction {
     deny_unknown_fields
 )]
 enum Request {
+    OutputList {
+        scope: Scope,
+    },
+    OutputRead {
+        scope: Scope,
+        output_id: String,
+    },
     ImageUpload {
         scope: Scope,
         upload_id: String,
@@ -274,6 +281,14 @@ fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(
 pub fn image_operation(value: &Value) -> bool {
     matches!(value["op"].as_str(), Some("image-upload" | "image-read"))
 }
+fn output_id(value: &str) -> bool {
+    value.strip_prefix("output-").is_some_and(|hex| {
+        hex.len() == 64
+            && hex
+                .bytes()
+                .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+    })
+}
 fn image_id(value: &str) -> bool {
     let bytes = value.as_bytes();
     bytes.len() == 36
@@ -334,6 +349,16 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
     }
     let mut request: Request = serde_json::from_value(value).map_err(|_| INVALID)?;
     let scope = match &mut request {
+        Request::OutputRead {
+            scope,
+            output_id: id,
+        } => {
+            if !output_id(id) {
+                return Err(INVALID);
+            }
+            Some(scope)
+        }
+        Request::OutputList { scope } => Some(scope),
         Request::ImageUpload {
             scope,
             upload_id,
@@ -861,4 +886,5 @@ mod tests {
         let response = json!({"ok":false, "error":{"kind":"image-unsupported", "message":"This model cannot read images."}});
         assert!(image_response(&request, &response));
     }
+    include!("wire_output_tests.rs");
 }
