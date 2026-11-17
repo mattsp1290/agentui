@@ -6,6 +6,15 @@ const STOP_REASONS = ['unsupported', 'snapshot-unavailable', 'invalid-projection
 const CLOSURES = ['cancelled', 'failed', 'exhausted'] as const;
 export type ObservationStopReason = typeof STOP_REASONS[number];
 export type ConversationClosure = typeof CLOSURES[number];
+export type ContinuationRefusal = 'busy' | 'limit' | 'unavailable' | 'continued-elsewhere';
+/** Counts of the earlier conversation's turns that a provider carried into its successor. */
+export interface ContinuationCarried {
+  readonly carriedTurns: number;
+  readonly omittedTurns: number;
+  readonly uncertainTurns: number;
+  readonly carriedBytes: number;
+  readonly limitBytes: number;
+}
 export type ProviderObservationStatus =
   | { readonly kind: 'not-applicable' | 'recovering' | 'observing' }
   | { readonly kind: 'stopped'; readonly reason: ObservationStopReason }

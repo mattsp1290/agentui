@@ -1,4 +1,4 @@
-import type { ConversationClosure, RunIdentity } from '@agentui/contracts';
+import type { ContinuationCarried, ContinuationRefusal, ConversationClosure, Json, RunIdentity } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ConversationRef, CredentialHandle, ProviderConversation, ProviderInstance, ProviderModel } from './providers.js';
 
@@ -23,6 +23,8 @@ export interface ProviderPresentation<M extends ProviderModel, I extends string>
   };
   /** Reports that the provider ended this conversation, read from saved state without I/O. */
   readonly closure?: (state: M['state']) => { readonly cause: ConversationClosure } | null;
+  /** Reads what a successor creation carried, or why it was refused, from that creation's saved evidence without I/O. */
+  readonly continuation?: (evidence: Json) => ContinuationCarried | { readonly refused: ContinuationRefusal } | null;
 }
 
 /** Full-trust server code must keep secrets out of errors, model values and client output. */

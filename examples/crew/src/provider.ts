@@ -1,9 +1,10 @@
+import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
-import { CrewClient, CrewHttpError, CrewProtocolError, type Capabilities } from '@birbcrew/client';
+import { CrewClient, CrewHttpError, CrewProtocolError, CrewUnknownOutcomeError, type Capabilities, type HandoffRecord } from '@birbcrew/client';
 import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderCommand, ProviderCommandEffect,
+import type { BackendProvider, ConnectedProvider, ContinuationRefusal, CreationIntent, ProviderCommand, ProviderCommandEffect,
   ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
 import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome, uncertain } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
@@ -44,6 +45,21 @@ function negative(error: unknown, submit: boolean): ReturnType<typeof uncertain>
     (submit && error instanceof CrewHttpError && error.status === 409 && handoffRefusals.includes(error.code))
     ? { kind: 'rejected', reason: 'Crew refused this operation.', evidence: null } : uncertain();
 }
+const continuationRefusals = new Map<string, ContinuationRefusal>([['busy', 'busy'], ['usage_limit', 'limit'], ['memory_limit', 'limit'],
+  ['instructions_limit', 'limit'], ['handed_off', 'continued-elsewhere'], ['handoff_empty', 'unavailable'], ['handoff_too_large', 'unavailable'],
+  ['history_unavailable', 'unavailable'], ['trusted_conversation', 'unavailable'], ['conflict', 'unavailable']]);
+const refused = (refusal: ContinuationRefusal, code: string) =>
+  ({ kind: 'rejected', reason: 'Crew refused the continuation.', evidence: { refused: refusal, code } } as const);
+// Only these refusals write nothing on Crew; any other answer may follow its commit.
+function handoffRefusal(error: unknown): ReturnType<typeof refused> | null {
+  if (!(error instanceof CrewHttpError)) return null;
+  const refusal = error.status === 409 ? continuationRefusals.get(error.code) : [400, 401, 403, 404].includes(error.status) ? 'unavailable' : undefined;
+  return refusal ? refused(refusal, error.code) : null;
+}
+// Crew re-drives an unadmitted first request when the same handoff is posted again after one of these answers.
+const redrivable = (error: unknown) => error instanceof CrewUnknownOutcomeError && error.cause instanceof CrewHttpError &&
+  ((error.cause.status === 503 && error.cause.code === 'retry_same_request') || (error.cause.status === 409 && error.cause.code === 'update_rejected'));
+type Posted = { readonly record: HandoffRecord } | { readonly error: unknown };
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
   const service = new URL(options.service);
   if (!['http:', 'https:'].includes(service.protocol) || service.username || service.password || service.pathname !== '/' ||
@@ -68,16 +84,74 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       };
       const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean, submit = false): Promise<ProviderOutcome<T>> =>
         use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error, submit) : uncertain(); } }).catch(() => uncertain());
-      function creation(operation: CreationIntent<string>): ProviderConversation<string> {
+      function member(operation: CreationIntent<string>) {
         if (operation.agent.opaqueId !== memberId || operation.agent.kind !== 'agent' ||
           canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
+      }
+      function predecessor(from: NonNullable<CreationIntent<string>['from']>): string {
+        if (from.binding.namespace !== instance.namespace || from.binding.installationId !== instance.installationId) throw new Error('Foreign Crew predecessor');
+        return from.binding.opaqueSessionId;
+      }
+      // A successor's session and carrying turn are what Crew drew, so only confirm() can supply them; everything else derives from the intent.
+      function creation(operation: CreationIntent<string>, target = operation.operationId, carryingTurn?: string): ProviderConversation<string> {
+        member(operation);
+        if (operation.from) {
+          const source = predecessor(operation.from);
+          if (target === operation.operationId || target === source) throw new Error('Foreign Crew predecessor');
+          if (!carryingTurn) throw new Error('Foreign Crew conversation');
+        }
         return bindingSchema.parse({ kind: 'agentui-created', creation: operation, authority: { kind: 'remote-provider',
-          binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: operation.operationId } } });
+          binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: target } },
+          ...(operation.from && { carryingTurn }) });
       }
       function validate(binding: ProviderConversation<string>) {
-        if (canonicalJson(binding) !== canonicalJson(creation(binding.creation))) throw new Error('Foreign Crew conversation');
+        const target = binding.creation.from && binding.authority.binding.opaqueSessionId;
+        if (canonicalJson(binding) !== canonicalJson(creation(binding.creation, target, binding.carryingTurn))) throw new Error('Foreign Crew conversation');
       }
+      function settle(operation: CreationIntent<string>, source: string, record: HandoffRecord | null): ProviderOutcome<ProviderConversation<string>> {
+        if (!record || record.source.conversationId !== source) return uncertain();
+        if (record.requestId !== operation.operationId) return refused('continued-elsewhere', 'handed_off');
+        if (record.target.memberId !== memberId) return uncertain();
+        const evidence = { handoffId: record.handoffId, firstRequestId: record.firstRequestId, carriedTurns: record.carriedTurns,
+          omittedTurns: record.omittedTurns, uncertainTurns: record.uncertainTurns, transcriptBytes: record.transcriptBytes };
+        return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId, record.firstRequestId), evidence }
+          : { kind: 'pending', evidence };
+      }
+      // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.
+      const post = (operation: CreationIntent<string>, source: string): Promise<Posted> => use<Posted>(async client => {
+        try {
+          return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId },
+            { signal: AbortSignal.timeout(15000) }) };
+        } catch (error) { return { error }; }
+      });
+      // Only the first create() posts. Lookups and every later call read the source's outgoing handoff.
+      const handoff = async (operation: CreationIntent<string>, source: string, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
+        if (!fresh) {
+          return use(async client => settle(operation, source,
+            (await client.handoff({ conversationId: source }, { signal: AbortSignal.timeout(10000) })).outgoing)).catch(() => uncertain());
+        }
+        let committed: HandoffRecord | undefined, unresolved = false;
+        try {
+          for (let attempt = 1; ; attempt++) {
+            const posted = await post(operation, source);
+            if ('record' in posted) {
+              committed = posted.record;
+              if (committed.firstRequestAdmitted) break;
+            } else if (redrivable(posted.error)) unresolved = true;
+            else if (committed) break;
+            // After an unknown outcome only a 409 proves the earlier POST wrote nothing: Crew raises those after its requestId lookup.
+            else return (!unresolved || (posted.error instanceof CrewHttpError && posted.error.status === 409) ? handoffRefusal(posted.error) : null) ?? uncertain();
+            if (attempt === 3) break;
+            await delay(5000);
+          }
+          return committed ? settle(operation, source, committed) : uncertain();
+        } catch { return uncertain(); }
+      };
       const confirm = async (operation: CreationIntent<string>, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
+        if (operation.from) {
+          member(operation);
+          return handoff(operation, predecessor(operation.from), fresh);
+        }
         const binding = creation(operation);
         return call(async client => {
           const remote = fresh ? await client.openConversation({ conversationId: operation.operationId, memberId }, { signal: AbortSignal.timeout(15000) })
