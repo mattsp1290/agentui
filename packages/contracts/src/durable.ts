@@ -174,7 +174,8 @@ export function parseRunIdentity(value: unknown): RunIdentity {
 }
 /**
  * Local scope and command IDs are limited to 1024 UTF-16 units. Approval and cancel targets preserve
- * nonempty provider-owned IDs. Semantic parsing does not enforce host resource budgets.
+ * nonempty provider-owned IDs. Version 2 parsing enforces the fixed DEFAULT_MAX_COMMAND_BYTES ceiling
+ * for offered commands. Semantic parsing otherwise does not enforce host resource budgets.
  * New host admission checks canonical command bytes and event and snapshot capacity before durable
  * persistence and dispatch. Earlier driver capability calls and application-owned draft storage are
  * outside those host limits.
