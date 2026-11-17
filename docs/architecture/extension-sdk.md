@@ -30,12 +30,13 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.6.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.7.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.6.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.7.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
+SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
 Workspace package versions are `0.0.0`, service wire version is 9, and transcript projection version is 4.
 
@@ -228,7 +229,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.6.0",
+			"sdkVersion": "0.7.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -314,6 +315,15 @@ return { modules: [], overrides: { transcript: MyTranscript }, dispose() {} };
 
 The desktop activates each namespace once for its contributions.
 The override changes only transcript presentation. The ordinary composer, approvals, Stop, and command recovery keep their owners.
+An activity override replaces command and file presentation while native messages, Markdown and sent images remain visible.
+It receives `ConversationActivityProps`, which extends `ConversationModuleProps` with readonly `updates` equal to `connected`, `reconnecting` or `paused`.
+Stopped provider observation takes precedence over the local conversation connection when deriving `updates`.
+`connected` describes that connection, not whether the provider is producing events.
+The canonical `activity.domain.activities` data retains unknown and terminal outcomes, revisions and truncation facts. The author controls their presentation.
+Return `overrides: { activity: MyActivity }` to claim this combined command and file slot.
+A claimed whole transcript takes precedence over selective activity, including its native fallback during loading or failure.
+Activity loading, conflict or failure uses native activity without replacing messages or the protected composer.
+An outer content layout fallback is fully native and does not mount another activity override.
 The default transcript stays visible while any selected activation is pending or a lazy override is loading.
 If multiple ready namespaces claim the transcript after all activations settle, the host reports their sorted names and keeps the default transcript.
 A failed namespace releases its claim and disposes once; other namespaces remain available.
