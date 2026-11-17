@@ -105,7 +105,7 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   db.close();
   const reopened = f.open();
   const reader = new DatabaseSync(f.path);
-  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 8);
+  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 9);
   for (const [table, rows] of saved) assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), rows);
   reader.close(); reopened.close(); await reopened.drained;
   const bytes = readFileSync(f.path);

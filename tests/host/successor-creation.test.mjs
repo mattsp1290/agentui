@@ -8,10 +8,12 @@ import { EXTENSION_SDK_VERSION, backendProviderContractVersion } from '@agentui/
 import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
 import { budgets } from '../../packages/host/dist/durable-model.js';
 import { openDatabase as openFormat7 } from './fixtures/sqlite-format7.ts';
+import { openDatabase as openFormat8 } from './fixtures/sqlite-format8.ts';
 import { fixture, installed, other, projection, scope as before } from './fixture.mjs';
 
 // SHA-256 of packages/host/src/sqlite-schema.ts at 074b2ad, the last format 7 opener.
 const format7OpenerSha256 = '9befb13e5cfc5d7139004d7d51de1b9cc1ffaf2ab810e215ab875161ef1d6ae6';
+const format8OpenerSha256 = 'e9fde8db5c71ead770775c1dca5c2eb6dcb3726b8172f10cef885594baa08ff0';
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
 const after = { hostId: before.hostId, conversationId: 'conversation-after' };
 const instance = { namespace: 'successor-fixture', installationId: 'successor-installation', generation: 'one', protocolVersion: '1' };
@@ -186,13 +188,30 @@ test('a saved successor whose predecessor was altered is refused when read', asy
   assert.equal(host.creation(after).observation.kind, 'confirmed');
 });
 
-test('the unchanged format 7 opener refuses a format 8 database before file or WAL mutation', async t => {
+test('the unchanged format 7 opener refuses a current-format database before file or WAL mutation', async t => {
   assert.equal(digest(readFileSync(new URL('./fixtures/sqlite-format7.ts', import.meta.url))), format7OpenerSha256);
   const f = fixture(t), old = openFormat7(f.path); old.close();
   const host = f.open(); host.close(); await host.drained;
-  assert.equal(read(f.path, db => db.prepare('PRAGMA user_version').get().user_version), 8);
+  assert.equal(read(f.path, db => db.prepare('PRAGMA user_version').get().user_version), 9);
   const bytes = readFileSync(f.path);
   assert.throws(() => openFormat7(f.path), /Unsupported database version/);
+  assert.deepEqual(readFileSync(f.path), bytes);
+  assert.equal(existsSync(f.path + '-wal'), false); assert.equal(existsSync(f.path + '-shm'), false);
+});
+
+// Format 9 adds no schema change: it keeps a format 8 host, which cannot parse an `abandoned` receipt, from opening the file.
+test('the unchanged format 8 opener refuses a format 9 database before file or WAL mutation', async t => {
+  assert.equal(digest(readFileSync(new URL('./fixtures/sqlite-format8.ts', import.meta.url))), format8OpenerSha256);
+  const f = fixture(t), old = openFormat8(f.path); old.close();
+  let host = f.open(); host.close(); await host.drained;
+  const schema = read(f.path, db => { db.exec('PRAGMA user_version=8'); return db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(); });
+  host = f.open(); host.close(); await host.drained;
+  read(f.path, db => {
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
+    assert.deepEqual(db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
+  });
+  const bytes = readFileSync(f.path);
+  assert.throws(() => openFormat8(f.path), /Unsupported database version/);
   assert.deepEqual(readFileSync(f.path), bytes);
   assert.equal(existsSync(f.path + '-wal'), false); assert.equal(existsSync(f.path + '-shm'), false);
 });
@@ -209,7 +228,7 @@ test('a format 7 database gains the predecessor index once without rewriting cre
   for (let attempt = 0; attempt < 2; attempt++) {
     const store = new SqliteStore(f.path, projection, budgets());
     try {
-      assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
+      assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 9);
       assert.deepEqual(store.db.prepare('SELECT * FROM provider_creations ORDER BY rowid').all(), rows);
       assert.deepEqual(store.db.prepare(successors).all(before.hostId, before.conversationId).map(row => row.conversation), [after.conversationId]);
     } finally { store.close(); }
@@ -218,12 +237,12 @@ test('a format 7 database gains the predecessor index once without rewriting cre
 
 for (const [name, damage] of [['missing', 'DROP INDEX provider_creations_from'],
   ['changed', 'DROP INDEX provider_creations_from; CREATE INDEX provider_creations_from ON provider_creations(host)']]) {
-  test(`format 8 refuses a ${name} predecessor index without repairing it`, async t => {
+  test(`format 8 and later refuse a ${name} predecessor index without repairing it`, async t => {
     const f = fixture(t), host = f.open(); host.close(); await host.drained;
     const schema = read(f.path, db => { db.exec(damage); return db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(); });
     assert.throws(() => f.open(), /^Error: Invalid provider creation schema$/u);
     read(f.path, db => {
-      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 8);
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 9);
       assert.deepEqual(db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
     });
   });
