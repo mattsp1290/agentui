@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { createConnection } from 'node:net';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright';
@@ -19,7 +20,14 @@ async function decoded(preview) {
 
 test('committed layout keeps sent images inside its text-only transcript and protects the composer through loading, failure and restore', { timeout: 90_000 }, async t => {
   const custom = repository(), child = repository();
-  t.after(() => { rmSync(custom.directory, { recursive: true, force: true }); rmSync(child.directory, { recursive: true, force: true }); });
+  const directory = mkdtempSync(join(tmpdir(), 'agentui-img-'));
+  let host, browser;
+  t.after(async () => {
+    const closed = await Promise.allSettled([browser?.close(), host?.close()]);
+    for (const path of [directory, custom.directory, child.directory]) rmSync(path, { recursive: true, force: true });
+    const failure = closed.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  });
   const childManifest = JSON.parse(readFileSync(join(child.repo, 'package.json'), 'utf8'));
   childManifest.agentui.extension.namespace = 'transcript';
   child.write('package.json', JSON.stringify(childManifest));
@@ -29,26 +37,26 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   custom.write('package.json', JSON.stringify(manifest));
   custom.write('desktop/index.tsx', readFileSync(join(root, 'tests/application/fixtures/image-layout.tsx'), 'utf8'));
   const commit = custom.commit();
-  buildCustom(custom, commit);
   child.write('desktop/index.tsx', 'throw new Error("Dirty transcript source must not enter artifact");');
   custom.write('desktop/index.tsx', 'throw new Error("Dirty layout source must not enter artifact");');
-  const directory = join(custom.directory, 'host');
-  mkdirSync(directory, { mode: 0o700 });
+  buildCustom(custom, commit);
   const log = join(directory, 'codex.jsonl'), implementation = join(directory, 'fixture.mjs'), executable = join(directory, 'codex');
-  writeFileSync(implementation, readFileSync(join(root, 'tests/host/fixtures/codex-agent.mjs'), 'utf8')
+  const copiedFixture = readFileSync(join(root, 'tests/host/fixtures/codex-agent.mjs'), 'utf8')
     .replace("displayName: 'GPT-9.2-Sol', hidden: false, isDefault: false", "displayName: 'GPT-9.2-Sol', hidden: false, isDefault: true")
-    .replace("displayName: 'GPT-9.1-Astra', hidden: false, isDefault: true", "displayName: 'GPT-9.1-Astra', hidden: false, isDefault: false"));
+    .replace("displayName: 'GPT-9.1-Astra', hidden: false, isDefault: true", "displayName: 'GPT-9.1-Astra', hidden: false, isDefault: false");
+  assert.ok(copiedFixture.includes("displayName: 'GPT-9.2-Sol', hidden: false, isDefault: true"));
+  assert.ok(copiedFixture.includes("displayName: 'GPT-9.1-Astra', hidden: false, isDefault: false"));
+  writeFileSync(implementation, copiedFixture);
   writeFileSync(executable, `#!${process.execPath}\nif (process.argv[2] === '--version') console.log('codex-cli 0.167.2'); else { process.argv = [process.execPath, 'fixture', ${JSON.stringify(log)}, 'images']; await import(${JSON.stringify(implementation)}); }\n`, { mode: 0o700 });
-  const host = await startBrowserHost({ agentStartup: { kind: 'provider', provider: { kind: 'codex', cwd: directory, executable } },
+  host = await startBrowserHost({ agentStartup: { kind: 'provider', provider: { kind: 'codex', cwd: directory, executable } },
     directory, port: 0, hostArtifactDirectory: join(root, 'apps/host/dist'), assetsDirectory: join(custom.directory, 'browser') });
-  t.after(() => host.close());
   const control = op => new Promise((resolve, reject) => {
     const socket = createConnection(join(directory, 'control.sock')); let output = '';
     socket.once('error', reject); socket.once('connect', () => socket.end(JSON.stringify(op) + '\n'));
     socket.on('data', part => { output += part; });
     socket.once('end', () => { const value = JSON.parse(output); if (value.ok) resolve(value.value); else reject(new Error(value.error)); });
   });
-  const browser = await chromium.launch(); t.after(() => browser.close());
+  browser = await chromium.launch();
   const page = await browser.newPage(); page.setDefaultTimeout(15_000);
   const operations = [], errors = [];
   page.on('pageerror', error => errors.push(error.message));
@@ -91,13 +99,14 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   await page.getByRole('region', { name: 'Committed transcript', exact: true }).waitFor();
   await decoded(sent.getByRole('img', { name: 'canonical.png', exact: true })); await stable();
   assert.equal(await layoutTranscript.count(), 0);
+  assert.equal(await page.getByLabel('Messages', { exact: true }).count(), 0);
   await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   await decoded(page.getByLabel('Messages', { exact: true }).getByRole('img', { name: 'canonical.png', exact: true }));
   assert.equal(await sent.count(), 0);
   assert.equal(await page.getByRole('region', { name: 'Committed transcript', exact: true }).count(), 0);
   await stable();
   await page.getByRole('button', { name: 'Stop', exact: true }).click();
-  await wait(() => page.getByRole('button', { name: 'Stop', exact: true }).count().then(count => count === 0), 'fixture stop settled');
+  await wait(async () => await page.getByRole('button', { name: /^(?:Stop|Stopping…)$/ }).count() === 0, 'fixture stop settled');
   await wait(() => readFileSync(log, 'utf8').split('\n').filter(Boolean).map(JSON.parse).some(entry => entry.direction === 'in' && entry.method === 'turn/interrupt'), 'fixture received Stop');
   assert.equal(await editor(page).inputValue(), 'Protected image draft');
   const database = new DatabaseSync(join(directory, 'host.sqlite'));
