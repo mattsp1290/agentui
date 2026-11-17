@@ -14,7 +14,8 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const own = { version: 1, scope, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' } };
     const foreign = { scope, clientCommandId: 'foreign-pending', hostOperationId: 'operation', sequence: 1, state: { kind: 'pending' } };
     const unconfirmed = { scope, clientCommandId: 'foreign-uncertain', hostOperationId: 'operation-2', sequence: 2, state: { kind: 'uncertain', reason: 'provider-outcome-unknown' } };
-    let view = { submitting: ['own-original'], draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }],
+    const ownCancel = { version: 1, scope, clientCommandId: 'own-cancel', body: { kind: 'cancel', runId: 'run' } };
+    let view = { submitting: ['own-original'], draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }, { command: ownCancel, draftRevision: null }],
       connection: { kind: 'connected' }, cursor: 1,
       document: { domain: { messages: [] }, decisions: {}, receipts: { 'foreign-pending': foreign } } };
     globalThis.addUncertain = () => { view = { ...view, document: { ...view.document, receipts: { ...view.document.receipts, 'foreign-uncertain': unconfirmed,
@@ -32,7 +33,7 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={!busy && !storageFailure} storageFailure={storageFailure} />)); };
     globalThis.storageUnavailable = () => { storageFailure = 'Storage unavailable'; globalThis.renderRecovery(false); };
     globalThis.savedCommand = own;
-    globalThis.renderRecovery(true, [own.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
+    globalThis.renderRecovery(true, [own.clientCommandId, ownCancel.clientCommandId]);`, resolveDir: root, loader: 'jsx' },
     bundle: true, write: false, format: 'iife', jsx: 'automatic',
     define: { 'process.env.NODE_ENV': '"production"' } });
   const browser = await chromium.launch();
@@ -48,17 +49,23 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   await page.evaluate(() => globalThis.renderRecovery(false));
   await page.getByRole('button', { name: 'Check pending command', exact: true }).click();
   assert.deepEqual(await page.evaluate(() => globalThis.checked), ['foreign-pending']);
+  const pendingSection = page.getByRole('region', { name: 'Pending commands', exact: true });
+  assert.match(await pendingSection.textContent(), /Stop waiting releases it; it does not say whether that message ran/);
+  await pendingSection.getByRole('button', { name: 'Stop waiting', exact: true }).click();
+  assert.deepEqual(await page.evaluate(() => globalThis.abandoned), ['foreign-pending']);
   const recovery = page.getByRole('region', { name: 'Command recovery', exact: true });
-  assert.equal(await recovery.getByRole('button', { name: 'Retry original command', exact: true }).count(), 1);
+  assert.equal(await recovery.getByRole('button', { name: 'Retry original command', exact: true }).count(), 2);
   assert.match(await recovery.textContent(), /absent result or rejected retry cannot rule out an earlier submission/);
   assert.equal(await page.getByRole('button', { name: /Discard|Archive/ }).count(), 0);
-  assert.equal(await recovery.getByRole('button', { name: 'Stop waiting', exact: true }).count(), 0);
+  const ownCancel = recovery.getByRole('article').filter({ hasText: 'own-cancel' });
+  assert.equal(await ownCancel.getByRole('button', { name: 'Stop waiting', exact: true }).count(), 0);
   await page.evaluate(() => globalThis.addUncertain());
-  assert.match(await recovery.textContent(), /Stop waiting releases the conversation for new work and does not say whether the earlier command ran/);
+  assert.match(await recovery.textContent(), /Stop waiting releases an unconfirmed message that is holding up new messages; it does not say whether that message ran/);
   const stop = recovery.getByRole('button', { name: 'Stop waiting', exact: true });
   assert.equal(await stop.count(), 2);
   await stop.nth(0).click(); await stop.nth(1).click();
-  assert.deepEqual(await page.evaluate(() => globalThis.abandoned), ['own-original', 'foreign-uncertain']);
+  assert.deepEqual(await page.evaluate(() => globalThis.abandoned), ['foreign-pending', 'own-original', 'foreign-uncertain']);
+  assert.equal(await ownCancel.getByRole('button', { name: 'Stop waiting', exact: true }).count(), 0);
   assert.deepEqual(await page.evaluate(() => globalThis.savedCommand), {
     version: 1, scope: { hostId: 'host', conversationId: 'conversation' }, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' },
   });

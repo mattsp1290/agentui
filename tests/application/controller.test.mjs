@@ -518,12 +518,18 @@ test('a send refused behind an unconfirmed earlier send names the recovery actio
   assert.deepEqual(await f.actions.commands.send('behind an unconfirmed send'), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
   assert.equal(f.app.getSnapshot().error, 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
     + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it. '
-    + 'If it stays unconfirmed, use Stop waiting under Command recovery to send new messages here; '
+    + 'If it stays unconfirmed, use Stop waiting in the same section to send new messages here; '
     + 'the earlier message may or may not have run.');
-  const abandoned = [];
-  f.behavior.abandon = async (selected, id) => { abandoned.push([selected, id]); return null; };
+  const abandoned = [], receipt = state => ({ scope: f.target.scope, clientCommandId: 'earlier-send', hostOperationId: 'operation', sequence: 2, state });
+  f.behavior.abandon = async (selected, id) => { abandoned.push([selected, id]); return receipt({ kind: 'abandoned' }); };
   await f.actions.abandon('earlier-send');
-  assert.deepEqual(abandoned, [[f.target.scope, 'earlier-send']]);
+  assert.equal(f.app.getSnapshot().error, '');
+  for (const result of [null, receipt({ kind: 'completed' }), receipt({ kind: 'pending' })]) {
+    f.behavior.abandon = async (selected, id) => { abandoned.push([selected, id]); return result; };
+    await f.actions.abandon('earlier-send');
+    assert.equal(f.app.getSnapshot().error, 'Nothing to stop waiting on: this command is not holding up new messages.');
+  }
+  assert.deepEqual(abandoned, Array(4).fill([f.target.scope, 'earlier-send']));
 });
 
 
