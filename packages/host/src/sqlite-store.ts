@@ -549,8 +549,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     return this.transaction(() => {
       const stored = this.command(scope, id);
       if (!stored) return null;
-      if (!('kind' in stored) || stored.command.body.kind !== 'send' || stored.receipt.state.kind !== 'uncertain' ||
-        sendBlock('provider', stored) === 'none') return stored.receipt;
+      if (!('kind' in stored) || stored.command.body.kind !== 'send' || sendBlock('provider', stored) !== 'blocked-reconcilable') return stored.receipt;
       const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state: { kind: 'abandoned' } };
       this.db.prepare('UPDATE commands SET receipt=? WHERE host=? AND conversation=? AND id=?')
         .run(canonicalJson(next), ...key(scope), id);

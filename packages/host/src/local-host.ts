@@ -50,7 +50,7 @@ export interface LocalHost<E, P> {
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
-  /** Stops waiting on an uncertain provider send that blocks its conversation. Never says whether it took effect. */
+  /** Stops waiting on a provider send that blocks its conversation and is not being dispatched. Never says whether it took effect. */
   abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
   frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register'>): Promise<FrontendBinding>;
   close(): void;
@@ -388,8 +388,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       return inFlight(async () => {
         const stored = ownedCommand(scope, id, actor);
         if (!stored) return null;
-        if (dispatching.has(commandKey(stored.command.scope, stored.command.clientCommandId)) ||
-          !('kind' in stored) || stored.receipt.state.kind !== 'uncertain' || sendBlock('provider', stored) === 'none') return stored.receipt;
+        if (!('kind' in stored) || stored.command.body.kind !== 'send' || sendBlock('provider', stored) !== 'blocked-reconcilable' ||
+          dispatching.has(commandKey(stored.command.scope, stored.command.clientCommandId))) return stored.receipt;
         store.frontendSends.authorize('settle', stored, actor);
         authorized(scope);
         return store.abandon(stored.command.scope, stored.command.clientCommandId);

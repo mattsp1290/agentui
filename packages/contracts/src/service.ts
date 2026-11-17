@@ -132,7 +132,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   providerObservation(input: { readonly scope: ConversationScope; readonly action: 'read' | 'retry' }): Promise<ProviderObservationStatus>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
-  /** Stop waiting on an uncertain provider send. The result says nothing about whether the send took effect. */
+  /** Stop waiting on a provider send that blocks its conversation. The result says nothing about whether the send took effect. */
   abandon(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }
