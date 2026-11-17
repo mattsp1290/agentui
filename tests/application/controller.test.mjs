@@ -528,6 +528,13 @@ for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted'
   });
 }
 
+test('a closed conversation refusal is shown as a sentence while SDK commands keep the reason', async t => {
+  const f = await openCommands(t);
+  f.behavior.submit = async () => ({ kind: 'rejected', reason: 'conversation-closed' });
+  assert.deepEqual(await f.actions.commands.send('after closure'), { kind: 'rejected', reason: 'conversation-closed' });
+  assert.equal(f.app.getSnapshot().error, 'This conversation ended. Start a new chat to keep going.');
+});
+
 for (const unauthorized of [false, true]) {
   test(`SDK rejects ${unauthorized ? 'authorization' : 'transport'} failures while the UI submission stays caught`, async t => {
     for (const sdk of [true, false]) {

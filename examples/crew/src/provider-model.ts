@@ -22,11 +22,14 @@ export const bindingSchema = z.strictObject({ kind: z.literal('agentui-created')
     agent: z.strictObject({ instance: instanceSchema, kind: z.literal('agent'), opaqueId: z.uuid() }) }),
   authority: z.strictObject({ kind: z.literal('remote-provider'), binding: z.strictObject({
     namespace: id, installationId: id, opaqueSessionId: z.uuid() }) }) });
-export const stateSchema = z.strictObject({ binding: bindingSchema, messages: z.array(messageSchema).max(2048), run: runSchema.nullable() });
+export const closureSchema = z.strictObject({ cause: z.enum(['cancelled', 'failed', 'exhausted']) });
+export const stateSchema = z.strictObject({ binding: bindingSchema, messages: z.array(messageSchema).max(2048), run: runSchema.nullable(),
+  closure: closureSchema.exactOptional() });
 export const cursorSchema = z.strictObject({ epoch: z.uuid(), sequence: z.int().nonnegative(), requests: z.array(z.uuid()).max(2048) });
 export const requestSchema = z.strictObject({ text: z.string().min(1).max(65536) });
 export type CrewState = z.infer<typeof stateSchema>;
 export type CrewCursor = z.infer<typeof cursorSchema>;
+export type CrewClosure = z.infer<typeof closureSchema>;
 export type CrewApproval = z.infer<typeof approvalSchema>;
 export interface CrewModel extends ProviderModel {
   readonly request: z.infer<typeof requestSchema>;
@@ -50,6 +53,9 @@ export function runOutcome(run: z.input<typeof runSchema> | z.infer<typeof reque
   return run.status === 'completed' ? 'completed' : run.status === 'failed' ? 'failed'
     : run.status === 'cancelled' || run.cancellation?.nativeTermination === 'confirmed' ? 'interrupted' : null;
 }
+export function closureCause(phase: string): CrewClosure['cause'] | null {
+  return phase === 'cancelled' || phase === 'failed' ? phase : phase === 'complete' ? 'exhausted' : null;
+}
 export function presentation(instance: ProviderInstance<string>): ProviderPresentation<CrewModel, string> {
   return { instance, decodeRequest: value => requestSchema.parse(value), decodeCursor: value => cursorSchema.parse(value),
     decodeState: value => stateSchema.parse(value), decodeEvent: value => stateSchema.parse(value),
@@ -62,5 +68,6 @@ export function presentation(instance: ProviderInstance<string>): ProviderPresen
       return { messages: state.messages, currentRun: outcome ? { kind: 'ended', runId, outcome } : { kind: 'running', runId } };
     },
     apply() { throw new Error('Crew observation supplies authoritative snapshots'); },
+    closure: state => state.closure ?? null,
   };
 }

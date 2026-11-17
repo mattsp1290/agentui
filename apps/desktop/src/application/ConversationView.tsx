@@ -1,5 +1,5 @@
 import { canRetryObservation } from '@agentui/contracts';
-import type { ObservationStopReason } from '@agentui/contracts';
+import type { ConversationClosure, ObservationStopReason } from '@agentui/contracts';
 import { IMAGE_MAX_BYTES } from '@agentui/contracts/image';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
@@ -27,6 +27,11 @@ const OBSERVATION_NOTICE: Record<ObservationStopReason, string> = {
   'original-credentials-unavailable': 'Restore this conversation’s original provider credentials to resume updates.',
   'original-binding-unavailable': 'This conversation’s original provider binding is unavailable. Restore its original configuration.',
   'cleanup-failed': 'The previous observer could not close safely. Restart the host before resuming updates.',
+};
+const CLOSURE_NOTICE: Record<ConversationClosure, string> = {
+  cancelled: 'it was stopped',
+  failed: 'the provider reported a failure',
+  exhausted: 'it reached its turn limit',
 };
 
 type DraftEditor =
@@ -74,6 +79,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
   }
   const observationStatus = observation?.status;
   const paused = observationStatus?.kind === 'stopped';
+  const concluded = observationStatus?.kind === 'concluded';
   const available = active.agent.availability.kind === 'ready';
   const connected = enabled && available && view.connection.kind === 'connected';
   const live = presentation.live;
@@ -109,7 +115,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
   }
   const image = view.image;
   const acceptsImages = active.agent.imageInput.kind === 'supported' && active.agent.commands.includes('send');
-  const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' &&
+  const canSend = connected && !concluded && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' &&
     (image ? image.status === 'ready' && acceptsImages : Boolean(editor.text.trim()));
   const sentImages = view.document.domain.messages.flatMap(message => message.image ? [{ messageId: message.messageId, image: message.image }] : []);
   function imageAction(operation: () => Promise<void>): void {
@@ -125,7 +131,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
         {message.role === 'assistant' ? <AssistantReply text={message.text} /> : message.text && <p>{message.text}</p>}
         {message.image && <ImageAttachmentCard attachment={message.image} read={actions.readImage} />}
-        {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
+        {!message.complete && <span className="progress-label">{concluded ? 'Did not finish' : paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
     </>;
   const nativeActivity = <>
@@ -150,6 +156,9 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         <button type="button" disabled={!enabled || observation?.retrying}
           onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Checking for updates…' : 'Check for updates'}</button>
       </>}
+    </div>}
+    {observationStatus?.kind === 'concluded' && <div role="status" className="observation-notice">
+      <p>This conversation ended: {CLOSURE_NOTICE[observationStatus.cause]}. Earlier messages and your draft stay available.</p>
     </div>}
     {permissionState && <ConversationPermissions retained={recoveryModel(view).retained} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationContent selection={contentLayout} conversationKey={conversationKey} modules={modules} nativeTranscript={nativeTranscript}
@@ -192,7 +201,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         {imageError?.store === active.store && <p role="alert">{imageError.message}</p>}
       </div>}
       <div className="composer-footer">{composerControls?.(enabled && editor.kind === 'saved' && !responding)}<div className="composer-send-actions"><button disabled={!canSend}>Send</button>
-        {run && run.kind !== 'ended' && <button type="button" disabled={!connected || !active.agent.commands.includes('cancel') || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
+        {run && run.kind !== 'ended' && !concluded && <button type="button" disabled={!connected || !active.agent.commands.includes('cancel') || stopping} onClick={stop}>{stopping ? 'Stopping…' : 'Stop'}</button>}</div>
       <p className="composer-disclosure">{presentation.footer}</p>
       </div>
     </form>

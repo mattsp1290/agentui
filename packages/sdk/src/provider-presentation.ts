@@ -1,4 +1,4 @@
-import type { RunIdentity } from '@agentui/contracts';
+import type { ConversationClosure, RunIdentity } from '@agentui/contracts';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ConversationRef, CredentialHandle, ProviderConversation, ProviderInstance, ProviderModel } from './providers.js';
 
@@ -21,6 +21,8 @@ export interface ProviderPresentation<M extends ProviderModel, I extends string>
   readonly apply: (previous: M['state'], event: M['event'], refs: PresentationRefs<I>) => {
     readonly state: M['state']; readonly events: readonly TranscriptEvent[];
   };
+  /** Reports that the provider ended this conversation, read from saved state without I/O. */
+  readonly closure?: (state: M['state']) => { readonly cause: ConversationClosure } | null;
 }
 
 /** Full-trust server code must keep secrets out of errors, model values and client output. */
