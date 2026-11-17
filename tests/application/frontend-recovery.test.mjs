@@ -172,11 +172,11 @@ test('offered binding retains the owner fence after the producer callback', asyn
     return { register() { authorized = false; }, cancel() { assert.fail('No cancellation'); } };
   }), /frontend-owner/);
 });
-for (const corruption of ['missing', 'platform', 'actor']) test(`offered private blocker lookup refuses ${corruption} admitted ownership`, async t => {
+for (const corruption of ['missing', 'state', 'actor']) test(`offered private blocker lookup refuses ${corruption} admitted ownership`, async t => {
   const { a, f, scope, state } = await offeredHttp(t), other = await f.anotherClient();
   await f.client.conversation(scope).submit(offered(scope)); state('completed');
-  f.inspect(db => { db.exec('PRAGMA ignore_check_constraints=ON'); db.exec(corruption === 'missing' ? 'DELETE FROM frontend_sends'
-    : corruption === 'platform' ? "UPDATE frontend_sends SET platform='ios'" : "UPDATE frontend_sends SET actor_id=''"); });
+  f.inspect(db => { db.exec('PRAGMA ignore_check_constraints=ON'); db.exec(corruption === 'missing' ? 'DELETE FROM frontend_send_owners'
+    : corruption === 'state' ? "UPDATE frontend_send_owners SET state='tombstone'" : "UPDATE frontend_send_owners SET actor_id=''"); });
   assert.equal((await other.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
   assert.equal(a.calls.reconciles.length, 0); assert.equal(a.calls.submits.length, 1); noFrontendEffects(f);
 });

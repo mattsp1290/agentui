@@ -43,11 +43,36 @@ test('owner-state authority accepts identities and offered commands but rejects 
     export declare const offered: OfferedStoredCommand;
     export const identity = { scope: { hostId: 'host', conversationId: 'conversation' }, id: 'command' };`,
   cases: [
-    ["const state: 'absent' | 'available' | 'unavailable' = owners.assertAuthority({ intent: 'owner-state', target: identity, actor }); void state;", null],
-    ["owners.assertAuthority({ intent: 'owner-state', target: offered, actor });", null],
-    ["owners.assertAuthority({ intent: 'dispatch', stored, actor });", null],
-    ["owners.assertAuthority({ intent: 'private-settler', stored, actor });", null],
-    ["owners.assertAuthority({ intent: 'owner-state', target: stored, actor });", /No overload matches/u],
+    ["const state: 'absent' | 'available' | 'unavailable' = owners.ownerState(identity, actor); void state;", null],
+    ["owners.ownerState(offered, actor);", null],
+    ["owners.assertMayDispatch(offered, actor);", null],
+    ["owners.assertMaySettle(offered, actor);", null],
+    ["owners.ownerState(stored, actor);", /not assignable/u],
+    ["owners.assertMayDispatch(stored, actor);", /not assignable/u],
+    ["owners.assertMaySettle(stored, actor);", /not assignable/u],
     ["owners.check({ ...identity, actor });", /does not exist/u],
+  ],
+}));
+
+test('native drivers reject offered commands and the registry requires a matched capture', () => assertCompileCases({
+  config: new URL('../../packages/host/tsconfig.json', import.meta.url).pathname,
+  prefix: `import type { ProviderDriver, CapturedTarget } from '${new URL('../../packages/host/dist/durable-model.js', import.meta.url).pathname}';
+    import type { ProviderConversationOperations } from '${new URL('../../packages/host/dist/providers.js', import.meta.url).pathname}';
+    import type { ProviderCapture, MatchedProviderCommand, V1Command } from '${new URL('../../packages/host/dist/provider-commands.js', import.meta.url).pathname}';
+    import type { OfferedCommand } from '@agentui/contracts';
+    export declare const driver: ProviderDriver<unknown>;
+    export declare const target: CapturedTarget;
+    export declare const offered: OfferedCommand;
+    export declare const plain: V1Command;
+    export declare const registry: ProviderConversationOperations;
+    export declare const capture: ProviderCapture;
+    export declare const matched: MatchedProviderCommand;`,
+  cases: [
+    ['driver.capability(plain); void driver.dispatch(plain, target); void driver.lookup?.(plain, target);', null],
+    ['driver.capability(offered);', /not assignable/u],
+    ['void driver.dispatch(offered, target);', /not assignable/u],
+    ['void driver.lookup?.(offered, target);', /not assignable/u],
+    ['void registry.executeCommand(matched, true, () => {});', null],
+    ['void registry.executeCommand(capture, true, () => {});', /not assignable/u],
   ],
 }));

@@ -1,6 +1,6 @@
+import type { V1Command } from './provider-commands.js';
 import { appendFileSync, closeSync, existsSync, fsyncSync, openSync, readFileSync } from 'node:fs';
 import { canonicalJson } from '@agentui/contracts';
-import type { ClientCommand } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { nonempty, object } from './codec.js';
 import { output, parseEvidence } from './native-execution.js';
@@ -10,8 +10,8 @@ export interface RecordedDriverOptions<E> {
   readonly installation: Installation;
   readonly backendPath: string;
   readonly decodeEvent: (value: unknown) => E;
-  readonly resolve: (command: ClientCommand, target: CapturedTarget) => Promise<CommandResult<E> | 'accepted'>;
-  readonly afterAcceptance?: (command: ClientCommand, target: CapturedTarget) => Promise<void>;
+  readonly resolve: (command: V1Command, target: CapturedTarget) => Promise<CommandResult<E> | 'accepted'>;
+  readonly afterAcceptance?: (command: V1Command, target: CapturedTarget) => Promise<void>;
   readonly cancel?: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
 }
 export function createRecordedDriver<E>(options: RecordedDriverOptions<E>): ProviderDriver<E> {

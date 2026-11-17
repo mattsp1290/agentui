@@ -262,6 +262,17 @@ export function parseServicePull(value: unknown): ServicePull {
     default: throw new Error('Invalid service pull');
   }
 }
+function catalogEntries(value: unknown) {
+  if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
+  return value.map(value => {
+    const entry = record(value, ['scope', 'preview']);
+    if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
+      entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
+      throw new Error('Invalid conversation preview');
+    }
+    return { scope: parseScope(entry.scope), preview: entry.preview };
+  });
+}
 type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, 'frontend-binding'> } | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest);
 type RequestFor<K extends keyof ServiceValueMap> = ResponseRequest & { readonly op: K };
 const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, request: RequestFor<K>) => ServiceValueMap[K] } = {
@@ -286,23 +297,13 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
     if (defaultAgentId === null ? agents.some(agent => agent.availability.kind === 'ready') : !agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
     return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
   },
-  catalog(value) {
-    if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
-    return value.map(value => {
-      const entry = record(value, ['scope', 'preview']);
-      if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
-        entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
-        throw new Error('Invalid conversation preview');
-      }
-      return { scope: parseScope(entry.scope), preview: entry.preview };
-    });
-  },
+  catalog: catalogEntries,
   search(value) {
     const input = record(value, ['items', 'after']);
     if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
     const entries = input.items.map(value => {
       const entry = record(value, ['scope', 'preview', 'excerpt']);
-      const [catalog] = valueParsers.catalog([{ scope: entry.scope, preview: entry.preview }], { op: 'catalog' });
+      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview }]);
       if (!catalog) throw new Error('Missing search entry');
       if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
         entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');

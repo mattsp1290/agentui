@@ -55,7 +55,7 @@ test('store notifies only successful write commits after other connections can o
 
 test('opening incomplete version two refuses before adding provider creation metadata', t => {
   const f = fixture(t), host = f.open(); host.close();
-  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
   assert.deepEqual(readFileSync(f.path), before);
@@ -68,7 +68,7 @@ for (const [failure, mutate, options, message] of [
 ]) {
   test(`pre-feature version two ${failure} refuses without adding provider metadata or changing file bytes`, t => {
     const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
-    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; DROP TABLE provider_creations; ${mutate}`); db.close();
+    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; DROP TABLE provider_creations; ${mutate}`); db.close();
     const before = readFileSync(f.path);
     assert.throws(() => f.open(options), message);
     const reader = new DatabaseSync(f.path);
@@ -95,7 +95,7 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   await host.conversation(scope).submit(command('uncertain'));
   host.close(); await host.drained;
   const db = new DatabaseSync(f.path);
-  db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images;');
+  db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images;');
   const saved = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits']
     .map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]);
   assert.equal(JSON.parse(saved.find(([name]) => name === 'commands')[1][0].receipt).state.kind, 'uncertain');

@@ -1,6 +1,7 @@
+import type { V1Command } from './provider-commands.js';
 import { randomUUID } from 'node:crypto';
 import { codexInstallation } from './native-installations.js';
-import type { ClientCommand, ConversationScope } from '@agentui/contracts';
+import type { ConversationScope } from '@agentui/contracts';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { canonicalJson } from '@agentui/contracts';
 import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversation';
@@ -305,7 +306,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       continuation: { processId: rpc.processId, requestId: id, threadId: turn.threadId, turnId: turn.run.identity.runId },
     }]);
   }
-  function acknowledged(command: ClientCommand, target: CapturedTarget, output: HostOutput<CodexTranscriptEvent>, nativeId: string): Extract<Observation, { readonly kind: 'conclusive' }> {
+  function acknowledged(command: V1Command, target: CapturedTarget, output: HostOutput<CodexTranscriptEvent>, nativeId: string): Extract<Observation, { readonly kind: 'conclusive' }> {
     const result: Extract<Observation, { readonly kind: 'conclusive' }> = { kind: 'conclusive', evidence: {
       identity: target.identity, source: 'native-acknowledgement',
       nativeOperation: { namespace: 'codex-app-server', id: nativeId },
@@ -314,7 +315,7 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
     }, result: { kind: 'completed', output } };
     return result;
   }
-  async function send(command: ClientCommand & { readonly body: { readonly kind: 'send'; readonly text: string; readonly imageId?: ImageId } }, target: CapturedTarget, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
+  async function send(command: V1Command & { readonly body: { readonly kind: 'send'; readonly text: string; readonly imageId?: ImageId } }, target: CapturedTarget, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
     const modelSelection = model === undefined ? {} : { model };
     const key = scopeKey(command.scope);
     let image: { readonly attachment: ImageAttachment; readonly item: { readonly type: 'image'; readonly url: string } } | undefined;
@@ -381,9 +382,8 @@ export function createCodexDriver(options: CodexDriverOptions): CodexDriver {
       }, result: { kind: 'rejected', reason: rejection.reason } };
     }
   }
-  async function dispatch(command: ClientCommand, target: CapturedTarget, expected: Installation, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
+  async function dispatch(command: V1Command, target: CapturedTarget, expected: Installation, model?: string): ReturnType<ProviderDriver<CodexTranscriptEvent>['dispatch']> {
     if (canonicalJson(target.installation) !== canonicalJson(expected)) throw new Error('Wrong Codex installation');
-    if (command.version !== 1) return { kind: 'not-dispatched', reason: 'frontend-offers-unsupported' };
     switch (command.body.kind) {
       case 'revoke-permission': return { kind: 'not-dispatched', reason: 'permission-management-unsupported' };
       case 'send': return send({ ...command, body: command.body }, target, model);

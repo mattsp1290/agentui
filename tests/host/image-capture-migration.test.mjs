@@ -14,7 +14,7 @@ import { fixture } from './fixture.mjs';
 
 const provenance = JSON.parse(readFileSync(new URL('./fixtures/released-image4.json', import.meta.url), 'utf8'));
 const digest = bytes => createHash('sha256').update(bytes).digest('hex');
-const rows = db => Object.fromEntries(db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name<>'frontend_sends' ORDER BY name").all()
+const rows = db => Object.fromEntries(db.prepare("SELECT name FROM sqlite_schema WHERE type='table' AND name NOT IN ('frontend_send_owners','frontend_send_tombstones') ORDER BY name").all()
   .map(({ name }) => [name, db.prepare(`SELECT * FROM ${name} ORDER BY rowid`).all()]));
 const schema = db => db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all();
 function released(t) {
@@ -38,7 +38,7 @@ test('authentic released image4 upgrades once preserving raw rows, image replay 
     try {
       assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 5);
       assert.deepEqual(rows(store.db), before);
-      assert.equal(store.db.prepare('SELECT COUNT(*) n FROM frontend_sends').get().n, 0);
+      for (const table of ['frontend_send_owners', 'frontend_send_tombstones']) assert.equal(store.db.prepare(`SELECT COUNT(*) n FROM ${table}`).get().n, 0);
       assert.deepEqual(store.snapshot(scope).document, original);
       let replay = { domain: transcriptProjection.initial(), receipts: {}, decisions: {} };
       for (const envelope of store.page(scope, 0, store.head(scope))) replay = foldDocument(replay, envelope.event, transcriptProjection);
@@ -82,4 +82,18 @@ test('the exact released main opener refuses joint format5 before changing datab
   const before = readFileSync(f.path);
   assert.throws(() => openReleasedMain(f.path), /Unsupported database version/);
   assert.deepEqual(readFileSync(f.path), before);
+});
+
+for (const table of ['frontend_send_owners', 'frontend_send_tombstones']) test(`released image4 ${table} creation failure rolls back the migration`, t => {
+  const f = released(t), db = new DatabaseSync(f.path);
+  db.exec(`CREATE TABLE ${table}(sentinel BLOB); INSERT INTO ${table} VALUES (x'0001ff')`);
+  const before = rows(db), beforeSchema = schema(db), sentinel = db.prepare(`SELECT * FROM ${table}`).all(); db.close();
+  assert.throws(() => new SqliteStore(f.path, transcriptProjection, budgets()), /already exists/);
+  const reader = new DatabaseSync(f.path);
+  try {
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.deepEqual(rows(reader), before);
+    assert.deepEqual(schema(reader), beforeSchema);
+    assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), sentinel);
+  } finally { reader.close(); }
 });
