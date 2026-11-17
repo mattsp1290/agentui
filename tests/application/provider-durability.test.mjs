@@ -272,6 +272,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     }
     record.finalEvent = remote.emit(remote.makeEvent(record.binding, `${record.id} final answer`, 2, true));
     await until(() => acknowledged(b, record.finalEvent));
+    await until(() => JSON.parse(fullState(f, record.id).commands.find(command => command.id === 'send').observation).evidence.source.source === 'provider-lookup');
     record.final = fullState(f, record.id);
     assert.equal(document(record.final).domain.messages.at(-1).text, `${record.id} final answer`);
     assert.equal(document(record.final).domain.currentRun.outcome, 'completed');
@@ -295,6 +296,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     assert.deepEqual(fullState(f, record.id), record.final);
   }
   assert.equal(effects(remote, '/create').length, 2); assert.equal(effects(remote, '/submit').length, 6);
-  assert.equal(effects(remote, '/lookup').length, 2);
+  assert.equal(effects(remote, '/lookup').filter(value => value.input.kind !== 'send').length, 2);
+  assert.equal(effects(remote, '/lookup').filter(value => value.input.kind === 'send').length, 2);
   assert.equal(effects(remote, '/submit').some(value => value.input.kind === 'cancel'), false);
 });

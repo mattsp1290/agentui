@@ -95,6 +95,8 @@ A lost send reply therefore blocks the conversation until reconciliation settles
 The block can be permanent. When a send never reached the provider, its lookup finds no record and stays `uncertain`, so Reconcile cannot settle it, and cancel is refused with `unknown-run` because no run exists. Start a new chat to keep going. An action to stop waiting on such a send is tracked as bean `agentui-b9oy`.
 After upgrading to a host with this rule, a provider conversation that already holds a non-conclusive `uncertain` send starts refusing new sends the same way, until Reconcile settles that send or the user starts a new chat.
 
+The host also reads status on its own, for every provider. When observation commits a transcript whose current run has ended, and an `accepted` send's evidence names that run, the host calls `reconcileCommand` once for that send. The run end is not settlement evidence; only the returned status settles the receipt. The read counts once the provider admits it, so each send gets at most one automatic read per host process, and a run end committed while the provider is being replaced is read again after the replacement observes. A pending, unknown or failed result leaves the send `accepted` with no further automatic read; a client `reconcile`, a blocked follow-up send or a host restart can settle it later. Report a terminal status before ending the run in observation, or the send stays `accepted` until one of those happens. The automatic read is admitted work, so a replacement requested while it runs returns `deferred` with `active-work`.
+
 ## Observation
 
 A feed delivers `snapshot` and `event` items through `receive`.
