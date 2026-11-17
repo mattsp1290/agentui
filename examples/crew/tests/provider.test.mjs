@@ -34,7 +34,9 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
       return json(200, { apiVersion: '1', grant: revokeHandler ? await revokeHandler(grant) : grant });
     }
     if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test', ...(subagents && { subagents }) }], next: null });
-    if (path === '/v1/conversations') {
+    if (request.method === 'GET' && path === '/v1/conversations') return json(200, { apiVersion: '1',
+      conversations: [...conversations.values()].map(row => row.state), next: null });
+    if (request.method === 'POST' && path === '/v1/conversations') {
       conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId, engine: 'codex', profile: 'test',
         phase: 'idle', openStep: null, pendingApprovals: [] }, messages: [], cursor: 0, openTools: {}, openText: null, childText: {} });
       return json(201, { apiVersion: '1', ...conversations.get(input.conversationId) });
@@ -1137,4 +1139,19 @@ test('Crew maps HTTP, transport and contract failures to typed provider failures
   assert.equal(connection.kind, 'connected');
   await assert.rejects(connection.backend.discover(), error => error === refusal);
   await connection.backend.close();
+});
+
+test('Crew discovery, creation and host restart touch only the member, owned conversation and its observation, never a listing', async t => {
+  const remote = await service(t), foreign = randomUUID();
+  remote.conversations.set(foreign, { state: { conversationId: foreign, memberId, phase: 'idle' }, messages: [], cursor: 0 });
+  const f = await fixture(t, [remote.extension()]);
+  await f.create();
+  await until(() => remote.streams.size === 1);
+  const owned = remote.calls.find(call => call.method === 'POST' && call.path === '/v1/conversations').input.conversationId;
+  const observe = `POST /v1/conversations/${owned}/events`, seen = calls => calls.map(call => `${call.method} ${call.path}`);
+  assert.deepEqual(seen(remote.calls), ['GET /v1/capabilities', 'GET /v1/members', 'POST /v1/conversations', observe]);
+  const before = remote.calls.length;
+  await f.restart([remote.extension()]);
+  await until(() => remote.streams.size === 1 && seen(remote.calls.slice(before)).includes(observe));
+  assert.deepEqual(seen(remote.calls.slice(before)), ['GET /v1/capabilities', 'GET /v1/members', observe]);
 });
