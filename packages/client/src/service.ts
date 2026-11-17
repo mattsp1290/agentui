@@ -1,12 +1,13 @@
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { ServiceConnection } from '@agentui/contracts/service';
 import { createServiceConnection } from './service-engine.js';
+import type { ServiceConnectionOptions } from './service-engine.js';
 
 export type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 export { ServiceError } from '@agentui/contracts/service';
 export { ServiceConnectionLost, ServiceProtocolError } from './service-engine.js';
-export interface BrowserConnectionOptions {
-  readonly requestTimeoutMs?: number;
+export type { ServiceConnectionOptions } from './service-engine.js';
+export interface BrowserConnectionOptions extends ServiceConnectionOptions {
   readonly fetch?: typeof globalThis.fetch;
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {

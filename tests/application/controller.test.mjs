@@ -464,7 +464,7 @@ for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted'
 test('a lost native connection during a command disables the app until an explicit reconnect', async t => {
   const f = await openCommands(t);
   const failure = new ServiceConnectionLost('A different AgentUI host is answering on this Mac. Reconnect to switch to it.');
-  f.behavior.submit = async () => { throw failure; };
+  f.behavior.submit = async () => { f.connectionLost(failure); throw failure; };
   await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
   const snapshot = f.app.getSnapshot();
   assert.equal(snapshot.host.kind, 'unavailable');
@@ -474,6 +474,17 @@ test('a lost native connection during a command disables the app until an explic
   assert.equal(f.target.store.getSnapshot().outbox.length, 1);
   await f.app.reconnect();
   assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+});
+
+test('a connection loss seen by a background request that ignores its own errors still disables the app', async t => {
+  const f = await openCommands(t);
+  f.connectionLost(new ServiceConnectionLost('The local host connection changed. Reconnect before continuing.'));
+  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
+  assert.match(f.app.getSnapshot().error, /host connection changed/);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
+  assert.equal(f.target.store.getSnapshot().connection.kind, 'disconnected');
+  await f.app.reconnect();
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
 });
 

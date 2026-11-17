@@ -43,6 +43,7 @@ export async function readServiceResponseBody(response: Response, limit = SERVIC
 }
 export interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
+  readonly onConnectionLost?: (error: ServiceConnectionLost) => void;
 }
 export type ServiceExecutor = (body: string, context: {
   readonly op: ServiceRequest['op'];
@@ -71,7 +72,12 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       signal?.addEventListener('abort', abort, { once: true });
     });
     const perform = async (): Promise<ServiceValueMap[K]> => {
-      const response = await execute(body, { op: value.op, signal: controller.signal });
+      let response: Response;
+      try { response = await execute(body, { op: value.op, signal: controller.signal }); }
+      catch (error) {
+        if (error instanceof ServiceConnectionLost && !signal?.aborted) options.onConnectionLost?.(error);
+        throw error;
+      }
       const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
       let result: ServiceResponse<ServiceValueMap[K]>;
       try { result = parseServiceResponse<K>(value, raw); }

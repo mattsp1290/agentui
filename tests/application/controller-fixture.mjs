@@ -54,9 +54,10 @@ export function fixture() {
       async receipt() { return null; },
       watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
   };
-  const app = createApplicationController({ createConnection: () => connection,
+  let connectionOptions;
+  const app = createApplicationController({ createConnection: options => { connectionOptions = options; return connection; },
     ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => behavior.uuids ? `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` : `id-${++nextId}` });
   return { app, views, drafts, loads, selected, captured, descriptor, leases, created, submitted, cursors, feeds, behavior,
-    host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
+    host: value => { hostId = value; }, connectionLost: error => connectionOptions.onConnectionLost(error), feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
 }
 

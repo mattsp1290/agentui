@@ -1,6 +1,7 @@
 import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
 import { ServiceConnectionLost } from '@agentui/client/service';
+import type { ServiceConnectionOptions } from '@agentui/client/service';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
@@ -107,7 +108,7 @@ function imageTransfers(connection: ServiceConnection): ImageTransfers {
       for (let attempt = 1; ; attempt++) {
         try { return await operation(); }
         catch (cause) {
-          if (!(cause instanceof ServiceError && cause.kind === 'unavailable') || attempt === IMAGE_TRANSFER_ATTEMPTS) throw cause;
+          if (!(cause instanceof ServiceError && cause.kind === 'unavailable') || cause instanceof ServiceConnectionLost || attempt === IMAGE_TRANSFER_ATTEMPTS) throw cause;
           await new Promise(resolve => setTimeout(resolve, 200 * attempt));
         }
       }
@@ -136,7 +137,7 @@ export function applicationEnabled(state: ApplicationSnapshot): boolean {
 }
 
 export function createApplicationController(deps: {
-  readonly createConnection: () => ServiceConnection;
+  readonly createConnection: (options: ServiceConnectionOptions) => ServiceConnection;
   readonly ownedViewStorage: ViewStorageFactory;
   readonly createId: () => string;
 }): ApplicationController {
@@ -183,10 +184,7 @@ export function createApplicationController(deps: {
           : { kind: 'stale', listing: 'listing' in previous ? previous.listing : null, reason: result.reason } });
       return result;
     } catch (cause) {
-      if (session === owner && state.active === target && version === permissionRead) {
-        stalePermissions(message(cause));
-        if (cause instanceof ServiceConnectionLost) fail(owner, cause);
-      }
+      if (session === owner && state.active === target && version === permissionRead) stalePermissions(message(cause));
       throw cause;
     }
   }
@@ -204,10 +202,13 @@ export function createApplicationController(deps: {
   }
   function fail(owner: Session, cause: unknown, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
-    if (phase === 'handshake' || cause instanceof ServiceConnectionLost) {
-      publish({ host: { kind: 'unavailable' }, error: message(cause) });
-      if (phase !== 'handshake') disconnectActive();
-    } else publish({ error: message(cause) });
+    publish(phase === 'handshake' ? { host: { kind: 'unavailable' }, error: message(cause) } : { error: message(cause) });
+  }
+  function lose(owner: Session, cause: ServiceConnectionLost): void {
+    if (session !== owner) return;
+    publish({ host: { kind: 'unavailable' }, error: message(cause) });
+    disconnectActive();
+    owner.frontend.pause();
   }
   async function current<T>(owner: Session, operation: Promise<T>): Promise<T> {
     const result = await operation;
@@ -277,10 +278,8 @@ export function createApplicationController(deps: {
         try {
           const status = await owner.connection.providerObservation({ scope: target.scope, action });
           if (current()) publish({ observation: { status, retrying } });
-        } catch (cause) {
-          if (!current()) return;
-          if (cause instanceof ServiceConnectionLost) fail(owner, cause);
-          else publish({ observation: { status: { kind: 'unknown' }, retrying } });
+        } catch {
+          if (current()) publish({ observation: { status: { kind: 'unknown' }, retrying } });
         }
       })();
       pending = task;
@@ -475,7 +474,7 @@ export function createApplicationController(deps: {
     start() {
       if (session) return Promise.resolve();
       const closing = disposal;
-      const connection = deps.createConnection();
+      const connection = deps.createConnection({ onConnectionLost: cause => lose(next, cause) });
       const next: Session = {
         activeOwner: null, view: null, images: imageTransfers(connection),
         pool: createViewLeasePool({
@@ -549,10 +548,7 @@ export function createApplicationController(deps: {
       const owner = session;
       if (!owner) throw new Error('This application has closed.');
       const { hostId, principalId } = requireHost(owner);
-      const page = await current(owner, owner.connection.search(query, after)).catch((cause: unknown) => {
-        if (!signal.aborted && cause instanceof ServiceConnectionLost) fail(owner, cause);
-        throw cause;
-      });
+      const page = await current(owner, owner.connection.search(query, after));
       const host = requireHost(owner);
       if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
       if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');

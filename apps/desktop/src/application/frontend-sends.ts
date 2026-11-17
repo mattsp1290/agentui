@@ -83,7 +83,7 @@ export function createFrontendSends(deps: {
   }
   function schedule(): void {
     clearTimeout(timer);
-    if (!closed && authority.session && [...entries.values()].some(entry => entry.row.status === 'waiting' && matches(entry.reference))) {
+    if (!closed && authority.session && !authority.lifetime.signal.aborted && [...entries.values()].some(entry => entry.row.status === 'waiting' && matches(entry.reference))) {
       timer = setTimeout(() => { void poll(); }, 2_000);
     }
   }
@@ -121,9 +121,7 @@ export function createFrontendSends(deps: {
       if (valid() && matches(reference) && reference.state === 'unavailable-pending') {
         remember(viewId, reference); syncRows();
       }
-    } catch {
-      return;
-    }
+    } catch {}
   }
   async function read(entry: Entry): Promise<void> {
     const current = authority, session = current.session;
@@ -146,7 +144,6 @@ export function createFrontendSends(deps: {
       }
       syncRows();
     } catch {
-      return;
     } finally { entry.pending = false; }
   }
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
@@ -160,7 +157,10 @@ export function createFrontendSends(deps: {
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
       const session = authority.session;
       const same = metadata && session && metadata.hostId === session.hostId && metadata.principalId === session.principalId && session.connection === connection;
-      if (same) { schedule(); return; }
+      if (same) {
+        if (session && authority.lifetime.signal.aborted) become(session);
+        schedule(); return;
+      }
       const transition = become(null); recent.clear(); clearTimeout(timer); syncRows();
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
@@ -223,6 +223,7 @@ export function createFrontendSends(deps: {
         },
       };
     },
+    pause(): void { clearTimeout(timer); authority.lifetime.abort(); },
     async release(key: string): Promise<void> { const entry = entries.get(key); if (entry) await unavailable(entry); },
     storageFailed(viewId: string): void {
       failedViews.add(viewId);

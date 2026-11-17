@@ -5,7 +5,7 @@ import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { projection, events, scope as textScope, snapshot as textSnapshot } from './support.mjs';
 import { createServiceConnection } from '../../packages/client/dist/service-engine.js';
-import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
+import { ServiceConnectionLost, ServiceError, ServiceProtocolError } from '@agentui/client/service';
 
 const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 4, cursor: 0,
@@ -27,6 +27,23 @@ test('shared engine bounds an executor that ignores abort', async () => {
   assert.equal(signal.aborted, true);
   pending.resolve(reply(null));
   await setImmediate();
+});
+
+test('shared engine reports a lost connection once through its option for every operation, including feeds', async () => {
+  const lost = [], failure = new ServiceConnectionLost('The local host connection changed. Reconnect before continuing.');
+  let mode = 'lost';
+  const connection = createServiceConnection(async () => {
+    if (mode === 'lost') throw failure;
+    throw new ServiceError('unavailable', 'Down');
+  }, transcriptProjection, { onConnectionLost: error => lost.push(error) });
+  await assert.rejects(connection.metadata(), error => error === failure);
+  await assert.rejects(connection.conversationPermissions(scope), error => error === failure);
+  const feed = connection.conversation(scope).watch({ after: null, projectionVersion: transcriptProjection.version }, async () => {});
+  assert.equal((await feed.ended).kind, 'failed');
+  assert.deepEqual(lost, [failure, failure, failure]);
+  mode = 'other';
+  await assert.rejects(connection.metadata(), /Down/);
+  assert.equal(lost.length, 3);
 });
 
 test('shared engine validates before execution and never retries a failed command', async () => {

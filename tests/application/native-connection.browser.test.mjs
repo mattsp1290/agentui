@@ -14,6 +14,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'trusted-owner', compatibility: {
     wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME, desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   globalThis.nativeCalls = [];
+  globalThis.answeringHost = 'host';
   globalThis.__TAURI_INTERNALS__ = { async invoke(name, { command }) {
     if (name !== 'native_access') throw new Error('Unexpected native command');
     globalThis.nativeCalls.push(command);
@@ -22,12 +23,16 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
       await new Promise((resolve, reject) => { globalThis.releaseNative = resolve; globalThis.rejectNative = reject; });
     }
     if (globalThis.nativeFailure) throw globalThis.nativeFailure;
-    if (command.kind === 'connect') return { observation: 'connection-' + globalThis.nativeCalls.length, hostId: 'host', principalId: 'trusted-owner' };
+    if (command.kind === 'connect') {
+      globalThis.boundHost = globalThis.answeringHost;
+      return { observation: 'connection-' + globalThis.nativeCalls.length };
+    }
     if (command.kind !== 'execute') throw new Error('Unexpected native action');
     const op = command.request.op;
+    // native.rs answers a scoped request refused by a replaced host by probing metadata and reporting host-changed.
+    if (command.request.scope && globalThis.boundHost !== globalThis.answeringHost) throw 'host-changed';
     if (op !== 'metadata' && op !== 'catalog') throw new Error('Unexpected service request: ' + op);
-    if (op === 'metadata' && globalThis.hostChanged) throw 'host-changed';
-    return { status: 200, body: JSON.stringify({ ok: true, value: op === 'metadata' ? metadata : [] }) };
+    return { status: 200, body: JSON.stringify({ ok: true, value: op === 'metadata' ? { ...metadata, hostId: globalThis.answeringHost } : [] }) };
   } };
   window.confirm = () => { throw new Error('Browser confirmation unavailable'); };
   globalThis.mountNative = async () => {
@@ -100,24 +105,22 @@ test('native connection controls show category-specific recovery without exposin
   await assertNoPairing(page);
 });
 
-test('a host change during a session asks for an explicit reconnect and keeps saved work', async t => {
+test('a host replaced during a session disables the app until an explicit reconnect and keeps saved work', async t => {
   const page = await fixture(t);
-  const records = await page.evaluate(() => globalThis.savedRecords());
-  await page.evaluate(() => { globalThis.hostChanged = true; });
-  const reconnect = page.getByRole('button', { name: 'Reconnect', exact: true });
-  await page.evaluate(() => { globalThis.heldAction = 'connect'; });
-  await reconnect.click();
-  await page.waitForFunction(() => typeof globalThis.releaseNative === 'function');
-  await page.evaluate(() => globalThis.releaseNative());
+  const draft = () => page.evaluate(() => globalThis.savedRecords().then(records => records.some(record => JSON.stringify(record).includes('Keep the native draft'))));
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await page.evaluate(() => { globalThis.answeringHost = 'replacement'; });
+  await page.getByRole('button', { name: 'New recorded conversation', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: /different AgentUI host.*Reconnect/ }).waitFor();
-  assert.deepEqual(await page.evaluate(() => globalThis.savedRecords()), records);
-  await page.evaluate(() => { globalThis.hostChanged = false; globalThis.releaseNative = null; });
+  assert.equal(await page.getByRole('button', { name: 'New conversation', exact: true }).isDisabled(), true);
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind === 'execute' && call.request.op === 'create').map(call => call.request.scope.hostId)), ['host']);
+  assert.equal(await draft(), true);
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
-  await reconnect.click();
-  await page.getByRole('button', { name: 'New recorded conversation', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).click();
+  await page.getByText('Host replacement', { exact: true }).waitFor({ state: 'attached' });
   await page.waitForFunction(() => ![...document.querySelectorAll('button')].find(button => button.textContent === 'New recorded conversation').disabled);
-  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind !== 'execute').map(call => call.kind)), ['connect', 'connect', 'connect']);
-  assert.deepEqual(await page.evaluate(() => globalThis.savedRecords()), records);
+  assert.deepEqual(await page.evaluate(() => globalThis.nativeCalls.filter(call => call.kind !== 'execute').map(call => call.kind)), ['connect', 'connect']);
+  assert.equal(await draft(), true);
 });
 
 test('cold failed startup connects on Reconnect, deduplicates clicks and retains drafts through failure and retry', async t => {
