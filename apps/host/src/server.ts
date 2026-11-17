@@ -52,7 +52,6 @@ export interface BrowserHostOptions {
   readonly agentStartup: HostAgentStartup;
   readonly observability?: ObservabilityConfiguration;
   readonly extensions?: ExtensionStartup;
-  readonly accessMode?: 'paired' | 'trusted';
   readonly setupCapability?: string;
 }
 function piApiKey(): string {
@@ -140,7 +139,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    access = new Access(accessDatabase, options.accessMode);
+    access = new Access(accessDatabase);
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
       const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;

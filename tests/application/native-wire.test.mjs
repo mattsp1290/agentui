@@ -19,7 +19,6 @@ test('generated invitations and credentials round-trip through the native pairin
     const paired = access.pair(request.code, credentialClass);
     const credential = { hostId: paired.principal.hostId, principalId: paired.principal.id, secret: paired.secret };
     assert.deepEqual(parseNativeCredential(credential), credential);
-    assert.deepEqual(access.authenticate(credential.secret, credentialClass), paired.principal);
   }
 });
 

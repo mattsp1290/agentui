@@ -8,27 +8,11 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { createConnection } from 'node:net';
 import { chromium } from 'playwright';
 
 const live = process.env.AGENTUI_CLAUDE_SDK_LIVE === '1';
 const models = ['opus', 'sonnet'];
 const root = fileURLToPath(new URL('../../', import.meta.url));
-
-function requestControl(path, request) {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(path);
-    let output = '';
-    socket.setTimeout(5000, () => socket.destroy(new Error('Host control timed out')));
-    socket.once('error', reject);
-    socket.once('connect', () => socket.write(`${JSON.stringify(request)}\n`));
-    socket.on('data', chunk => { output += chunk; });
-    socket.once('end', () => {
-      try { resolve(JSON.parse(output)); }
-      catch { reject(new Error('Host control returned invalid JSON')); }
-    });
-  });
-}
 
 async function wait(predicate, label) {
   const end = Date.now() + 90_000;
@@ -159,12 +143,8 @@ for (const model of models) {
     const errors = [];
     page.on('pageerror', error => errors.push(redact(error.message)));
     await page.goto(`${host.origin}/browser.html`);
-    const invite = await requestControl(join(directory, 'control.sock'), { op: 'invite' });
-    assert.equal(invite.ok, true);
-    await page.getByLabel('Pairing code').fill(invite.value.code);
-    await page.getByRole('button', { name: 'Pair host', exact: true }).click();
     const newChat = page.getByRole('button', { name: 'New conversation', exact: true });
-    await wait(() => newChat.isEnabled(), 'paired Claude SDK host');
+    await wait(() => newChat.isEnabled(), 'connected Claude SDK host');
     await newChat.click();
     await wait(() => page.getByRole('status').first().textContent()
       .then(text => text.includes('Conversation connected')), 'connected Claude SDK conversation');

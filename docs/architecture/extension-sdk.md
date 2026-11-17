@@ -161,7 +161,7 @@ UI refresh does not invoke server replacement.
 
 `serve --config ./agents.json --extensions ./extensions.json --data-dir ./state` selects server extensions alongside configured native agents.
 `serve --extensions ./extensions.json --data-dir ./state` runs providers without native agents or recorded playback.
-Add `--trusted` for trusted browser access. `--extensions` is valid only for `serve`.
+`--extensions` is valid only for `serve`.
 With both files, the configured native default remains selected. Without native configuration, the default is the ready provider with the smallest stable ID in the current catalog, independent of discovery order.
 Empty, changing, or failed catalogs remain readable with no default. Creation is disabled while saved conversations and their original agent identities remain available.
 Omitting `--extensions` preserves the existing native-agent behavior.

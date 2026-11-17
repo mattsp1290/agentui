@@ -8,19 +8,6 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import { chromium } from 'playwright';
-import { createConnection } from 'node:net';
-function requestControl(path, request) {
-  return new Promise((resolve, reject) => {
-    const socket = createConnection(path);
-    let output = '';
-    socket.setTimeout(5000, () => socket.destroy(new Error('Host control timed out')));
-    socket.once('error', reject);
-    socket.once('connect', () => socket.write(`${JSON.stringify(request)}\n`));
-    socket.on('data', chunk => { output += chunk; });
-    socket.once('end', () => { try { resolve(JSON.parse(output)); } catch (error) { reject(error); } });
-  });
-}
-
 const live = process.env.AGENTUI_PI_LIVE === '1';
 const wait = async (predicate, label) => {
   const end = Date.now() + 90_000;
@@ -80,12 +67,8 @@ test('live OpenCode Go GLM 5.3 chat streams, remembers, reopens and stops throug
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${host.origin}/browser.html`);
-  const invite = await requestControl(join(directory, 'control.sock'), { op: 'invite' });
-  assert.equal(invite.ok, true);
-  await page.getByLabel('Pairing code').fill(invite.value.code);
-  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
   const newChat = page.getByRole('button', { name: 'New conversation', exact: true });
-  await wait(() => newChat.isEnabled(), 'paired Pi host');
+  await wait(() => newChat.isEnabled(), 'connected Pi host');
   await newChat.click();
   await wait(() => page.getByRole('status').first().textContent().then(text => text.includes('Conversation connected')), 'connected Pi conversation');
   const conversationId = await page.locator('.scope-label').textContent();

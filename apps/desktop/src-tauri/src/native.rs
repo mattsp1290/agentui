@@ -322,8 +322,7 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
             }
             if request["op"] == "metadata"
                 && value["ok"] == true
-                && (value["value"]["hostId"] != credential.host_id
-                    || value["value"]["principalId"] != credential.principal_id)
+                && value["value"]["hostId"] != credential.host_id
             {
                 return Err("network-failed");
             }
@@ -841,6 +840,32 @@ mod tests {
             .read(ReadMode::Quiet)
             .unwrap()
             .is_none());
+    }
+    #[test]
+    fn metadata_accepts_the_owner_principal_but_rejects_a_foreign_host() {
+        for (host, accepted) in [("host", true), ("elsewhere", false)] {
+            let fixture = Fixture::new();
+            let reply = json!({"ok":true,"value":{"hostId":host,"principalId":"trusted-owner"}})
+                .to_string();
+            let (endpoint, admitted, release, server) = delayed_reply(reply, 200);
+            locked(&fixture.owner).unwrap().endpoint = endpoint;
+            let observation = fixture.ready()["observation"].as_str().unwrap().to_string();
+            release.send(()).unwrap();
+            let result = run(
+                &fixture.owner,
+                Command::Execute {
+                    observation,
+                    request: json!({"op":"metadata"}),
+                },
+            );
+            admitted.recv_timeout(Duration::from_secs(5)).unwrap();
+            server.join().unwrap();
+            if accepted {
+                assert_eq!(result.unwrap()["status"], 200);
+            } else {
+                assert_eq!(result, Err("network-failed"));
+            }
+        }
     }
     #[test]
     fn a_delayed_unauthorized_response_cannot_retire_a_replacement() {

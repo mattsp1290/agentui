@@ -59,7 +59,7 @@ async function fixture(t) {
   const configuration = { version: 2, ownership: 'durable-artifacts', extensions: [{ kind: 'artifact', ...pin(a), installations: [structuredClone(grant)] }] };
   await writeFile(config, JSON.stringify(configuration));
   const environment = { ...process.env, AGENTUI_EXTENSION_SELECTION_TOKEN: secret };
-  const args = ['serve', '--data-dir', directory, '--extensions', config, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', '0', '--trusted'];
+  const args = ['serve', '--data-dir', directory, '--extensions', config, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', '0'];
   const children = new Set();
   t.after(async () => { for (const child of children) { child.kill('SIGKILL'); await once(child, 'exit').catch(() => {}); } });
   function launch(env = environment, executable = main, assets = join(root, 'apps/desktop/web-dist-browser')) {
@@ -228,7 +228,7 @@ test('durable ownership refuses raw replacement and control framing preserves sp
   const entries = [{ kind: 'artifact', ...f.pin(f.a), installations: [{ ...grant,
     authentication: { kind: 'secret', revision: 'first', resolve: async () => secret } }] }];
   const host = await runtime.startBrowserHost({ directory: f.directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
-    hostArtifactDirectory: join(root, 'apps/host/dist'), agentStartup: { kind: 'extensions' }, accessMode: 'trusted', extensions: { kind: 'durable-artifacts', entries } });
+    hostArtifactDirectory: join(root, 'apps/host/dist'), agentStartup: { kind: 'extensions' }, extensions: { kind: 'durable-artifacts', entries } });
   t.after(() => host.close());
   await assert.rejects(host.replaceProviderExtensions([]), /Durable extensions/);
   const command = { op: 'extensions-select', command: { id: 'unicode', expectedRevision: 0, selection: { version: 1, artifacts: [f.pin(f.b)] } } };

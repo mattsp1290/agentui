@@ -30,7 +30,7 @@ The [AG-UI conformance matrix](docs/protocol/README.md) separates canonical wire
 Linux CI runs the same package checks and browser fixtures with the pinned toolchain.
 Apple application builds remain separate.
 
-Read [recorded host development](docs/development/recorded-host.md) to run paired browser views against the independent host process.
+Read [recorded host development](docs/development/recorded-host.md) to run browser views against the independent host process, which admits them directly as its single owner.
 
 Read [host observability](docs/development/observability.md) to export opt-in OpenTelemetry request and agent-run traces to a Collector or local Datadog Agent.
 

@@ -13,15 +13,9 @@ npm run host:browser-dev -- --data-dir /absolute/private/agentui-host
 
 The command creates a private data directory if it does not exist. An existing directory must belong to the current user and have mode `0700`. Keep this directory across restarts. It contains the host identity, device access records, conversation database, and recorded acceptance evidence. A second process cannot own it while the first process is running or draining accepted work.
 
-The listener prints its address and host ID. Open that address in a browser supporting IndexedDB and Web Locks. In another terminal, create a pairing invitation:
+The listener prints its address and host ID. Open that address in a browser supporting IndexedDB and Web Locks. The browser reaches the host directly as its single owner; there is no pairing step.
 
-```sh
-npm run host:invite -- --data-dir /absolute/private/agentui-host
-```
-
-Enter the returned code in **Pairing code**, then select **Pair host**. Codes expire after five minutes and work once. If the pairing reply is lost, request a new code. Pairing does not retry automatically.
-
-Select **New recorded conversation**. In a second browser profile, pair with another code, select **Reconnect** to refresh the catalog, then open that conversation. Each view owns its draft and saved commands independently. Copied tabs receive separate ownership. After closing a view, use **Reopen saved view** to recover its route, draft, and unresolved commands. A view that is still open cannot be claimed by another tab.
+Select **New recorded conversation**. In a second browser profile, open the same address, select **Reconnect** to refresh the catalog, then open that conversation. Each view owns its draft and saved commands independently. Copied tabs receive separate ownership. After closing a view, use **Reopen saved view** to recover its route, draft, and unresolved commands. A view that is still open cannot be claimed by another tab.
 
 ## Recovery
 
@@ -33,22 +27,15 @@ The receipt refresh deliberately uses the shared store's read and durable-settle
 
 Recorded cancellation is unavailable. Closing a browser or aborting an HTTP request does not cancel admitted work. Stop the host with Ctrl+C. Graceful shutdown retains ownership until accepted work settles and SQLite closes. After a killed process, start the host with the same directory and address, reconnect, and explicitly reconcile any unfinished receipt.
 
-To list and revoke paired devices:
+The `host:invite`, `host:devices` and `host:revoke` commands still exist but no longer control access: every client is the single owner, and revoking a device row does not stop any client. They are removed with pairing.
 
-```sh
-npm run host:devices -- --data-dir /absolute/private/agentui-host
-npm run host:revoke -- --data-dir /absolute/private/agentui-host --id DEVICE_ID
-```
-
-Device lists contain at most 100 entries. Continue with `host:devices -- --data-dir ... --after LAST_DEVICE_ID`. Revocation persists before success, closes that device's observations, and rejects later operations. It preserves local drafts and commands and does not undo an admitted effect.
-
-Device lists show expiry and current activity. Expired rows remain as access history; pagination bounds each read without deleting that history. Conversation and saved-view lists also load one page at a time through **More conversations** and **More saved views**.
+Conversation and saved-view lists load one page at a time through **More conversations** and **More saved views**.
 
 Access records and conversations share the existing host database. The application owns the versioned `service_*` namespace; the durable host owns its conversation schema. Startup checks that their host identities agree. Keeping that existing boundary preserves paired devices and conversations across upgrades without copying authority into another database.
 
 ## Development boundary and build identity
 
-This listener binds to loopback and serves only the recorded backend. Browser credentials use an HttpOnly, SameSite Strict cookie, expire after one hour, and belong to the browser development credential class. Cookies do not isolate loopback ports. Use this entry for local recorded development; it is not a packaged native adapter or a remote host deployment. Pairing codes, cookies, and provider secrets do not belong in customization Git or URLs.
+This listener binds to loopback and serves only the recorded backend. It admits every request that reaches it as the single owner, with no cookie or bearer check. Access control is the network boundary, loopback or a private overlay, plus the Host, Origin and content-type checks on each request. Use this entry for local recorded development; it is not a packaged native adapter or a remote host deployment. Provider secrets do not belong in customization Git or URLs.
 
 The absolute data-directory path plus `/control.sock` must fit within 103 UTF-8 bytes for the local control socket. Choose a shorter private directory if startup reports that limit.
 
@@ -60,7 +47,7 @@ Builds emit `artifact.json` for the executed host bundle and browser assets. The
 
 The browser build is in `apps/desktop/web-dist-browser`; Tauri packages its separate `web-dist` output. A running host serves its verified browser bytes from memory. Rebuilding does not change those served bytes. Restart the host to apply a new browser build.
 
-Run `npm run verify` for the repository gates. Application tests launch the actual bundled host and built desktop browser entry, covering independent drafts, progressive output, one decision winner, dropped replies, saved-view recovery, revocation, incompatible metadata, and host restart.
+Run `npm run verify` for the repository gates. Application tests launch the actual bundled host and built desktop browser entry, covering independent drafts, progressive output, one decision winner, dropped replies, saved-view recovery, incompatible metadata, and host restart.
 
 ## Native protocol prerequisite
 
@@ -72,7 +59,7 @@ npm run host:invite-native -- --data-dir /absolute/private/agentui-host
 
 The result contains the host ID and a 32-character, 192-bit invitation code. Codes expire after five minutes and work once. `POST /native/v1/pair` accepts exactly `{version:1,hostId,code}`. A wrong host ID does not consume the invitation. Successful pairing returns the private envelope `{ok:true,value:{hostId,principalId,secret}}`; it does not set a cookie. The credential expires after one hour.
 
-`POST /native/v1` accepts the existing closed service requests except `pair`, with exactly one `Authorization: Bearer <secret>` header. The `Bearer` scheme is case-sensitive. Both native routes require exactly `Content-Type: application/json` with no parameters, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Browser and native invitations and credentials cannot substitute for one another. Revocation uses the existing device command and wakes pending observations.
+`POST /native/v1` accepts the existing closed service requests except `pair` and admits them as the single owner; it does not check the `Authorization` header, so the paired secret grants nothing. Both native routes require a `127.0.0.1` Host header and exactly `Content-Type: application/json` with no parameters, reject Origin and Cookie headers, return no CORS permission, and use `Cache-Control: no-store`. Native pairing remains only so the stock Mac app can store its host ID until pairing is removed.
 
 The shared connection engine takes a `ServiceExecutor` that returns a fetch `Response`. The engine owns bounded JSON and UTF-8 decoding, HTTP status classification, envelope validation, and observation resynchronization. The engine serializes and bounds each request once, then passes its validated body to the browser or private test executor.
 

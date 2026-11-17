@@ -55,9 +55,7 @@ export async function fixture(t, assets) {
     const page = await context.newPage();
     page.setDefaultTimeout(20_000);
     await page.goto(`${info.origin}/browser.html`);
-    await page.getByLabel('Pairing code').fill((await control({ op: 'invite' })).code);
-    await page.getByRole('button', { name: 'Pair host', exact: true }).click();
-    await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'paired host');
+    await wait(() => page.getByRole('button', { name: 'New recorded conversation' }).isEnabled(), 'connected host');
     return page;
   };
   const entries = async () => {

@@ -571,7 +571,6 @@ test('browser retries owner detail failures and renders a full escaped note befo
   assert.equal(saved(f).decisions.length, 0);
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   await page.getByRole('button', { name: 'Check for updates', exact: true }).waitFor();
@@ -768,7 +767,6 @@ for (const termination of ['absent', 'unconfirmed', 'confirmed']) test(`Crew unc
   }
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
@@ -845,7 +843,6 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   assert.deepEqual(evidence, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
@@ -977,7 +974,6 @@ test('browser keeps permissions after run end and confirms member revocation acr
   remote.grants.push(narrow, broad, activeGrant(randomUUID()));
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   const permissions = page.getByRole('region', { name: 'Permissions', exact: true });
@@ -1017,7 +1013,6 @@ test('browser keeps an in-flight conversation revoke labelled until the next lis
   remote.grants.push(narrow, broad);
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
-  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
   await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
   const permissions = page.getByRole('region', { name: 'Permissions', exact: true });

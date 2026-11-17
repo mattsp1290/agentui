@@ -116,7 +116,7 @@ export async function fixture(t, runtime, { stableIdentity = false, liveFeeds = 
   const installedValue = await installedEntry('installed'), nextInstalled = await installedEntry('installed-next');
   const directory = join(f.root, 'host');
   const options = { directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'), hostArtifactDirectory: join(root, 'apps/host/dist'),
-    agentStartup: { kind: 'extensions' }, accessMode: 'trusted' };
+    agentStartup: { kind: 'extensions' } };
   return { ...f, state, first, second, selected, installed: installedValue, nextInstalled, options,
     get provisioned() { return provisioned; },
     count(module, phase) { return state.events.filter(value => value === `${module.label}:${module.id}:${phase}`).length; } };

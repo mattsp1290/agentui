@@ -94,7 +94,7 @@ async function ready(running) {
     ]);
     const response = await fetch(`${info.origin}/api/v1`, { method: 'POST', signal: AbortSignal.timeout(5000),
       headers: { 'Content-Type': 'application/json', Origin: info.origin }, body: JSON.stringify({ op: 'metadata' }) });
-    assert.equal(response.status, 401); await response.arrayBuffer();
+    assert.equal(response.status, 200); await response.arrayBuffer();
     return info;
   } finally { lines.close(); }
 }
@@ -105,7 +105,7 @@ function privateDiagnostics(running) {
   assert.doesNotMatch(running.stdout + running.stderr, /PRIVATE_CLI_EXTENSION_SECRET|PRIVATE_EXTENSION_ERROR|AGENTUI_EXTENSION_CREW_TOKEN|not-installed|server\.mjs/);
 }
 
-test('bundled serve selects an installed public provider, pairs, creates and sends with host credentials, then disposes on SIGTERM', { timeout: 20000 }, async t => {
+test('bundled serve selects an installed public provider, creates and sends with host credentials, then disposes on SIGTERM', { timeout: 20000 }, async t => {
   const requests = [], publicFixture = createCrewFixture(instance);
   const remote = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${secret}`);
@@ -148,17 +148,14 @@ test('bundled serve selects an installed public provider, pairs, creates and sen
     credentialPresent: false, unselected: 'unselected', nativeKeyPresent: false, setupCapabilityPresent: false, anthropicKey: 'anthropic-key',
     path: process.env.PATH, sentinel: 'preserved',
   });
-  let cookie = ''; const payloads = [];
+  const payloads = [];
   const call = async body => {
     const response = await fetch(`${info.origin}/api/v1`, { method: 'POST', signal: AbortSignal.timeout(5000), headers: {
-      'Content-Type': 'application/json', Origin: info.origin, Cookie: cookie,
+      'Content-Type': 'application/json', Origin: info.origin,
     }, body: JSON.stringify(body) });
-    if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+    assert.equal(response.headers.has('set-cookie'), false);
     const value = await response.json(); payloads.push(value); return { status: response.status, ...value };
   };
-  const unpaired = await call({ op: 'metadata' }); assert.equal(unpaired.status, 401); assert.equal(unpaired.ok, false);
-  const invitation = f.launch(['invite']); assert.equal(await invitation.exited, 0, invitation.stderr);
-  assert.equal((await call({ op: 'pair', code: JSON.parse(invitation.stdout).value.code })).ok, true);
   const metadata = (await call({ op: 'metadata' })).value;
   assert.equal(metadata.agents[0].availability.kind, 'unavailable');
   assert.equal(metadata.defaultAgentId, metadata.agents[0].id);
@@ -263,29 +260,23 @@ test('bundled CLI requires a serving configuration, rejects empty selection opti
   }
 });
 
-for (const trusted of [false, true]) test(`bundled extension-only serve creates and sends with ${trusted ? 'trusted' : 'paired'} browser access and separate native credentials`, { timeout: 20000 }, async t => {
+test('bundled extension-only serve creates and sends with direct browser and native access', { timeout: 20000 }, async t => {
   const f = await fixture(t);
   await writeFile(join(f.installed, 'server.mjs'), f.module
     .replace("discover: () => request('/agents')", 'discover: () => fixture.crewBackend.discover()')
     .replace("create: operation => request('/create', operation)", 'create: operation => fixture.crewBackend.create(operation)')
     .replace("submit: operation => request('/send', operation)", 'submit: operation => fixture.crewBackend.submit(operation)'));
-  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0', ...(trusted ? ['--trusted'] : [])]);
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
   const lines = createInterface({ input: running.child.stdout });
   const info = await Promise.race([new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))), running.exited.then(() => { throw new Error(running.stderr); })]);
   lines.close();
-  let cookie;
   async function call(body, path = '/api/v1', headers = {}) {
     const response = await fetch(info.origin + path, { method: 'POST', signal: AbortSignal.timeout(5000), headers: {
-      'Content-Type': 'application/json', ...(path.startsWith('/native/') ? {} : { Origin: info.origin, ...(cookie ? { Cookie: cookie } : {}) }), ...headers,
+      'Content-Type': 'application/json', ...(path.startsWith('/native/') ? {} : { Origin: info.origin }), ...headers,
     }, body: JSON.stringify(body) });
-    if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+    assert.equal(response.headers.has('set-cookie'), false);
     return { status: response.status, ...await response.json() };
   }
-  async function control(args) {
-    const request = f.launch(args); assert.equal(await request.exited, 0, request.stderr); return JSON.parse(request.stdout).value;
-  }
-  assert.equal((await call({ op: 'metadata' })).status, trusted ? 200 : 401);
-  if (!trusted) assert.equal((await call({ op: 'pair', code: (await control(['invite'])).code })).ok, true);
   const metadata = (await call({ op: 'metadata' })).value;
   assert.equal(metadata.compatibility.nativeRuntime, null);
   assert.equal(metadata.compatibility.wireVersion, 9);
@@ -297,21 +288,11 @@ for (const trusted of [false, true]) test(`bundled extension-only serve creates 
   assert.equal(sent.ok, true, JSON.stringify(sent)); assert.equal(sent.value.kind, 'receipt');
   assert.equal((await call({ op: 'create', scope: { ...scope, conversationId: 'foreign', hostId: 'foreign' }, agentId: metadata.defaultAgentId })).status, 403);
   const nativePath = '/native/v1';
-  assert.equal((await call({ op: 'metadata' }, nativePath)).status, 401);
-  const nativeInvite = await control(['invite-native']);
-  const native = await call({ version: 1, hostId: info.hostId, code: nativeInvite.code }, nativePath + '/pair');
-  assert.equal(native.status, 200);
-  const authorization = { Authorization: `Bearer ${native.value.secret}` };
-  const nativeMetadata = await call({ op: 'metadata' }, nativePath, authorization);
+  const nativeMetadata = await call({ op: 'metadata' }, nativePath);
   assert.equal(nativeMetadata.status, 200); assert.equal(nativeMetadata.value.defaultAgentId, metadata.defaultAgentId);
-  assert.deepEqual((await call({ op: 'create', scope: { ...scope, conversationId: 'extension-native' }, agentId: metadata.defaultAgentId }, nativePath, authorization)).value, { ...scope, conversationId: 'extension-native' });
-  await control(['revoke', '--id', nativeMetadata.value.principalId]);
-  assert.equal((await call({ op: 'metadata' }, nativePath, authorization)).status, 401);
-  if (!trusted) {
-    assert.equal((await call({ op: 'metadata' }, '/api/v1', { Origin: 'https://foreign.example' })).status, 400);
-    await control(['revoke', '--id', metadata.principalId]);
-    assert.equal((await call({ op: 'metadata' })).status, 401);
-  }
+  assert.deepEqual((await call({ op: 'create', scope: { ...scope, conversationId: 'extension-native' }, agentId: metadata.defaultAgentId }, nativePath)).value, { ...scope, conversationId: 'extension-native' });
+  assert.equal((await call({ op: 'metadata' }, '/api/v1', { Origin: 'https://foreign.example' })).status, 400);
+  assert.equal((await call({ op: 'metadata' }, nativePath, { Origin: info.origin })).status, 400);
   assert.equal(existsSync(join(f.directory, 'data', 'recorded.jsonl')), false);
   await stop(running); privateDiagnostics(running);
 });
@@ -326,12 +307,8 @@ for (const [name, change] of [
   const f = await fixture(t); await change(f);
   const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
   const info = await ready(running);
-  const invitation = f.launch(['invite']); assert.equal(await invitation.exited, 0);
-  const pair = await fetch(`${info.origin}/api/v1`, { method: 'POST', headers: { Origin: info.origin, 'Content-Type': 'application/json' },
-    body: JSON.stringify({ op: 'pair', code: JSON.parse(invitation.stdout).value.code }) });
-  const cookie = pair.headers.get('set-cookie').split(';')[0]; await pair.arrayBuffer();
   const client = (await import('@agentui/client/service')).createBrowserConnection({ fetch: (path, init) => fetch(info.origin + path, {
-    ...init, headers: { ...init.headers, Origin: info.origin, Cookie: cookie },
+    ...init, headers: { ...init.headers, Origin: info.origin },
   }) });
   const metadata = await client.metadata();
   assert.equal(metadata.defaultAgentId, null); assert.equal(metadata.compatibility.nativeRuntime, null);
@@ -365,7 +342,7 @@ async function artifactFixture(t) {
 
 test('bundled serve starts a caller-pinned artifact, uses credentials, creates and sends, and disposes on shutdown', { timeout: 20000 }, async t => {
   const f = await artifactFixture(t);
-  const running = f.launch(['serve', '--extensions', f.selection, '--trusted', '--port', '0']);
+  const running = f.launch(['serve', '--extensions', f.selection, '--port', '0']);
   const lines = createInterface({ input: running.child.stdout });
   const info = await Promise.race([new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))), running.exited.then(() => { throw new Error(running.stderr); })]);
   lines.close();

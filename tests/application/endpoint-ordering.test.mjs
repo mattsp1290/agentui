@@ -1,7 +1,5 @@
 import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
-import { describeAgent } from '../../apps/host/build/tsc/agents.js';
 import { recordedInstallation } from '@agentui/host/recorded';
-const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
 import assert from 'node:assert/strict';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { createServer, request } from 'node:http';
@@ -43,39 +41,18 @@ async function fixture(t, credentialClass) {
     method: 'POST', headers: { ...headers, 'Content-Type': 'application/json', ...extraHeaders },
     body: typeof body === 'string' ? body : JSON.stringify(body), signal: AbortSignal.timeout(2000),
   });
-  const enroll = () => access.pair(access.invite(credentialClass), credentialClass);
-  const auth = secret => credentialClass === 'native' ? { Authorization: `Bearer ${secret}` }
-    : { Cookie: `agentui_device_${access.hostId}=${secret}` };
-  return { access, feeds, origin, headers, path, send, enroll, auth,
+  return { access, origin, headers, path, send,
     closeGate() { closing = true; },
     reopenGate() { closing = false; },
     nextGate(count = 1) { return new Promise(resolve => { observeGate = () => { if (--count === 0) resolve(); }; }); },
   };
 }
 
-test('native unauthenticated service responds before any body arrives', { timeout: 3000 }, async t => {
-  const f = await fixture(t, 'native');
-  const result = await new Promise((resolve, reject) => {
-    const outgoing = request(`${f.origin}${f.path}`, { method: 'POST', headers: {
-      'Content-Type': 'application/json', 'Content-Length': 100,
-    } }, incoming => {
-      let text = '';
-      incoming.setEncoding('utf8').on('data', part => { text += part; });
-      incoming.on('end', () => { resolve({ status: incoming.statusCode, body: JSON.parse(text) }); outgoing.destroy(); });
-    });
-    outgoing.on('error', reject);
-    outgoing.setTimeout(1500, () => outgoing.destroy(new Error('Handler consumed an unauthenticated body')));
-    outgoing.flushHeaders();
-  });
-  assert.equal(result.status, 401);
-  assert.equal(result.body.error.kind, 'unauthorized');
-});
-
 for (const credentialClass of ['browser-development', 'native']) {
-  test(`${credentialClass} malformed unauthenticated body preserves class ordering`, async t => {
+  test(`${credentialClass} malformed body without credentials is rejected as invalid`, async t => {
     const f = await fixture(t, credentialClass);
     const response = await f.send('{');
-    assert.equal(response.status, credentialClass === 'native' ? 401 : 400);
+    assert.equal(response.status, 400);
   });
 
   test(`${credentialClass} shutdown during pairing body read leaves invitation usable`, { timeout: 3000 }, async t => {
@@ -105,23 +82,6 @@ for (const credentialClass of ['browser-development', 'native']) {
     assert.equal((await f.send(body, {}, path)).status, 401);
   });
 
-  test(`${credentialClass} real API revocation check runs after an admitted pull`, { timeout: 3000 }, async t => {
-    const f = await fixture(t, credentialClass);
-    const { principal, secret } = f.enroll(), auth = f.auth(secret);
-    const scope = { hostId: f.access.hostId, conversationId: 'revoked-admitted-pull' };
-    assert.equal((await f.send({ op: 'create', agentId: recordedAgentId, scope }, auth)).status, 200);
-    const { value: { feedId } } = await (await f.send({ op: 'watch', scope, after: null, projectionVersion: 4 }, auth)).json();
-    const { value: page } = await (await f.send({ op: 'pull', feedId, ack: null }, auth)).json();
-    const started = f.nextGate(2);
-    const pending = f.send({ op: 'pull', feedId, ack: page.page }, auth);
-    await started;
-    f.access.revoke(principal.id);
-    f.feeds.closePrincipal(principal.id);
-    const response = await pending;
-    assert.equal(response.status, 401);
-    assert.equal((await response.json()).error.message, 'Device access was revoked');
-    assert.equal((await f.send({ op: 'metadata' }, auth)).status, 401);
-  });
 }
 
 test('browser static assets preserve headers and bypass closing and authentication', async t => {
