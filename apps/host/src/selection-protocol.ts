@@ -4,6 +4,8 @@ import type { ServerExtensionFailure, ServerExtensionReplacement } from '@agentu
 
 import type { ArtifactPin } from './provider-extensions.js';
 
+export const REFRESH_SELECTION_PREFIX = 'refresh.';
+export type RefreshAdmission = { readonly kind: 'allow' } | { readonly kind: 'refuse'; readonly reason: 'source-superseded' | 'refresh-intent-conflict' };
 export const RECEIPT_LIMIT = 16 * 1024 * 1024;
 export function operationId(value: unknown): string {
   const id = identifier(value, 96);
@@ -113,7 +115,7 @@ export interface SelectionControl {
   receipt(digest: string, offset: number): ReceiptChunk;
 }
 export class SelectionRefusal extends Error {
-  constructor(reason: 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset' | 'attempt-conflict' | 'uncertain') {
+  constructor(readonly reason: 'source-superseded' | 'refresh-intent-conflict' | 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset' | 'attempt-conflict' | 'uncertain') {
     super(reason === 'ownership' ? 'Selection requires durable artifact ownership' : `Selection ${reason}`);
   }
 }

@@ -1,6 +1,6 @@
 export { readCustomizationSnapshot } from './repository.js';
 export type { CustomizationSnapshot } from './repository.js';
-export { CustomizationError, assertSupportedNode, supportedNpmVersion, supportedPackageManager, serverCatalogFile } from './contract.js';
+export { CustomizationError, parseGitExtensionReference, assertSupportedNode, supportedNpmVersion, supportedPackageManager, serverCatalogFile } from './contract.js';
 export type { CustomizationErrorCode, CustomizationSource, GitExtensionReference } from './contract.js';
 export { resolveCustomizationSources } from './sources.js';
 export type { ResolvedCustomizationPackage, ResolvedCustomizationSources } from './sources.js';

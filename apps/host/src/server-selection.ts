@@ -8,8 +8,8 @@ import type { AccessDatabase } from './access-database.js';
 import { normalizeGrantPool, publicGrantBinding } from './provider-credentials.js';
 import { verifyArtifactPins } from './provider-extensions.js';
 import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
-import { SelectionRefusal, RECEIPT_LIMIT, parseAttemptOutcome, parseLiveRequest, parseSelection, parseSelectionCommand } from './selection-protocol.js';
-import type { LiveRequest, AttemptOutcome, OperationSummary, SelectionCommand, SelectionQuery, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
+import { SelectionRefusal, REFRESH_SELECTION_PREFIX, RECEIPT_LIMIT, parseAttemptOutcome, parseLiveRequest, parseSelection, parseSelectionCommand } from './selection-protocol.js';
+import type { RefreshAdmission, LiveRequest, AttemptOutcome, OperationSummary, SelectionCommand, SelectionQuery, SelectionRuntime, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
 const journalTables = new Map([
@@ -17,6 +17,8 @@ const journalTables = new Map([
   ['service_extension_selections', 'id TEXT PRIMARY KEY, revision INTEGER NOT NULL UNIQUE, intent TEXT NOT NULL, receipt TEXT NOT NULL, digest TEXT NOT NULL'],
   ['service_extension_attempts', 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), intent TEXT NOT NULL, outcome TEXT NOT NULL'],
 ]);
+const refreshOwnerTable = 'service_extension_refresh_owner';
+const refreshOwnerColumns = 'singleton INTEGER PRIMARY KEY CHECK(singleton=1), host TEXT NOT NULL';
 const legacyColumns = 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), outcome TEXT NOT NULL';
 type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
@@ -31,20 +33,29 @@ export type ExtensionStartup = { readonly kind: 'transient'; readonly entries: r
   | { readonly kind: 'durable-artifacts'; readonly entries: readonly (Extract<BrowserProviderExtension, { kind: 'artifact' }>)[] };
 
 export function assertNoSelectionJournal(database: AccessDatabase): void {
-  if (database.database.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*' LIMIT 1").get()) {
+  if (database.database.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*' OR lower(name) GLOB 'host_refresh_*' LIMIT 1").get()) {
     throw new Error('Existing selection journal requires durable artifact ownership');
   }
 }
 
+export function assertRefreshSelectionOwner(database: AccessDatabase): void {
+  const object = database.database.prepare('SELECT type,sql FROM sqlite_schema WHERE name=?').get(refreshOwnerTable);
+  if (object?.type !== 'table' || object.sql !== `CREATE TABLE ${refreshOwnerTable} (${refreshOwnerColumns})`) throw new Error('Invalid refresh selection ownership');
+  const owners = database.database.prepare('SELECT * FROM service_extension_refresh_owner').all();
+  if (owners.length !== 1 || owners[0]?.singleton !== 1 || owners[0]?.host !== database.hostId) throw new Error('Invalid refresh selection ownership');
+}
+
 export async function createServerSelection(deps: { readonly database: AccessDatabase; readonly entries: Extract<ExtensionStartup, { kind: 'durable-artifacts' }>['entries'];
   readonly runtime: () => ServerExtensionStatus; readonly isClosing: () => boolean;
-  readonly replace: (selected: ProviderExtensionSelection) => Promise<ServerExtensionReplacement>; readonly stopRuntime: () => void }) {
+  readonly replace: (selected: ProviderExtensionSelection) => Promise<ServerExtensionReplacement>; readonly stopRuntime: () => void;
+  readonly checkRefreshAdmission?: (command: SelectionCommand) => RefreshAdmission }) {
   const db = deps.database.database;
   const grants = normalizeGrantPool(deps.entries.flatMap(entry => entry.installations));
   const grantsDigest = digest('[' + grants.map(grant => canonicalJson(publicGrantBinding(grant))).sort().join(',') + ']');
   let selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
   let desired: Selection | undefined, invalid = false, poisoned = false, busy: Promise<unknown> | undefined, closed = false, booted = false;
   let running: Running = { kind: 'withheld' };
+  let refreshOwned = false;
   function transaction<T>(work: () => JournalResult<T>): T {
     db.exec('BEGIN IMMEDIATE');
     try {
@@ -57,6 +68,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   function decodeSelection(row: Record<string, unknown>): Selection {
     const id = identifier(row.id, 96), revision = count(row.revision), intent = identifier(row.intent, RECEIPT_LIMIT);
     const command = parseSelectionCommand(JSON.parse(intent));
+    if (command.id.startsWith(REFRESH_SELECTION_PREFIX) && !deps.checkRefreshAdmission) throw new Error();
     if (command.id !== id || (revision === 0 ? id !== 'startup' || command.expectedRevision !== 0 : command.expectedRevision !== revision - 1) || canonicalJson(command) !== intent) throw new Error();
     const receipt = identifier(row.receipt, RECEIPT_LIMIT), receiptDigest = hex(row.digest, 64);
     if (Buffer.byteLength(receipt) > RECEIPT_LIMIT || digest(receipt) !== receiptDigest) throw new Error();
@@ -77,6 +89,12 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     const version = schema[0]?.version;
     if (schema.length !== 1 || schema[0]?.singleton !== 1 || (version !== 1 && version !== 2) || schema[0]?.host !== deps.database.hostId) throw new Error('Invalid selection journal');
     const tables = new Map(journalTables);
+    if (refreshOwned && !objects.some(object => object.name === refreshOwnerTable)) throw new Error('Missing refresh selection ownership');
+    if (objects.some(object => object.name === refreshOwnerTable)) {
+      if (!deps.checkRefreshAdmission) throw new Error('Refresh ownership requires guarded selection');
+      tables.set(refreshOwnerTable, refreshOwnerColumns);
+      assertRefreshSelectionOwner(deps.database);
+    }
     if (version === 1) { tables.delete('service_extension_attempts'); tables.set('service_extension_boots', legacyColumns); }
     if (objects.length !== tables.size || objects.some(object => {
       if (object.type !== 'table' || typeof object.name !== 'string') return true;
@@ -87,6 +105,13 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       WHERE t.type='table' AND lower(t.name) GLOB 'service_extension_*' AND i."unique"=1 AND i.origin='c' LIMIT 1`).get();
     if (extraUnique) throw new Error('Invalid selection journal');
     return version;
+  }
+  function ownRefresh(): void {
+    if (!deps.checkRefreshAdmission) return;
+    if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(refreshOwnerTable)) { refreshOwned = true; return; }
+    db.exec(`CREATE TABLE ${refreshOwnerTable} (${refreshOwnerColumns})`);
+    if (db.prepare('INSERT INTO service_extension_refresh_owner VALUES(1,?)').run(deps.database.hostId).changes !== 1) throw new Error('Refresh ownership write failed');
+    refreshOwned = true;
   }
   function migrateV1(): void {
     db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
@@ -150,6 +175,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         if (!desired) return { namespace: 1, value: { selections, attempts, byId, desired, unresolved } };
         validatedRecoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
         if (version === 1) migrateV1();
+        ownRefresh();
         const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
         for (const attempt of unresolved) {
           if (update.run(outcome, attempt.id).changes !== 1) throw new Error('Selection journal write failed');
@@ -227,6 +253,13 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       if (expectedStoredRevision !== -1 && version !== 2) throw new Error('Invalid selection journal');
       const storedRevision = version ? db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1 : -1;
       if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
+      const command = parseSelectionCommand(JSON.parse(selection.intent));
+      const admission = deps.checkRefreshAdmission ? deps.checkRefreshAdmission(command)
+        : command.id.startsWith(REFRESH_SELECTION_PREFIX) ? { kind: 'refuse', reason: 'refresh-intent-conflict' } : { kind: 'allow' };
+      if (!admission || typeof admission !== 'object' || 'then' in admission) throw new Error('Invalid refresh admission');
+      record(admission, admission.kind === 'refuse' ? ['kind', 'reason'] : ['kind']);
+      if (admission.kind === 'refuse' && (admission.reason === 'source-superseded' || admission.reason === 'refresh-intent-conflict')) throw new SelectionRefusal(admission.reason);
+      if (admission.kind !== 'allow') throw new Error('Invalid refresh admission');
       if (version === 2 && db.prepare('SELECT 1 FROM service_extension_attempts WHERE id=?').get(selection.id)) throw new SelectionRefusal('id-conflict');
       if (expectedStoredRevision === -1) {
         if (version === 2) throw new Error('Invalid selection journal');
@@ -238,6 +271,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
           migrateV1();
         }
       }
+      ownRefresh();
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
       if (version !== 2 && db.prepare('SELECT COUNT(*) AS n FROM service_extension_attempts').get()?.n !== 0) throw new Error('Selection journal write failed');
       verifyWriteTail(selection);
