@@ -4,9 +4,13 @@ import { createServer } from 'node:http';
 import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { crewProvider } from '../dist/provider.js';
+import { connected, crewService } from './support/crew-service.mjs';
 import { fixture, saved, send } from '../../../tests/application/provider-stream-fixture.mjs';
 import { until } from '../../../tests/host/fixture.mjs';
-import { memberId, service } from './crew-service.mjs';
+
+const memberId = randomUUID();
+const instance = { namespace: 'crew', installationId: 'test', generation: 'one', protocolVersion: '1' };
+const service = (t, options) => crewService(t, { ...options, memberId, token: 'private-crew-test', instance });
 
 test('Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen', async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
@@ -86,16 +90,6 @@ test('Crew lost submit remains original-only GET recovery and does not turn miss
   assert(remote.calls.some(call => call.method === 'GET' && call.path.endsWith(before[0].input.requestId)));
 });
 
-async function connected(remote) {
-  const { value } = remote.extension(), installation = value.installations[0];
-  let provider, presentation;
-  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
-    credentials: { use: (_request, action) => action('private-crew-test') } });
-  const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
-    credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
-  assert.equal(result.kind, 'connected');
-  return { backend: result.backend, presentation, installation };
-}
 
 async function direct(remote) {
   const { backend, presentation } = await connected(remote);

@@ -21,7 +21,7 @@ Use unique names and set `default` to one of them. Claude also accepts `"model":
 node apps/host/dist/main.js serve --config /absolute/agents.json --data-dir /absolute/private/agentui --port 7140
 ```
 
-Open the printed address with `/browser.html` appended and pair with the ordinary `invite` command. Choose **Agent for new chat**, then **New conversation**. Each saved chat keeps its original agent, controls, and draft. Changing this selector affects only new chats.
+Open the printed address with `/browser.html` appended. The browser connects directly. Choose **Agent for new chat**, then **New conversation**. Each saved chat keeps its original agent, controls, and draft. Changing this selector affects only new chats.
 
 An agent that cannot start appears as unavailable. If the default is unavailable, select another available agent explicitly. Removed agents leave readable history with commands disabled. Restore the same workspace, model, and native runtime to continue their chats. Keep the same data directory when moving from a single-agent command to this configuration.
 

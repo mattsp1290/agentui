@@ -1,5 +1,7 @@
 import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
+import { ServiceConnectionLost } from '@agentui/client/service';
+import type { ServiceConnectionOptions } from '@agentui/client/service';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
@@ -20,7 +22,7 @@ import { conversationResponding } from './responding.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
 type HostState =
-  | { readonly kind: 'loading' | 'unpaired' | 'unavailable' }
+  | { readonly kind: 'loading' | 'unavailable' }
   | { readonly kind: 'ready'; readonly metadata: ServiceMetadata }
   | { readonly kind: 'incompatible'; readonly metadata: ServiceMetadata; readonly issues: readonly CompatibilityIssue[] };
 export interface OpenConversation {
@@ -68,7 +70,6 @@ export interface ApplicationController {
   subscribe(listener: () => void): () => void;
   start(): Promise<void>;
   dispose(): Promise<void>;
-  pair(code: string): Promise<void>;
   reconnect(): Promise<void>;
   reopenView(viewId: string): Promise<void>;
   moreConversations(): Promise<void>;
@@ -81,9 +82,6 @@ export interface ApplicationController {
 }
 interface LoadedView { readonly borrow: ViewBorrow; readonly saved: SavedView; readonly hostId: string }
 type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedView;
-type ApplicationFailure =
-  | { readonly kind: 'access-revoked' }
-  | { readonly kind: 'operation-failed'; readonly error: string };
 interface ImageTransfers {
   upload: ServiceConnection['uploadImage'];
   read(scope: ConversationScope, imageId: ImageId): Promise<Uint8Array>;
@@ -110,7 +108,7 @@ function imageTransfers(connection: ServiceConnection): ImageTransfers {
       for (let attempt = 1; ; attempt++) {
         try { return await operation(); }
         catch (cause) {
-          if (!(cause instanceof ServiceError && cause.kind === 'unavailable') || attempt === IMAGE_TRANSFER_ATTEMPTS) throw cause;
+          if (!(cause instanceof ServiceError && cause.kind === 'unavailable') || cause instanceof ServiceConnectionLost || attempt === IMAGE_TRANSFER_ATTEMPTS) throw cause;
           await new Promise(resolve => setTimeout(resolve, 200 * attempt));
         }
       }
@@ -134,10 +132,6 @@ function initialSnapshot(): ApplicationSnapshot {
   return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
 }
 function message(error: unknown): string { return error instanceof Error ? error.message : 'The operation failed.'; }
-function classifyFailure(cause: unknown): ApplicationFailure {
-  return cause instanceof ServiceError && cause.kind === 'unauthorized'
-    ? { kind: 'access-revoked' } : { kind: 'operation-failed', error: message(cause) };
-}
 export function applicationEnabled(state: ApplicationSnapshot): boolean {
   return state.host.kind === 'ready' && !state.storageFailure && !state.busy;
 }
@@ -146,7 +140,7 @@ export function refusalMessage(reason: string): string {
 }
 
 export function createApplicationController(deps: {
-  readonly createConnection: (options: { readonly onUnauthorized: () => void }) => ServiceConnection;
+  readonly createConnection: (options: ServiceConnectionOptions) => ServiceConnection;
   readonly ownedViewStorage: ViewStorageFactory;
   readonly createId: () => string;
 }): ApplicationController {
@@ -194,10 +188,7 @@ export function createApplicationController(deps: {
           : { kind: 'stale', listing: 'listing' in previous ? previous.listing : null, reason: result.reason } });
       return result;
     } catch (cause) {
-      if (session === owner && state.active === target && version === permissionRead) {
-        stalePermissions(message(cause));
-        if (cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
-      }
+      if (session === owner && state.active === target && version === permissionRead) stalePermissions(message(cause));
       throw cause;
     }
   }
@@ -213,16 +204,15 @@ export function createApplicationController(deps: {
     unsubscribeActive = null;
     target?.store.disconnect();
   }
-  function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
+  function fail(owner: Session, cause: unknown, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
-    if (failure.kind === 'access-revoked') {
-      publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
-      void owner.frontend.session(null, owner.connection);
-      disconnectActive();
-    } else {
-      if (phase === 'handshake') { publish({ host: { kind: 'unavailable' }, error: failure.error }); }
-      else publish({ error: failure.error });
-    }
+    publish(phase === 'handshake' ? { host: { kind: 'unavailable' }, error: message(cause) } : { error: message(cause) });
+  }
+  function lose(owner: Session, cause: ServiceConnectionLost): void {
+    if (session !== owner) return;
+    if (state.host.kind !== 'unavailable') publish({ host: { kind: 'unavailable' }, error: message(cause) });
+    disconnectActive();
+    owner.frontend.pause();
   }
   async function current<T>(owner: Session, operation: Promise<T>): Promise<T> {
     const result = await operation;
@@ -241,7 +231,7 @@ export function createApplicationController(deps: {
   }
   function requireHost(owner: Session): ServiceMetadata {
     local(owner);
-    if (state.host.kind !== 'ready') throw new Error('A compatible paired host is required.');
+    if (state.host.kind !== 'ready') throw new Error('A compatible connected host is required.');
     return state.host.metadata;
   }
   function requireSaved(owner: Session): LoadedView {
@@ -299,10 +289,8 @@ export function createApplicationController(deps: {
         try {
           const status = await owner.connection.providerObservation({ scope: target.scope, action });
           if (current()) observed(status);
-        } catch (cause) {
-          if (!current()) return;
-          if (cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
-          else observed({ kind: 'unknown' });
+        } catch {
+          if (current()) observed({ kind: 'unknown' });
         }
       })();
       pending = task;
@@ -436,8 +424,8 @@ export function createApplicationController(deps: {
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
         saved.route ? install(owner, saved.route) : Promise.resolve()]);
       const failed = results.find(result => result.status === 'rejected');
-      if (failed?.status === 'rejected') fail(owner, classifyFailure(failed.reason));
-    } catch (cause) { fail(owner, classifyFailure(cause), 'handshake'); }
+      if (failed?.status === 'rejected') fail(owner, failed.reason);
+    } catch (cause) { fail(owner, cause, 'handshake'); }
     finally { held?.release(); }
   }
   async function run(operation: (owner: Session) => Promise<void>): Promise<void> {
@@ -445,7 +433,7 @@ export function createApplicationController(deps: {
     if (!owner || state.busy) return;
     publish({ busy: true, error: '' });
     try { await operation(owner); }
-    catch (cause) { fail(owner, classifyFailure(cause)); } finally { if (session === owner) publish({ busy: false }); }
+    catch (cause) { fail(owner, cause); } finally { if (session === owner) publish({ busy: false }); }
   }
   async function submitCommand(owner: Session | null, target: OpenConversation, operation: () => Promise<SubmitResult>): Promise<SubmitResult> {
     if (!owner || session !== owner) throw new Error('This application has closed.');
@@ -460,7 +448,7 @@ export function createApplicationController(deps: {
       else if (result.receipt.state.kind === 'rejected') publish({ error: result.receipt.state.reason });
       return result;
     } catch (cause) {
-      fail(owner, classifyFailure(cause));
+      fail(owner, cause);
       throw cause;
     } finally { if (session === owner) { publish({ busy: false }); refreshPermissions(owner, target); } }
   }
@@ -497,7 +485,7 @@ export function createApplicationController(deps: {
     start() {
       if (session) return Promise.resolve();
       const closing = disposal;
-      const connection = deps.createConnection({ onUnauthorized: () => fail(next, { kind: 'access-revoked' }) });
+      const connection = deps.createConnection({ onConnectionLost: cause => lose(next, cause) });
       const next: Session = {
         activeOwner: null, view: null, images: imageTransfers(connection),
         pool: createViewLeasePool({
@@ -517,7 +505,6 @@ export function createApplicationController(deps: {
             const capturedSends = next.frontend.snapshot();
             if (capturedSends !== state.capturedSends) publish({ capturedSends });
           },
-          unauthorized() { fail(next, { kind: 'access-revoked' }); },
         }),
       };
       session = next;
@@ -553,13 +540,6 @@ export function createApplicationController(deps: {
       }
       return closing;
     },
-    pair: code => run(async owner => {
-      local(owner);
-      await current(owner, owner.frontend.session(null, owner.connection));
-      try { await current(owner, owner.connection.pair(code)); }
-      catch (cause) { fail(owner, { kind: 'operation-failed', error: message(cause) }); return; }
-      await refresh(owner);
-    }),
     reconnect: () => run(refresh),
     reopenView: viewId => run(async owner => {
       requireHost(owner);
@@ -579,17 +559,12 @@ export function createApplicationController(deps: {
       const owner = session;
       if (!owner) throw new Error('This application has closed.');
       const { hostId, principalId } = requireHost(owner);
-      try {
-        const page = await current(owner, owner.connection.search(query, after));
-        const host = requireHost(owner);
-        if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
-        if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');
-        if (page.after !== null && page.after === after) throw new Error('Search did not advance.');
-        return page;
-      } catch (cause) {
-        if (!signal.aborted && cause instanceof ServiceError && cause.kind === 'unauthorized') fail(owner, { kind: 'access-revoked' });
-        throw cause;
-      }
+      const page = await current(owner, owner.connection.search(query, after));
+      const host = requireHost(owner);
+      if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
+      if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');
+      if (page.after !== null && page.after === after) throw new Error('Search did not advance.');
+      return page;
     },
     moreSavedViews: () => run(async owner => {
       const host = requireHost(owner);

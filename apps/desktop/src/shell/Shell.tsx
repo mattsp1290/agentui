@@ -35,7 +35,7 @@ function DefaultView() {
       <Text variant="muted">AgentUI brings your existing agents into a workspace you can make your own.</Text>
       <Surface className="connection-card">
         <div className="connection-heading"><span className="status-dot" /><Text as="h2" variant="label">No host connected</Text></div>
-        <Text>Connect to the local Codex host on this Mac to pair and open your conversations.</Text>
+        <Text>Connect to the local Codex host on this Mac to open your conversations.</Text>
         <Button className="connect-host" onClick={() => window.location.assign('http://127.0.0.1:7140/browser.html')}>Connect to local Codex</Button>
         <Text variant="muted">Start the AgentUI Codex host first, then connect. Keep the host running while you work.</Text>
       </Surface>
@@ -43,7 +43,7 @@ function DefaultView() {
     <aside className="workspace-notes" aria-label="About this build">
       <div className="note-number">01</div>
       <Text as="h2" variant="label">Built around your agents</Text>
-      <Text variant="muted">The local host uses your existing Codex installation. Pair with a code from the host to access your conversations.</Text>
+      <Text variant="muted">The local host uses your existing Codex installation and serves your conversations directly to this Mac.</Text>
       <div className="note-divider" />
       <div className="note-number">02</div>
       <Text as="h2" variant="label">A workspace you can change</Text>

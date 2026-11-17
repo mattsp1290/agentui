@@ -9,17 +9,15 @@ export function openAccessDatabase(path: string): AccessDatabase {
     chmodSync(path, 0o600);
     database.exec(`PRAGMA busy_timeout=5000; PRAGMA synchronous=FULL;
       CREATE TABLE IF NOT EXISTS service_schema (singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL);
-      INSERT OR IGNORE INTO service_schema(singleton,version) VALUES(1,1);
+      INSERT OR IGNORE INTO service_schema(singleton,version) VALUES(1,2);
       CREATE TABLE IF NOT EXISTS service_identity (singleton INTEGER PRIMARY KEY CHECK(singleton=1), host TEXT NOT NULL);
-      CREATE TABLE IF NOT EXISTS service_devices (id TEXT PRIMARY KEY, digest TEXT NOT NULL UNIQUE, host TEXT NOT NULL,
-        credential_class TEXT NOT NULL CHECK(credential_class IN ('browser-development','native')), expires INTEGER NOT NULL,
-        policy TEXT NOT NULL CHECK(policy='owner'), revoked INTEGER NOT NULL CHECK(revoked IN (0,1)));
       CREATE TABLE IF NOT EXISTS service_provider_credentials (handle TEXT PRIMARY KEY, host TEXT NOT NULL,
         namespace TEXT NOT NULL, contribution TEXT NOT NULL, installation TEXT NOT NULL, generation TEXT NOT NULL,
         protocol TEXT NOT NULL, service TEXT NOT NULL, revision TEXT NOT NULL, revoked INTEGER NOT NULL CHECK(revoked IN (0,1)),
         UNIQUE(host,namespace,contribution,installation,generation,protocol,service,revision));`);
-    if (database.prepare('SELECT version FROM service_schema WHERE singleton=1').get()?.version !== 1 ||
-      !database.prepare('PRAGMA table_info(service_devices)').all().some(row => row.name === 'credential_class')) throw new Error('Unsupported host access schema');
+    const version = database.prepare('SELECT version FROM service_schema WHERE singleton=1').get()?.version;
+    if (version === 1) database.exec('BEGIN IMMEDIATE; DROP TABLE IF EXISTS service_devices; UPDATE service_schema SET version=2 WHERE singleton=1; COMMIT;');
+    else if (version !== 2) throw new Error('Unsupported host access schema');
     const providerColumns = database.prepare('PRAGMA table_info(service_provider_credentials)').all();
     if (['handle', 'host', 'namespace', 'contribution', 'installation', 'generation', 'protocol', 'service', 'revision', 'revoked']
       .some(name => !providerColumns.some(row => row.name === name))) throw new Error('Unsupported provider credential schema');

@@ -5,7 +5,6 @@ import { join } from 'node:path';
 import test from 'node:test';
 import { secretResolver } from '@agentui/host';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
-import { Access } from '../../apps/host/build/tsc/access.js';
 import { createProviderAuthority } from '../../apps/host/build/tsc/provider-credentials.js';
 
 const instance = { namespace: 'example-crew', installationId: 'personal', generation: '1', protocolVersion: 'v1' };
@@ -19,10 +18,8 @@ function database(t) {
   return { path, state: openAccessDatabase(path) };
 }
 
-test('opaque provider grants persist with complete bindings and preserve device credentials', async t => {
-  const { path, state } = database(t), access = new Access(state);
-  const paired = access.pair(access.invite('native'), 'native');
-  const devices = state.database.prepare('SELECT * FROM service_devices').all();
+test('opaque provider grants persist with complete bindings', async t => {
+  const { path, state } = database(t);
   let authority = createProviderAuthority(state, instance.namespace, [installation]);
   const { credential } = authority.issue('service', instance);
   assert.equal(await authority.credentials.use({ credential, service }, async value => value === secret), true);
@@ -30,15 +27,13 @@ test('opaque provider grants persist with complete bindings and preserve device 
   assert.deepEqual({ ...grant }, { handle: credential.opaqueHandle, host: state.hostId, namespace: instance.namespace,
     contribution: 'service', installation: instance.installationId, generation: '1', protocol: 'v1', service, revision: 'revision-1', revoked: 0 });
   assert.doesNotMatch(JSON.stringify(grant), /PRIVATE_PROVIDER_SENTINEL/);
-  await authority.close(); access.close();
+  await authority.close(); state.database.close();
   assert.equal(readFileSync(path).includes(Buffer.from(secret)), false);
-  const reopened = openAccessDatabase(path), reopenedAccess = new Access(reopened);
-  t.after(() => reopenedAccess.close());
+  const reopened = openAccessDatabase(path);
+  t.after(() => reopened.database.close());
   authority = createProviderAuthority(reopened, instance.namespace, [installation]);
   t.after(() => authority.close());
   assert.equal(authority.issue('service', instance).credential.opaqueHandle, credential.opaqueHandle);
-  assert.deepEqual(reopened.database.prepare('SELECT * FROM service_devices').all(), devices);
-  assert.ok(paired.principal);
   const revised = createProviderAuthority(reopened, instance.namespace, [{ ...installation, authentication: { ...installation.authentication, revision: 'revision-2' } }]);
   await assert.rejects(revised.credentials.use({ credential, service }, async () => assert.fail('stale revision reached action')), /^Error: Provider credential use refused$/);
   await revised.close();

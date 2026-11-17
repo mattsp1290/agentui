@@ -7,9 +7,6 @@ import { SelectionRefusal, parseLiveRequest, parseSelectionQuery, parseSelection
 import type { SelectionControl, SelectionCommand, LiveRequest, SelectionQuery, OperationSummary, SelectionStatus, ReceiptChunk } from './selection-protocol.js';
 import { parseRefreshReceipt, parseRefreshRequest, RefreshRefusal } from './refresh-jobs.js';
 import type { RefreshController, RefreshRequest, RefreshReceipt } from './refresh-jobs.js';
-import type { Access } from './access.js';
-import type { FeedRegistry } from './feed-registry.js';
-import { parseInvitationCode } from './native-wire.js';
 import { isProviderUnavailableCause, providerUnavailableReasons } from '@agentui/host';
 import type { ProviderStatus, ProviderUnavailableCause } from '@agentui/host';
 
@@ -35,17 +32,13 @@ export type ControlRequest = { readonly op: 'extensions-select'; readonly comman
   | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
   | { readonly op: 'extensions-refresh-request'; readonly request: RefreshRequest }
   | { readonly op: 'extensions-refresh-status' | 'extensions-refresh-promote'; readonly id: string }
-  | { readonly op: 'invite' | 'invite-native' | 'providers-refresh' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
-type ControlValue = readonly ProviderRefreshStatus[] | readonly ProviderRefreshEntry[] | OperationSummary | SelectionStatus | ReceiptChunk | RefreshReceipt | { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
+  | { readonly op: 'providers-refresh' };
+type ControlValue = readonly ProviderRefreshStatus[] | readonly ProviderRefreshEntry[] | OperationSummary | SelectionStatus | ReceiptChunk | RefreshReceipt | null;
 type ControlResponse = { readonly ok: true; readonly value: ControlValue } | { readonly ok: false; readonly error: string };
 export function parseControlRequest(value: unknown): ControlRequest {
   const input = record(value);
   switch (input.op) {
-    case 'invite': case 'invite-native': case 'providers-refresh': record(input, ['op']); return { op: input.op };
-    case 'devices': {
-      record(input, input.after === undefined ? ['op'] : ['op', 'after']);
-      return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
-    }
+    case 'providers-refresh': record(input, ['op']); return { op: input.op };
     case 'extensions-refresh-request': record(input, ['op', 'request']); return { op: input.op, request: parseRefreshRequest(input.request) };
     case 'extensions-refresh-status': case 'extensions-refresh-promote': record(input, ['op', 'id']); return { op: input.op, id: operationId(input.id) };
     case 'extensions-select': record(input, ['op', 'command']); return { op: input.op, command: parseSelectionCommand(input.command) };
@@ -55,7 +48,6 @@ export function parseControlRequest(value: unknown): ControlRequest {
     }
     case 'extensions-status': record(input, ['op', 'query']); return { op: input.op, query: input.query === null ? null : parseSelectionQuery(input.query) };
     case 'extensions-receipt': record(input, ['op', 'digest', 'offset']); return { op: input.op, digest: hex(input.digest, 64), offset: count(input.offset) };
-    case 'revoke': record(input, ['op', 'id']); return { op: 'revoke', id: identifier(input.id) };
     default: throw new Error('Unknown control operation');
   }
 }
@@ -69,23 +61,9 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
     case 'extensions-live': case 'extensions-select': return { ok: true, value: parseOperationSummary(input.value) };
     case 'extensions-status': return { ok: true, value: parseSelectionStatus(input.value) };
     case 'extensions-receipt': return { ok: true, value: parseReceiptChunk(input.value) };
-    case 'invite': return { ok: true, value: { code: identifier(record(input.value, ['code']).code) } };
-    case 'invite-native': {
-      const invitation = record(input.value, ['hostId', 'code']);
-      return { ok: true, value: { hostId: identifier(invitation.hostId), code: parseInvitationCode(invitation.code) } };
-    }
-    case 'revoke': if (input.value !== null) throw new Error('Invalid revocation result'); return { ok: true, value: null };
     case 'providers-refresh':
       if (!Array.isArray(input.value) || input.value.length > providerRefreshLimit) throw new Error('Invalid provider status');
       return { ok: true, value: input.value.map(parseRefreshEntry) };
-    case 'devices': {
-      if (!Array.isArray(input.value) || input.value.length > 100) throw new Error('Invalid device list');
-      return { ok: true, value: input.value.map(value => {
-        const device = record(value, ['id', 'revoked', 'expires', 'active']);
-        if (typeof device.revoked !== 'boolean' || typeof device.active !== 'boolean') throw new Error('Invalid device status');
-        return { id: identifier(device.id), revoked: device.revoked, expires: count(device.expires), active: device.active };
-      }) };
-    }
   }
 }
 export function formatControlResponse(response: ControlResponse): string {
@@ -194,7 +172,7 @@ export async function requestControl(path: string, request: ControlRequest): Pro
 const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); };
 export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, live: refuseSelection, status: refuseSelection, receipt: refuseSelection };
 
-export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl,
+export async function startControl(path: string, isClosing: () => boolean, selection: SelectionControl,
   refreshProviders: () => Promise<readonly ProviderStatus[]>, refresh?: Pick<RefreshController, 'request' | 'inspect' | 'promote'>) {
   if (existsSync(path)) unlinkSync(path);
   const server = createServer(socket => {
@@ -215,10 +193,6 @@ export async function startControl(path: string, access: Access, feeds: FeedRegi
           case 'extensions-live': value = await selection.live(request.request); break;
           case 'extensions-status': value = selection.status(request.query ?? undefined); break;
           case 'extensions-receipt': value = selection.receipt(request.digest, request.offset); break;
-          case 'invite': value = { code: access.invite('browser-development') }; break;
-          case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;
-          case 'devices': value = access.devices(request.after); break;
-          case 'revoke': access.revoke(request.id); feeds.closePrincipal(request.id); value = null; break;
           case 'providers-refresh': {
             const statuses = await refreshProviders();
             if (statuses.length > providerRefreshLimit) throw new Error('Too many providers');

@@ -2,6 +2,7 @@ import { z } from 'zod';
 import { requestReceiptResponseSchema } from '@birbcrew/client/contract';
 import type { ProviderConversation, ProviderInstance, ProviderModel, ProviderPresentation, ConversationRef } from '@agentui/sdk';
 
+export const uncertain = () => ({ kind: 'uncertain', reason: 'Crew outcome is unresolved. Recover the original operation.', evidence: null } as const);
 const id = z.string().min(1).max(512);
 export const choiceSchema = z.enum(['approve', 'deny', 'inspect', 'test', 'allow_conversation', 'allow_always']);
 export const approvalSchema = z.object({ conversationId: z.uuid(), memberId: z.uuid(), requestId: z.uuid(),

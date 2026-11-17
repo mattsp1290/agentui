@@ -46,6 +46,8 @@ The controlled tests drive the extension through its public HTTP and SSE boundar
 - Permissions: `Crew lists every applicable active scope and refuses foreign or changed-scope revocation before POST`, `Crew lost revoke ACK stays uncertain after list absence and host restart without another POST` and the browser permission tests.
 - Failure mapping: `Crew maps HTTP, transport and contract failures to typed provider failures without leaking details`.
 
+[`examples/crew/tests/decision-reconciliation.test.mjs`](../../examples/crew/tests/decision-reconciliation.test.mjs) runs `examples/crew/run.mjs` as a child process against a controlled Crew with a decision ledger. It kills the host with `SIGKILL` after Crew committed a named decision, and in other runs before Crew committed it, then restarts it on the same SQLite directory. It also covers a dropped reply, a competing decision, an expired card, a receipt read that returns `404`, `503` or a dropped connection, an absent capability, and fresh `decision_conflict` and `decision_unverifiable` refusals. A decision whose host stopped before Crew committed it stays uncertain until a later reconcile reads a definitive record: Crew committing that decision, a competing decision, or the card closing or expiring. The host never resends it. Each process test counts decide POSTs, receipt reads and ledger effects. `decision verdict table follows Crew decision-receipt semantics` checks the classification table directly.
+
 The generic provider host tests in `tests/application/provider-*.test.mjs` cover the contract the extension relies on:
 
 - [`provider-creation.test.mjs`](../../tests/application/provider-creation.test.mjs): `lost response and restart reconcile only the original immutable operation; concurrent recovery shares its lease` and `reserved restart never dispatches create, original credentials cannot be rebound, and revocation discards late confirmation`.
@@ -57,7 +59,7 @@ The generic provider host tests in `tests/application/provider-*.test.mjs` cover
 
 ## Capability gaps
 
-- **No exact-choice decision lookup.** Crew exposes no GET receipt for an exact decision choice. A lost or mismatched decision reply stays uncertain.
+- **Exact-choice decision lookup needs Crew decision receipts.** The gap is closed when Crew advertises `decisionReceipts` version 1: the extension names each decision with its host command UUID and reconciles a lost reply from Crew's decision record. Crew without the capability, including the qualified `f332734` service above, keeps lost or mismatched decision replies uncertain. The private spark deployment must run Crew `dfe1c288bc4f0e338011389e10ad35656d6e4154` or later, with migrations 038 and 039 applied, for this to apply there. No real Crew run has exercised it yet.
 - **Cold worker replacement is unqualified.** No run replaced the Crew gateway or worker during a request.
 - **Frontend tools are unavailable.** Crew accepts no client tool definitions or results. They need Switchboard adapter delivery, tracked as `agentui-9xfk` and `switchboard-5py2`. Switchboard's app-chosen restore contract is [frontend tool restore](https://github.com/mattsp1290/switchboard/blob/main/docs/architecture/frontend-restore.md), merged in Switchboard PR 60.
 - **Observation is capped at 8 MiB per connection.** Reaching the cap ends observation. Restart the host for a fresh baseline.

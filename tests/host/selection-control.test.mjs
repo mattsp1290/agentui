@@ -102,7 +102,7 @@ test('select waits for its completed-frame reply beyond the framing deadline', {
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'control.sock');
   let selections = 0;
-  const control = await startControl(path, {}, {}, () => false, { async select() {
+  const control = await startControl(path, () => false, { async select() {
     selections++;
     await new Promise(resolve => setTimeout(resolve, 5400));
     return operation;
@@ -128,7 +128,7 @@ test('server rejects oversized and malformed frames and expires partial frames b
   t.after(() => rm(directory, { recursive: true, force: true }));
   const path = join(directory, 'control.sock');
   let selections = 0;
-  const control = await startControl(path, {}, {}, () => false, { async select() { selections++; return operation; } }, async () => []);
+  const control = await startControl(path, () => false, { async select() { selections++; return operation; } }, async () => []);
   t.after(() => control.close());
   const send = async line => {
     const socket = createConnection(path);

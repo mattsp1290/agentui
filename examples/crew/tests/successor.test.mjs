@@ -9,7 +9,11 @@ import { createProviderRegistry, openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { SqliteStore } from '../../../packages/host/dist/sqlite-store.js';
 import { budgets } from '../../../packages/host/dist/durable-model.js';
-import { acknowledgement, memberId, service } from './crew-service.mjs';
+import { acknowledgement, crewService } from './support/crew-service.mjs';
+
+const memberId = randomUUID();
+const crewInstance = { namespace: 'crew', installationId: 'test', generation: 'one', protocolVersion: '1' };
+const service = (t, options) => crewService(t, { ...options, memberId, token: 'private-crew-test', instance: crewInstance });
 
 const hostId = 'crew-host';
 const scope = conversationId => ({ hostId, conversationId });

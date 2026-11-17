@@ -1,17 +1,15 @@
 #[test]
-fn outputs_execute_through_the_ordinary_native_http_route_with_private_keychain_fixture() {
+fn outputs_execute_through_the_ordinary_native_http_route_without_credentials() {
     use std::io::{BufRead, BufReader, Write};
     for operation in ["output-list", "output-read"] {
-        let fixture = Fixture::new();
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
-        locked(&fixture.owner).unwrap().endpoint =
-            format!("http://{}", server.local_addr().unwrap());
         let address = server.local_addr().unwrap();
+        let fixture = Fixture::new(&format!("http://{address}"));
         eprintln!(
             "output-native-resource {}",
             json!({"directory":fixture.directory, "port":address.port(), "pid":std::process::id()})
         );
-        let ready = fixture.ready();
+        let observation = fixture.bound("host");
         let scope = json!({"hostId":"host", "conversationId":"chat"});
         let output_id = format!("output-{}", "a".repeat(64));
         let mut request = json!({"op":operation, "scope":scope});
@@ -48,10 +46,11 @@ fn outputs_execute_through_the_ordinary_native_http_route_with_private_keychain_
                 }
                 headers.push(line.to_lowercase());
             }
-            assert!(headers.contains(&format!("authorization: bearer {}\r\n", "s".repeat(43))));
-            assert!(!headers
-                .iter()
-                .any(|line| line.starts_with("cookie:") || line.starts_with("origin:")));
+            assert!(
+                !headers.iter().any(|line| line.starts_with("authorization:")
+                    || line.starts_with("cookie:")
+                    || line.starts_with("origin:"))
+            );
             let mut bytes = vec![0; length];
             reader.read_exact(&mut bytes).unwrap();
             assert_eq!(
@@ -63,7 +62,7 @@ fn outputs_execute_through_the_ordinary_native_http_route_with_private_keychain_
         let result = run(
             &fixture.owner,
             Command::Execute {
-                observation: ready["observation"].as_str().unwrap().into(),
+                observation,
                 request,
             },
         )
@@ -71,7 +70,6 @@ fn outputs_execute_through_the_ordinary_native_http_route_with_private_keychain_
         child.join().unwrap();
         assert_eq!(result["status"], 200);
         assert_eq!(result["body"], expected_response);
-        assert!(!result.to_string().contains(&"S".repeat(43)));
         assert!(
             std::net::TcpStream::connect_timeout(&address, Duration::from_millis(100)).is_err()
         );

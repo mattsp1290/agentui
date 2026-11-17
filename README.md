@@ -2,7 +2,7 @@
 
 AgentUI is a conversation client for existing agent installations, with React customization for Tauri desktop and a separate React Native iOS client.
 
-The macOS launcher starts the host and desktop client together. Run the host locally or on an SSH-accessible Mac or Linux machine. The launcher provisions the matching runtime, connects automatically, and opens the conversation UI without a pairing code or Keychain access. Read [launcher setup](docs/development/launcher.md) for local and remote workspaces. The separate iOS client still starts disconnected.
+The macOS launcher starts the host and desktop client together. Run the host locally or on an SSH-accessible Mac or Linux machine. The launcher provisions the matching runtime, connects automatically, and opens the conversation UI without any access setup. Read [launcher setup](docs/development/launcher.md) for local and remote workspaces. The separate iOS client still starts disconnected.
 
 For installation before provider login and the planned credential setup flow, read the [secure bootstrap design](docs/architecture/secure-bootstrap.md). Host integrations can use the [secret-provider interface](docs/architecture/secret-providers.md) to resolve credentials through an operator-selected backend.
 

@@ -15,7 +15,7 @@ test('a failed view stays refused across authority changes until a new registry 
   const connection = {}, registries = [];
   t.after(async () => { await Promise.all(registries.map(owner => owner.dispose())); await generation.retire(); });
   const create = () => {
-    const owner = createFrontendSends({ generations: source, rowsChanged() {}, unauthorized() {} });
+    const owner = createFrontendSends({ generations: source, rowsChanged() {} });
     registries.push(owner); return owner;
   };
   const capture = { borrow: () => ({ failed() {}, release() {} }) };

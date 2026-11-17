@@ -13,6 +13,6 @@ Later platform tasks must provide reproducible Apple-machine commands.
 Record source revision, Node, npm, Xcode, macOS, native dependencies, signing method, and device or simulator identity.
 
 Full desktop qualification must exercise connection, recovery, and client lifecycle. The packaging slice qualifies native launch and shell controls only. Connection and credential handling remain pending.
-Full iOS qualification must install a developer build and exercise pairing, reconnect, pending decisions, and shared conversations. The packaging slice provides a disconnected screen and does not qualify those flows.
+Full iOS qualification must install a developer build and exercise host connection, reconnect, pending decisions, and shared conversations. The packaging slice provides a disconnected screen and does not qualify those flows.
 Native-incompatible customization must report rebuild-required.
 Client disconnects and UI replacement must preserve the authoritative run.

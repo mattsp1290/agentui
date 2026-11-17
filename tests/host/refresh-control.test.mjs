@@ -133,7 +133,7 @@ for (const mode of ['offset', 'digest', 'total', 'payload', 'truncated', 'partia
 
 test('refresh request envelope admits a 4096-byte domain intent while other request limits remain unchanged', async t => {
   const root = await directory(t), f = databaseFixture(t), owner = await f.open(), path = join(root, 'control.sock');
-  const control = await startControl(path, {}, {}, () => false, owner.selection, async () => [], owner);
+  const control = await startControl(path, () => false, owner.selection, async () => [], owner);
   t.after(() => control.close());
   const intent = request('maximum', { repository: '/source', commit: 'a'.repeat(40) });
   intent.reference.repository += 'r'.repeat(4096 - Buffer.byteLength(JSON.stringify(intent)));
@@ -152,7 +152,7 @@ for (const op of ['extensions-refresh-request', 'extensions-refresh-promote']) t
   const root = await directory(t), path = join(root, 'control.sock'), receipt = largeReceipt();
   let calls = 0;
   const work = async () => { calls++; await sleep(5400); return receipt; };
-  const control = await startControl(path, {}, {}, () => false, {}, async () => [], { request: work, promote: work });
+  const control = await startControl(path, () => false, {}, async () => [], { request: work, promote: work });
   t.after(() => control.close());
   const input = op === 'extensions-refresh-request' ? { op, request: receipt.job.request } : { op, id: 'request' };
   assert.deepEqual(await requestControl(path, input), { ok: true, value: receipt });
@@ -174,7 +174,7 @@ test('a slow reader is disconnected while unrelated control remains available', 
   const root = await directory(t), path = join(root, 'control.sock'), began = deferred();
   const receipt = largeReceipt();
   receipt.job.build.provenance.sdkVersion = 'x'.repeat(8 * 1024 * 1024);
-  const control = await startControl(path, {}, {}, () => false, {}, async () => [], { inspect: async () => { began.resolve(); return receipt; } });
+  const control = await startControl(path, () => false, {}, async () => [], { inspect: async () => { began.resolve(); return receipt; } });
   t.after(() => control.close());
   const socket = createConnection(path);
   socket.on('error', () => {}); socket.pause();
@@ -210,7 +210,7 @@ test('disconnect preserves the canonical real build; status and exact replay nev
   const f = await realFixture(t), owner = await f.open(), entered = deferred(), release = deferred();
   f.setRun(async command => { entered.resolve(); await release.promise; return f.actual(command); });
   const root = await directory(t), path = join(root, 'control.sock');
-  const control = await startControl(path, {}, {}, () => false, owner.selection, async () => [], owner);
+  const control = await startControl(path, () => false, owner.selection, async () => [], owner);
   t.after(() => control.close());
   t.after(() => release.resolve());
   const intent = request('lost', f.first), socket = createConnection(path);

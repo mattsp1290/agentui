@@ -47,7 +47,7 @@ Replace [createCodexDriver](../../../packages/host/src/codex-driver.ts) behind
 the existing `ProviderDriver` boundary once that adapter exists. Route its shared
 AG-UI output into the host transcript and remove the replaced local Codex wire
 parser and translation. Do not copy private upstream transport into AgentUI.
-The host keeps pairing, authorization, the conversation catalog, durable command
+The host keeps authorization, the conversation catalog, durable command
 admission, receipts, replay, and reconnect recovery.
 
 Preserve the existing create, streaming reply, follow-up, restart-resume, Allow,

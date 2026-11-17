@@ -26,14 +26,8 @@ the host with a private data directory and an existing workspace:
 node apps/host/dist/main.js codex-sdk --data-dir "$HOME/.local/share/agentui-sol" --workspace "$PWD" --port 7140
 ```
 
-Open the printed loopback origin with `/browser.html` appended. In another
-terminal, create a pairing code:
-
-```sh
-node apps/host/dist/main.js invite --data-dir "$HOME/.local/share/agentui-sol"
-```
-
-Enter that code, pair the host, and choose **New conversation**. Send a message.
+Open the printed loopback origin with `/browser.html` appended. The browser
+connects directly. Choose **New conversation** and send a message.
 Send a follow-up to continue the same native thread. Reloading the browser or
 restarting the host with the same directories preserves that conversation.
 Use **Stop** to interrupt a response and retain completed messages already received.

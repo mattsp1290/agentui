@@ -24,20 +24,14 @@ Start an Opus host with a private data directory and an existing workspace:
 node apps/host/dist/main.js claude-sdk --model opus --data-dir "$HOME/.local/share/agentui-opus" --workspace "$PWD" --port 7140
 ```
 
-Open the printed loopback origin with `/browser.html` appended. In another
-terminal, create a pairing code:
-
-```sh
-node apps/host/dist/main.js invite --data-dir "$HOME/.local/share/agentui-opus"
-```
-
-Enter that code, pair the host, and choose **New conversation**. Send a message.
+Open the printed loopback origin with `/browser.html` appended. The browser
+connects directly. Choose **New conversation** and send a message.
 Send a follow-up to continue the same native session. Reloading the browser or
 restarting the host with the same model and directories preserves the
 conversation. Use **Stop** to interrupt a response.
 
 To run Sonnet, start another host with `--model sonnet`, a separate data
-directory, and a free port. Use its printed origin and its own pairing code.
+directory, and a free port. Use its printed origin.
 The browser identifies the selected family. The native SDK resolves the family
 alias, and command evidence records the model observed in the native response.
 

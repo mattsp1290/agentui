@@ -1,11 +1,17 @@
 import assert from 'node:assert/strict';
-import { createHash, randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
-import { crewProvider } from '../dist/provider.js';
+import { createHash, randomUUID } from 'node:crypto';
+import { crewProvider } from '../../dist/provider.js';
 
-export const memberId = randomUUID();
+/** The reply Crew's admitted handoff turn records for the successor's reserved first request. */
 export const acknowledgement = 'I have read the earlier conversation.';
-export async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
+
+/**
+ * A controlled Crew service over real HTTP. `intercept` may answer a conversation-scoped request before the default
+ * routes; it returns true when it wrote the response. Handoff routes mirror Crew's handoff row: `replyHandoffs` queues
+ * per-POST outcomes, `setHandoffRead` rewrites the GET chain, and `commitHandoff`/`admit` drive the row directly.
+ */
+export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
   const grants = [];
@@ -38,15 +44,15 @@ export async function service(t, { approvalDetails, standingGrants, subagents } 
       acceptance: { boundary: 'sql_admission_and_temporal_queue' }, status: 'accepted' });
   }
   const server = createServer(async (request, response) => {
-    assert.equal(request.headers.authorization, 'Bearer private-crew-test');
+    assert.equal(request.headers.authorization, `Bearer ${token}`);
     let text = ''; for await (const chunk of request) text += chunk;
-    const input = text ? JSON.parse(text) : null, path = new URL(request.url, 'http://localhost').pathname;
-    calls.push({ method: request.method, path, input, query: Object.fromEntries(new URL(request.url, 'http://localhost').searchParams) });
+    const url = new URL(request.url, 'http://localhost'), input = text ? JSON.parse(text) : null, path = url.pathname;
+    calls.push({ method: request.method, path, input, query: Object.fromEntries(url.searchParams) });
     const parts = path.split('/'), conversationId = parts[3], requestId = parts[5];
     const json = (status, body) => { response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body)); };
     if (path === '/v1/capabilities') return json(200, { apiVersion: '1', requestContract: 'sql-admission-temporal-queue-v1',
       observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'],
-      ...(approvalDetails && { approvalDetails }), ...(standingGrants && { standingGrants }) });
+      ...(approvalDetails && { approvalDetails }), ...(standingGrants && { standingGrants }), ...(decisionReceipts && { decisionReceipts }) });
     if (parts[2] === 'members' && parts[4] === 'grants') {
       if (request.method === 'GET') return json(200, grantHandler ? await grantHandler() : { apiVersion: '1', memberId,
         active: grants.filter(row => row.status === 'active'), inactive: grants.filter(row => row.status !== 'active').slice(-20) });
@@ -101,6 +107,7 @@ export async function service(t, { approvalDetails, standingGrants, subagents } 
       if (finish(stream, conversation.state.phase)) response.end();
       return;
     }
+    if (intercept && await intercept({ request, response, url, path, parts, input, json })) return;
     if (parts[4] === 'human') {
       if (lost) { response.destroy(); return; }
       return json(200, { approvalId: input.approvalId, decision: input.choice, ...decisionReply });
@@ -154,14 +161,25 @@ export async function service(t, { approvalDetails, standingGrants, subagents } 
     }
   }
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const instance = { namespace: 'crew', installationId: 'test', generation: 'one', protocolVersion: '1' };
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
-      kind: 'secret', revision: 'one', resolve: async () => 'private-crew-test' } }] } });
-  return { calls, streams, conversations, receipts, details, emit, end, extension, grants, handoffs, commitHandoff, admit,
+      kind: 'secret', revision: 'one', resolve: async () => token } }] } });
+  return { origin, token, calls, streams, conversations, receipts, details, emit, end, extension, grants, handoffs, commitHandoff, admit,
     replyHandoffs(...replies) { handoffReplies.push(...replies); }, setHandoffRead(value) { handoffRead = value; },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },
     holdReceipts() { const hold = Promise.withResolvers(); receiptHold = hold.promise; return () => { receiptHold = null; hold.resolve(); }; },
     setReceiptFailure(value) { receiptFailure = value; } };
+}
+
+/** Activates the extension the way the host would and connects one backend directly, outside any host. */
+export async function connected(remote) {
+  const { value } = remote.extension(), installation = value.installations[0];
+  let provider, presentation;
+  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
+    credentials: { use: (_request, action) => action(remote.token) } });
+  const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
+    credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
+  assert.equal(result.kind, 'connected');
+  return { backend: result.backend, presentation, installation };
 }

@@ -448,31 +448,6 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
     }
     serde_json::to_value(request).map_err(|_| INVALID)
 }
-#[derive(Deserialize, Serialize)]
-#[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct Invitation {
-    version: Count,
-    pub host_id: String,
-    pub code: String,
-}
-pub fn invitation(value: Value) -> Result<Invitation, &'static str> {
-    if encoded_bytes(&value)? > 4096 {
-        return Err(INVALID);
-    }
-    let invitation: Invitation = serde_json::from_value(value).map_err(|_| INVALID)?;
-    Id::try_from(invitation.host_id.clone())?;
-    if invitation.version.0 != 1
-        || invitation.code.len() != 32
-        || !invitation
-            .code
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
-    {
-        return Err(INVALID);
-    }
-    Ok(invitation)
-}
-
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ImageAttachment {
@@ -910,34 +885,6 @@ mod tests {
             json!({"op":"image-upload", "scope":scope(), "name":"Screen", "byteLength":1});
         let response = json!({"ok":false, "error":{"kind":"image-unsupported", "message":"This model cannot read images."}});
         assert!(image_response(&request, &response));
-    }
-
-    #[test]
-    fn invitation_has_exact_version_host_and_base64url_code() {
-        let good = json!({"version":1, "hostId":"host", "code":"aA0_-".repeat(6) + "aa"});
-        let parsed = invitation(good.clone()).unwrap();
-        assert_eq!(parsed.host_id, "host");
-        assert_eq!(parsed.code.len(), 32);
-        for (field, value) in [
-            ("version", json!(0)),
-            ("version", json!(2)),
-            ("hostId", json!("")),
-            ("hostId", json!("😀".repeat(513))),
-            ("code", json!("a".repeat(31))),
-            ("code", json!("a".repeat(33))),
-            ("code", json!(format!("{}+", "a".repeat(31)))),
-            ("code", json!("😀".repeat(8))),
-            ("secret", json!("x")),
-        ] {
-            let mut value_to_check = good.clone();
-            value_to_check[field] = value;
-            assert!(invitation(value_to_check).is_err());
-        }
-        for field in ["version", "hostId", "code"] {
-            let mut value = good.clone();
-            value.as_object_mut().unwrap().remove(field);
-            assert!(invitation(value).is_err());
-        }
     }
     include!("wire_output_tests.rs");
 }
