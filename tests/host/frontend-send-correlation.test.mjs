@@ -32,3 +32,22 @@ test('durable command parsing rejects restored offered native targets', t => {
   store.db.prepare('UPDATE commands SET intent=?').run(JSON.stringify(offer));
   assert.throws(() => store.command(scope, 'offered'), /native|offered|Corrupt/u);
 });
+
+test('owner-state authority accepts identities and offered commands but rejects generic commands', () => assertCompileCases({
+  config: new URL('../../packages/host/tsconfig.json', import.meta.url).pathname,
+  prefix: `import type { FrontendSends, FrontendSendActor } from '${new URL('../../packages/host/dist/frontend-sends.js', import.meta.url).pathname}';
+    import type { StoredCommand, OfferedStoredCommand } from '${new URL('../../packages/host/dist/durable-model.js', import.meta.url).pathname}';
+    export declare const owners: FrontendSends;
+    export declare const actor: FrontendSendActor;
+    export declare const stored: StoredCommand;
+    export declare const offered: OfferedStoredCommand;
+    export const identity = { scope: { hostId: 'host', conversationId: 'conversation' }, id: 'command' };`,
+  cases: [
+    ["const state: 'absent' | 'available' | 'unavailable' = owners.assertAuthority({ intent: 'owner-state', target: identity, actor }); void state;", null],
+    ["owners.assertAuthority({ intent: 'owner-state', target: offered, actor });", null],
+    ["owners.assertAuthority({ intent: 'dispatch', stored, actor });", null],
+    ["owners.assertAuthority({ intent: 'private-settler', stored, actor });", null],
+    ["owners.assertAuthority({ intent: 'owner-state', target: stored, actor });", /No overload matches/u],
+    ["owners.check({ ...identity, actor });", /does not exist/u],
+  ],
+}));

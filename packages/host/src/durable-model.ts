@@ -43,6 +43,8 @@ export interface CapturedTarget {
 export interface ProviderDriver<E> {
   readonly source: 'recorded' | 'codex' | 'codex-sdk' | 'claude-sdk' | 'pi';
   readonly installation: Installation;
+  /** The driver can dispatch send commands carrying an imageId. */
+  readonly imageInput?: true;
   capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
   /** Return not-dispatched only before issuing any native request or response, publishing an event,
    * or producing output for this command. It is permanently terminal and is never looked up.

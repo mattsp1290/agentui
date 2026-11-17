@@ -94,7 +94,7 @@ test('trusted host creates and resumes a chat without an invitation, cookie or c
     body: { kind: 'send', text: 'Keep this chat across host restarts.' } } });
   assert.equal(submitted.kind, 'receipt');
   assert.equal(submitted.receipt.state.kind, 'completed');
-  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 3 });
+  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 4 });
   const page = await f.ok({ op: 'pull', feedId, ack: null });
   assert.equal(page.item.kind, 'snapshot');
   assert.ok(page.item.snapshot.document.domain.messages.some(message => message.role === 'user' && message.text === 'Keep this chat across host restarts.'));

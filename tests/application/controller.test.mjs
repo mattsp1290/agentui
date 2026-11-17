@@ -500,7 +500,7 @@ async function openCommands(t, runtime = RECORDED_RUNTIME) {
 }
 async function deliver(f, domain = { messages: [], currentRun: null }) {
   const feed = f.feeds.at(-1);
-  await feed.receive({ kind: 'snapshot', snapshot: { scope: feed.scope, projectionVersion: 3,
+  await feed.receive({ kind: 'snapshot', snapshot: { scope: feed.scope, projectionVersion: 4,
     cursor: (f.app.getSnapshot().active.store.getSnapshot().cursor ?? -1) + 1,
     document: { domain, decisions: {}, receipts: {} } } });
   assert.equal(f.app.getSnapshot().active.store.getSnapshot().connection.kind, 'connected');
@@ -1068,7 +1068,7 @@ test('a newly acquired view already owns its selected lease when another capture
   await source.generation.retire();
 });
 
-const journalRecord = (selected, count = 1) => ({ version: 2, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [],
+const journalRecord = (selected, count = 1) => ({ version: 3, image: null, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [],
   frontendSends: Array.from({ length: count }, (_, index) => ({ ownerId: 'principal', state: 'retained', command: { version: 2, scope: selected,
     clientCommandId: `${selected.conversationId}-${index}`, body: { kind: 'send', text: 'Original', frontend: { platform: 'desktop', tools: [{ activationId: 'old', definition: { name: 'fixture__echo', description: 'Original' } }] } } } })) });
 const eventually = async predicate => { for (let attempt = 0; attempt < 500; attempt++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('Recovery did not reach its durable state'); };
@@ -1152,7 +1152,7 @@ for (const route of [null, scope]) test(`owned-view sweep reaches more than 100 
   f.views.set('original-view/host', { ...empty(), route });
   for (let index = 0; index < 105; index++) {
     const selected = { ...scope, conversationId: `a-${String(index).padStart(3, '0')}` };
-    f.drafts.set(`original-view/host/${selected.conversationId}`, { ...journalRecord(selected, 0), version: 1 });
+    f.drafts.set(`original-view/host/${selected.conversationId}`, { version: 1, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [] });
   }
   const last = { ...scope, conversationId: 'z-last' }, record = journalRecord(last, 70), requests = [], lookedUp = [];
   for (let index = 0; index < 35; index++) record.frontendSends[index].ownerId = 'foreign';
@@ -1503,4 +1503,45 @@ test('old capture disposal save failure does not poison a restarted owner', asyn
   await state.active.store.setDraft('Healthy restarted draft');
   const saved=f.drafts.get('original-view/host/conversation');
   assert.equal(saved.draft,'Healthy restarted draft');assert.deepEqual(saved.frontendSends[0].command,original.command);assert.equal(saved.frontendSends[0].ownerId,original.ownerId);
+});
+
+test('image previews and uploads share one host transfer slot, reusing concurrent reads and retrying refused overlaps', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const active = f.app.getSnapshot().active;
+  let busy = false, overlaps = 0;
+  const reads = [], uploads = [];
+  // Mirrors the host: one transfer per access, overlaps refused as unavailable.
+  const transfer = async work => {
+    if (busy) { overlaps++; throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.'); }
+    busy = true;
+    try { await new Promise(resolve => setTimeout(resolve, 5)); return work(); } finally { busy = false; }
+  };
+  let refuseFirstUpload = true;
+  f.behavior.readImage = (_, imageId) => transfer(() => { reads.push(imageId); return { attachment: null, bytes: new Uint8Array([imageId.length]) }; });
+  f.behavior.uploadImage = input => {
+    if (refuseFirstUpload) { refuseFirstUpload = false; return Promise.reject(new ServiceError('unavailable', 'Another image transfer is in progress. Try again.')); }
+    return transfer(() => { uploads.push(input.uploadId);
+      return { imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name: input.name, mediaType: 'image/png', byteLength: input.bytes.byteLength, width: 1, height: 1 }; });
+  };
+  f.behavior.uuids = true;
+  const actions = f.app.conversationActions(active);
+  const png = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 1, 2]);
+  const previews = ['a', 'bb', 'a', 'ccc'].map(id => actions.readImage(id));
+  const selecting = active.store.selectImage({ name: 'chart.png', bytes: png });
+  assert.deepEqual((await Promise.all(previews)).map(bytes => [...bytes]), [[1], [2], [1], [3]]);
+  await selecting;
+  assert.equal(active.store.getSnapshot().image.status, 'ready');
+  assert.deepEqual(reads, ['a', 'bb', 'ccc']);
+  assert.equal(uploads.length, 1);
+  assert.equal(overlaps, 0);
+  let refusals = 0;
+  f.behavior.readImage = async () => { refusals++; throw new ServiceError('unavailable', 'Busy'); };
+  await assert.rejects(actions.readImage('d'), { kind: 'unavailable' });
+  assert.equal(refusals, 3);
+  f.behavior.readImage = async () => { refusals++; throw new ServiceError('image-scope', 'Elsewhere'); };
+  await assert.rejects(actions.readImage('d'), { kind: 'image-scope' });
+  assert.equal(refusals, 4);
+  assert.equal(f.app.getSnapshot().error, '');
 });

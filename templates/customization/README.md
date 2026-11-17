@@ -87,4 +87,4 @@ The template returns `contentLayout: ReviewLayout`. Its `ConversationContentLayo
 The transcript includes any selected transcript override. Render each node once with ordinary React and CSS.
 This desktop arrangement keeps permissions, approvals, the composer, Stop, and recovery under their existing host owners.
 Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom transcript and module views, actions, and namespace diagnostics wait.
-SDK compatibility is `0.5.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.
+SDK compatibility is `0.6.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.

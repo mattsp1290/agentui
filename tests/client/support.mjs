@@ -25,7 +25,17 @@ export function storage(initial = null) {
     value: initial,
     writes: [],
     async load() { return structuredClone(this.value); },
-    async save(records) { this.value = structuredClone(records); this.writes.push(this.value); },
+    images: new Map(),
+    imageWrites: [],
+    async save(records, image) {
+      this.value = structuredClone(records);
+      this.writes.push(this.value);
+      if (!image) return;
+      this.imageWrites.push({ put: image.put?.selectionId ?? null, remove: image.remove ?? [] });
+      for (const id of image.remove ?? []) this.images.delete(id);
+      if (image.put) this.images.set(image.put.selectionId, image.put.bytes.slice());
+    },
+    async loadImage(_, selectionId) { return this.images.get(selectionId)?.slice() ?? null; },
   };
 }
 export function receipt(command, kind = 'pending', sequence = 1) {
@@ -51,9 +61,10 @@ export function fakePort(boundScope = scope) {
     },
   };
 }
-export function fixture({ drafts = storage(), port = fakePort(), selectedScope = port.scope, createCommandId, selectedProjection = projection } = {}) {
+export function fixture({ drafts = storage(), port = fakePort(), selectedScope = port.scope, createCommandId, selectedProjection = projection, images } = {}) {
   let counter = 0;
-  const store = createConversationStore({ scope: selectedScope, port, projection: selectedProjection, drafts, createCommandId: createCommandId ?? (() => `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`) });
+  const store = createConversationStore({ scope: selectedScope, port, projection: selectedProjection, drafts, createCommandId: createCommandId ?? (() => `00000000-0000-4000-8000-${String(++counter).padStart(12, '0')}`),
+    ...(images ? { images } : {}) });
   return { store, drafts, port };
 }
 export function snapshot(cursor = 0, text = '', selectedScope = scope, receipts = {}, decisions = {}) {

@@ -4,6 +4,7 @@ import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
 import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions } from '@agentui/contracts';
+import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
@@ -57,6 +58,8 @@ export interface ConversationActions {
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
   retryObservation(): Promise<void>;
+  /** Reads an image of this conversation for preview; failures never mark the application failed. */
+  readImage(imageId: ImageId): Promise<Uint8Array>;
 }
 export interface ApplicationController {
   readonly frontendGenerations: GenerationSink;
@@ -81,12 +84,16 @@ type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedV
 type ApplicationFailure =
   | { readonly kind: 'access-revoked' }
   | { readonly kind: 'operation-failed'; readonly error: string };
+interface ImageTransfers {
+  upload: ServiceConnection['uploadImage'];
+  read(scope: ConversationScope, imageId: ImageId): Promise<Uint8Array>;
+}
 type ActiveStoreOwner =
   | { readonly kind: 'handover'; readonly borrow: StoreBorrow }
   | { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: OpenConversation };
 type VisibleTransition = { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: Omit<OpenConversation, 'store'> };
 type ActiveTransition = VisibleTransition | Extract<ActiveStoreOwner, { kind: 'handover' }> | null;
-interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends }
+interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends; readonly images: ImageTransfers }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
   observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
@@ -96,6 +103,36 @@ function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
     runtime.version === agent.runtime.version && runtime.format === agent.runtime.format) ? agent
     : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
+}
+const IMAGE_TRANSFER_ATTEMPTS = 3;
+// The host admits one image transfer per access and refuses overlaps as unavailable, so transfers run one at a time.
+function imageTransfers(connection: ServiceConnection): ImageTransfers {
+  let tail: Promise<unknown> = Promise.resolve();
+  const reads = new Map<string, Promise<Uint8Array>>();
+  function queued<T>(operation: () => Promise<T>): Promise<T> {
+    const result = tail.then(async () => {
+      for (let attempt = 1; ; attempt++) {
+        try { return await operation(); }
+        catch (cause) {
+          if (!(cause instanceof ServiceError && cause.kind === 'unavailable') || attempt === IMAGE_TRANSFER_ATTEMPTS) throw cause;
+          await new Promise(resolve => setTimeout(resolve, 200 * attempt));
+        }
+      }
+    });
+    tail = result.catch(() => undefined);
+    return result;
+  }
+  return {
+    upload: input => queued(() => connection.uploadImage(input)),
+    read(scope, imageId) {
+      const key = JSON.stringify([scope.hostId, scope.conversationId, imageId]);
+      const pending = reads.get(key);
+      if (pending) return pending;
+      const read = queued(async () => (await connection.readImage(scope, imageId)).bytes).finally(() => reads.delete(key));
+      reads.set(key, read);
+      return read;
+    },
+  };
 }
 function initialSnapshot(): ApplicationSnapshot {
   return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
@@ -456,17 +493,19 @@ export function createApplicationController(deps: {
     start() {
       if (session) return Promise.resolve();
       const closing = disposal;
+      const connection = deps.createConnection({ onUnauthorized: () => fail(next, { kind: 'access-revoked' }) });
       const next: Session = {
-        activeOwner: null, view: null,
+        activeOwner: null, view: null, images: imageTransfers(connection),
         pool: createViewLeasePool({
           createStore: (storage, scope, agentId, capture) => createConversationStore({ scope,
             port: next.connection.conversation(scope), projection: transcriptProjection,
             drafts: storage.drafts(error => next.pool.failed(storage, error)), createCommandId: deps.createId,
+            images: { upload: input => next.images.upload(input) },
             frontend: next.frontend.forStore({ viewId: storage.viewId, scope, capture, eligibility: () => state.host.kind === 'ready'
               ? state.host.metadata.agents.find(item => item.id === agentId())?.frontendOffers ?? 'unsupported' : 'unsupported' }) }),
           failed: (storage, error) => failStorage(next, storage, error),
         }),
-        connection: deps.createConnection({ onUnauthorized: () => fail(next, { kind: 'access-revoked' }) }),
+        connection,
         frontend: createFrontendSends({
           generations,
           rowsChanged() {
@@ -601,6 +640,11 @@ export function createApplicationController(deps: {
         return operation();
       });
       return {
+        async readImage(imageId) {
+          if (!owner || session !== owner) throw new Error('This application has closed.');
+          requireTarget(owner, target);
+          return owner.images.read(target.scope, imageId);
+        },
         async retryObservation() {
           if (owner && session === owner && state.active === target) await observationPoll?.retry();
         },

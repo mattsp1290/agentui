@@ -76,3 +76,27 @@ test('pool disposal drains admitted writes without waiting for an arbitrary capt
   capture.release(); first.release(); f.view.release();
   assert.deepEqual(f.failures, []);
 });
+
+
+for (const purpose of ['active', 'recovery']) test(`${purpose} readiness failure respects its purpose while a capture still retains the view`, async t => {
+  const f = fixture(t), first = await f.pool.active(f.view, scope, 'agent');
+  const capture = f.captures[0].borrow(), original = f.view.storage;
+  const selected = { ...scope, conversationId: 'corrupt' }, corrupt = { version: 99, scope: selected };
+  f.drafts.value = corrupt;
+  const gate = deferred(), entered = deferred();
+  t.after(gate.resolve);
+  f.drafts.load = async () => { entered.resolve(); await gate.promise; return corrupt; };
+  const acquiring = purpose === 'active' ? f.pool.active(f.view, selected, 'agent') : f.pool.recovery(f.view, selected);
+  const rejected = assert.rejects(acquiring, /Unsupported local storage version/);
+  await entered.promise;
+  first.release(); f.view.release();
+  gate.resolve(); await rejected; await flush();
+  assert.equal(f.failures.length, purpose === 'active' ? 1 : 0);
+  assert.equal(f.closes(), 0);
+  assert.equal(f.drafts.value, corrupt);
+  const failure = new Error('Live captured write failed');
+  capture.failed(failure);
+  assert.deepEqual(f.failures.at(-1), [original, failure]);
+  capture.release(); await flush();
+  assert.equal(f.closes(), 1);
+});

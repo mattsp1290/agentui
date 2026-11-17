@@ -1,5 +1,10 @@
 import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
+import { identifier } from '@agentui/contracts/decode';
+import { parseImageId, parseUploadId } from '@agentui/contracts/image';
+import type { ImageId, UploadId } from '@agentui/contracts/image';
+import { verifyImageUpload } from './image-input.js';
+import { hasImage, insertImage, migrateImages, readImage } from './sqlite-images.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
 import { parseProviderCapture, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
@@ -61,8 +66,9 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
       this.transaction(() => {
         const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
-        if (format !== 2 && format !== 3 && format !== 4) throw new Error('Unsupported database version');
-        if (format !== 4) this.db.exec(`CREATE TABLE IF NOT EXISTS frontend_sends (
+        if (format !== 2 && format !== 3 && format !== 4 && format !== 5) throw new Error('Unsupported database version');
+        migrateImages(this.db);
+        if (format !== 5) this.db.exec(`CREATE TABLE frontend_sends (
           host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
           platform TEXT NOT NULL CHECK(platform='desktop'), state TEXT NOT NULL CHECK(state IN ('tombstone','available','unavailable')),
           thread_id TEXT, run_id TEXT,
@@ -70,13 +76,26 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           CHECK(state='tombstone' OR (thread_id IS NOT NULL AND run_id IS NOT NULL)),
           UNIQUE(host,conversation,thread_id,run_id),
           PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
-          CREATE UNIQUE INDEX IF NOT EXISTS frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
-          CREATE INDEX IF NOT EXISTS commands_tagged_send_key ON commands(host,conversation,${taggedThreadSql},${taggedRunSql}) WHERE ${taggedSendSql};`);
-        this.db.prepare('SELECT actor_id,thread_id,run_id FROM frontend_sends LIMIT 1').get();
+          CREATE UNIQUE INDEX frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
+          CREATE INDEX commands_tagged_send_key ON commands(host,conversation,${taggedThreadSql},${taggedRunSql}) WHERE ${taggedSendSql};`);
+        this.db.prepare('SELECT host,conversation,command_id,actor_id,platform,state,thread_id,run_id FROM frontend_sends LIMIT 1').get();
+        const owner = this.db.prepare("PRAGMA index_list('frontend_sends')").all().find(row => row.name === 'frontend_send_owner');
+        const columns = this.db.prepare("PRAGMA index_info('frontend_send_owner')").all().map(row => row.name);
+        const ownerSql = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='index' AND name='frontend_send_owner'").get()?.sql;
+        if (owner?.unique !== 1 || owner.partial !== 1 || canonicalJson(columns) !== canonicalJson(['host', 'conversation', 'command_id']) ||
+          typeof ownerSql !== 'string' || !/WHERE\s+state\s*<>\s*'tombstone'\s*$/i.test(ownerSql)) throw new Error('Invalid frontend owner index');
         this.db.prepare(taggedHistorySql);
-        if (format !== 4) this.db.exec('PRAGMA user_version=4');
+        if (format !== 5) this.db.exec('PRAGMA user_version=5');
       });
     } catch (error) { this.db.close(); throw error; }
+  }
+  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array) {
+    const target = parseScope(scope), owner = identifier(uploader), upload = parseUploadId(uploadId);
+    const verified = verifyImageUpload(name, bytes);
+    return this.transaction(() => insertImage(this.db, target, owner, upload, verified));
+  }
+  readImage(scope: ConversationScope, imageId: ImageId) {
+    return this.transaction(() => readImage(this.db, parseScope(scope), parseImageId(imageId)), false);
   }
   close(): void { this.db.close(); }
   transaction<T>(work: () => T, write = true): T {
@@ -341,6 +360,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
+      const imageId = command.version === 1 && command.body.kind === 'send' ? command.body.imageId : undefined;
+      if (imageId !== undefined && !hasImage(this.db, scope, imageId)) return { kind: 'rejected', reason: 'This image is not available in this conversation. Attach it again.' };
       let run = null, pending = null;
       if (command.body.kind === 'approve' && !('kind' in installed)) {
         const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?')
@@ -408,6 +429,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       }
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(stored.target), canonicalJson(admitted));
+      if (imageId !== undefined) this.db.prepare('INSERT INTO command_images(host, conversation, command, image) VALUES (?, ?, ?, ?)')
+        .run(...key(scope), command.clientCommandId, imageId);
       if (providerPending) {
         this.db.prepare("UPDATE pending_decisions SET status='reserved', operation=? WHERE host=? AND conversation=? AND id=?")
           .run(operation, ...key(scope), providerPending.visible.pendingId);

@@ -1,4 +1,5 @@
 import { frontendToolsFor } from '@agentui/host/frontend-tools';
+import { imageFailure } from '@agentui/host';
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
@@ -37,7 +38,7 @@ export function createApi(options: {
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'frontend-binding': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -65,6 +66,11 @@ export function createApi(options: {
       authorized: () => access.authorized(principal, options.credentialClass) && !options.isClosing() };
     switch (request.op) {
       case 'frontend-binding': return host.frontendBinding(request, actor, scope => frontendToolsFor(host).producer(scope));
+      case 'image-upload': return { scope: request.scope, attachment: host.uploadImage(request.scope, principal.id, request.uploadId, request.name, Buffer.from(request.base64, 'base64')) };
+      case 'image-read': {
+        const image = host.readImage(request.scope, request.imageId);
+        return { scope: request.scope, attachment: image.attachment, base64: Buffer.from(image.bytes).toString('base64') };
+      }
       case 'metadata': {
         const providerAgents = providerChoices();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
@@ -130,6 +136,8 @@ export function createApi(options: {
       return value;
     } catch (error) {
       if (error instanceof ServiceError) throw error;
+      const imageError = imageFailure(error);
+      if (imageError) throw new ServiceError(imageError.code, imageError.message);
       const message = request.op === 'submit' || request.op === 'reconcile'
         ? 'The host could not confirm this operation. Reconcile before retrying.' : 'Host operation failed. Try again.';
       throw new ServiceError('unavailable', message);

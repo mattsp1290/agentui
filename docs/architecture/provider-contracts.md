@@ -121,14 +121,15 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 8, SDK compatibility 0.5.0, package versions 0.0 and transcript projection 3.
+The current integration uses wire version 9, SDK compatibility 0.6.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Captured frontend offers
 
 An `addAgui` provider advertises `frontendOffers: 'ag-ui-capture-and-bind'` only when send and reconciliation are supported.
 Generic and native providers advertise `unsupported`. This does not change AG-UI executable-tool capabilities.
-The paired service accepts a version-2 send containing a desktop offer of definitions and original activation IDs.
+The paired service accepts a version-2 text send containing a desktop offer of definitions and original activation IDs.
+Version-1 text and image sends keep their exact shapes. Version 2 rejects `imageId`; no provider currently supports an offered image send.
 Version-1 commands retain their existing shape and canonical identity.
 The offer definition type follows its parsed wire shape, with optional object-valued parameters and metadata.
 The SDK tool type remains derived from the pinned AG-UI package; the host still validates definitions with its schemas.
@@ -149,7 +150,9 @@ For each independent offered send, an `addAgui` provider must allocate a fresh r
 An exact retry retains the original run ID and saved command.
 Another tagged send using that identity is rejected with `frontend-run-reused` before dispatch, including after release or terminal settlement.
 A new offered command also rejects a key captured by any earlier tagged send.
-Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic sends keep their historical semantics.
+Tagged version-1 sends can reuse a key when no offered command reserved it. Untagged generic run-key reuse is unchanged.
+
+Provider dispatch, including generic sends, rechecks the authenticated actor before the effect. These actor fences do not change native driver dispatch. A follow-up send does not reconcile a provider blocker while its original dispatch is still running locally.
 An exact command retry returns its existing receipt without translating or dispatching again.
 This reservation does not qualify frontend handler execution ownership.
 
@@ -173,9 +176,12 @@ A prior confirmed run retained through later rejection remains a binding. Comman
 After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
 Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
 
-Database format 4 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
-Both belong to the same initial format-4 release; released format-3 hosts refuse this format.
-Wire 8 and SDK 0.5.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 3.
+Database format 5 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
+The joint format-5 release preserves released format-4 images. Earlier hosts refuse format 5.
+Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
+Existing format 5 requires the image tables, owner table, unique partial owner index and usable tagged history index. Opening does not repair missing objects.
+Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
+Wire 9 and SDK 0.6.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
 There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
@@ -197,7 +203,7 @@ After leaving a physical view, pending notifications alone do not retain its loc
 Conversation navigation within the selected physical view continues background recovery.
 Inactive stores close new writes synchronously and drain admitted saves before eviction. Delayed transport replies cannot overwrite a successor store.
 
-Local v1 records remain readable and upgrade to v2 when saved. Full journal commands and original owner IDs remain durable, including confirmed history needed to reject reused command IDs.
+Released local v1 text and v2 image records remain readable and upgrade to v3 when saved. Local v3 requires image metadata and the frontend journal in one record. Private frontend-only v2 records are refused without rewriting. Images with captured frontend tools are refused before local admission. Explicit text sends keep the selected composer image. Full journal commands and original owner IDs remain durable, including confirmed history needed to reject reused command IDs.
 The bounds above apply to live resources and recovery work, not to one whole record's byte size or total disk history.
 This integration executes no frontend handlers.
 Consent, claiming, durable execution receipts and continuation remain separate work.
@@ -233,7 +239,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 8, transcript projection 3, SDK compatibility 0.5.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 9, transcript projection 4, SDK compatibility 0.6.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -380,6 +386,6 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.5.0 and wire 8 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.6.0 and wire 9 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.

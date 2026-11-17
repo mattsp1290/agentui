@@ -18,11 +18,11 @@ for (const format of [2, 3]) test(`format ${format} upgrade builds tagged index 
   await host.conversation(scope).submit(command('uncertain'));
   host.close(); await host.drained;
   const db = new DatabaseSync(f.path);
-  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; PRAGMA user_version=${format}`);
+  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}`);
   const before = saved(db); db.close();
   const store = new SqliteStore(f.path, projection, budgets());
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 5);
     assert.deepEqual(saved(store.db), before);
     assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'missing', 'missing'), undefined);
     assert.equal(store.db.prepare("SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE " + predicate).get().n, 0);
@@ -35,20 +35,20 @@ for (const format of [2, 3]) test(`format ${format} index failure rolls back own
   assert.equal(store.admit(command('saved'), { kind: 'supported' }).kind, 'owned');
   store.close();
   const db = new DatabaseSync(f.path);
-  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; PRAGMA user_version=${format}; UPDATE commands SET target='invalid json'`);
+  db.exec(`DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=${format}; UPDATE commands SET target='invalid json'`);
   const before = saved(db); db.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), /malformed JSON/);
   const reader = new DatabaseSync(f.path);
   try {
     assert.equal(reader.prepare('PRAGMA user_version').get().user_version, format);
     assert.deepEqual(saved(reader), before);
-    for (const name of ['frontend_sends', 'frontend_send_owner', 'commands_tagged_send_key']) {
+    for (const name of ['images', 'command_images', 'frontend_sends', 'frontend_send_owner', 'commands_tagged_send_key']) {
       assert.equal(reader.prepare('SELECT 1 FROM sqlite_schema WHERE name=?').get(name), undefined);
     }
   } finally { reader.close(); }
 });
 
-test('existing format four refuses a missing or unusable required history index', t => {
+test('existing format five refuses a missing or unusable required history index', t => {
   const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); store.close();
   const db = new DatabaseSync(f.path); db.exec('DROP INDEX commands_tagged_send_key'); db.close();
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), /no such index/);
@@ -76,4 +76,48 @@ test('tagged key miss searches all four expression-index columns despite large h
   assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'thread', 'missing'), undefined);
   assert.ok(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'thread', 'run-399'));
   assert.equal(store.db.prepare(`SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE ${predicate}`).get().n, 400);
+});
+
+for (const [name, mutation, error] of [
+  ['images', 'DROP TABLE images', /missing images/],
+  ['command_images', 'DROP TABLE command_images', /missing command_images/],
+  ['frontend_sends', 'DROP TABLE frontend_sends', /no such table/],
+  ['frontend_send_owner', 'DROP INDEX frontend_send_owner', /Invalid frontend owner index/],
+  ['nonunique owner', "DROP INDEX frontend_send_owner; CREATE INDEX frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone'", /Invalid frontend owner index/],
+  ['nonpartial owner', 'DROP INDEX frontend_send_owner; CREATE UNIQUE INDEX frontend_send_owner ON frontend_sends(host,conversation,command_id)', /Invalid frontend owner index/],
+  ['wrong owner columns', "DROP INDEX frontend_send_owner; CREATE UNIQUE INDEX frontend_send_owner ON frontend_sends(host,conversation,actor_id) WHERE state<>'tombstone'", /Invalid frontend owner index/],
+  ['wrong owner predicate', "DROP INDEX frontend_send_owner; CREATE UNIQUE INDEX frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state='available'", /Invalid frontend owner index/],
+]) test(`format five refuses ${name} damage without repairing its schema`, t => {
+  const f = fixture(t), store = new SqliteStore(f.path, projection, budgets()); store.close();
+  const db = new DatabaseSync(f.path); db.exec(mutation);
+  const schema = db.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(); db.close();
+  assert.throws(() => new SqliteStore(f.path, projection, budgets()), error);
+  const reader = new DatabaseSync(f.path);
+  try {
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 5);
+    assert.deepEqual(reader.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
+  } finally { reader.close(); }
+});
+
+test('owner constraints retain paired keys and one admitted actor while allowing isolated tombstones', t => {
+  const store = new SqliteStore(fixture(t).path, projection, budgets()); t.after(() => store.close()); store.create(scope, installed);
+  const insert = store.db.prepare("INSERT INTO frontend_sends VALUES (?,?,'command',?,'desktop',?,?,?)");
+  for (const [state, thread, run] of [['available', null, null], ['unavailable', 'thread', null], ['tombstone', null, 'run']]) {
+    assert.throws(() => insert.run(scope.hostId, scope.conversationId, 'bad', state, thread, run), /CHECK constraint/);
+  }
+  for (const actor of ['a', 'b']) insert.run(scope.hostId, scope.conversationId, actor, 'tombstone', null, null);
+  insert.run(scope.hostId, scope.conversationId, 'owner', 'unavailable', 'thread', 'run');
+  assert.throws(() => insert.run(scope.hostId, scope.conversationId, 'other', 'available', 'thread2', 'run2'), /UNIQUE constraint/);
+  assert.equal(store.db.prepare('SELECT COUNT(*) n FROM frontend_sends').get().n, 3);
+});
+
+test('private capture-only format four is refused rather than guessed or repaired', t => {
+  const f = fixture(t), store = new SqliteStore(f.path, projection, budgets());
+  store.db.exec('DROP TABLE command_images; DROP TABLE images; PRAGMA user_version=4'); store.close();
+  assert.throws(() => new SqliteStore(f.path, projection, budgets()), /Incomplete database schema version 4: missing images/);
+  const reader = new DatabaseSync(f.path);
+  try {
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 4);
+    assert.equal(reader.prepare("SELECT 1 FROM sqlite_schema WHERE name='images'").get(), undefined);
+  } finally { reader.close(); }
 });

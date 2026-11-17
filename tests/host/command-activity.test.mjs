@@ -71,6 +71,51 @@ function legacy(path, corrupt = false) {
   } finally { db.close(); }
 }
 
+const image = { imageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Screen.png', mediaType: 'image/png', byteLength: 4, width: 1, height: 1 };
+const userText = { kind: 'message-updated', messageId: 'user', revision: 1, role: 'user', text: 'hi', complete: true };
+const userImage = (overrides = {}) => ({ ...userText, text: '', image, ...overrides });
+
+test('user messages carry image metadata and same-revision image changes conflict', () => {
+  const state = transcriptProjection.apply(transcriptProjection.initial(), userImage());
+  assert.deepEqual(state.messages, [{ messageId: 'user', revision: 1, role: 'user', text: '', complete: true, image }]);
+  assert.deepEqual(parseTranscript(JSON.parse(JSON.stringify(state))), state);
+  assert.equal(transcriptProjection.apply(state, userImage()), state);
+  assert.throws(() => transcriptProjection.apply(state, userImage({ image: { ...image, name: 'Other.png' } })), /Conflicting/);
+  assert.throws(() => transcriptProjection.apply(state, userImage({ image: undefined })), /Conflicting/);
+  const plain = transcriptProjection.apply(transcriptProjection.initial(), userText);
+  assert.equal(Object.hasOwn(plain.messages[0], 'image'), false);
+  assert.throws(() => transcriptProjection.decodeEvent(userImage({ role: 'assistant' })), /Invalid transcript message/);
+  assert.throws(() => transcriptProjection.decodeEvent(userImage({ image: { ...image, mediaType: 'image/gif' } })));
+  assert.equal(transcriptProjection.version, 4);
+});
+
+test('V3 migration advances imageless rows only and refuses historical images unchanged', async t => {
+  for (const variant of ['plain', 'snapshot', 'event']) {
+    const f = fixture(t), host = f.open({ projection: transcriptProjection });
+    host.createConversation(scope, installed);
+    append(host, [variant === 'plain' ? userText : userImage()]);
+    host.close(); await host.drained;
+    const db = new DatabaseSync(f.path);
+    db.prepare('UPDATE conversations SET version=3').run();
+    if (variant === 'event') {
+      const document = JSON.parse(db.prepare('SELECT document FROM conversations').get().document);
+      delete document.domain.messages[0].image;
+      const encoded = JSON.stringify(document);
+      db.prepare('UPDATE conversations SET document=?, bytes=?').run(encoded, Buffer.byteLength(encoded));
+    }
+    db.close();
+    const before = tables(f.path);
+    if (variant === 'plain') {
+      const reopened = f.open({ projection: transcriptProjection });
+      assert.deepEqual(tables(f.path), { ...before, conversations: before.conversations.map(value => ({ ...value, version: 4 })) });
+      reopened.close(); await reopened.drained;
+    } else {
+      assert.throws(() => f.open({ projection: transcriptProjection }), variant === 'snapshot' ? /historical image/ : /legacy transcript event/);
+      assert.deepEqual(tables(f.path), before);
+    }
+  }
+});
+
 test('V1 migration updates only projection metadata and preserves canonical retries, old feeds refuse clearly', async t => {
   const f = fixture(t, { resolve: async () => ({ kind: 'completed', output: empty() }) });
   const host = f.open({ projection: transcriptProjection });
@@ -87,7 +132,7 @@ test('V1 migration updates only projection metadata and preserves canonical retr
   const before = tables(f.path);
   const reopened = f.open({ projection: transcriptProjection });
   const after = tables(f.path);
-  assert.deepEqual(after, { ...before, conversations: before.conversations.map(value => ({ ...value, version: 3 })) });
+  assert.deepEqual(after, { ...before, conversations: before.conversations.map(value => ({ ...value, version: 4 })) });
   assert.deepEqual(await reopened.conversation(scope).submit(sent), receipt);
   const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 1 }, async () => assert.fail('Old feed delivered'));
   assert.match((await feed.ended).reason, /Update the app and host together/);
@@ -112,7 +157,7 @@ for (const corruption of ['domain', 'event', 'unsupported', 'current-v2-domain']
     const db = new DatabaseSync(f.path);
     if (corruption === 'current-v2-domain') db.prepare("UPDATE conversations SET version=2, document='{}', bytes=2 WHERE conversation=?").run(other.conversationId);
     if (corruption === 'event') db.prepare("UPDATE events SET payload='{}', bytes=2").run();
-    if (corruption === 'unsupported') db.prepare('UPDATE conversations SET version=4 WHERE conversation=?').run(other.conversationId);
+    if (corruption === 'unsupported') db.prepare('UPDATE conversations SET version=5 WHERE conversation=?').run(other.conversationId);
     db.close();
     const before = tables(f.path);
     assert.throws(() => f.open({ projection: transcriptProjection }));
@@ -141,7 +186,7 @@ test('near-limit legacy history migrates and opens without activity fields or ne
   const reopened = f.open({ projection: transcriptProjection, budgets: limits });
   assert.equal(reopened.inspect(scope).snapshot.document.domain.messages[0].text.length, 17500);
   assert.equal(tables(f.path).conversations[0].document, before.conversations[0].document);
-  const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => assert.ok(item.snapshot));
+  const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 4 }, async item => assert.ok(item.snapshot));
   feed.close(); await feed.ended;
 });
 
@@ -237,7 +282,7 @@ test('mixed V1 and V2 migration preserves raw command rows, journals and native 
   db.prepare('UPDATE conversations SET version=1 WHERE conversation=?').run(other.conversationId);
   db.close();
   const before = tables(f.path), reopened = f.open({ projection: transcriptProjection });
-  assert.deepEqual(tables(f.path), { ...before, conversations: before.conversations.map(value => ({ ...value, version: 3 })) });
+  assert.deepEqual(tables(f.path), { ...before, conversations: before.conversations.map(value => ({ ...value, version: 4 })) });
   const feed = reopened.conversation(scope).watch({ after: null, projectionVersion: 2 }, async () => assert.fail('Old feed delivered'));
   assert.match((await feed.ended).reason, /Update the app and host together/);
   assert.deepEqual(reopened.inspect(scope).snapshot.document.domain.activities, [row()]);
