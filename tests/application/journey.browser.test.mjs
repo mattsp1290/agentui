@@ -303,7 +303,7 @@ test('incompatible metadata and unsupported draft storage block commands without
     const cursor = store.openCursor();
     cursor.onsuccess = () => {
       if (!cursor.result) return;
-      if (cursor.result.value.draft === 'Do not discard this draft') cursor.result.update({ ...cursor.result.value, version: 3 });
+      if (cursor.result.value.draft === 'Do not discard this draft') cursor.result.update({ ...cursor.result.value, version: 99 });
       cursor.result.continue();
     };
     await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
