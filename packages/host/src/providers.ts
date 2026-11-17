@@ -442,7 +442,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     assertFrontendInput(target: ProviderTarget): void {
       const binding = bindings.find(binding => binding.matches(target.installation));
       if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
-      return binding.assertFrontendInput(target);
+      binding.assertFrontendInput(target);
+      if (phase !== 'active') throw new Error('Original AG-UI provider unavailable');
     },
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');

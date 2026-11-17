@@ -1,6 +1,7 @@
 import { canonicalJson } from '@agentui/contracts';
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
+import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
 import { createProviderRegistry } from '@agentui/host';
 import { frontendToolsFor } from '@agentui/host/frontend-tools';
@@ -147,8 +148,55 @@ async function localOfferedHost(t, a) {
     presentationVersion: 1, expectedAuthority: discovered.expectedAuthority };
   const f = hostFixture(t), host = f.open({ providers: registry });
   await host.createProviderConversation(hostScope, target, registry);
-  return { host, f };
+  return { host, f, registry };
 }
+for (const closes of [false, true]) test(`offered recovery decoder registry closure ${closes} fences producer registration`, async t => {
+  let armed = false, decodes = 0, closing;
+  const a = aguiExtension({ decode(value) {
+    if (armed) { decodes++; if (closes) closing = registry.close(); }
+    return value;
+  } });
+  const { host, f, registry } = await localOfferedHost(t, a);
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => true };
+  assert.equal((await host.conversation(hostScope, actor).submit(offered(hostScope))).receipt.state.kind, 'completed');
+  const producer = frontendToolsFor(host).producer(hostScope), registrations = [];
+  armed = true;
+  const recovery = host.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor, () => ({
+    register(value) { registrations.push(value); producer.register(value); },
+    cancel() { assert.fail('No cancellation expected'); },
+  }));
+  if (closes) await assert.rejects(recovery, /provider unavailable/);
+  else assert.equal((await recovery).kind, 'bound');
+  assert.equal(decodes, 1);
+  assert.equal(registrations.length, closes ? 0 : 1);
+  const db = new DatabaseSync(f.path);
+  try { assert.equal(db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n, closes ? 0 : 1); }
+  finally { db.close(); }
+  assert.equal(a.calls.submits.length, 1); assert.equal(a.calls.reconciles.length, 0);
+  if (closes) { assert.ok(closing); await closing; }
+});
+for (const replaces of [false, true]) test(`offered recovery decoder running-host replacement ${replaces} fences producer registration`, async t => {
+  let armed = false, decodes = 0, replacing;
+  const a = aguiExtension({ decode(value) {
+    if (armed) { decodes++; if (replaces) replacing = f.running.replaceProviderExtensions([]); }
+    return value;
+  } });
+  const f = await fixture(t, [a]), scope = await create(f);
+  assert.equal((await f.client.conversation(scope).submit(offered(scope))).receipt.state.kind, 'completed');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
+  armed = true;
+  const recovery = f.client.frontendBinding({ scope, id: 'offered', action: 'recover' });
+  if (replaces) await unavailable(recovery);
+  else assert.equal((await recovery).kind, 'bound');
+  assert.equal(decodes, 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), replaces ? 0 : 1);
+  assert.equal(a.calls.submits.length, 1); assert.equal(a.calls.reconciles.length, 0);
+  if (replaces) {
+    assert.ok(replacing);
+    assert.deepEqual(await replacing, { kind: 'replaced', generation: null });
+    assert.equal(f.running.extensionStatus().kind, 'empty');
+  }
+});
 for (const outcome of ['pending', 'rejected', 'not-dispatched']) test(`offered ${outcome} binding never acquires a producer`, async t => {
   const result = outcome === 'pending' ? { kind: outcome, evidence: {} }
     : { kind: outcome, reason: 'provider-decision', ...(outcome === 'rejected' ? { evidence: {} } : {}) };
