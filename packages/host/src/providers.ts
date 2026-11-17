@@ -7,7 +7,7 @@ import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
 import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
-import type { ProviderCapture, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
+import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
@@ -54,7 +54,6 @@ function capability(value: unknown): boolean {
   throw new Error('Invalid provider capability');
 }
 interface BoundProvider {
-  assertFrontendTarget(target: ProviderTarget): void;
   assertFrontendInput(target: ProviderTarget): void;
   discover(): Promise<DiscoveredProvider>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
@@ -147,7 +146,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     assertFrontendTarget(target);
   }
   return {
-    assertFrontendTarget, assertFrontendInput,
+    assertFrontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
       const granted = validate(selected);
@@ -440,15 +439,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       if (!binding) throw new Error('Provider unavailable');
       return binding.capture(scope, selected);
     },
-    assertFrontendTarget(target: ProviderTarget): void {
-      const binding = bindings.find(binding => binding.matches(target.installation));
-      if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
-      binding.assertFrontendTarget(target);
-    },
     assertFrontendInput(target: ProviderTarget): void {
       const binding = bindings.find(binding => binding.matches(target.installation));
       if (phase !== 'active' || !binding) throw new Error('Original AG-UI provider unavailable');
-      return binding.assertFrontendInput(target);
+      binding.assertFrontendInput(target);
+      if (phase !== 'active') throw new Error('Original AG-UI provider unavailable');
     },
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');
@@ -478,13 +473,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         return stream;
       });
     },
-    executeCommand(capture: ProviderCapture, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
+    executeCommand(capture: MatchedProviderCommand, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation> {
       return track(async () => {
         if (phase !== 'active') return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
         const original = capture.target;
         const binding = bindings.find(binding => binding.matches(original.installation));
         if (!binding) return fresh ? { kind: 'not-dispatched', reason: 'provider-local-refusal' } : { kind: 'outcome-unknown' };
-        return binding.executeCommand(capture, fresh, beforeEffect);
+        return binding.executeCommand(capture, fresh, () => {
+          if (capture.command.version === 2 && phase !== 'active') throw new Error('Original AG-UI provider unavailable');
+          beforeEffect();
+        });
       });
     },
     execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation> {
@@ -498,4 +496,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'assertFrontendTarget'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput'>;

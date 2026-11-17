@@ -87,6 +87,16 @@ test('committed layout keeps sent images inside its text-only transcript and pro
     assert.equal(await editor(page).inputValue(), 'Protected image draft');
     assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).evaluate((node, original) => node === original, originalStop), true);
   };
+  const originalLayout = await layoutTranscript.elementHandle();
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+  assert.equal(await layoutTranscript.isVisible(), false);
+  assert.equal(await originalLayout.evaluate(node => node.isConnected), true);
+  assert.equal(await originalEditor.evaluate(node => node.isConnected && node.value === 'Protected image draft'), true);
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await decoded(arrangedPreview);
+  assert.equal(await layoutTranscript.evaluate((node, original) => node === original, originalLayout), true);
+  await stable();
   await page.getByRole('button', { name: 'Suspend image layout', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Content layout is loading' }).waitFor();
   await decoded(page.getByLabel('Messages', { exact: true }).getByRole('img', { name: 'canonical.png', exact: true }));

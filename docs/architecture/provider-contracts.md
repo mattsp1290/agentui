@@ -154,6 +154,10 @@ Tagged version-1 sends can reuse a key when no offered command reserved it. Unta
 
 Provider dispatch, including generic sends, rechecks the authenticated actor before the effect. These actor fences do not change native driver dispatch. A follow-up send does not reconcile a provider blocker while its original dispatch is still running locally.
 An exact command retry returns its existing receipt without translating or dispatching again.
+Native driver capability, dispatch and lookup accept only version-1 commands. Native version-2 sends still pass through durable admission so exact retry and conflict checks keep their precedence.
+Before a provider effect, the host checks current authority, conversation access and the saved intent after request decoding.
+If decoding starts registry shutdown, offered effects stop. In-flight generic and tagged version-1 effects retain their existing credential-based policy.
+Binding recovery rechecks the owner after reconciliation, provider input decoding and producer registration.
 This reservation does not qualify frontend handler execution ownership.
 
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
@@ -175,11 +179,17 @@ A prior confirmed run retained through later rejection remains a binding. Comman
 `action: 'unavailable'` irreversibly releases host availability. Before admission it records an owner-specific tombstone that cannot reserve another principal's command ID.
 After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
 Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
+`frontendToolsFor` requires the exact handle returned by `openLocalHost` or `openRecordedHost`. A copy or wrapper has a different identity and is not registered.
 
 Database format 5 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
 The joint format-5 release preserves released format-4 images. Earlier hosts refuse format 5.
 Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
-Existing format 5 requires the image tables, owner table, unique partial owner index and usable tagged history index. Opening does not repair missing objects.
+Format 5 stores keyed admitted owners in `frontend_send_owners` and keyless actor-specific tombstones in `frontend_send_tombstones`.
+Each owner has one command and a unique host, conversation, thread and run key. Both available and unavailable owners retain that key.
+An admitted owner takes precedence over foreign actor tombstones for the same command. Tombstones never reserve a run key.
+The tagged history index derives its keys from immutable saved targets. Admission checks that those raw JSON keys agree with the parsed capture.
+Existing format 5 requires both ownership tables, their command keys, owner run uniqueness and a usable tagged history index. Opening does not repair missing objects.
+Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
 Wire 9 and SDK 0.6.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.

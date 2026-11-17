@@ -127,36 +127,28 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const assertMayReceiveEvidence = (stored: StoredCommand, actor?: FrontendSendActor) => {
     if (!isOffered(stored)) return;
     authorized(stored.command.scope);
-    store.frontendSends.assertAuthority({ target: stored, actor, intent: 'owner-state' });
+    store.frontendSends.ownerState(stored, actor);
   };
   const ownedCommand = (scope: ConversationScope, id: string, actor?: FrontendSendActor) => {
     const stored = store.command(authorized(scope), nonempty(id));
     if (stored) assertMayReceiveEvidence(stored, actor);
     return stored;
   };
-  const assertFrontendTarget = (stored: StoredCommand) => {
-    if (!isOffered(stored)) return;
-    if (!options.providers) throw new Error('Original AG-UI provider unavailable');
-    options.providers.assertFrontendTarget(stored.target);
-  };
-  const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => {
-    assertFrontendTarget(stored);
-    store.frontendSends.assertAuthority({ stored, actor, intent: 'dispatch' });
-    authorized(stored.command.scope);
-    store.verifyIntent(stored);
-  };
-  const lookupFence = (stored: StoredCommand, assertCallerAuthority: () => void) => {
-    assertFrontendTarget(stored);
+  const effectFence = (stored: StoredCommand, assertCallerAuthority: () => void) => {
     assertCallerAuthority();
     authorized(stored.command.scope);
     store.verifyIntent(stored);
   };
+  const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => effectFence(stored, () => {
+    if (isOffered(stored)) store.frontendSends.assertMayDispatch(stored, actor);
+    else if (actor) store.frontendSends.assertActor(actor);
+  });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
     if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
-      ? await options.providers?.executeCommand(stored, false, () => lookupFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
+      ? await options.providers?.executeCommand(stored, false, () => effectFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
     if (observed.kind === 'outcome-unknown' && (isOffered(stored) || dispatching.has(commandKey(scope, id)))) {
       const current = store.command(scope, id);
@@ -170,7 +162,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
     if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
     const assertRequester = () => {
-      store.frontendSends.assertAuthority({ stored: blocker, actor, intent: 'private-settler' });
+      if (isOffered(blocker)) store.frontendSends.assertMaySettle(blocker, actor);
+      else if (actor && !actor.authorized()) throw new Error('Unauthorized actor');
       authorized(scope);
     };
     assertRequester();
@@ -269,7 +262,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const assertSubmitter = () => { authorized(scope); if (actor) store.frontendSends.assertActor(actor); };
           const image = command.version === 1 && command.body.kind === 'send' && command.body.imageId !== undefined;
           const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
-            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.body.kind === 'revoke-permission'
+            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.version === 2
+            ? { kind: 'unsupported', reason: 'frontend-offers-unsupported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
             registry ? (original, operation, action) => {

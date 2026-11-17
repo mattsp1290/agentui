@@ -3,14 +3,16 @@ import { Button, Surface, Text, ThemeScope } from '@agentui/ui-primitives/deskto
 
 type ContentState = { readonly kind: 'ready' } | { readonly kind: 'failed' };
 
-class ContentBoundary extends Component<{ readonly children: ReactNode; readonly revision: number }, ContentState> {
+type ContentBoundaryProps = { readonly children: ReactNode; readonly revision: number };
+
+class ContentBoundary extends Component<ContentBoundaryProps, ContentState> {
   override state: ContentState = { kind: 'ready' };
 
   static getDerivedStateFromError(): ContentState {
     return { kind: 'failed' };
   }
 
-  override componentDidUpdate(previous: Readonly<{ readonly children: ReactNode; readonly revision: number }>) {
+  override componentDidUpdate(previous: Readonly<ContentBoundaryProps>) {
     if (this.state.kind === 'failed' && previous.revision !== this.props.revision) this.setState({ kind: 'ready' });
   }
 
@@ -51,9 +53,10 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children, defaultView, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
+export function DesktopShell({ children, defaultView, settingsView, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
   readonly children?: ReactNode;
   readonly defaultView?: ReactNode;
+  readonly settingsView?: ReactNode;
   readonly protectedContent?: ReactNode;
   readonly navigation?: ReactNode;
   readonly activeView?: 'chats' | 'settings';
@@ -63,6 +66,9 @@ export function DesktopShell({ children, defaultView, protectedContent, navigati
   readonly buildLabel?: string;
 }) {
   const [view, setView] = useState<{ readonly kind: 'initial' } | { readonly kind: 'default'; readonly revision: number }>({ kind: 'initial' });
+  const boundaryKey = restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision;
+  const revision = view.kind === 'initial' ? 0 : view.revision;
+  const showSettings = settingsView !== undefined && activeView === 'settings';
   return <ThemeScope className="desktop-shell" data-workspace-view={activeView}>
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
@@ -74,10 +80,14 @@ export function DesktopShell({ children, defaultView, protectedContent, navigati
     {navigation}
     {protectedContent}
     <main id="main-content">
-      <ContentBoundary key={restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision}
-        revision={view.kind === 'initial' ? 0 : view.revision}>
-        {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
-      </ContentBoundary>
+      <div className="shell-view" hidden={showSettings}>
+        <ContentBoundary key={boundaryKey} revision={revision}>
+          {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
+        </ContentBoundary>
+      </div>
+      {settingsView !== undefined && <div className="shell-view" hidden={!showSettings}>
+        <ContentBoundary key={`settings-${boundaryKey}`} revision={revision}>{settingsView}</ContentBoundary>
+      </div>}
     </main>
     <footer className="shell-footer"><span className="footer-status">{status ?? 'Disconnected'}</span><span>{buildLabel ?? 'Local app · No host connection'}</span></footer>
   </ThemeScope>;

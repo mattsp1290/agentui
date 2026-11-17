@@ -7,13 +7,13 @@ import { createProviderRegistry } from '@agentui/host';
 import { fixture as hostFixture, scope as hostScope } from '../host/fixture.mjs';
 import { fixture, create, offered, send, actualInput, aguiExtension, unavailable } from './provider-send-fixture.mjs';
 
-const tables = ['commands', 'frontend_sends', 'events', 'conversations'];
+const tables = ['commands', 'frontend_send_owners', 'frontend_send_tombstones', 'events', 'conversations'];
 const durable = f => f.inspect(db => Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
 
 test('command insertion failure after new owner insertion rolls back the whole admission', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), before = durable(f);
   f.inspect(db => db.exec(`CREATE TRIGGER fail_command AFTER INSERT ON commands BEGIN
-    SELECT CASE WHEN (SELECT COUNT(*) FROM frontend_sends WHERE command_id=NEW.id AND state='available')=1
+    SELECT CASE WHEN (SELECT COUNT(*) FROM frontend_send_owners WHERE command_id=NEW.id AND state='available')=1
       AND (SELECT COUNT(*) FROM commands INDEXED BY commands_tagged_send_key WHERE host=NEW.host AND conversation=NEW.conversation
         AND json_extract(target, '$.kind')='provider' AND json_extract(target, '$.operation.kind')='send'
         AND json_extract(target, '$.operation.protocol')='ag-ui')=1
@@ -37,7 +37,8 @@ test('multiple actor tombstones remain isolated before and after original owner 
   }
   assert.equal((await f.client.frontendBinding({ scope, id: 'shared', action: 'recover' })).kind, 'pending');
   assert.equal((await f.client.conversation(scope).submit(offered(scope, 'shared'))).receipt.state.kind, 'completed');
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_sends').get().n), 3);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners').get().n), 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_tombstones').get().n), 2);
   for (const other of others) await unavailable(other.frontendBinding({ scope, id: 'shared', action: 'recover' }));
   await f.restart([a]);
   assert.equal((await f.client.frontendBinding({ scope, id: 'shared', action: 'recover' })).kind, 'bound');
@@ -81,19 +82,6 @@ test('identical conversation command thread and run IDs remain independent acros
     assert.equal((await host.conversation(scope, actor).receipt('offered')).state.kind, 'completed');
   }
   assert.equal(a.calls.submits.length, 2);
-});
-
-test('legacy paired-key tombstones still permanently reserve their capture key', async t => {
-  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
-  await f.client.frontendBinding({ scope, id: 'legacy', action: 'unavailable' });
-  f.inspect(db => db.exec("UPDATE frontend_sends SET thread_id='actual-thread', run_id='actual-run'"));
-  assert.equal((await f.client.frontendBinding({ scope, id: 'legacy', action: 'recover' })).reason, 'closures-unavailable');
-  const before = durable(f);
-  for (const command of [send(scope), offered(scope)]) {
-    assert.deepEqual(await f.client.conversation(scope).submit(command), { kind: 'rejected', reason: 'frontend-run-reused' });
-    assert.deepEqual(durable(f), before);
-  }
-  assert.equal(a.calls.submits.length, 0);
 });
 
 const admissionWorker = `
@@ -154,7 +142,7 @@ test('independent SQLite admissions racing for one offered key commit one owner'
   const before = durable(f);
   assert.deepEqual(await f.client.conversation(scope).submit(commands[loser]), { kind: 'rejected', reason: 'frontend-run-reused' });
   assert.deepEqual(durable(f), before);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_sends').get().n), 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners').get().n), 1);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands WHERE id<>?').get('seed').n), 1);
   assert.equal(a.calls.submits.length, 1);
 });
@@ -183,5 +171,31 @@ test('provider image and combined offered image sends preserve the uploaded imag
   assert.deepEqual(durable(f), before);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM command_images').get().n), 0);
   assert.deepEqual(Buffer.from((await f.client.readImage(scope, attachment.imageId)).bytes), png());
+  assert.equal(a.calls.submits.length, 0);
+});
+
+for (const admitted of [false, true]) test(`failed ${admitted ? 'owner release' : 'tombstone insertion'} rolls back availability`, async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
+  if (admitted) await f.client.conversation(scope).submit(command);
+  const before = durable(f);
+  f.inspect(db => db.exec(`CREATE TRIGGER fail_unavailable AFTER ${admitted ? 'UPDATE ON frontend_send_owners' : 'INSERT ON frontend_send_tombstones'}
+    BEGIN SELECT RAISE(ABORT,'late-unavailability-write'); END`));
+  await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' }));
+  assert.deepEqual(durable(f), before);
+  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, admitted ? 'bound' : 'pending');
+  f.inspect(db => db.exec('DROP TRIGGER fail_unavailable'));
+  if (!admitted) assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');
+  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' })).reason, 'closures-unavailable');
+  assert.equal(a.calls.submits.length, 1);
+});
+
+for (const kind of ['generic', 'tagged-v1', 'offered']) test(`${kind} capture refuses decoder mutation of a retained provider binding`, async t => {
+  let binding;
+  const a = aguiExtension({ agui: kind !== 'generic', request(text, original) { binding = original; return actualInput(text); },
+    decode(value) { binding.authority.binding.opaqueSessionId = 'changed-during-decode'; return value; } });
+  const f = await fixture(t, [a]), scope = await create(f), before = durable(f);
+  const command = kind === 'offered' ? offered(scope) : send(scope);
+  assert.deepEqual(await f.client.conversation(scope).submit(command), { kind: 'rejected', reason: 'provider-target-mismatch' });
+  assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 0);
 });

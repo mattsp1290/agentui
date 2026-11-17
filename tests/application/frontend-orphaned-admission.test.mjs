@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixture, create, offered, send, actualInput, aguiExtension, unavailable } from './provider-send-fixture.mjs';
 
-const tables = ['conversations', 'events', 'commands', 'frontend_sends', 'runs'];
+const tables = ['conversations', 'events', 'commands', 'frontend_send_owners', 'frontend_send_tombstones', 'runs'];
 const durable = f => f.inspect(db => Object.fromEntries(tables.map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
 async function orphan(t, options = {}) {
   let f, admission;
@@ -155,7 +155,7 @@ test('offered key refuses earlier tagged not-dispatched capture without run evid
 test('two tagged v1 commands may reuse a key without an offered claim', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
   for (const id of ['first', 'second']) assert.equal((await f.client.conversation(scope).submit(send(scope, id))).receipt.state.kind, 'completed');
-  assert.equal(durable(f).frontend_sends.length, 0); assert.equal(a.calls.submits.length, 2);
+  assert.equal(durable(f).frontend_send_owners.length, 0); assert.equal(a.calls.submits.length, 2);
 });
 
 test('untagged AG-UI-shaped captures permit offered claim and later generic reuse', async t => {

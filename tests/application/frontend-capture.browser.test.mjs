@@ -174,7 +174,8 @@ test('actual browser release precedes a delayed submission and repeats lost unav
   await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? [])[0].state === 'unavailable-confirmed', 'repeated unavailable acknowledgment');
   resume();
   await wait(async () => (await records(page)).filter(row => row.outbox).every(row => row.outbox.length === 0), 'late submission refusal');
-  assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_sends WHERE command_id=?').get(reference.command.clientCommandId).state), 'tombstone');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_tombstones WHERE command_id=? AND actor_id=?').get(reference.command.clientCommandId, reference.ownerId).n), 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners WHERE command_id=?').get(reference.command.clientCommandId).n), 0);
   assert.equal(f.operations.length, 0); assert.equal(f.translations(), 0); assert.equal(await page.evaluate(() => window.captureFixture.executions), 0);
 });
 
@@ -248,7 +249,7 @@ for (const loss of ['pagehide', 'crash-retained']) test(`production reload in B 
   });
   await page.reload(); await connected(page);
   await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).filter(entry => entry.state === 'unavailable-confirmed').length === 2, 'both original journals confirmed without reopening A');
-  for (const reference of original) assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_sends WHERE command_id=?').get(reference.command.clientCommandId).state), 'unavailable');
+  for (const reference of original) assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_send_owners WHERE command_id=?').get(reference.command.clientCommandId).state), 'unavailable');
   const recovered = (await records(page)).flatMap(row => row.frontendSends ?? []);
   assert.deepEqual(recovered.map(({ command, ownerId }) => ({ command, ownerId })), original.map(({ command, ownerId }) => ({ command, ownerId })));
   for (const reference of original) await page.locator(`[data-captured-command="${reference.command.clientCommandId}"]`).getByRole('status').filter({ hasText: 'Captured tools unavailable' }).waitFor();
@@ -301,7 +302,7 @@ test('production browser switches recovery views and releases the old lock befor
   assert.equal(await page.evaluate(id => navigator.locks.request(`agentui-view:${id}`, { ifAvailable: true }, lock => Boolean(lock)), oldView), true);
   const before = (await records(page)).flatMap(row => row.frontendSends ?? []);
   releaseOld();
-  await wait(() => f.inspect(db => db.prepare('SELECT state FROM frontend_sends WHERE command_id=?').get(original.command.clientCommandId).state) === 'unavailable', 'late original host response');
+  await wait(() => f.inspect(db => db.prepare('SELECT state FROM frontend_send_owners WHERE command_id=?').get(original.command.clientCommandId).state) === 'unavailable', 'late original host response');
   assert.deepEqual((await records(page)).flatMap(row => row.frontendSends ?? []), before);
   releaseNext();
   await wait(async () => (await records(page)).flatMap(row => row.frontendSends ?? []).find(row => row.command.clientCommandId === successor.command.clientCommandId).state === 'unavailable-confirmed', 'successor view acknowledgment');

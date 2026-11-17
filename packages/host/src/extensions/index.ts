@@ -125,8 +125,11 @@ export function createServerExtensions() {
   function current() { return state.kind === 'active' ? state.generation.registry : inactive; }
   const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
-  const assertFrontendTarget: ProviderConversationOperations['assertFrontendTarget'] = target => current().assertFrontendTarget(target);
-  const assertFrontendInput: ProviderConversationOperations['assertFrontendInput'] = target => current().assertFrontendInput(target);
+  const assertFrontendInput: ProviderConversationOperations['assertFrontendInput'] = target => {
+    const registry = current();
+    registry.assertFrontendInput(target);
+    if (current() !== registry) throw new Error('Original AG-UI provider unavailable');
+  };
   const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
   const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
   const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
@@ -163,5 +166,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, assertFrontendTarget, assertFrontendInput, readPermissions, observe, status, close };
+  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, assertFrontendInput, readPermissions, observe, status, close };
 }

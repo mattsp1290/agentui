@@ -3,7 +3,7 @@ import test from 'node:test';
 import { fixture, create, offered, aguiExtension, actualInput, send } from './provider-send-fixture.mjs';
 
 function durable(f) {
-  return f.inspect(db => Object.fromEntries(['commands', 'frontend_sends', 'events', 'conversations'].map(table =>
+  return f.inspect(db => Object.fromEntries(['commands', 'frontend_send_owners', 'frontend_send_tombstones', 'events', 'conversations'].map(table =>
     [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
 }
 for (const changed of [false, true]) test(`offered run reservation rejects ${changed ? 'changed' : 'identical'} bindings and rolls back admission`, async t => {
@@ -82,27 +82,29 @@ test('terminal rejection retaining run evidence keeps the offered reservation', 
 test('generic completed sends can reuse a run without an offered reservation', async t => {
   const a = aguiExtension({ agui: false }), f = await fixture(t, [a]), scope = await create(f);
   for (const id of ['first', 'second']) assert.equal((await f.client.conversation(scope).submit(send(scope, id))).receipt.state.kind, 'completed');
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_sends').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 0);
   assert.equal(a.calls.submits.length, 2);
 });
 
 test('keyless tombstones do not reserve another actor command or capture key', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), other = await f.anotherClient();
   await other.frontendBinding({ scope, id: 'first', action: 'unavailable' });
-  const tombstone = f.inspect(db => db.prepare('SELECT thread_id,run_id FROM frontend_sends').get());
-  assert.deepEqual({ ...tombstone }, { thread_id: null, run_id: null });
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_tombstones').get().n), 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 0);
+  assert.throws(() => f.inspect(db => db.prepare('SELECT thread_id,run_id FROM frontend_send_tombstones')), /no such column/);
   assert.equal((await f.client.conversation(scope).submit(offered(scope, 'first'))).receipt.state.kind, 'completed');
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_sends').get().n), 2);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_owners').get().n), 1);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_send_tombstones').get().n), 1);
 });
 
-test('schema rejects malformed capture pairs and reads refuse owner key corruption', async t => {
+test('schema rejects keyless owners and reads refuse owner key corruption', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
   await f.client.conversation(scope).submit(offered(scope, 'first'));
   f.inspect(db => {
     for (const assignment of ['thread_id=NULL', 'run_id=NULL', 'thread_id=NULL,run_id=NULL']) {
-      assert.throws(() => db.exec(`UPDATE frontend_sends SET ${assignment}`), /CHECK constraint/);
+      assert.throws(() => db.exec(`UPDATE frontend_send_owners SET ${assignment}`), /NOT NULL constraint/);
     }
-    db.exec("UPDATE frontend_sends SET thread_id='foreign-thread'");
+    db.exec("UPDATE frontend_send_owners SET thread_id='foreign-thread'");
   });
   await assert.rejects(f.client.conversation(scope).receipt('first'), error => error.kind === 'unavailable');
   await assert.rejects(f.client.frontendBinding({ scope, id: 'first', action: 'recover' }), error => error.kind === 'unavailable');

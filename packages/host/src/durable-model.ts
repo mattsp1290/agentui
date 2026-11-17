@@ -1,5 +1,5 @@
 import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity, OfferedCommand } from '@agentui/contracts';
+import type { ConversationScope, Json, PendingDecision, Receipt, ReceiptState, RunIdentity, OfferedCommand } from '@agentui/contracts';
 import type { MatchedProviderCommand, ProviderObservation, V1Command } from './provider-commands.js';
 import type { DispatchIdentity, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
@@ -45,12 +45,12 @@ export interface ProviderDriver<E> {
   readonly installation: Installation;
   /** The driver can dispatch send commands carrying an imageId. */
   readonly imageInput?: true;
-  capability(command: ClientCommand): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
+  capability(command: V1Command): { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string };
   /** Return not-dispatched only before issuing any native request or response, publishing an event,
    * or producing output for this command. It is permanently terminal and is never looked up.
    * After any such effect, return native evidence or outcome-unknown, or throw if the outcome is unknown. */
-  dispatch(command: ClientCommand, target: CapturedTarget): Promise<ProviderDispatchObservation<CommandResult<E>>>;
-  lookup?(command: ClientCommand, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
+  dispatch(command: V1Command, target: CapturedTarget): Promise<ProviderDispatchObservation<CommandResult<E>>>;
+  lookup?(command: V1Command, target: CapturedTarget): Promise<NativeDispatchObservation<CommandResult<E>>>;
 }
 export type ObservedResult =
   | { readonly kind: 'completed'; readonly output: unknown }

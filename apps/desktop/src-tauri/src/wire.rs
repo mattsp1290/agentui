@@ -382,7 +382,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         }
         Request::Submit { command } => {
             let valid = match &command.body {
-                Body::RevokePermission { .. } => true,
+                Body::RevokePermission { .. } => command.version.0 == 1,
                 Body::Send {
                     text,
                     frontend,
@@ -396,19 +396,10 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
                 Body::Approve {
                     pending_id,
                     choice_id,
-                } => !pending_id.is_empty() && !choice_id.is_empty(),
-                Body::Cancel { run_id } => !run_id.is_empty(),
+                } => command.version.0 == 1 && !pending_id.is_empty() && !choice_id.is_empty(),
+                Body::Cancel { run_id } => command.version.0 == 1 && !run_id.is_empty(),
             };
-            let version_valid = command.version.0 == 1
-                || (command.version.0 == 2
-                    && matches!(
-                        &command.body,
-                        Body::Send {
-                            frontend: Some(_),
-                            ..
-                        }
-                    ));
-            if !version_valid || !valid || encoded_bytes(command)? > MAX_COMMAND_BYTES {
+            if !valid || encoded_bytes(command)? > MAX_COMMAND_BYTES {
                 return Err(INVALID);
             }
             Some(&mut command.scope)

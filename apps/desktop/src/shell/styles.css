@@ -10,6 +10,8 @@ body { margin: 0; }
 .shell-header nav { display: flex; flex-wrap: wrap; gap: .5rem; }
 .shell-header button { font-size: .8rem; }
 #main-content { flex: 1; display: grid; align-content: center; padding: 5rem 3rem; }
+.shell-view { display: contents; }
+.shell-view[hidden] { display: none; }
 .landing-grid { display: grid; grid-template-columns: minmax(0, 1.7fr) minmax(0, 1fr); gap: 5rem; max-width: 65rem; width: 100%; margin: 0 auto; }
 .introduction > [data-variant="label"] { letter-spacing: .12em; font-size: .7rem; color: var(--aui-color-accent); }
 .introduction h1 { overflow-wrap: anywhere; max-width: 12ch; font-size: clamp(2.5rem, 5vw, 4rem); line-height: 1.12; margin: 1.5rem 0; }

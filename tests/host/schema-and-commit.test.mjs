@@ -3,6 +3,9 @@ import test from 'node:test';
 import { openDatabase as openVersionTwoDatabase } from './fixtures/sqlite-format2.ts';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { budgets } from '../../packages/host/dist/durable-model.js';
@@ -55,7 +58,7 @@ test('store notifies only successful write commits after other connections can o
 
 test('opening incomplete version two refuses before adding provider creation metadata', t => {
   const f = fixture(t), host = f.open(); host.close();
-  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
+  const db = new DatabaseSync(f.path); db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE provider_creations'); db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open(), /Incomplete database schema version 2: missing frontend_receipts/);
   assert.deepEqual(readFileSync(f.path), before);
@@ -68,7 +71,7 @@ for (const [failure, mutate, options, message] of [
 ]) {
   test(`pre-feature version two ${failure} refuses without adding provider metadata or changing file bytes`, t => {
     const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
-    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images; DROP TABLE provider_creations; ${mutate}`); db.close();
+    const db = new DatabaseSync(f.path); db.exec(`PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; DROP TABLE provider_creations; ${mutate}`); db.close();
     const before = readFileSync(f.path);
     assert.throws(() => f.open(options), message);
     const reader = new DatabaseSync(f.path);
@@ -95,7 +98,7 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   await host.conversation(scope).submit(command('uncertain'));
   host.close(); await host.drained;
   const db = new DatabaseSync(f.path);
-  db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_sends; DROP TABLE command_images; DROP TABLE images;');
+  db.exec('PRAGMA user_version=2; DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images;');
   const saved = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits']
     .map(table => [table, db.prepare(`SELECT * FROM ${table}`).all()]);
   assert.equal(JSON.parse(saved.find(([name]) => name === 'commands')[1][0].receipt).state.kind, 'uncertain');
@@ -108,4 +111,34 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   const bytes = readFileSync(f.path);
   assert.throws(() => openVersionTwoDatabase(f.path), /Unsupported database version/);
   assert.deepEqual(readFileSync(f.path), bytes);
+});
+
+test('many processes opening the same new database all reach WAL mode', { timeout: 60000 }, async t => {
+  const f = fixture(t), opener = new URL('../../packages/host/dist/sqlite-schema.js', import.meta.url).href;
+  const script = `const { openDatabase } = await import(process.argv[1]);
+    const { createInterface } = await import('node:readline');
+    process.stdout.write('ready\\n');
+    for await (const line of createInterface({ input: process.stdin })) {
+      const [path, start] = JSON.parse(line);
+      while (Date.now() < start) {}
+      try { openDatabase(path).close(); process.stdout.write('opened\\n'); }
+      catch (error) { process.stdout.write(JSON.stringify(String(error)) + '\\n'); }
+    }`;
+  const children = Array.from({ length: 10 }, () => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, opener], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    return { child, next: async () => (await lines.next()).value };
+  });
+  t.after(() => children.forEach(({ child }) => child.kill()));
+  assert.deepEqual(await Promise.all(children.map(c => c.next())), children.map(() => 'ready'));
+  for (let round = 0; round < 80; round++) {
+    const path = join(f.dir, `concurrent-${round}.sqlite`), start = Date.now() + 50;
+    for (const { child } of children) child.stdin.write(JSON.stringify([path, start]) + '\n');
+    assert.deepEqual(await Promise.all(children.map(c => c.next())), children.map(() => 'opened'));
+    const db = new DatabaseSync(path);
+    try {
+      assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+    } finally { db.close(); }
+  }
 });
