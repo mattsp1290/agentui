@@ -23,7 +23,7 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
     document: { domain: { messages: [{ messageId: 'user', revision: 1, role: 'user', text: ${JSON.stringify(literal)}, complete: true }] }, decisions: {}, receipts: {} } };
   const store = { getSnapshot: () => view, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
     async setDraft(draft) { flushSync(() => { view = { ...view, draft }; for (const listener of listeners) listener(); }); } };
-  const active = { store, scope: { hostId: 'host', conversationId: 'reply' }, agent: { label: 'Recorded', commands: ['send'], availability: { kind: 'ready' } } };
+  const active = { store, scope: { hostId: 'host', conversationId: 'reply' }, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, label: 'Recorded', commands: ['send'], availability: { kind: 'ready' } } };
   const root = createRoot(document.getElementById('conversation'));
   globalThis.setStoredView = next => flushSync(() => { view = next; for (const listener of listeners) listener(); });
   globalThis.replySource = () => view.document.domain.messages[1];
@@ -216,17 +216,32 @@ test('Codex file observations reach saved default disclosures through host and c
   const { page, requests } = await fixture(t, 360);
   const directory = await mkdtemp(join(tmpdir(), 'agentui-file-view-'));
   const log = join(directory, 'rpc.jsonl'), scope = { hostId: 'host', conversationId: 'reply' };
-  let host, client, saved = null;
+  let host, client, submission, saved = null;
   const driver = createCodexDriver({ cwd: directory, version: '0.167.2', executable: process.execPath,
     args: [fileURLToPath(new URL('../host/fixtures/codex-streaming-agent.mjs', import.meta.url)), log, 'file-activity'],
     append: (scope, output) => host.append(scope, output) });
   const openHost = () => openLocalHost({ path: join(directory, 'host.sqlite'), driver, projection: transcriptProjection, budgets: budgets(), authorize: () => true });
   const openClient = () => createConversationStore({ scope, port: host.conversation(scope), projection: transcriptProjection,
     drafts: { async load() { return saved; }, async save(value) { saved = structuredClone(value); } }, createCommandId: () => 'file-view-send' });
-  t.after(async () => { client?.disconnect(); driver.close(); host?.close(); await host?.drained; await rm(directory, { recursive: true, force: true }); });
+  t.after(async () => {
+    try {
+      await writeFile(`${log}.finish`, ''); await writeFile(`${log}.late`, '');
+      if (submission) {
+        await submission;
+        await until(() => {
+          const domain = host.inspect(scope).snapshot.document.domain;
+          return domain.currentRun?.kind === 'ended' && domain.activities?.some(item => item.kind === 'file-change' && item.status.kind === 'completed');
+        });
+      }
+    } finally {
+      client?.disconnect(); driver.close(); host?.close(); await host?.drained;
+      await rm(directory, { recursive: true, force: true });
+    }
+  });
   host = openHost(); host.createConversation(scope, driver.installation);
   client = openClient(); await client.connect();
-  await host.conversation(scope).submit({ version: 1, scope, clientCommandId: 'native-send', body: { kind: 'send', text: 'Observe fixture changes' } });
+  submission = host.conversation(scope).submit({ version: 1, scope, clientCommandId: 'native-send', body: { kind: 'send', text: 'Observe fixture changes' } });
+  await submission;
   await until(() => client.getSnapshot().document.domain.activities?.some(item => item.kind === 'file-change'));
   await client.setDraft('Keep the file review draft');
   const show = () => page.evaluate(view => globalThis.setStoredView(view), client.getSnapshot());
