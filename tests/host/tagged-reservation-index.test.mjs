@@ -99,6 +99,15 @@ for (const [name, mutation, error] of [
     replaceTable(db, 'frontend_send_owners', sql => sql.replace('UNIQUE(host,conversation,thread_id,run_id),', ''));
     db.exec("CREATE UNIQUE INDEX partial_run ON frontend_send_owners(host,conversation,thread_id,run_id) WHERE state='available'");
   }, /Invalid frontend ownership uniqueness/],
+  ['missing command foreign key', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(/,\s*FOREIGN KEY\(host,conversation,command_id\) REFERENCES commands\(host,conversation,id\) DEFERRABLE INITIALLY DEFERRED/, '')), /Invalid frontend ownership foreign keys/],
+  ['wrong command foreign key columns', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace('REFERENCES commands(host,conversation,id)', 'REFERENCES commands(host,id,conversation)')), /Invalid frontend ownership foreign keys/],
+  ['wrong command foreign key order', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace('FOREIGN KEY(host,conversation,command_id)', 'FOREIGN KEY(conversation,host,command_id)')), /Invalid frontend ownership foreign keys/],
+  ['command foreign key cascade', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(' DEFERRABLE INITIALLY DEFERRED', ' ON DELETE CASCADE DEFERRABLE INITIALLY DEFERRED')), /Invalid frontend ownership foreign keys/],
+  ['command foreign key update', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(' DEFERRABLE INITIALLY DEFERRED', ' ON UPDATE CASCADE DEFERRABLE INITIALLY DEFERRED')), /Invalid frontend ownership foreign keys/],
+  ['immediate command foreign key', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(' DEFERRABLE INITIALLY DEFERRED', '')), /Invalid frontend ownership foreign key timing/],
+  ['deferred declaration in a block comment', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(' DEFERRABLE INITIALLY DEFERRED', ' /* FOREIGN KEY(host,conversation,command_id) REFERENCES commands(host,conversation,id) DEFERRABLE INITIALLY DEFERRED */')), /Invalid frontend ownership foreign key timing/],
+  ['deferred declaration in a line comment', db => replaceTable(db, 'frontend_send_owners', sql => sql.replace(' DEFERRABLE INITIALLY DEFERRED', ' -- FOREIGN KEY(host,conversation,command_id) REFERENCES commands(host,conversation,id) DEFERRABLE INITIALLY DEFERRED\n')), /Invalid frontend ownership foreign key timing/],
+  ...['frontend_send_owners', 'frontend_send_tombstones'].map(table => [table + ' conversation foreign key', db => replaceTable(db, table, sql => sql.replace('REFERENCES conversations(host,conversation)', 'REFERENCES conversations(conversation,host)')), /Invalid frontend ownership foreign keys/]),
   ['keyed tombstones', db => db.exec('ALTER TABLE frontend_send_tombstones ADD COLUMN run_id TEXT'), /Invalid frontend ownership schema/],
   ['private mixed owner schema', db => {
     db.exec('DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; CREATE TABLE frontend_sends(host TEXT, conversation TEXT, command_id TEXT, actor_id TEXT, platform TEXT, state TEXT, thread_id TEXT, run_id TEXT)');
@@ -126,6 +135,8 @@ test('owners require real unique keys while keyless tombstones remain actor-spec
   for (const actor of ['a', 'b']) tombstone.run(scope.hostId, scope.conversationId, 'command', actor);
   assert.throws(() => tombstone.run(scope.hostId, scope.conversationId, 'command', 'a'), /UNIQUE constraint/);
   assert.throws(() => store.db.prepare('SELECT thread_id,run_id FROM frontend_send_tombstones'), /no such column/);
+  assert.throws(() => insert.run(scope.hostId, scope.conversationId, 'missing', 'owner', 'available', 'thread', 'run'), /FOREIGN KEY constraint/);
+  assert.equal(store.admit(command('command'), { kind: 'supported' }).kind, 'owned');
   insert.run(scope.hostId, scope.conversationId, 'command', 'owner', 'unavailable', 'thread', 'run');
   assert.throws(() => insert.run(scope.hostId, scope.conversationId, 'command', 'other', 'available', 'thread2', 'run2'), /UNIQUE constraint/);
   assert.throws(() => insert.run(scope.hostId, scope.conversationId, 'another', 'other', 'available', 'thread', 'run'), /UNIQUE constraint/);

@@ -2572,5 +2572,3485 @@
       },
       "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
     }
+  },
+  {
+    "name": "namespace length 32",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa__b",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "namespace length 33",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa__b",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "full name length 64",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a__bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "full name length 65",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a__bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "local starts digit",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a__0b",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "local starts underscore",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a___b",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "local includes delimiter",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a__b__c",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "namespace digits and hyphen",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "a1-__b",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "exactly 128 offered tools",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "demo__tool0",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation0"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool1",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation1"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool2",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation2"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool3",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation3"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool4",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation4"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool5",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation5"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool6",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation6"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool7",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation7"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool8",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation8"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool9",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation9"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool10",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation10"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool11",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation11"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool12",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation12"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool13",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation13"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool14",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation14"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool15",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation15"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool16",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation16"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool17",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation17"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool18",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation18"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool19",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation19"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool20",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation20"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool21",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation21"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool22",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation22"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool23",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation23"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool24",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation24"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool25",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation25"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool26",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation26"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool27",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation27"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool28",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation28"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool29",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation29"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool30",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation30"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool31",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation31"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool32",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation32"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool33",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation33"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool34",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation34"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool35",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation35"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool36",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation36"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool37",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation37"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool38",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation38"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool39",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation39"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool40",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation40"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool41",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation41"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool42",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation42"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool43",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation43"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool44",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation44"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool45",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation45"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool46",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation46"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool47",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation47"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool48",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation48"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool49",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation49"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool50",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation50"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool51",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation51"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool52",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation52"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool53",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation53"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool54",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation54"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool55",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation55"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool56",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation56"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool57",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation57"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool58",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation58"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool59",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation59"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool60",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation60"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool61",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation61"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool62",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation62"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool63",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation63"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool64",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation64"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool65",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation65"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool66",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation66"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool67",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation67"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool68",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation68"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool69",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation69"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool70",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation70"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool71",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation71"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool72",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation72"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool73",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation73"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool74",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation74"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool75",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation75"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool76",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation76"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool77",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation77"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool78",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation78"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool79",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation79"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool80",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation80"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool81",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation81"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool82",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation82"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool83",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation83"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool84",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation84"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool85",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation85"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool86",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation86"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool87",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation87"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool88",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation88"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool89",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation89"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool90",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation90"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool91",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation91"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool92",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation92"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool93",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation93"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool94",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation94"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool95",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation95"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool96",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation96"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool97",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation97"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool98",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation98"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool99",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation99"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool100",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation100"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool101",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation101"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool102",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation102"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool103",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation103"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool104",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation104"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool105",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation105"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool106",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation106"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool107",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation107"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool108",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation108"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool109",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation109"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool110",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation110"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool111",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation111"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool112",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation112"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool113",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation113"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool114",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation114"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool115",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation115"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool116",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation116"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool117",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation117"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool118",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation118"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool119",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation119"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool120",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation120"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool121",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation121"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool122",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation122"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool123",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation123"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool124",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation124"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool125",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation125"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool126",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation126"
+              },
+              {
+                "definition": {
+                  "name": "demo__tool127",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "activation127"
+              }
+            ]
+          }
+        }
+      }
+    }
   }
 ]

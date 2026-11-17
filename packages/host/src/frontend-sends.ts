@@ -1,10 +1,8 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { identifier } from '@agentui/contracts/decode';
-import type { ClientCommand, ConversationScope, FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
+import type { ClientCommand, ConversationScope } from '@agentui/contracts';
 import { isOffered } from './durable-model.js';
 import type { StoredCommand, OfferedStoredCommand } from './durable-model.js';
-import type { FrontendToolProducer } from './frontend-tools/index.js';
-import type { ProviderConversationOperations } from './providers.js';
 import type { AguiRunKey, MatchedProviderCommand } from './provider-commands.js';
 
 export interface FrontendSendActor {
@@ -13,16 +11,16 @@ export interface FrontendSendActor {
   authorized(): boolean;
 }
 export class FrontendAccessError extends Error {}
+export function assertFrontendSendActor(actor: FrontendSendActor | undefined): FrontendSendActor {
+  if (!actor || actor.platform !== 'desktop' || !actor.authorized()) throw new FrontendAccessError('frontend-owner-unavailable');
+  identifier(actor.id);
+  return actor;
+}
 type Identity = { readonly scope: ConversationScope; readonly id: string };
 type AdmittedOwner = { readonly actorId: string; readonly state: 'available' | 'unavailable'; readonly run: AguiRunKey };
 type OwnerState = 'absent' | 'available' | 'unavailable';
 export class FrontendSends {
   constructor(private readonly db: DatabaseSync) {}
-  assertActor(actor: FrontendSendActor | undefined): FrontendSendActor {
-    if (!actor || actor.platform !== 'desktop' || !actor.authorized()) throw new FrontendAccessError('frontend-owner-unavailable');
-    identifier(actor.id);
-    return actor;
-  }
   private owner({ scope, id }: Identity): AdmittedOwner | null {
     const row = this.db.prepare('SELECT actor_id,state,thread_id,run_id FROM frontend_send_owners WHERE host=? AND conversation=? AND command_id=?')
       .get(scope.hostId, scope.conversationId, id);
@@ -38,7 +36,7 @@ export class FrontendSends {
     return owner;
   }
   ownerState(target: Identity | OfferedStoredCommand, value: FrontendSendActor | undefined): OwnerState {
-    const actor = this.assertActor(value);
+    const actor = assertFrontendSendActor(value);
     const owner = 'command' in target ? this.admittedOwner(target) : this.owner(target);
     if (owner) {
       if (owner.actorId !== actor.id) throw new FrontendAccessError('frontend-owner-mismatch');
@@ -52,7 +50,7 @@ export class FrontendSends {
     if (this.ownerState(stored, actor) !== 'available') throw new FrontendAccessError('Frontend owner unavailable');
   }
   assertMaySettle(stored: OfferedStoredCommand, actor: FrontendSendActor | undefined): void {
-    this.assertActor(actor);
+    assertFrontendSendActor(actor);
     this.admittedOwner(stored);
   }
 
@@ -69,7 +67,7 @@ export class FrontendSends {
     if (run === null) return;
     const { scope } = command;
     if (command.version !== 2) return;
-    const owner = this.assertActor(actor);
+    const owner = assertFrontendSendActor(actor);
     this.db.prepare("INSERT INTO frontend_send_owners(host,conversation,command_id,actor_id,state,thread_id,run_id) VALUES (?,?,?,?,'available',?,?)")
       .run(scope.hostId, scope.conversationId, command.clientCommandId, owner.id, run.threadId, run.runId);
   }
@@ -84,54 +82,4 @@ export class FrontendSends {
       ON CONFLICT(host,conversation,command_id,actor_id) DO NOTHING`)
       .run(identity.scope.hostId, identity.scope.conversationId, identity.id, actor.id);
   }
-}
-export async function recoverFrontendBinding(input: {
-  readonly request: FrontendBindingRequest;
-  readonly actor: FrontendSendActor;
-  readonly owners: FrontendSends;
-  readonly command: () => OfferedStoredCommand | null;
-  readonly transaction: (work: () => void) => void;
-  readonly reconcile: () => Promise<unknown>;
-  readonly producer: () => Pick<FrontendToolProducer, 'register' | 'cancel'>;
-  readonly providers: ProviderConversationOperations | undefined;
-}): Promise<FrontendBinding> {
-  const { request, actor, owners } = input;
-  const identity = { scope: request.scope, id: identifier(request.id) };
-  const initial = input.command();
-  const ownerFence = (stored: OfferedStoredCommand | null) => owners.ownerState(stored ?? identity, actor);
-  ownerFence(initial);
-  if (request.action === 'unavailable') {
-    input.transaction(() => {
-      const stored = input.command();
-      if (stored) owners.markUnavailable(stored, actor);
-      else owners.tombstone(identity, actor);
-    });
-  } else if (initial && initial.observation?.kind !== 'conclusive' && initial.observation?.kind !== 'not-dispatched') {
-    await input.reconcile();
-  }
-  const stored = input.command(), state = ownerFence(stored);
-  if (stored) {
-    const observation = stored.observation;
-    const run = observation && 'evidence' in observation ? observation.evidence.source.run : null;
-    if (!run && state !== 'unavailable') {
-      if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: request.id, reason: 'not-dispatched' };
-      if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: request.id, reason: 'provider-rejected' };
-    }
-    if (state !== 'unavailable') {
-      if (!input.providers) throw new Error('Original AG-UI provider unavailable');
-      input.providers.assertFrontendInput(stored.target);
-    }
-    ownerFence(stored);
-    if (run) {
-      const bound = { kind: 'bound', command: stored.command, hostOperationId: stored.receipt.hostOperationId,
-        run: run.identity, threadId: stored.agui.threadId } satisfies FrontendBinding;
-      const producer = input.producer();
-      producer.register({ identity: bound.run, threadId: bound.threadId, platform: bound.command.body.frontend.platform,
-        bindings: bound.command.body.frontend.tools.map(tool => ({ ...tool, name: tool.definition.name })) });
-      if (ownerFence(stored) === 'unavailable') producer.cancel({ threadId: bound.threadId, runId: bound.run.runId });
-      else return bound;
-    }
-  }
-  if (ownerFence(stored) === 'unavailable') return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
-  return { kind: 'pending', id: request.id };
 }
