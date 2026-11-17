@@ -34,8 +34,10 @@ import type { InstalledAgent } from './agents.js';
 import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
 import { directCodexEnvironment } from './native-environment.js';
-import { assertNoSelectionJournal, createServerSelection } from './server-selection.js';
-import type { ExtensionStartup, ServerSelection } from './server-selection.js';
+import { assertNoSelectionJournal } from './server-selection.js';
+import { createRefreshController } from './refresh-jobs.js';
+import type { RefreshController } from './refresh-jobs.js';
+import type { ExtensionStartup } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import type { ServerExtensionReplacement } from '@agentui/host/extensions';
 import type { SelectionControl } from './selection-protocol.js';
@@ -94,7 +96,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let feeds: FeedRegistry | undefined;
   const providers = createServerExtensions();
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
-  let selection: ServerSelection | undefined;
+  let refresh: RefreshController | undefined;
   let resolveFatal!: () => void;
   const fatal = new Promise<void>(resolve => { resolveFatal = resolve; });
   let closePromise: Promise<void> | undefined;
@@ -107,7 +109,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       closing = true;
       feeds?.dispose();
       const drainResults = await Promise.allSettled([
-        selection?.close(),
+        refresh?.close(),
         providers.close(),
         ...drivers.map(driver => Promise.resolve().then(() => driver.close())),
       ]);
@@ -162,14 +164,16 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     let selectionControl: SelectionControl;
     switch (extensions.kind) {
       case 'durable-artifacts': {
-        const durable = await createServerSelection({ database: accessDatabase, entries: extensions.entries,
+        const composed = await createRefreshController({ database: accessDatabase, artifactRoot: join(owner.directory, 'refresh-artifacts'),
+          builder: { kind: 'unavailable' }, selection: { entries: extensions.entries,
           runtime: providers.status, isClosing: () => closing,
           replace: selected => {
             if (!host) throw new Error('Selection host unavailable');
             return replaceExtensions(host, selected);
           },
-          stopRuntime: () => { void close().catch(() => {}); resolveFatal(); } });
-        selection = durable;
+          stopRuntime: () => { void close().catch(() => {}); resolveFatal(); } } });
+        refresh = composed;
+        const durable = composed.selection;
         boot = () => durable.activate();
         directReplace = async () => { throw new Error('Durable extensions require selection commands'); };
         selectionControl = durable;

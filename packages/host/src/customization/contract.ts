@@ -128,7 +128,7 @@ function fields(value: unknown, allowed: readonly string[]): Record<string, unkn
   return object;
 }
 
-function externalReference(value: unknown): GitExtensionReference {
+export function parseGitExtensionReference(value: unknown): GitExtensionReference {
   try {
     const reference = fields(value, ['repository', 'commit', 'subdirectory']);
     return { repository: repositoryLocation(reference.repository), commit: commitId(reference.commit),
@@ -194,7 +194,7 @@ export function parseCustomizationPackage(input: unknown, files: ReadonlySet<str
       if (!Array.isArray(metadata.extensions)) throw new Error('Expected external reference array');
       if (metadata.extensions.length > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
       for (const value of metadata.extensions) {
-        extensions.push(externalReference(value));
+        extensions.push(parseGitExtensionReference(value));
       }
     }
     if (!local && shared === undefined && !extensions.length) return undefined;
