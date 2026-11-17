@@ -290,8 +290,8 @@ The namespace, complete module path, and action ID together identify an action.
 Views and actions receive `ConversationModuleProps` with a captured conversation scope, activity, and commands.
 Activity is the existing `ConversationDocument<Transcript>` with `domain`, `decisions`, and `receipts`.
 The caller passes an immutable snapshot as props on each render.
-Commands expose `send(text)`, `approve(pendingId, choiceId)`, and `cancel(runId)`.
-Every command and contributed action returns `Promise<SubmitResult>`.
+Commands expose `send`, `approve`, `cancel` and `revokePermission` handles. Each handle has synchronous `availability(...)` and asynchronous `run(...)` methods.
+Every `run` method and contributed action returns `Promise<SubmitResult>`.
 Preserve rejected admission and uncertain receipt states for the caller.
 Resolving an action does not establish native execution success.
 
