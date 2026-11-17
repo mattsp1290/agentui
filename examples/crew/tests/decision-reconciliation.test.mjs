@@ -29,11 +29,7 @@ async function crew(t, { receipts = true } = {}) {
   const cards = new Map();
   const ledger = { effects: 0, mode: 'normal', read: 'normal', entered: Promise.withResolvers(), committed: Promise.withResolvers() };
   let remote;
-  const withdraw = card => {
-    const conversation = remote.conversations.get(card.conversationId);
-    conversation.state.pendingApprovals = conversation.state.pendingApprovals.filter(row => row.approvalId !== card.approvalId);
-    remote.emit(card.conversationId);
-  };
+  const withdraw = card => remote.withdraw(card.conversationId, card.approvalId);
   const commit = (card, choice, decisionId) => {
     card.decision = { choice, decisionId };
     ledger.effects++;
@@ -98,14 +94,8 @@ async function crew(t, { receipts = true } = {}) {
     posts: () => remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/human')),
     reads: () => remote.calls.filter(call => call.method === 'GET' && call.path.endsWith('/decision')),
     pend(conversationId, requestId) {
-      const conversation = remote.conversations.get(conversationId);
-      const card = { conversationId, memberId, requestId, invocationId: randomUUID(), approvalId: randomUUID(), version: 1,
-        policyVersion: 1, toolName: 'record_work_item', summary: 'Record one work item', choices: ['approve', 'deny'], argumentsComplete: true };
-      conversation.messages.push({ id: `${card.approvalId}/call`, role: 'assistant', content: '', toolCalls: [{ id: card.approvalId,
-        type: 'function', function: { name: 'record_work_item', arguments: JSON.stringify({ operation_id: requestId }) } }] });
-      conversation.state.pendingApprovals = [card];
+      const card = remote.pend(conversationId, { requestId, invocationId: randomUUID(), policyVersion: 1 });
       cards.set(card.approvalId, { ...card });
-      remote.emit(conversationId);
       return cards.get(card.approvalId);
     },
   };
