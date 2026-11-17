@@ -3,6 +3,9 @@ import test from 'node:test';
 import { openDatabase as openVersionTwoDatabase } from './fixtures/sqlite-format2.ts';
 import { readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
+import { spawn } from 'node:child_process';
+import { join } from 'node:path';
+import { createInterface } from 'node:readline';
 import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { budgets } from '../../packages/host/dist/durable-model.js';
@@ -108,4 +111,34 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   const bytes = readFileSync(f.path);
   assert.throws(() => openVersionTwoDatabase(f.path), /Unsupported database version/);
   assert.deepEqual(readFileSync(f.path), bytes);
+});
+
+test('many processes opening the same new database all reach WAL mode', { timeout: 60000 }, async t => {
+  const f = fixture(t), opener = new URL('../../packages/host/dist/sqlite-schema.js', import.meta.url).href;
+  const script = `const { openDatabase } = await import(process.argv[1]);
+    const { createInterface } = await import('node:readline');
+    process.stdout.write('ready\\n');
+    for await (const line of createInterface({ input: process.stdin })) {
+      const [path, start] = JSON.parse(line);
+      while (Date.now() < start) {}
+      try { openDatabase(path).close(); process.stdout.write('opened\\n'); }
+      catch (error) { process.stdout.write(JSON.stringify(String(error)) + '\\n'); }
+    }`;
+  const children = Array.from({ length: 10 }, () => {
+    const child = spawn(process.execPath, ['--input-type=module', '-e', script, opener], { stdio: ['pipe', 'pipe', 'inherit'] });
+    const lines = createInterface({ input: child.stdout })[Symbol.asyncIterator]();
+    return { child, next: async () => (await lines.next()).value };
+  });
+  t.after(() => children.forEach(({ child }) => child.kill()));
+  assert.deepEqual(await Promise.all(children.map(c => c.next())), children.map(() => 'ready'));
+  for (let round = 0; round < 80; round++) {
+    const path = join(f.dir, `concurrent-${round}.sqlite`), start = Date.now() + 50;
+    for (const { child } of children) child.stdin.write(JSON.stringify([path, start]) + '\n');
+    assert.deepEqual(await Promise.all(children.map(c => c.next())), children.map(() => 'opened'));
+    const db = new DatabaseSync(path);
+    try {
+      assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+    } finally { db.close(); }
+  }
 });
