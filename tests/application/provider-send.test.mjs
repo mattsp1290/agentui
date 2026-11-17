@@ -558,7 +558,7 @@ test('offered owner identity fences admission, receipt, recovery, reconciliation
   await unavailable(other.conversation(scope).receipt(command.clientCommandId));
   assert.equal((await other.conversation(scope).submit(command)).kind, 'rejected');
   assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'bound');
-  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM frontend_sends WHERE state='available'").get().n), 1);
+  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM frontend_send_owners WHERE state='available'").get().n), 1);
   const late = offered(scope, 'late');
   f.loseNext('frontend-binding');
   await assert.rejects(f.client.frontendBinding({ scope, id: late.clientCommandId, action: 'unavailable' }));
@@ -583,7 +583,7 @@ test('offered recovery survives lost replies and registration crash gaps using o
   assert.equal(bound.kind, 'bound');
   assert.deepEqual(stored(f, 'chat'), original);
   assert.equal(a.calls.translations, 1); assert.equal(a.calls.submits.length, 1);
-  f.inspect(db => db.exec("UPDATE frontend_sends SET state='unavailable'"));
+  f.inspect(db => db.exec("UPDATE frontend_send_owners SET state='unavailable'"));
   await f.restart([]);
   assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'unavailable');
   assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
@@ -664,7 +664,7 @@ for (const fault of ['generic', 'collision', 'duplicate', 'invalid-input', 'deco
   const f = await fixture(t, [a]), scope = await create(f);
   assert.equal((await f.client.conversation(scope).submit(offered(scope))).kind, 'rejected');
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands').get().n), 0);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_sends').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_send_owners').get().n), 0);
   assert.equal(a.calls.submits.length, 0);
 });
 
@@ -694,7 +694,7 @@ test('offered recovery rejects forged restored run evidence and ownerless comman
   await f.restart([a]);
   await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
-  f.inspect(db => { db.prepare('UPDATE commands SET observation=?').run(original); db.exec('DELETE FROM frontend_sends'); });
+  f.inspect(db => { db.prepare('UPDATE commands SET observation=?').run(original); db.exec('DELETE FROM frontend_send_owners'); });
   await unavailable(f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }));
   assert.equal((await f.client.conversation(scope).submit(command)).kind, 'rejected');
   assert.equal(a.calls.submits.length, 1);
@@ -703,9 +703,9 @@ test('offered recovery rejects forged restored run evidence and ownerless comman
 test('offered input preserves absent defaults and ownership admission rolls back with command persistence', async t => {
   const a = aguiExtension({ request(text) { const input = actualInput(text); delete input.context; delete input.tools; return input; } });
   const f = await fixture(t, [a]), scope = await create(f), command = offered(scope);
-  f.inspect(db => db.exec("CREATE TRIGGER fail_owner BEFORE INSERT ON frontend_sends BEGIN SELECT RAISE(ABORT,'injected'); END"));
+  f.inspect(db => db.exec("CREATE TRIGGER fail_owner BEFORE INSERT ON frontend_send_owners BEGIN SELECT RAISE(ABORT,'injected'); END"));
   await unavailable(f.client.conversation(scope).submit(command));
-  for (const table of ['commands', 'frontend_sends']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
+  for (const table of ['commands', 'frontend_send_owners', 'frontend_send_tombstones']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
   assert.equal(a.calls.submits.length, 0);
   f.inspect(db => db.exec('DROP TRIGGER fail_owner'));
   assert.equal((await f.client.conversation(scope).submit(command)).receipt.state.kind, 'completed');

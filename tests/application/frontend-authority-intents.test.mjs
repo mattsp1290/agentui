@@ -19,12 +19,13 @@ async function local(t, kind, options = {}, hostOptions = {}) {
   await host.createProviderConversation(scope, target, registry);
   const inspect = action => { const db = new DatabaseSync(f.path); try { return action(db); } finally { db.close(); } };
   const rows = () => inspect(db => ({ commands: db.prepare('SELECT * FROM commands ORDER BY rowid').all(),
-    owners: db.prepare('SELECT * FROM frontend_sends ORDER BY rowid').all() }));
-  return { a, host, inspect, rows, command: kind === 'offered' ? offered(scope) : send(scope, 'original') };
+    owners: db.prepare('SELECT * FROM frontend_send_owners ORDER BY rowid').all(),
+    tombstones: db.prepare('SELECT * FROM frontend_send_tombstones ORDER BY rowid').all() }));
+  return { a, host, registry, inspect, rows, command: kind === 'offered' ? offered(scope) : send(scope, 'original') };
 }
 const corrupt = (f, column, value) => f.inspect(db => {
   db.exec('PRAGMA ignore_check_constraints=ON');
-  db.prepare(`UPDATE frontend_sends SET ${column}=?`).run(value);
+  db.prepare(`UPDATE frontend_send_owners SET ${column}=?`).run(value);
 });
 
 for (const kind of ['generic', 'tagged-v1', 'offered']) for (const validity of ['valid', 'revoked', 'platform', 'identifier']) {
@@ -56,7 +57,7 @@ for (const state of ['available', 'released', 'other', 'revoked', 'platform', 'i
     const f = await local(t, 'offered'), owner = actor();
     await f.host.conversation(scope, owner).submit(f.command);
     if (state === 'released') corrupt(f, 'state', 'unavailable');
-    if (state === 'missing') f.inspect(db => db.exec('DELETE FROM frontend_sends'));
+    if (state === 'missing') f.inspect(db => db.exec('DELETE FROM frontend_send_owners'));
     if (state === 'wrong-key') corrupt(f, 'run_id', 'different-run');
     const reader = state === 'other' ? actor('other') : state === 'revoked' ? actor('owner', () => false)
       : state === 'platform' ? actor('owner', () => true, 'ios') : state === 'identifier' ? actor('') : owner;
@@ -85,7 +86,7 @@ for (const state of ['other', 'released', 'revoked-owner', 'revoked-requester', 
     await f.host.conversation(scope, actor('owner', () => ownerAuthorized)).submit(f.command);
     if (state === 'released') corrupt(f, 'state', 'unavailable');
     if (state === 'revoked-owner') ownerAuthorized = false;
-    if (state === 'missing') f.inspect(db => db.exec('DELETE FROM frontend_sends'));
+    if (state === 'missing') f.inspect(db => db.exec('DELETE FROM frontend_send_owners'));
     if (state === 'wrong-key') corrupt(f, 'thread_id', 'different-thread');
     const requester = state === 'revoked-requester' ? actor('other', () => false)
       : state === 'platform' ? actor('other', () => true, 'ios') : state === 'identifier' ? actor('') : actor('other');
@@ -143,3 +144,41 @@ for (const kind of ['generic', 'tagged-v1']) test(`owner-evidence ${kind} does n
   assert.equal((await f.host.reconcile(scope, 'original', requester)).state.kind, 'completed');
   assert.equal(authorized, false);
 });
+
+for (const kind of ['generic', 'tagged-v1', 'offered']) for (const path of ['fresh', 'lookup', 'private-blocker']) {
+  test(`${kind} ${path} preserves its effect policy when decoding closes the registry`, async t => {
+    let decodes = 0, closing;
+    const f = await local(t, kind, { decode(value) {
+      if (++decodes === (path === 'fresh' ? 2 : 3)) closing = f.registry.close();
+      return value;
+    } });
+    const owner = actor();
+    const first = await f.host.conversation(scope, owner).submit(f.command);
+    if (path === 'fresh') {
+      assert.equal(first.receipt.state.kind, kind === 'offered' ? 'not-dispatched' : 'accepted');
+      assert.equal(f.a.calls.submits.length, kind === 'offered' ? 0 : 1);
+      assert.equal(f.a.calls.reconciles.length, 0);
+    } else {
+      assert.equal(first.receipt.state.kind, 'accepted');
+      const before = f.rows();
+      if (path === 'lookup') {
+        const receipt = await f.host.reconcile(scope, f.command.clientCommandId, owner);
+        assert.equal(receipt.state.kind, kind === 'offered' ? 'accepted' : 'completed');
+      } else {
+        const result = await f.host.conversation(scope, actor('other')).submit(send(scope, 'next', 'Next'));
+        assert.deepEqual(result, { kind: 'rejected', reason: kind === 'offered' ? 'send-awaiting-confirmation' : 'provider-command-unavailable' });
+      }
+      const after = f.rows();
+      assert.equal(JSON.parse(after.commands[0].receipt).state.kind, kind === 'offered' ? 'accepted' : 'completed');
+      assert.equal(after.commands.length, 1);
+      assert.equal(after.commands[0].intent, before.commands[0].intent);
+      assert.equal(after.commands[0].target, before.commands[0].target);
+      assert.deepEqual(after.owners, before.owners);
+      assert.deepEqual(after.tombstones, before.tombstones);
+      assert.equal(f.a.calls.submits.length, 1);
+      assert.equal(f.a.calls.reconciles.length, kind === 'offered' ? 0 : 1);
+    }
+    assert.ok(closing);
+    await closing;
+  });
+}

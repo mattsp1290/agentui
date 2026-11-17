@@ -1,7 +1,8 @@
+import type { V1Command } from './provider-commands.js';
 import { canonicalJson } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import { RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import type { ClientCommand, Envelope } from '@agentui/contracts';
+import type { Envelope } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import { budgets } from './durable-model.js';
@@ -29,10 +30,10 @@ function update(messageId: string, text: string, revision: number, complete: boo
 function output(events: readonly TranscriptEvent[], runs: readonly NativeRun[] = []): HostOutput<TranscriptEvent> {
   return { events, runs, decisions: [] };
 }
-function userEvents(command: ClientCommand, operation: string): readonly TranscriptEvent[] {
+function userEvents(command: V1Command, operation: string): readonly TranscriptEvent[] {
   return command.body.kind === 'send' ? [update(`${operation}:user`, command.body.text, 1, true, 'user')] : [];
 }
-function finalResult(command: ClientCommand, target: CapturedTarget): CommandResult<TranscriptEvent> {
+function finalResult(command: V1Command, target: CapturedTarget): CommandResult<TranscriptEvent> {
   const operation = target.identity.hostOperationId;
   switch (command.body.kind) {
       case 'revoke-permission': return { kind: 'rejected', reason: 'permission-management-unsupported' };
@@ -67,7 +68,7 @@ export function openRecordedHost(options: RecordedHostOptions): LocalHost<Transc
   const progressMs = Math.min(requestedProgressMs, 2000);
   let closing = false;
   const pause = () => new Promise<void>(resolve => setTimeout(resolve, progressMs));
-  const progress = (command: ClientCommand, events: readonly TranscriptEvent[]) => {
+  const progress = (command: V1Command, events: readonly TranscriptEvent[]) => {
     if (closing) return;
     try { host.append(command.scope, output(events)); }
     catch (error) {

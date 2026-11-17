@@ -8,9 +8,9 @@ import { hasImage, insertImage, migrateImages, readImage } from './sqlite-images
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
 import type { ProviderCheckpoint, ProviderChange, ProviderStreamStore, ProviderDecision } from './provider-stream.js';
 import { parseProviderCapture, providerObservation, retainProviderRun, matchProviderCommand, providerRun } from './provider-commands.js';
-import type { MatchedProviderCommand, ProviderTarget, ProviderRun, ProviderAction } from './provider-commands.js';
+import type { MatchedProviderCommand, V1Command, ProviderTarget, ProviderRun, ProviderAction } from './provider-commands.js';
 import { creationObservation, providerCreation, conversationInstallation } from './provider-creation.js';
-import type { ConversationInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
+import type { ConversationInstallation, ProviderInstallation, ProviderCreation, StoredCreation, CreationObservation } from './provider-creation.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, foldDocument, parseCommand, parseDecision, parseDocument, parseHostEvent, parseReceipt, parseScope, sameScope } from '@agentui/contracts';
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
@@ -23,6 +23,9 @@ import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from '
 import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
 import { scopeKey as key } from './durable-model.js';
 
+type AdmissionTarget =
+  | { readonly kind: 'provider'; readonly installation: ProviderInstallation; readonly command: ClientCommand }
+  | { readonly kind: 'native'; readonly installation: Installation; readonly command: V1Command };
 type Observation = NonNullable<StoredCommand['observation']>;
 type Admission = { kind: 'owned'; stored: StoredCommand } | { kind: 'existing'; receipt: Receipt } | { kind: 'rejected'; reason: string };
 export type ResumePlan<P> = { kind: 'resume'; through: number } | { kind: 'snapshot'; snapshot: Snapshot<P> } | { kind: 'refused' | 'resync'; reason: string };
@@ -68,22 +71,27 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
         if (format !== 2 && format !== 3 && format !== 4 && format !== 5) throw new Error('Unsupported database version');
         migrateImages(this.db);
-        if (format !== 5) this.db.exec(`CREATE TABLE frontend_sends (
+        if (format !== 5) this.db.exec(`CREATE TABLE frontend_send_owners (
           host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
-          platform TEXT NOT NULL CHECK(platform='desktop'), state TEXT NOT NULL CHECK(state IN ('tombstone','available','unavailable')),
-          thread_id TEXT, run_id TEXT,
-          CHECK((thread_id IS NULL) = (run_id IS NULL)),
-          CHECK(state='tombstone' OR (thread_id IS NOT NULL AND run_id IS NOT NULL)),
-          UNIQUE(host,conversation,thread_id,run_id),
-          PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
-          CREATE UNIQUE INDEX frontend_send_owner ON frontend_sends(host,conversation,command_id) WHERE state<>'tombstone';
+          state TEXT NOT NULL CHECK(state IN ('available','unavailable')), thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
+          PRIMARY KEY(host,conversation,command_id), UNIQUE(host,conversation,thread_id,run_id),
+          FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
+          CREATE TABLE frontend_send_tombstones (
+            host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
+            PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
           CREATE INDEX commands_tagged_send_key ON commands(host,conversation,${taggedThreadSql},${taggedRunSql}) WHERE ${taggedSendSql};`);
-        this.db.prepare('SELECT host,conversation,command_id,actor_id,platform,state,thread_id,run_id FROM frontend_sends LIMIT 1').get();
-        const owner = this.db.prepare("PRAGMA index_list('frontend_sends')").all().find(row => row.name === 'frontend_send_owner');
-        const columns = this.db.prepare("PRAGMA index_info('frontend_send_owner')").all().map(row => row.name);
-        const ownerSql = this.db.prepare("SELECT sql FROM sqlite_schema WHERE type='index' AND name='frontend_send_owner'").get()?.sql;
-        if (owner?.unique !== 1 || owner.partial !== 1 || canonicalJson(columns) !== canonicalJson(['host', 'conversation', 'command_id']) ||
-          typeof ownerSql !== 'string' || !/WHERE\s+state\s*<>\s*'tombstone'\s*$/i.test(ownerSql)) throw new Error('Invalid frontend owner index');
+        for (const [table, names, primary] of [
+          ['frontend_send_owners', ['host', 'conversation', 'command_id', 'actor_id', 'state', 'thread_id', 'run_id'], ['host', 'conversation', 'command_id']],
+          ['frontend_send_tombstones', ['host', 'conversation', 'command_id', 'actor_id'], ['host', 'conversation', 'command_id', 'actor_id']],
+        ] as const) {
+          const columns = this.db.prepare('SELECT name,type,"notnull",pk FROM pragma_table_info(?) ORDER BY cid').all(table);
+          if (canonicalJson(columns.map(row => row.name)) !== canonicalJson(names) ||
+            columns.some(row => row.type !== 'TEXT' || row.notnull !== 1 || row.pk !== primary.findIndex(name => name === row.name) + 1)) throw new Error('Invalid frontend ownership schema');
+          const indexes = this.db.prepare('SELECT name FROM pragma_index_list(?) WHERE "unique"=1 AND partial=0').all(table);
+          const unique = indexes.map(row => this.db.prepare('SELECT name FROM pragma_index_info(?) ORDER BY seqno').all(nonempty(row.name)).map(column => column.name));
+          if (!unique.some(columns => canonicalJson(columns) === canonicalJson(primary)) ||
+            (table === 'frontend_send_owners' && !unique.some(columns => canonicalJson(columns) === canonicalJson(['host', 'conversation', 'thread_id', 'run_id'])))) throw new Error('Invalid frontend ownership uniqueness');
+        }
         this.db.prepare(taggedHistorySql);
         if (format !== 5) this.db.exec('PRAGMA user_version=5');
       });
@@ -340,7 +348,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       .get(encodedTarget, run.threadId, run.runId)) throw new AdmissionError('provider-command-unavailable');
     const parts = [...key(command.scope), run.threadId, run.runId] as const;
     if ((command.version === 2 && this.db.prepare(taggedHistorySql).get(...parts))
-      || this.db.prepare('SELECT 1 FROM frontend_sends WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
+      || this.db.prepare('SELECT 1 FROM frontend_send_owners WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
         .get(...parts)) throw new AdmissionError('frontend-run-reused');
   }
   admit(command: ClientCommand, capability: { readonly kind: 'supported' } | { readonly kind: 'unsupported'; readonly reason: string }, expectedInstallation?: Installation, captureProvider?: (original: StoredCreation, operationId: string, action: ProviderAction) => ProviderTarget, actor?: FrontendSendActor): Admission {
@@ -356,7 +364,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (expectedInstallation && canonicalJson(installed) !== canonicalJson(expectedInstallation)) {
         return { kind: 'rejected', reason: 'This conversation belongs to a different agent or workspace. Restart its original host to continue.' };
       }
-      if (command.version === 2 && !('kind' in installed)) return { kind: 'rejected', reason: 'frontend-offers-unsupported' };
+      let admissionTarget: AdmissionTarget;
+      if ('kind' in installed) admissionTarget = { kind: 'provider', installation: installed, command };
+      else if (command.version === 1) admissionTarget = { kind: 'native', installation: installed, command };
+      else return { kind: 'rejected', reason: 'frontend-offers-unsupported' };
       if (command.body.kind === 'revoke-permission' && !('kind' in installed)) return { kind: 'rejected', reason: 'permission-management-unsupported' };
       if (capability.kind === 'unsupported') return { kind: 'rejected', reason: capability.reason };
       if ('kind' in installed && !captureProvider) return { kind: 'rejected', reason: 'provider-command-unavailable' };
@@ -387,13 +398,15 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       this.appendEvents(scope, [{ kind: 'receipt', receipt: admitted }]);
       let stored: StoredCommand;
       let providerPending: ProviderDecision | null = null;
-      if ('kind' in installed) {
+      if (admissionTarget.kind === 'provider') {
+        const installed = admissionTarget.installation;
         const original = this.creation(scope);
         if (!original || original.observation?.kind !== 'confirmed' || !captureProvider ||
           canonicalJson(original.installation) !== canonicalJson(installed)) throw new AdmissionError('provider-creation-unavailable');
         let action: ProviderAction;
         if (command.body.kind === 'revoke-permission') action = command.body;
-        else if (command.body.kind === 'send') action = command.body;
+        else if (command.body.kind === 'send') action = { kind: 'send', text: command.body.text,
+          ...(command.version === 2 ? { frontend: command.body.frontend } : {}) };
         else {
           if (command.body.kind === 'approve') {
             const row = this.db.prepare('SELECT data, status FROM pending_decisions WHERE host=? AND conversation=? AND id=?').get(...key(scope), command.body.pendingId);
@@ -424,8 +437,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         this.frontendSends.admitCapture(capture, actor);
         stored = { kind: 'provider', ...capture, receipt: admitted, observation: null };
       } else {
-        if (command.version !== 1) throw new AdmissionError('frontend-offers-unsupported');
-        stored = { command, target: captureTarget({ installation: installed, run, decision: pending }, operation), receipt: admitted, observation: null };
+        stored = { command: admissionTarget.command, target: captureTarget({ installation: admissionTarget.installation, run, decision: pending }, operation), receipt: admitted, observation: null };
       }
       this.db.prepare('INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, ?, ?, ?, ?, NULL, ?)')
         .run(...key(scope), command.clientCommandId, operation, canonicalJson(command), canonicalJson(stored.target), canonicalJson(admitted));

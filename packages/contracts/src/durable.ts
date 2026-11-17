@@ -1,5 +1,3 @@
-import { parseFrontendOffer } from './frontend-sends.js';
-import type { OfferedCommand } from './frontend-sends.js';
 import { parsePermissionScope } from './permissions.js';
 import type { PermissionScope } from './permissions.js';
 import { record, nonempty, count, identifier, exact, utf8Bytes } from './decode.js';
@@ -16,6 +14,17 @@ export type CommandBody =
   | { readonly kind: 'approve'; readonly pendingId: string; readonly choiceId: string }
   | { readonly kind: 'cancel'; readonly runId: string }
   | { readonly kind: 'revoke-permission'; readonly permissionId: string; readonly scope: PermissionScope };
+export type FrontendDefinition = ReturnType<typeof parseFrontendDefinition>;
+export interface FrontendOffer {
+  readonly platform: 'desktop';
+  readonly tools: readonly { readonly definition: FrontendDefinition; readonly activationId: string }[];
+}
+export interface OfferedCommand {
+  readonly version: 2;
+  readonly scope: ConversationScope;
+  readonly clientCommandId: string;
+  readonly body: { readonly kind: 'send'; readonly text: string; readonly frontend: FrontendOffer };
+}
 export type ClientCommand = LegacyCommand | OfferedCommand;
 export interface LegacyCommand {
   readonly version: 1;
@@ -368,4 +377,29 @@ function serializeJson(value: unknown, budget: JsonBudget, sortKeys: boolean): s
     } finally { ancestors.delete(value); }
   };
   return encode(value, 0);
+}
+
+export function parseFrontendOffer(value: unknown): FrontendOffer {
+  const input = record(copyJson(value), ['platform', 'tools']);
+  if (input.platform !== 'desktop' || !Array.isArray(input.tools) || input.tools.length < 1 || input.tools.length > 128) throw new Error('Invalid frontend offer');
+  const names = new Set<string>();
+  const tools = input.tools.map(value => {
+    const item = record(value, ['definition', 'activationId']), definition = parseFrontendDefinition(item.definition);
+    if (names.has(definition.name)) throw new Error('Invalid frontend definition');
+    names.add(definition.name);
+    return { definition, activationId: identifier(item.activationId) };
+  });
+  return { platform: 'desktop', tools };
+}
+
+function parseFrontendDefinition(value: unknown) {
+  const raw = record(value);
+  record(raw, ['name', 'description', ...(['parameters', 'metadata'].filter(key => Object.hasOwn(raw, key)))]);
+  const name = identifier(raw.name, 64);
+  if (!/^[a-z][a-z0-9-]{0,31}__[A-Za-z][A-Za-z0-9_-]*$/u.test(name) || typeof raw.description !== 'string') throw new Error('Invalid frontend definition');
+  const parameters = Object.hasOwn(raw, 'parameters') ? record(raw.parameters) : undefined;
+  const metadata = Object.hasOwn(raw, 'metadata') ? record(raw.metadata) : undefined;
+  if (metadata && Object.hasOwn(metadata, 'ag-ui')) throw new Error('Reserved tool metadata');
+  return { name, description: raw.description, ...(parameters === undefined ? {} : { parameters }),
+    ...(metadata === undefined ? {} : { metadata }) };
 }

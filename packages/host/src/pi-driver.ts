@@ -1,8 +1,9 @@
+import type { V1Command } from './provider-commands.js';
 import { randomUUID } from 'node:crypto';
 import { piInstallation } from './native-installations.js';
 import { identifier, record } from '@agentui/contracts/decode';
 import { canonicalJson } from '@agentui/contracts';
-import type { ClientCommand, ConversationScope } from '@agentui/contracts';
+import type { ConversationScope } from '@agentui/contracts';
 import type { RunOutcome, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { NativeDispatchObservation } from '@mattsp1290/switchboard';
 import { createPiRuntime } from '@agentui/switchboard-pi/pi';
@@ -118,7 +119,7 @@ export async function createPiDriver(options: PiDriverOptions): Promise<Provider
       turn.timer.unref();
     } catch { outputFailed(turn); }
   }
-  function evidence(command: ClientCommand, target: CapturedTarget, session: PiSession, phase: string): Observation {
+  function evidence(command: V1Command, target: CapturedTarget, session: PiSession, phase: string): Observation {
     return { kind: 'conclusive', evidence: { identity: target.identity, source: 'native-acknowledgement',
       nativeOperation: { namespace: 'pi-sdk-session', id: session.id },
       observation: { namespace: 'pi-sdk', schemaVersion: 1,
