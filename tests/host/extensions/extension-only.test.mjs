@@ -75,8 +75,9 @@ test('extension-only metadata follows changing, empty and failed replacement wit
 
 test('extension-only discover failure lists the provider unavailable without a default', { timeout: 10000 }, async t => {
   const old = entry(t, { label: 'old' }), bad = entry(t, { label: 'bad', discover() { throw new Error('private'); } });
-  const f = await open(t, [old]); assert.ok(assertDefault(await f.client.metadata()));
+  const f = await open(t, [old]), oldId = assertDefault(await f.client.metadata()); assert.ok(oldId);
   assert.equal((await f.host.replaceProviderExtensions([bad.value])).kind, 'replaced');
+  await assert.rejects(f.client.create(f.scope('while-unavailable'), oldId), error => error.kind === 'create-rejected');
   assert.equal(assertDefault(await f.client.metadata()), null);
   assert.deepEqual((await f.client.metadata()).agents.map(agent => agent.availability.kind), ['unavailable']);
   assert.doesNotMatch(JSON.stringify(await f.client.metadata()), /private/);

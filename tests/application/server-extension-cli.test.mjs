@@ -245,7 +245,7 @@ test('bundled CLI keeps serving through discovery exceptions, retires the acquir
   assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\n');
   const refresh = f.launch(['providers-refresh']); assert.equal(await refresh.exited, 0, refresh.stderr);
   assert.deepEqual(JSON.parse(refresh.stdout).value, [{ contributionId: 'service', namespace: instance.namespace, kind: 'unavailable',
-    cause: 'invalid-installation', reason: 'The provider installation is invalid. Check the extension configuration, then replace the extension.' }]);
+    cause: 'invalid-installation', reason: 'The provider installation is invalid. Fix the extension configuration, then restart the host.' }]);
   privateDiagnostics(refresh); privateDiagnostics(running);
   await stop(running);
   assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\ndispose\n');

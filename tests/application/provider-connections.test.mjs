@@ -264,6 +264,16 @@ for (const [name, options_] of [
   } finally { await host.close(); }
 });
 
+for (const [cause, reconnects] of [['version-unsupported', true], ['unauthorized', false], ['unavailable', false]]) test(`reported ${cause} discovery ${reconnects ? 'reconnects to probe capabilities again' : 'keeps its connection'} on the next refresh`, async t => {
+  const fixture = extension({ discover: () => fixture.calls.discover === 1 ? { kind: cause, reason: sentinel } : crewBackend.discover() }), configured = options(t);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    assert.equal((await host.discoverProviders())[0].kind, 'available');
+    assert.equal(fixture.calls.connect, reconnects ? 2 : 1); assert.equal(fixture.calls.close, reconnects ? 1 : 0);
+  } finally { await host.close(); }
+  assert.equal(fixture.calls.close, reconnects ? 2 : 1);
+});
+
 test('a retired connection whose close throws surfaces cleanup failure at shutdown', async t => {
   const configured = options(t), fixture = extension({ discover() { throw new Error(sentinel); }, close() { throw new Error(sentinel); } });
   const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });

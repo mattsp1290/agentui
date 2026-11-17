@@ -4,7 +4,7 @@ import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
-import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, ProviderStatus, ProviderCreationOperations, UnavailableProvider } from '@agentui/host';
+import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, ProviderStatus, DiscoveredProvider, ProviderCreationOperations, UnavailableProvider } from '@agentui/host';
 import type { Access, CredentialClass, Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
@@ -21,7 +21,7 @@ export function createApi(options: {
   readonly access: Access; readonly host: LocalHost<TranscriptEvent, Transcript>;
   readonly compatibility: HostCompatibility; readonly feeds: FeedRegistry;
   readonly agentSelection: ApiAgentSelection;
-  readonly providers?: ProviderCreationOperations & { catalog(): readonly ProviderStatus[] };
+  readonly providers?: ProviderCreationOperations & { catalog(): readonly ProviderStatus[]; statusOf(installation: ProviderInstallation): ProviderStatus | undefined };
   readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
 }) {
   const { access, host, feeds } = options;
@@ -41,11 +41,13 @@ export function createApi(options: {
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
-  function unavailableProviders(): readonly UnavailableProvider[] {
-    return (options.providers?.catalog() ?? []).filter(provider => provider.kind === 'unavailable');
+  function providerCatalog() {
+    const statuses = options.providers?.catalog() ?? [];
+    const unavailable = statuses.filter((provider): provider is UnavailableProvider => provider.kind === 'unavailable');
+    return { unavailable, choices: providerChoices(statuses.filter((provider): provider is DiscoveredProvider => provider.kind === 'available')) };
   }
-  function providerChoices() {
-    return new Map((options.providers?.catalog() ?? []).flatMap(provider => provider.kind !== 'available' ? [] : provider.agents.map(agent => {
+  function providerChoices(available: readonly DiscoveredProvider[]) {
+    return new Map(available.flatMap(provider => provider.agents.map(agent => {
       const installation: ProviderInstallation = { kind: 'provider', contributionId: provider.contributionId,
         instance: provider.instance, agent, presentationVersion: 1, expectedAuthority: provider.expectedAuthority };
       const descriptor = describeProviderAgent(installation, provider.capabilities.create ? { kind: 'ready' }
@@ -58,10 +60,11 @@ export function createApi(options: {
   }
   function describe(installation: ConversationInstallation, providerAgents: ReturnType<typeof providerChoices>) {
     if ('kind' in installation) {
-      const outage = unavailableProviders().find(provider => provider.contributionId === installation.contributionId &&
-        canonicalJson(provider.instance) === canonicalJson(installation.instance));
-      return providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor ?? describeProviderAgent(installation,
-        { kind: 'unavailable', reason: outage ? providerUnavailableReasons[outage.cause] : 'This conversation’s provider is no longer configured.' });
+      const choice = providerAgents.get(describeProviderAgent(installation, { kind: 'ready' }).id)?.descriptor;
+      if (choice) return choice;
+      const status = options.providers?.statusOf(installation);
+      return describeProviderAgent(installation, { kind: 'unavailable',
+        reason: status?.kind === 'unavailable' ? providerUnavailableReasons[status.cause] : 'This conversation’s provider is no longer configured.' });
     }
     return agents().get(canonicalJson(installation)) ?? describeAgent(installation,
       { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
@@ -74,10 +77,10 @@ export function createApi(options: {
         return { scope: request.scope, attachment: image.attachment, base64: Buffer.from(image.bytes).toString('base64') };
       }
       case 'metadata': {
-        const providerAgents = providerChoices();
+        const { choices: providerAgents, unavailable } = providerCatalog();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
           descriptor.availability.kind === 'ready' && (selected === null || descriptor.id < selected) ? descriptor.id : selected, null);
-        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailableProviders().map(describeUnavailableProvider)], defaultAgentId } satisfies ServiceValueMap['metadata'];
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(describeUnavailableProvider)], defaultAgentId } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
@@ -86,12 +89,12 @@ export function createApi(options: {
       case 'conversation-permissions': return host.conversationPermissions(request.scope);
       case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);
       case 'conversation-agent': {
-        const providerAgents = providerChoices();
+        const providerAgents = providerCatalog().choices;
         const installation = host.creation(request.scope)?.installation ?? host.installation(request.scope);
         return installation ? describe(installation, providerAgents) : null;
       }
       case 'create': {
-        const providerAgents = providerChoices();
+        const providerAgents = providerCatalog().choices;
         const original = host.creation(request.scope);
         const provider = original?.installation ?? providerAgents.get(request.agentId)?.installation;
         if (provider) {

@@ -106,9 +106,13 @@ Concurrent replacement or shutdown stops an obsolete recovery scan. A later comp
 
 Discovery is per installation and never retires the generation. Each installation reports `available` with its agents, or `unavailable` with one cause from a closed set: `offline`, `authentication-failed`, `unauthorized`, `version-unsupported`, or `invalid-installation`.
 Backend `unavailable`, `authentication-failed`, `unauthorized`, and `version-unsupported` results map to the same-named cause (`unavailable` becomes `offline`, contract `unsupported` becomes `version-unsupported`). Thrown callbacks, malformed results, identity mismatches, and host authorization refusals are `invalid-installation`.
+A backend reports a configuration problem it cannot classify, such as a host credential it cannot use, by throwing.
 Each cause has one fixed, sanitized reason; provider-supplied reasons and errors are never shown.
-Healthy installations stay selectable. The chooser lists an unavailable installation as a disabled entry, and existing conversations show its reason instead of "no longer configured".
-A refused connection holds nothing, so `providers-refresh` (`node apps/host/dist/main.js providers-refresh --data-dir /private/host`) retries it and returns every installation's status. An `invalid-installation` closes that installation's connection and recovers only through replacement.
+Healthy installations stay selectable. The chooser lists an unavailable installation as a disabled entry labeled with its namespace and installation ID, and existing conversations show its reason instead of "no longer configured".
+Every cause except `invalid-installation` is retried on the next discovery: a refused connection holds nothing and reconnects, a reported `version-unsupported` closes its connection so the reconnect probes capabilities again, and other reported causes keep their connection.
+When metadata or conversation reads find a retryable outage and the last discovery started at least 30 seconds ago, the host starts one background discovery without waiting for it. No timer runs, and shutdown waits for that discovery.
+`providers-refresh` (`node apps/host/dist/main.js providers-refresh --data-dir /private/host`) discovers immediately and returns every installation's status.
+An `invalid-installation` closes that installation's connection and recovers only after the configuration is fixed and the extension is replaced, normally by restarting the host.
 Transient and durable serving keep running through provider discovery failures.
 Backends must bound their own connect and discover calls; the host does not impose a deadline, and an unsettled call keeps refresh and replacement pending.
 

@@ -184,7 +184,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           const replacement = await replaceExtensions(readyHost, { kind: 'entries', entries: extensions.entries });
           if (replacement.kind === 'failed') {
             const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
-              activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+              activation: 'Provider activation failed', cleanup: 'Provider cleanup failed' };
             throw new Error(messages[replacement.failure]);
           }
           if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');

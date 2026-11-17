@@ -40,6 +40,6 @@ export function describeProviderAgent(installation: ProviderInstallation, availa
 
 export function describeUnavailableProvider(provider: UnavailableProvider): AgentDescriptor {
   return { kind: 'provider', id: `provider-installation-v1-${createHash('sha256').update(canonicalJson({ contributionId: provider.contributionId, instance: provider.instance })).digest('hex')}`,
-    label: provider.instance.namespace, namespace: provider.instance.namespace, protocolVersion: provider.instance.protocolVersion,
+    label: `${provider.instance.namespace} · ${provider.instance.installationId}`, namespace: provider.instance.namespace, protocolVersion: provider.instance.protocolVersion,
     commands: [], availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
 }
