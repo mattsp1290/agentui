@@ -46,21 +46,30 @@ for (const reason of ['provider-rejected', 'not-dispatched', 'closures-unavailab
 });
 
 
-test('public response parsing requires binding context while preserving generic service transport typing', () => assertCompileCases({
+test('public response parsing requires binding and output context while preserving generic service transport typing', () => assertCompileCases({
   config: new URL('../../packages/contracts/tsconfig.json', import.meta.url).pathname,
   prefix: `import { parseServiceResponse } from '@agentui/contracts/service';
     import type { ServiceRequest, ServiceValueMap, ServiceResponse } from '@agentui/contracts/service';
+    import { parseOutputId } from '@agentui/contracts';
     import type { FrontendBinding } from '@agentui/contracts';
     export type { ServiceRequest, ServiceValueMap, ServiceResponse, FrontendBinding };
-    export const scope = { hostId: 'host', conversationId: 'conversation' };`,
+    export const scope = { hostId: 'host', conversationId: 'conversation' };
+    export const outputId = parseOutputId('output-' + 'a'.repeat(64));`,
   cases: [
     ["const response: ServiceResponse<ServiceValueMap['metadata']> = parseServiceResponse({ op: 'metadata' }, null); void response;", null],
-    ["function transport<K extends Exclude<ServiceRequest['op'], 'frontend-binding'>>(request: { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
+    ["function transport<K extends Exclude<ServiceRequest['op'], 'frontend-binding' | 'output-list' | 'output-read'>>(request: { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
     ["const response: ServiceResponse<FrontendBinding> = parseServiceResponse({ op: 'frontend-binding', scope, id: 'command', action: 'recover' }, null); void response;", null],
     ["function transport<K extends ServiceRequest['op']>(request: ServiceRequest & { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
+    ["const response: ServiceResponse<ServiceValueMap['output-list']> = parseServiceResponse({ op: 'output-list', scope }, null); void response;", null],
+    ["const response: ServiceResponse<ServiceValueMap['output-read']> = parseServiceResponse({ op: 'output-read', scope, outputId }, null); void response;", null],
     ["parseServiceResponse({ op: 'frontend-binding' }, null);", /not assignable|missing/u],
     ["parseServiceResponse({ op: 'frontend-binding', scope, action: 'recover' }, null);", /not assignable|missing/u],
     ["parseServiceResponse({ op: 'frontend-binding', id: 'command', action: 'recover' }, null);", /not assignable|missing/u],
+    ["parseServiceResponse({ op: 'output-list' }, null);", /not assignable|missing/u],
+    ["parseServiceResponse({ op: 'output-read' }, null);", /not assignable|missing/u],
+    ["parseServiceResponse({ op: 'output-read', scope }, null);", /not assignable|missing/u],
+    ["parseServiceResponse({ op: 'output-read', outputId }, null);", /not assignable|missing/u],
+    ["parseServiceResponse({ op: 'output-read', scope, outputId: 'unparsed' }, null);", /not assignable/u],
   ],
 }));
 
