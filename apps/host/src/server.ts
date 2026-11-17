@@ -35,8 +35,10 @@ import { createHostObservability } from './observability.js';
 import type { ObservabilityConfiguration } from './observability.js';
 import { directCodexEnvironment } from './native-environment.js';
 import { assertNoSelectionJournal } from './server-selection.js';
+import { createInstalledRefreshBuilder } from './installed-refresh-builder.js';
+import { serverArtifactExpectation } from './server-artifact-runtime.js';
 import { createRefreshController } from './refresh-jobs.js';
-import type { RefreshController } from './refresh-jobs.js';
+import type { RefreshBuilder, RefreshController } from './refresh-jobs.js';
 import type { ExtensionStartup } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import type { ServerExtensionReplacement } from '@agentui/host/extensions';
@@ -54,6 +56,7 @@ export interface BrowserHostOptions {
   readonly agentStartup: HostAgentStartup;
   readonly observability?: ObservabilityConfiguration;
   readonly extensions?: ExtensionStartup;
+  readonly refreshBuilder?: string;
   readonly setupCapability?: string;
 }
 function piApiKey(): string {
@@ -159,13 +162,19 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       return replacement;
     }
     const extensions = options.extensions ?? { kind: 'transient', entries: [] };
+    if (options.refreshBuilder !== undefined && extensions.kind !== 'durable-artifacts') throw new Error('Refresh builder requires durable extensions');
     let boot: (readyHost: LocalHost<TranscriptEvent, Transcript>) => Promise<void>;
     let directReplace: (readyHost: LocalHost<TranscriptEvent, Transcript>, entries: readonly BrowserProviderExtension[]) => Promise<ServerExtensionReplacement>;
     let selectionControl: SelectionControl;
     switch (extensions.kind) {
       case 'durable-artifacts': {
+        let builder: RefreshBuilder = { kind: 'unavailable' };
+        if (options.refreshBuilder !== undefined) {
+          const { artifactId: _artifactId, ...expected } = serverArtifactExpectation('');
+          builder = await createInstalledRefreshBuilder({ entry: options.refreshBuilder, expected });
+        }
         const composed = await createRefreshController({ database: accessDatabase, artifactRoot: join(owner.directory, 'refresh-artifacts'),
-          builder: { kind: 'unavailable' }, selection: { entries: extensions.entries,
+          builder, selection: { entries: extensions.entries,
           runtime: providers.status, isClosing: () => closing,
           replace: selected => {
             if (!host) throw new Error('Selection host unavailable');
