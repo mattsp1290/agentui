@@ -8,7 +8,7 @@ import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
 import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
-import { budgets, commandKey, isOffered } from './durable-model.js';
+import { budgets, commandKey, isOffered, sendBlock } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
@@ -50,6 +50,8 @@ export interface LocalHost<E, P> {
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
+  /** Stops waiting on an uncertain provider send that blocks its conversation. Never says whether it took effect. */
+  abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
   frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register'>): Promise<FrontendBinding>;
   close(): void;
 }
@@ -174,6 +176,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     store.frontendSends.authorize('dispatch', stored, actor);
   });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void, admitted?: () => void): Promise<Receipt> => inFlight(async () => {
+    if (stored.receipt.state.kind === 'abandoned') return stored.receipt;
     const { scope, clientCommandId: id } = stored.command;
     const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
       ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
@@ -380,6 +383,17 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       const receipt = await reconcileStored(stored, () => assertMayReceiveEvidence(stored, actor));
       assertMayReceiveEvidence(stored, actor);
       return receipt;
+    },
+    abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor) {
+      return inFlight(async () => {
+        const stored = ownedCommand(scope, id, actor);
+        if (!stored) return null;
+        if (dispatching.has(commandKey(stored.command.scope, stored.command.clientCommandId)) ||
+          !('kind' in stored) || stored.receipt.state.kind !== 'uncertain' || sendBlock('provider', stored) === 'none') return stored.receipt;
+        store.frontendSends.authorize('settle', stored, actor);
+        authorized(scope);
+        return store.abandon(stored.command.scope, stored.command.clientCommandId);
+      });
     },
     frontendBinding(input, actor, producerFor) {
       const scope = authorized(input.scope);

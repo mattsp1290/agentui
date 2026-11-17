@@ -249,6 +249,10 @@ enum Request {
         scope: Scope,
         id: Id,
     },
+    Abandon {
+        scope: Scope,
+        id: Id,
+    },
     Watch {
         scope: Scope,
         #[serde(deserialize_with = "nullable")]
@@ -386,7 +390,8 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         | Request::FrontendBinding { scope, .. }
         | Request::ProviderObservation { scope, .. }
         | Request::Receipt { scope, .. }
-        | Request::Reconcile { scope, .. } => Some(scope),
+        | Request::Reconcile { scope, .. }
+        | Request::Abandon { scope, .. } => Some(scope),
         Request::Watch {
             scope,
             projection_version,
@@ -557,6 +562,7 @@ mod tests {
             command(json!({"kind":"cancel", "runId":"run"})),
             json!({"op":"receipt", "scope":scope(), "id":"command"}),
             json!({"op":"reconcile", "scope":scope(), "id":"command"}),
+            json!({"op":"abandon", "scope":scope(), "id":"command"}),
             json!({"op":"watch", "scope":scope(), "after":null, "projectionVersion":1}),
             json!({"op":"watch", "scope":scope(), "after":0, "projectionVersion":2}),
             json!({"op":"pull", "feedId":"feed", "ack":null}),
@@ -640,12 +646,13 @@ mod tests {
             "conversation-agent",
             "receipt",
             "reconcile",
+            "abandon",
             "watch",
         ] {
             let mut value = json!({"op":op, "scope":foreign});
             match op {
                 "create" => value["agentId"] = json!("agent"),
-                "receipt" | "reconcile" => value["id"] = json!("command"),
+                "receipt" | "reconcile" | "abandon" => value["id"] = json!("command"),
                 "watch" => {
                     value["after"] = Value::Null;
                     value["projectionVersion"] = json!(1);

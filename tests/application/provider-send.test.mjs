@@ -109,6 +109,51 @@ test('an accepted send quarantined for capacity still blocks a follow-up after o
   assert.equal(a.calls.submits.length, 1);
 });
 
+test('stopping waiting on a send the provider never recorded releases the conversation without settling the send', async t => {
+  const a = extension({ submit: () => { throw new Error('Lost before the provider'); }, reconcile: () => ({ kind: 'uncertain', evidence: null }) });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  assert.equal((await port.submit(send(scope))).receipt.state.kind, 'uncertain');
+  assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'uncertain');
+  assert.deepEqual(await port.submit(send(scope, 'blocked')), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+  const observation = stored(f, 'chat').observation, lookups = a.calls.reconciles.length;
+  const abandoned = await f.client.abandon(scope, 'send');
+  assert.deepEqual(abandoned.state, { kind: 'abandoned' });
+  assert.deepEqual(await f.client.abandon(scope, 'send'), abandoned);
+  assert.equal(stored(f, 'chat').observation, observation);
+  const journal = f.inspect(db => db.prepare("SELECT payload FROM events WHERE conversation='chat' AND json_extract(payload,'$.event.kind')='receipt' AND json_extract(payload,'$.event.receipt.state.kind')='abandoned'").all());
+  assert.deepEqual(journal.map(row => JSON.parse(row.payload).event.receipt), [abandoned]);
+  a.connected.submit = async operation => { a.calls.submits.push(structuredClone(operation)); return a.effect(operation); };
+  assert.equal((await port.submit(send(scope, 'next'))).receipt.state.kind, 'accepted');
+  a.connected.reconcileCommand = async operation => { a.calls.reconciles.push(structuredClone(operation)); return a.effect(operation, 'completed'); };
+  assert.deepEqual(await f.client.reconcile(scope, 'send'), abandoned);
+  assert.equal(a.calls.reconciles.length, lookups);
+  await f.restart([a]);
+  assert.deepEqual(await f.client.conversation(scope).receipt('send'), abandoned);
+  assert.deepEqual(await f.client.reconcile(scope, 'send'), abandoned);
+  assert.deepEqual(await f.client.abandon(scope, 'send'), abandoned);
+  assert.equal(a.calls.reconciles.length, lookups);
+  assert.equal(await f.client.abandon(scope, 'missing'), null);
+});
+
+test('stop waiting leaves settled, accepted and conclusively uncertain sends unchanged', async t => {
+  const a = extension({ reconcile: () => ({ kind: 'uncertain', evidence: null }) });
+  const f = await fixture(t, [a]);
+  const accepted = await create(f, 'accepted');
+  const acceptedReceipt = (await f.client.conversation(accepted).submit(send(accepted))).receipt;
+  assert.deepEqual(await f.client.abandon(accepted, 'send'), acceptedReceipt);
+  a.connected.submit = async operation => { a.calls.submits.push(structuredClone(operation)); return a.effect(operation, 'completed'); };
+  const completed = await create(f, 'completed');
+  const completedReceipt = (await f.client.conversation(completed).submit(send(completed))).receipt;
+  assert.equal(completedReceipt.state.kind, 'completed');
+  assert.deepEqual(await f.client.abandon(completed, 'send'), completedReceipt);
+  const conclusive = await create(f, 'conclusive');
+  f.inspect(db => db.prepare("INSERT INTO runs(host, conversation, id, data) VALUES (?, 'conclusive', 'same-run', '{}')").run(conclusive.hostId));
+  const quarantined = (await f.client.conversation(conclusive).submit(send(conclusive))).receipt;
+  assert.deepEqual(quarantined.state, { kind: 'uncertain', reason: 'output-rejected' });
+  assert.deepEqual(await f.client.abandon(conclusive, 'send'), quarantined);
+  assert.equal(f.inspect(db => db.prepare("SELECT COUNT(*) AS n FROM events WHERE json_extract(payload,'$.event.receipt.state.kind')='abandoned'").get().n), 0);
+});
+
 test('pending send blocks follow-up without lookup, while confirmed rejection admits it', async t => {
   const a = extension({ submit: () => ({ kind: 'pending', evidence: { queued: true } }),
     reconcile: () => ({ kind: 'rejected', reason: 'Declined', evidence: { rejected: true } }) });
