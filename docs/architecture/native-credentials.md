@@ -12,7 +12,7 @@ The existing chat UI provides saved-history search, registered-agent selection, 
 
 Rust stores one complete versioned record in the default macOS Keychain under service `homes.birb.agentui.native.v1`, account `mac-default`. Each admitted request rereads and compares the exact protected record. Secrets never enter JavaScript, browser storage, URLs, preferences, or bridge replies. Native HTTP rejects redirects and caller-supplied destinations, headers, cookies, or bearer secrets. It has response caps, fixed safe errors, and a 20-second deadline. Only the bundled local main document has credential command authority. External navigation and new windows are denied in normal native mode. `--host-url` remains an explicit browser development route with no credential IPC authority.
 
-**Forget local pairing** removes only that protected item after explicit action. It preserves local work and does not revoke the host device. Use the existing host `devices` and `revoke` commands for server revocation. Unreadable records require additional native confirmation before removal. Denied or locked reads never authorize automatic replacement, deletion, or a plaintext fallback. Restore access in macOS Keychain Access and select **Reconnect**. If the app's code identity changed, resolve the item's application access policy explicitly; the app cannot silently repair it.
+**Forget local pairing** removes only that protected item after explicit action. It preserves local work. The host admits native requests as its single owner without checking the stored secret, so the host `devices` and `revoke` commands do not stop this client. Unreadable records require additional native confirmation before removal. Denied or locked reads never authorize automatic replacement, deletion, or a plaintext fallback. Restore access in macOS Keychain Access and select **Reconnect**. If the app's code identity changed, resolve the item's application access policy explicitly; the app cannot silently repair it.
 
 This implementation uses the classic login-Keychain creating-application ACL, not data-protection access groups or iCloud storage. A process-lifetime advisory profile lock excludes cooperating AgentUI copies using the same Application Support directory. External Keychain editors and restore operations are not arbitrated. The bundle remains ad-hoc signed. Same-build persistence was exercised in a disposable signed Mac test app using a test-owned encrypted Keychain and private ephemeral host; default login-Keychain item access was denied in that worker session. These observations do not establish silent access after rebuilds, upgrades, signing changes, keychain migration, screen lock, or backup restore.
 
@@ -43,7 +43,7 @@ Status = Ready(Observation<Ready>, hostId, principalId) | Absent(Observation<Abs
 The exact approved endpoint is part of the key. A changed destination or port requires a distinct selection.
 The current protocol permits only literal `http://127.0.0.1:<port>`. The host ID checks enrollment intent, not cryptographic server identity.
 The [wire credential](../../apps/host/src/native-wire.ts) contains `hostId`, `principalId`, and `secret`, with no expiry field.
-The [host policy](../../apps/host/src/access.ts) gives newly enrolled native credentials 30 days and browser development credentials one hour. Existing rows are not extended. Revocation remains authoritative. `Ready` establishes local admission only.
+The [host](../../apps/host/src/access.ts) admits every native and browser request as its single owner. Credential lifetimes and device revocation no longer control access. `Ready` establishes local admission only.
 
 The owner keeps at most one live reference per slot and reuses it for unchanged status reads.
 Each owner lifetime has a fresh tag from at least 128 CSPRNG bits. Each reference carries that tag and at least 128 fresh CSPRNG bits.
@@ -131,7 +131,7 @@ Call rows apply in order. Completion and recovery rows govern their named events
 ## Native transport and application recovery
 
 The native boundary independently validates closed IPC inputs and rejects unknown fields.
-Enrollment accepts a bounded invitation and the exact native pairing reply. The reply and bearer secret remain native.
+Enrollment accepts a bounded invitation and the exact native pairing reply. The reply and bearer secret remain native. The host no longer checks that secret; it admits native requests as its single owner after its Host, content-type, Origin and Cookie checks.
 Execution accepts the existing closed service requests except `pair`, and verifies host scope against the observed credential.
 JavaScript cannot supply a destination URL, authentication header, cookie, or replacement host identity.
 Native code chooses routes and headers from the [native wire rules](../development/recorded-host.md#native-protocol-prerequisite), rejects redirects, and enforces invitation, request, response, and deadline bounds.
@@ -145,7 +145,7 @@ The [service engine](../../packages/client/src/service-engine.ts) retains servic
 Its `onUnauthorized` hook is the callback isolated to the original connection, never a replacement connection.
 Its `ServiceExecutor` returns a fetch `Response` through an internal seam, not a [public package export](../../packages/client/package.json).
 Its browser `pair()` state does not coordinate native ownership. A future adapter must enforce the table's admission and callback rules.
-Forgetting is local. The existing host device-revocation command remains authoritative for server access.
+Forgetting is local. The host admits native requests as its single owner, so no device command controls server access.
 Credential transitions preserve drafts, saved commands, receipts, and unresolved effects.
 Aborting a request, closing a feed, removing a credential, or losing a process does not prove that an admitted command failed.
 Recovery preserves the original host, conversation, command ID, and body. No credential transition automatically replays or replaces a command.
@@ -165,7 +165,7 @@ Protected storage does not isolate credentials from a compromised native process
 
 The [Rust entrypoint](../../apps/desktop/src-tauri/src/main.rs) restricts native admission and bundled navigation for the current Mac subset.
 The [Swift entrypoint](../../apps/ios/native/ios/AgentUI/AppDelegate.swift) starts React Native and does not implement these interfaces.
-[Native HTTP tests](../../tests/application/native-http.test.mjs) cover route and class separation, expiry, revocation, and original-command recovery.
+[Native HTTP tests](../../tests/application/native-http.test.mjs) cover route and class separation and original-command recovery.
 Their [private fixture](../../tests/application/support/native-client.mjs) holds one immutable in-memory credential.
 Those tests do not qualify protected persistence, native IPC, replacement safety, installed applications, TLS, LAN access, or remote phone access.
 

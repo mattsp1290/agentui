@@ -22,7 +22,7 @@ for (const credentialClass of ['browser-development', 'native']) {
     const directory = mkdtempSync(join(tmpdir(), 'agentui-endpoint-'));
     const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
     const host = openRecordedHost({ path: join(directory, 'host.sqlite'), backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId });
-    const feeds = new FeedRegistry(), paired = access.pair(access.invite(credentialClass), credentialClass);
+    const feeds = new FeedRegistry();
     const compatibility = { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
     let closing = false;
@@ -42,15 +42,14 @@ for (const credentialClass of ['browser-development', 'native']) {
     const call = async body => {
       const response = await fetch(`${origin}${credentialClass === 'native' ? '/native/v1' : '/api/v1'}`, {
         method: 'POST', signal: AbortSignal.timeout(5000), headers: { 'Content-Type': 'application/json',
-          ...(credentialClass === 'native' ? { Authorization: `Bearer ${paired.secret}` }
-            : { Origin: origin, Cookie: `agentui_device_${access.hostId}=${paired.secret}` }) }, body: JSON.stringify(body),
+          ...(credentialClass === 'native' ? {} : { Origin: origin }) }, body: JSON.stringify(body),
       });
       assert.equal(response.headers.get('cache-control'), 'no-store');
       assert.equal(response.headers.get('access-control-allow-origin'), null);
       assert.equal(response.headers.get('set-cookie'), null);
       return { status: response.status, body: await response.json() };
     };
-    assert.equal((await call({ op: 'metadata' })).body.value.principalId, paired.principal.id);
+    assert.equal((await call({ op: 'metadata' })).body.value.principalId, 'trusted-owner');
     assert.deepEqual(await call({ op: 'search', query: 'missing', after: null }), {
       status: 200, body: { ok: true, value: { items: [], after: null } },
     });

@@ -36,7 +36,7 @@ export class Reader {
   }
   async authorize(signal: AbortSignal) {
     const metadata = await this.request({ op: 'metadata' }, signal);
-    if (metadata.hostId !== this.access.hostId || metadata.principalId !== this.access.principalId) throw new ReadError('Host identity mismatch');
+    if (metadata.hostId !== this.access.hostId) throw new ReadError('Host identity mismatch');
     return metadata;
   }
   async agents(signal: AbortSignal) {

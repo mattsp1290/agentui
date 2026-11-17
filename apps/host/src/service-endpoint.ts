@@ -7,7 +7,7 @@ import type { createApi } from './api.js';
 import { FAILURE_STATUS } from './errors.js';
 import { json, readJson } from './framing.js';
 import { serveAsset } from './static-assets.js';
-import { DEVICE_SECRET, NATIVE_PAIR_MAX_REQUEST_BYTES, parseNativePairRequest } from './native-wire.js';
+import { NATIVE_PAIR_MAX_REQUEST_BYTES, parseNativePairRequest } from './native-wire.js';
 import type { NativeCredential } from './native-wire.js';
 import type { HostObservability, RequestObservation } from './observability.js';
 
@@ -33,7 +33,7 @@ const imageIngress = new WeakSet<Access>();
 
 export function serviceEndpoint(options: EndpointOptions) {
   async function imageRequest(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
-    const principal = options.credentialClass === 'native' ? nativePrincipal(request, options.access) : browserPrincipal(request, options.access);
+    const principal = options.access.owner(options.credentialClass);
     if (imageIngress.has(options.access)) throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.');
     imageIngress.add(options.access);
     let operation: RequestResult['operation'] = 'admission';
@@ -107,17 +107,7 @@ async function admitBrowser(request: IncomingMessage, access: Access): Promise<A
   const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
   if (message.op === 'pair') return { kind: 'pair', code: message.code };
   if (message.op === 'image-upload' || message.op === 'image-read') throw new Error('Images require the image route');
-  return { kind: 'service', principal: browserPrincipal(request, access), message };
-}
-
-function browserPrincipal(request: IncomingMessage, access: Access): Principal {
-  const cookieName = browserCookieName(access.hostId);
-  const cookies = request.headers.cookie?.split(';').map(value => value.trim()).filter(value => value.startsWith(`${cookieName}=`)) ?? [];
-  const [cookie] = cookies;
-  const secret = cookies.length === 1 && cookie !== undefined ? cookie.slice(cookieName.length + 1) : undefined;
-  const principal = access.authenticate(secret, 'browser-development');
-  if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
-  return principal;
+  return { kind: 'service', principal: access.owner('browser-development'), message };
 }
 
 async function admitNative(request: IncomingMessage, access: Access): Promise<Admission> {
@@ -129,21 +119,10 @@ async function admitNative(request: IncomingMessage, access: Access): Promise<Ad
     return { kind: 'pair', code };
   }
   if (request.url !== '/native/v1') throw new Error('Invalid native path');
-  const principal = nativePrincipal(request, access);
   const message = parseServiceRequest(await readJson(request, SERVICE_MAX_REQUEST_BYTES));
   if (message.op === 'pair') throw new Error('Pairing requires the native pairing route');
   if (message.op === 'image-upload' || message.op === 'image-read') throw new Error('Images require the image route');
-  return { kind: 'service', principal, message };
-}
-
-function nativePrincipal(request: IncomingMessage, access: Access): Principal {
-  const authorization = request.headersDistinct.authorization;
-  const [header] = authorization ?? [];
-  const secret = header?.startsWith('Bearer ') ? header.slice(7) : undefined;
-  if (authorization?.length !== 1 || secret === undefined || !DEVICE_SECRET.test(secret)) throw new ServiceError('unauthorized', 'Pair this device with the host');
-  const principal = access.authenticate(secret, 'native');
-  if (!principal) throw new ServiceError('unauthorized', 'Pair this device with the host');
-  return principal;
+  return { kind: 'service', principal: access.owner('native'), message };
 }
 
 async function writeServiceResult(response: ServerResponse, run: () => Promise<Reply>, limit?: number): Promise<void> {

@@ -118,17 +118,7 @@ async function fixture(t) {
     assert.equal(response.body.ok, true);
     return response.body.value;
   };
-  f.pair = async () => {
-    const { code } = await f.control('invite');
-    const response = await f.call({ op: 'pair', code });
-    assert.equal(response.status, 200);
-    assert.equal(response.body.ok, true);
-    const setCookie = response.headers['set-cookie'][0];
-    assert.match(setCookie, /HttpOnly; SameSite=Strict; Path=\//);
-    const cookie = setCookie.split(';')[0];
-    const metadata = await f.ok({ op: 'metadata' }, cookie);
-    return { code, cookie, metadata };
-  };
+  f.client = async () => ({ cookie: '', metadata: await f.ok({ op: 'metadata' }) });
   await f.start();
   return f;
 }
@@ -141,42 +131,36 @@ function denied(response, status = 400, kind = 'invalid') {
   assert.equal(JSON.stringify(response.body).includes('compatibility'), false);
 }
 
-test('real host pairs independent devices and protects metadata, scope and explicit catalog creation', { timeout: 20_000 }, async t => {
+test('real host admits the owner directly and protects metadata, scope and explicit catalog creation', { timeout: 20_000 }, async t => {
   const f = await fixture(t);
-  denied(await f.call({ op: 'metadata' }), 401, 'unauthorized');
-  const alice = await f.pair(), bob = await f.pair();
-  assert.equal(alice.metadata.hostId, f.hostId);
-  assert.equal(bob.metadata.hostId, f.hostId);
-  assert.notEqual(alice.metadata.principalId, bob.metadata.principalId);
-  assert.notEqual(alice.cookie, bob.cookie);
-  denied(await f.call({ op: 'pair', code: alice.code }), 401, 'unauthorized');
+  const owner = await f.client();
+  assert.equal(owner.metadata.hostId, f.hostId);
+  assert.equal(owner.metadata.principalId, 'trusted-owner');
   for (const [body, headers] of [
     [{ op: 'metadata' }, { Origin: 'https://foreign.example' }],
     [{ op: 'metadata' }, { Host: 'foreign.example' }],
     [{ op: 'metadata', leak: true }, {}],
     [[], {}], ['{', {}], [`${' '.repeat(410_000)}{"op":"metadata"}`, {}],
-  ]) denied(await f.call(body, alice.cookie, headers));
+  ]) denied(await f.call(body, '', headers));
   const catalog = { op: 'catalog', after: null, limit: 100 };
-  assert.deepEqual(await f.ok(catalog, alice.cookie), []);
-  assert.deepEqual(await f.ok(catalog, bob.cookie), []);
+  assert.deepEqual(await f.ok(catalog), []);
   const scope = { hostId: f.hostId, conversationId: 'stable-explicit-conversation' };
   const foreign = { ...scope, hostId: 'another-host' };
   for (const request of [{ op: 'create', agentId: recordedAgentId, scope: foreign },
     { op: 'watch', scope: foreign, after: null, projectionVersion: 4 },
     { op: 'submit', command: command(foreign) }, { op: 'receipt', scope: foreign, id: 'send-once' }]) {
-    denied(await f.call(request, alice.cookie), 403, 'forbidden');
+    denied(await f.call(request), 403, 'forbidden');
   }
-  assert.deepEqual(await f.ok(catalog, alice.cookie), []);
-  assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie), scope);
-  assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }, bob.cookie), scope);
-  assert.deepEqual(await f.ok(catalog, bob.cookie), [{ scope, preview: null }]);
-  assert.deepEqual(await f.ok({ ...catalog, after: scope.conversationId }, alice.cookie), []);
-  assert.deepEqual((await f.control('devices')).map(item => item.id).sort(),
-    [alice.metadata.principalId, bob.metadata.principalId].sort());
+  assert.deepEqual(await f.ok(catalog), []);
+  assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }), scope);
+  assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }), scope);
+  assert.deepEqual(await f.ok(catalog), [{ scope, preview: null }]);
+  assert.deepEqual(await f.ok({ ...catalog, after: scope.conversationId }), []);
+  assert.deepEqual(await f.control('devices'), []);
 });
 
 test('real client applies a feed page before ACK and the host retains lost replies and rejects future ACKs', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair(), bob = await f.pair();
+  const f = await fixture(t), alice = await f.client();
   const scope = { hostId: f.hostId, conversationId: 'application-ack' };
   await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
   const first = deferred(), second = deferred(), releaseFirst = deferred(), releaseSecond = deferred();
@@ -200,8 +184,6 @@ test('real client applies a feed page before ACK and the host retains lost repli
   const pull = ack => ({ op: 'pull', feedId, ack });
   const pageOne = await f.ok(pull(null), alice.cookie);
   assert.equal(pageOne.page, 1);
-  denied(await f.call(pull(null), bob.cookie));
-  denied(await f.call({ op: 'close', feedId }, bob.cookie));
   const submitted = await connection.conversation(scope).submit(command(scope));
   assert.equal(submitted.receipt.state.kind, 'completed');
   assert.deepEqual(await f.ok(pull(null), alice.cookie), pageOne);
@@ -221,34 +203,26 @@ test('real client applies a feed page before ACK and the host retains lost repli
   assert.equal((await feed.ended).kind, 'closed');
 });
 
-test('revoking a device wakes its open HTTP pull and denies later operations while another device continues', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair(), bob = await f.pair();
-  const scope = { hostId: f.hostId, conversationId: 'revoke-open-pull' };
-  await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
-  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 4 }, alice.cookie);
-  const first = await f.ok({ op: 'pull', feedId, ack: null }, alice.cookie);
+test('an open HTTP pull stays pending while another request completes', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  const scope = { hostId: f.hostId, conversationId: 'open-pull' };
+  await f.ok({ op: 'create', agentId: recordedAgentId, scope });
+  const { feedId } = await f.ok({ op: 'watch', scope, after: null, projectionVersion: 4 });
+  const first = await f.ok({ op: 'pull', feedId, ack: null });
   let settled = false;
-  const pending = f.begin({ op: 'pull', feedId, ack: first.page }, alice.cookie);
+  const pending = f.begin({ op: 'pull', feedId, ack: first.page });
   void pending.response.then(() => { settled = true; }, () => { settled = true; });
   await pending.sent;
-  await f.ok({ op: 'metadata' }, bob.cookie);
+  assert.equal((await f.ok({ op: 'metadata' })).hostId, f.hostId);
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }), [{ scope, preview: null }]);
   assert.equal(settled, false);
-  await f.control('revoke', alice.metadata.principalId);
-  denied(await pending.response, 401, 'unauthorized');
-  for (const request of [{ op: 'metadata' }, { op: 'catalog', after: null, limit: 100 },
-    { op: 'watch', scope, after: null, projectionVersion: 4 }, { op: 'submit', command: command(scope) },
-    { op: 'create', agentId: recordedAgentId, scope }, { op: 'receipt', scope, id: 'send-once' }]) {
-    denied(await f.call(request, alice.cookie), 401, 'unauthorized');
-  }
-  assert.equal((await f.ok({ op: 'metadata' }, bob.cookie)).principalId, bob.metadata.principalId);
-  assert.equal((await f.ok({ op: 'submit', command: command(scope) }, bob.cookie)).receipt.state.kind, 'completed');
-  assert.deepEqual((await f.control('devices')).map(({ id, revoked }) => ({ id, revoked })), [
-    { id: alice.metadata.principalId, revoked: true }, { id: bob.metadata.principalId, revoked: false },
-  ].sort((a, b) => a.id.localeCompare(b.id)));
+  const response = await pending.response;
+  assert.equal(response.status, 200, JSON.stringify(response.body));
+  assert.equal(response.body.ok, true);
 });
 
 test('fixed-port process restart preserves device identity, catalog and evidence with one acceptance on exact-ID retry', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair();
+  const f = await fixture(t), alice = await f.client();
   const origin = f.origin, hostId = f.hostId;
   const scope = { hostId, conversationId: 'restart-evidence' }, intent = command(scope);
   await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
@@ -292,7 +266,7 @@ test('fixed-port process restart preserves device identity, catalog and evidence
 });
 
 test('SIGTERM during playback retains exclusive process ownership until the accepted command drains', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair();
+  const f = await fixture(t), alice = await f.client();
   const scope = { hostId: f.hostId, conversationId: 'shutdown-drain' }, intent = command(scope);
   await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
   const acceptance = deferred(), path = join(f.directory, 'recorded.jsonl');
@@ -323,7 +297,7 @@ test('SIGTERM during playback retains exclusive process ownership until the acce
 
 
 test('a post-admission storage fault is unavailable and retains the original command and newer draft', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair();
+  const f = await fixture(t), alice = await f.client();
   const scope = { hostId: f.hostId, conversationId: 'settlement-storage-fault' };
   await f.ok({ op: 'create', agentId: recordedAgentId, scope }, alice.cookie);
   const db = new DatabaseSync(join(f.directory, 'host.sqlite'));
@@ -367,7 +341,7 @@ test('a post-admission storage fault is unavailable and retains the original com
 
 
 test('a catalog storage fault gives a neutral retry message without command recovery instructions', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), alice = await f.pair();
+  const f = await fixture(t), alice = await f.client();
   const db = new DatabaseSync(join(f.directory, 'host.sqlite'));
   try {
     db.exec('ALTER TABLE conversations RENAME TO temporarily_unavailable');

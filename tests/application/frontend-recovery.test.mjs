@@ -36,22 +36,14 @@ const originalRow = f => f.inspect(db => db.prepare("SELECT intent,target,receip
 function noFrontendEffects(f) {
   for (const table of ['frontend_events', 'frontend_receipts']) assert.equal(f.inspect(db => db.prepare(`SELECT COUNT(*) AS n FROM ${table}`).get().n), 0);
 }
-async function privateOffer(client, scope) {
-  await unavailable(client.conversation(scope).receipt('offered'));
-  await unavailable(client.reconcile(scope, 'offered'));
-  for (const action of ['recover', 'unavailable']) await unavailable(client.frontendBinding({ scope, id: 'offered', action }));
-}
-for (const initial of ['accepted', 'pending']) for (const owner of ['available', 'released', 'revoked']) {
-  for (const next of owner === 'revoked' ? ['other'] : ['same', 'other']) test(`offered blocker ${initial} ${owner} permits ${next} actor after authentic HTTP completion`, async t => {
-    const { a, f, scope, requests, state } = await offeredHttp(t, initial), other = await f.anotherClient();
-    const principal = (await f.client.metadata()).principalId;
+for (const initial of ['accepted', 'pending']) for (const owner of ['available', 'released']) {
+  test(`offered blocker ${initial} ${owner} permits the owner's next send after authentic HTTP completion`, async t => {
+    const { a, f, scope, requests, state } = await offeredHttp(t, initial);
     assert.equal((await f.client.conversation(scope).submit(offered(scope))).receipt.state.kind, initial);
     const original = originalRow(f);
     if (owner === 'released') await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' });
-    if (owner === 'revoked') f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(principal));
-    await privateOffer(other, scope);
     state('completed');
-    const result = await (next === 'same' ? f.client : other).conversation(scope).submit(send(scope, 'next', 'Next'));
+    const result = await f.client.conversation(scope).submit(send(scope, 'next', 'Next'));
     assert.equal(result.receipt?.state.kind, 'completed');
     assert.equal(JSON.parse(originalRow(f).receipt).state.kind, 'completed');
     assert.equal(originalRow(f).target, original.target); assert.equal(originalRow(f).intent, original.intent);
@@ -61,12 +53,7 @@ for (const initial of ['accepted', 'pending']) for (const owner of ['available',
     assert.notEqual(requests[2].operation.operationId, requests[0].operation.operationId);
     assert.deepEqual(requests[2].operation.request, { runId: 'run-Next', threadId: 'original-thread',
       messages: [{ id: 'user', role: 'user', content: 'Next' }], state: null, custom: 'preserved' });
-    await privateOffer(other, scope);
-    if (owner === 'revoked') {
-      await assert.rejects(f.client.conversation(scope).receipt('offered'), error => error.kind === 'unauthorized');
-      await assert.rejects(f.client.reconcile(scope, 'offered'), error => error.kind === 'unauthorized');
-      await assert.rejects(f.client.frontendBinding({ scope, id: 'offered', action: 'recover' }), error => error.kind === 'unauthorized');
-    } else assert.equal((await f.client.reconcile(scope, 'offered')).state.kind, 'completed');
+    assert.equal((await f.client.reconcile(scope, 'offered')).state.kind, 'completed');
     noFrontendEffects(f);
   });
 }
@@ -80,12 +67,12 @@ test('offered released owner can publicly reconcile authentic evidence', async t
   noFrontendEffects(f);
 });
 for (const initial of ['accepted', 'pending']) for (const refusal of ['pending', 'uncertain', 'provider-revoked']) test(`offered ${initial} blocker keeps ${refusal} unresolved`, async t => {
-  const { a, f, scope, state } = await offeredHttp(t, initial), other = await f.anotherClient();
+  const { a, f, scope, state } = await offeredHttp(t, initial), view = f.secondView();
   await f.client.conversation(scope).submit(offered(scope));
   await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' });
   state(refusal === 'provider-revoked' ? 'completed' : refusal);
   if (refusal === 'provider-revoked') f.inspect(db => db.exec('UPDATE service_provider_credentials SET revoked=1'));
-  assert.equal((await other.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
+  assert.equal((await view.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
   assert.equal(JSON.parse(originalRow(f).receipt).state.kind, initial);
   assert.equal(a.calls.submits.length, 1); assert.equal(a.calls.reconciles.length, refusal === 'provider-revoked' ? 0 : 1);
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands').get().n), 1); noFrontendEffects(f);
@@ -95,29 +82,15 @@ test('offered in-flight initial dispatch cannot be looked up by a new send, but 
   const { a, f, scope, state } = await offeredHttp(t, 'pending', async path => {
     if (path === '/submit') { entered.resolve(); await release.promise; }
   });
-  const other = await f.anotherClient(), first = f.client.conversation(scope).submit(offered(scope));
+  const view = f.secondView(), first = f.client.conversation(scope).submit(offered(scope));
   await entered.promise;
   try {
-    assert.equal((await other.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
+    assert.equal((await view.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
     assert.equal(a.calls.reconciles.length, 0); assert.equal(a.calls.submits.length, 1);
   } finally { release.resolve(); }
   assert.equal((await first).receipt.state.kind, 'pending'); state('completed');
-  assert.equal((await other.conversation(scope).submit(send(scope, 'next', 'Next'))).receipt?.state.kind, 'completed');
+  assert.equal((await view.conversation(scope).submit(send(scope, 'next', 'Next'))).receipt?.state.kind, 'completed');
   assert.equal(a.calls.reconciles.length, 1); assert.equal(a.calls.submits.length, 2); noFrontendEffects(f);
-});
-test('offered blocker settlement persists evidence but revocation during lookup prevents new admission', async t => {
-  const entered = Promise.withResolvers(), release = Promise.withResolvers();
-  const { a, f, scope, state } = await offeredHttp(t, 'accepted', async path => {
-    if (path === '/lookup') { entered.resolve(); await release.promise; }
-  });
-  const other = await f.anotherClient(), principal = (await other.metadata()).principalId;
-  await f.client.conversation(scope).submit(offered(scope)); state('completed');
-  const result = other.conversation(scope).submit(send(scope, 'next')).then(value => ({ value }), error => ({ error }));
-  await Promise.race([entered.promise, result.then(() => { throw new Error('New send did not look up the blocker'); })]);
-  f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(principal)); release.resolve();
-  assert.ok((await result).error);
-  assert.equal(JSON.parse(originalRow(f).receipt).state.kind, 'completed'); assert.equal(a.calls.submits.length, 1);
-  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM commands').get().n), 1); noFrontendEffects(f);
 });
 for (const outcome of ['rejected', 'not-dispatched', 'pending']) test(`offered ${outcome} no-run binding online and offline`, async t => {
   const { a, f, scope } = await offeredHttp(t, outcome);
@@ -221,39 +194,27 @@ test('offered binding retains the owner fence after the producer callback', asyn
   }), /frontend-owner/);
 });
 for (const corruption of ['missing', 'state', 'actor']) test(`offered private blocker lookup refuses ${corruption} admitted ownership`, async t => {
-  const { a, f, scope, state } = await offeredHttp(t), other = await f.anotherClient();
+  const { a, f, scope, state } = await offeredHttp(t), view = f.secondView();
   await f.client.conversation(scope).submit(offered(scope)); state('completed');
   f.inspect(db => { db.exec('PRAGMA ignore_check_constraints=ON'); db.exec(corruption === 'missing' ? 'DELETE FROM frontend_send_owners'
     : corruption === 'state' ? "UPDATE frontend_send_owners SET state='tombstone'" : "UPDATE frontend_send_owners SET actor_id=''"); });
-  assert.equal((await other.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
+  assert.equal((await view.conversation(scope).submit(send(scope, 'next'))).reason, 'send-awaiting-confirmation');
   assert.equal(a.calls.reconciles.length, 0); assert.equal(a.calls.submits.length, 1); noFrontendEffects(f);
-});
-test('offered private lookup checks the incoming actor after reentrant original-input decoding', async t => {
-  let f, revoke = false, principal;
-  const a = aguiExtension({ submit: (operation, { effect }) => effect(operation, 'accepted', operation.request.runId), decode(value) {
-    if (revoke) f.inspect(db => db.prepare('UPDATE service_devices SET revoked=1 WHERE id=?').run(principal));
-    return value;
-  } });
-  f = await fixture(t, [a]); const scope = await create(f), other = await f.anotherClient(); principal = (await other.metadata()).principalId;
-  await f.client.conversation(scope).submit(offered(scope)); revoke = true;
-  await assert.rejects(other.conversation(scope).submit(send(scope, 'next')));
-  assert.equal(a.calls.reconciles.length, 0); assert.equal(a.calls.submits.length, 1);
-  assert.equal(JSON.parse(originalRow(f).receipt).state.kind, 'accepted'); noFrontendEffects(f);
 });
 test('offered original closure release during private lookup does not adopt or revive the old binding', async t => {
   const entered = Promise.withResolvers(), release = Promise.withResolvers();
   const { a, f, scope, state } = await offeredHttp(t, 'pending', async path => {
     if (path === '/lookup') { entered.resolve(); await release.promise; }
   });
-  const other = await f.anotherClient(); await f.client.conversation(scope).submit(offered(scope)); state('completed');
-  const next = other.conversation(scope).submit(send(scope, 'next', 'Next'));
+  const view = f.secondView(); await f.client.conversation(scope).submit(offered(scope)); state('completed');
+  const next = view.conversation(scope).submit(send(scope, 'next', 'Next'));
   await entered.promise;
   await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' }); release.resolve();
   assert.equal((await next).receipt.state.kind, 'completed');
   assert.equal((await f.client.frontendBinding({ scope, id: 'offered', action: 'recover' })).reason, 'closures-unavailable');
   assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_runs').get().n), 0);
   assert.equal(f.inspect(db => db.prepare("SELECT state FROM frontend_send_owners WHERE command_id='offered'").get().state), 'unavailable');
-  await privateOffer(other, scope); assert.equal(a.calls.submits.length, 2); noFrontendEffects(f);
+  assert.equal(a.calls.submits.length, 2); noFrontendEffects(f);
 });
 test('offered settled blocker cannot admit a new plain send whose decoder revokes the new actor', async t => {
   let authorized = true;

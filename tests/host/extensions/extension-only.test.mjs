@@ -11,7 +11,7 @@ import { describeAgent } from '../../../apps/host/build/tsc/agents.js';
 import { entry, options, startBrowserHost } from './fixtures.mjs';
 
 async function open(t, selected, configured = options(t), cleanupFails = false) {
-  const host = await startBrowserHost({ ...configured, agentStartup: { kind: 'extensions' }, accessMode: 'trusted', extensions: { kind: 'transient', entries: selected.map(value => value.value) } });
+  const host = await startBrowserHost({ ...configured, agentStartup: { kind: 'extensions' }, extensions: { kind: 'transient', entries: selected.map(value => value.value) } });
   t.after(async () => { if (cleanupFails) await assert.rejects(host.close(), /shutdown failed/); else await host.close(); });
   const client = createBrowserConnection({ fetch: (path, init) => fetch(host.origin + path, { ...init, headers: { ...init.headers, Origin: host.origin } }) });
   const inspect = action => { const db = new DatabaseSync(join(configured.directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } };
@@ -162,7 +162,7 @@ test('browser idle presentation follows the provider and becomes neutral after e
 
 test('extension-only restart reads saved native history without installing its recorded runtime', { timeout: 10000 }, async t => {
   const configured = options(t);
-  const recorded = await startBrowserHost({ ...configured, agentStartup: { kind: 'recorded' }, accessMode: 'trusted' });
+  const recorded = await startBrowserHost({ ...configured, agentStartup: { kind: 'recorded' } });
   t.after(() => recorded.close());
   const client = createBrowserConnection({ fetch: (path, init) => fetch(recorded.origin + path, { ...init, headers: { ...init.headers, Origin: recorded.origin } }) });
   const scope = { hostId: recorded.hostId, conversationId: 'saved-native' };

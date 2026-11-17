@@ -39,7 +39,7 @@ test('MCP refuses malformed, oversized, redirected, mismatched and non-snapshot 
     assert.equal(request.headers.cookie, undefined);
     if (input.op === 'metadata') {
       if (scenario === 'redirect') { response.writeHead(307, { location: redirect }); response.end(); }
-      else reply(response, scenario === 'principal' ? { ...metadata, principalId: 'foreign' } : metadata);
+      else reply(response, scenario === 'metadata-host' ? { ...metadata, hostId: 'foreign' } : metadata);
     } else if (input.op === 'conversation-agent') reply(response, null);
     else if (input.op === 'watch') { assert.equal(input.after, null); reply(response, { feedId: 'feed-a' }); }
     else if (input.op === 'close') { closes++; reply(response, null); }
@@ -62,13 +62,13 @@ test('MCP refuses malformed, oversized, redirected, mismatched and non-snapshot 
   const mcp = await connect(t, path);
   assert.equal(data(await mcp.client.callTool({ name: 'agentui_inspect', arguments: { conversationId: scope.conversationId } })).currentRun, null);
   assert.equal(closes, 1);
-  for (scenario of ['malformed', 'oversized', 'utf8', 'events', 'ended', 'scope', 'projection', 'state', 'principal', 'redirect']) {
+  for (scenario of ['malformed', 'oversized', 'utf8', 'events', 'ended', 'scope', 'projection', 'state', 'metadata-host', 'redirect']) {
     const before = closes;
     const result = await mcp.client.callTool({ name: 'agentui_inspect', arguments: { conversationId: scope.conversationId } });
     assert.equal(result.isError, true, scenario);
     assert.equal(result.structuredContent, undefined);
     assert.ok(!JSON.stringify(result).includes('private-host-response'));
-    assert.equal(closes, before + (scenario === 'principal' || scenario === 'redirect' ? 0 : 1), scenario);
+    assert.equal(closes, before + (scenario === 'metadata-host' || scenario === 'redirect' ? 0 : 1), scenario);
   }
   assert.equal(redirectHits, 0);
   assert.equal(mcp.stderr, '');
@@ -122,9 +122,9 @@ test('pairing is a one-shot exchange with no output, no redirects, no overwrite 
       else if (scenario === 'malformed') response.end('{');
       else if (scenario === 'lost') response.destroy();
       else reply(response, scenario === 'host' ? { ...identity, hostId: 'foreign' } : identity);
-    } else reply(response, scenario === 'principal' ? { ...metadata, principalId: 'foreign' } : metadata);
+    } else reply(response, scenario === 'metadata-host' ? { ...metadata, hostId: 'foreign' } : metadata);
   });
-  for (scenario of ['valid', 'host', 'principal', 'redirect', 'oversized', 'malformed', 'lost']) {
+  for (scenario of ['valid', 'host', 'metadata-host', 'redirect', 'oversized', 'malformed', 'lost']) {
     const path = join(directory, scenario), before = requests;
     const result = await cli(['pair', origin, path], invitation);
     assert.equal(result.code, scenario === 'valid' ? 0 : 1, scenario);

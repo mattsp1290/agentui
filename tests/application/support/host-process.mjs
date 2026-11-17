@@ -94,11 +94,3 @@ export async function control(t, args, environment) {
   assert.equal(response.ok, true);
   return response.value;
 }
-
-export async function pairBrowser(t, origin, inviteArgs, environment) {
-  const invitation = await control(t, inviteArgs, environment);
-  const response = await browserRequest(origin, { op: 'pair', code: invitation.code });
-  assert.equal(response.status, 200, JSON.stringify(response.body));
-  const cookie = response.headers['set-cookie'][0].split(';')[0];
-  return { code: invitation.code, cookie };
-}
