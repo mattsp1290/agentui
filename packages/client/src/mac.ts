@@ -7,7 +7,7 @@ import { transcriptProjection } from '@agentui/contracts/conversation';
 import { createServiceConnection, ServiceConnectionLost } from './service-engine.js';
 import type { ServiceConnectionOptions } from './service-engine.js';
 
-export type MacAccess = { readonly observation: string; readonly hostId: string; readonly principalId: string };
+export type MacAccess = { readonly observation: string };
 export type MacNativeInvoke = (command: { readonly kind: 'connect' } | {
   readonly kind: 'execute'; readonly observation: string; readonly request: ServiceRequest;
 }) => Promise<unknown>;
@@ -30,8 +30,7 @@ export async function macConnect(nativeInvoke: MacNativeInvoke): Promise<MacAcce
   let value: unknown;
   try { value = await nativeInvoke({ kind: 'connect' }); } catch (cause) { throw failure(cause); }
   try {
-    const input = record(value, ['observation', 'hostId', 'principalId']);
-    return { observation: identifier(input.observation), hostId: identifier(input.hostId), principalId: identifier(input.principalId) };
+    return { observation: identifier(record(value, ['observation']).observation) };
   } catch { throw new Error(invalidResponse); }
 }
 export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeInvoke, options: ServiceConnectionOptions = {}): ServiceConnection {

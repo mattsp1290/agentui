@@ -4,7 +4,7 @@ import { ServiceError, ServiceProtocolError } from '@agentui/client/service';
 import { createMacConnection, macConnect } from '@agentui/client/mac';
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
-const access = { observation: 'current', hostId: 'host', principalId: 'principal' };
+const access = { observation: 'current' };
 
 test('native connection failures give safe recovery for the reported category on connect and execution', async () => {
   const secret = 'private-host-response-and-profile-path';
@@ -37,7 +37,7 @@ test('native connection failures give safe recovery for the reported category on
 
 test('invalid native responses report a protocol problem without response contents', async () => {
   const secret = 'private-host-response-and-profile-path';
-  for (const value of [{ kind: secret, observation: 'current' }, { ...access, kind: 'ready' }, { ...access, hostId: '' }, { ...access, secret }]) {
+  for (const value of [{ kind: secret, observation: 'current' }, { ...access, kind: 'ready' }, { observation: '' }, { ...access, hostId: 'host' }, { ...access, secret }]) {
     await assert.rejects(macConnect(async () => value), error => {
       assert.match(error.message, /Invalid native.*response/);
       assert.doesNotMatch(error.message, new RegExp(secret));
@@ -52,7 +52,7 @@ test('invalid native responses report a protocol problem without response conten
   });
 });
 
-test('connect sends only the connect command and returns the host binding', async () => {
+test('connect sends only the connect command and returns only the observation', async () => {
   const calls = [];
   assert.deepEqual(await macConnect(async command => { calls.push(command); return access; }), access);
   assert.deepEqual(calls, [{ kind: 'connect' }]);
@@ -69,7 +69,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
   let current = 'old';
   const nativeInvoke = async command => {
     calls.push(command);
-    if (command.kind === 'connect') return { observation: current, hostId: 'host', principalId: 'principal' };
+    if (command.kind === 'connect') return { observation: current };
     if (command.observation === 'old') return old.promise;
     const request = command.request;
     const value = request.op === 'metadata' ? metadata : request.op === 'search' ? { items: [{ scope, preview: 'Hello', excerpt: 'Message match' }], after: null }

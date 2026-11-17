@@ -54,7 +54,7 @@ async function fixture(t, { imageInput = true, model } = {}) {
   };
   const clients = {
     'browser-development': createBrowserConnection({ fetch: (path, init) => fetch(origin + path, { ...init, headers: headers('browser-development') }) }),
-    native: createMacConnection({ observation: 'fixture', hostId: access.hostId, principalId: 'trusted-owner' }, async command => {
+    native: createMacConnection({ observation: 'fixture' }, async command => {
       assert.equal(command.kind, 'execute');
       assert.equal(command.observation, 'fixture');
       assert.deepEqual(Object.keys(command).sort(), ['kind', 'observation', 'request']);

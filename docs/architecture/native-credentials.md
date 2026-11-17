@@ -21,11 +21,13 @@ Transport limits:
 
 The app exposes two native commands.
 
-**`connect`** posts `{op:"metadata"}` to `/native/v1` with no credential. The reply gives the host ID and principal ID. Rust binds both for the app session in memory only. Nothing is written to disk and the Keychain is not used. `connect` returns an opaque observation token. Connecting again to the same host keeps the current observation. Connecting to a different host creates a new observation and the earlier one becomes stale.
+**`connect`** posts `{op:"metadata"}` to `/native/v1` with no credential. The reply gives the host ID. Rust binds it for the app session in memory only. Nothing is written to disk and the Keychain is not used. `connect` returns only an opaque observation token. Connecting again to the same host keeps the current observation. Connecting to a different host creates a new observation and the earlier one becomes stale.
+
+After upgrading the app, restart the host. A host from before this change still requires a device credential and answers the new app with HTTP 401, which the app reports as `network-failed` ("check that the host is running").
 
 **`execute`** takes the current observation and a service request. Rust checks the request's scopes against the bound host ID before sending. After an image reply it checks the observation again.
 
-If a metadata reply reports a different host ID than the bound one, Rust drops the binding and fails with `host-changed`. The user must select **Reconnect** explicitly; the app never rebinds on its own.
+Rust detects a host replaced mid-session, for example one restarted with another data directory on the same port, in two ways. A metadata reply that reports a different host ID than the bound one is the first. The second is a scoped request refused with 403 `forbidden`: the new host refuses scopes that belong to the old one, so Rust then sends a metadata request and compares its host ID. In either case, when the host IDs differ, Rust drops the binding and fails with `host-changed`. The app reports this as a lost connection: it disables its controls and keeps local work until the user selects **Reconnect**. The app never rebinds on its own.
 
 Errors are `profile-in-use`, `profile-unavailable`, `network-failed`, `stale`, `host-changed`, `invalid-input`, and `forbidden`. A per-profile lock file in the app data directory excludes a second AgentUI copy using the same profile, which reports `profile-in-use`.
 

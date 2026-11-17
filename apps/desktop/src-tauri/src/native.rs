@@ -21,7 +21,6 @@ pub enum Command {
 #[serde(rename_all = "camelCase")]
 struct Identity {
     host_id: String,
-    principal_id: String,
 }
 #[derive(Deserialize)]
 struct Reply {
@@ -48,8 +47,12 @@ fn random() -> Result<String, &'static str> {
         .map_err(|_| "profile-unavailable")?;
     Ok(bytes.iter().map(|value| format!("{value:02x}")).collect())
 }
-fn id(value: &str) -> bool {
-    !value.is_empty() && value.encode_utf16().count() <= 1024
+const SERVICE_MAX_RESPONSE_BYTES: usize = 4_100_000;
+fn host_identity(status: u16, body: &str) -> Option<String> {
+    let reply: Reply = serde_json::from_str(body).ok()?;
+    let host_id = reply.value.host_id;
+    (status == 200 && reply.ok && !host_id.is_empty() && host_id.encode_utf16().count() <= 1024)
+        .then_some(host_id)
 }
 impl Owner {
     pub fn new(directory: &Path, endpoint: String) -> Result<Self, &'static str> {
@@ -148,21 +151,11 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
                 &endpoint,
                 "/native/v1",
                 &json!({"op":"metadata"}),
-                4_100_000,
+                SERVICE_MAX_RESPONSE_BYTES,
             )?;
-            let reply: Reply = serde_json::from_str(&body).map_err(|_| "network-failed")?;
-            if status != 200
-                || !reply.ok
-                || !id(&reply.value.host_id)
-                || !id(&reply.value.principal_id)
-            {
-                return Err("network-failed");
-            }
+            let host_id = host_identity(status, &body).ok_or("network-failed")?;
             let mut state = locked(owner)?;
-            let observation = state.bind(reply.value.host_id.clone())?.to_string();
-            Ok(
-                json!({"observation":observation, "hostId":reply.value.host_id, "principalId":reply.value.principal_id}),
-            )
+            Ok(json!({"observation": state.bind(host_id)?}))
         }
         Command::Execute {
             observation,
@@ -182,7 +175,7 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
             };
             let image = wire::image_operation(&request);
             let (status, body) = http(
-                client,
+                client.clone(),
                 &endpoint,
                 if image {
                     "/native/v1/images"
@@ -193,14 +186,28 @@ pub fn run(owner: &Shared, command: Command) -> Result<Value, &'static str> {
                 if image {
                     wire::IMAGE_TRANSFER_MAX_BYTES
                 } else {
-                    4_100_000
+                    SERVICE_MAX_RESPONSE_BYTES
                 },
             )?;
             let value: Value = serde_json::from_str(&body).map_err(|_| "network-failed")?;
-            if request["op"] == "metadata"
-                && value["ok"] == true
-                && value["value"]["hostId"] != host_id
-            {
+            // A replaced host refuses this host's scopes with 403 forbidden, so
+            // ask who is answering before treating the refusal as an ordinary error.
+            let answering = if request["op"] == "metadata" {
+                host_identity(status, &body)
+            } else if status == 403 && value["error"]["kind"] == "forbidden" {
+                http(
+                    client,
+                    &endpoint,
+                    "/native/v1",
+                    &json!({"op":"metadata"}),
+                    SERVICE_MAX_RESPONSE_BYTES,
+                )
+                .ok()
+                .and_then(|(status, body)| host_identity(status, &body))
+            } else {
+                None
+            };
+            if answering.is_some_and(|answering| answering != host_id) {
                 let mut state = locked(owner)?;
                 if state.guard(&observation).is_ok() {
                     state.binding = None;
@@ -279,15 +286,21 @@ mod tests {
         write!(socket, "HTTP/1.1 {status} Test\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len()).unwrap();
     }
     fn serve(replies: Vec<String>) -> (String, std::thread::JoinHandle<Vec<Vec<String>>>) {
+        serve_statuses(replies.into_iter().map(|body| (200, body)).collect())
+    }
+    fn serve_statuses(
+        replies: Vec<(u16, String)>,
+    ) -> (String, std::thread::JoinHandle<Vec<Vec<String>>>) {
         let server = TcpListener::bind("127.0.0.1:0").unwrap();
         let address = server.local_addr().unwrap();
         let thread = std::thread::spawn(move || {
             replies
                 .into_iter()
-                .map(|body| {
+                .map(|(status, body)| {
                     let (mut socket, _) = server.accept().unwrap();
-                    let (_, headers, _) = read_request(&socket);
-                    reply(&mut socket, 200, &body);
+                    let (_, mut headers, request) = read_request(&socket);
+                    reply(&mut socket, status, &body);
+                    headers.push(String::from_utf8(request).unwrap());
                     headers
                 })
                 .collect()
@@ -321,8 +334,10 @@ mod tests {
         let (endpoint, server) = serve(vec![metadata("host"), metadata("host")]);
         let fixture = Fixture::new(&endpoint);
         let first = run(&fixture.owner, Command::Connect {}).unwrap();
-        assert_eq!(first["hostId"], "host");
-        assert_eq!(first["principalId"], "trusted-owner");
+        assert_eq!(
+            first.as_object().unwrap().keys().collect::<Vec<_>>(),
+            ["observation"]
+        );
         let again = run(&fixture.owner, Command::Connect {}).unwrap();
         assert_eq!(again, first);
         for headers in server.join().unwrap() {
@@ -340,7 +355,6 @@ mod tests {
         let first = run(&fixture.owner, Command::Connect {}).unwrap();
         let second = run(&fixture.owner, Command::Connect {}).unwrap();
         server.join().unwrap();
-        assert_eq!(second["hostId"], "elsewhere");
         assert_ne!(second["observation"], first["observation"]);
         assert!(run(
             &fixture.owner,
@@ -414,6 +428,52 @@ mod tests {
             } else {
                 assert_eq!(result, Err("host-changed"));
                 assert!(locked(&fixture.owner).unwrap().binding.is_none());
+            }
+        }
+    }
+    #[test]
+    fn a_forbidden_scoped_reply_from_a_replaced_host_requires_an_explicit_reconnect() {
+        let forbidden = json!({"ok":false,"error":{"kind":"forbidden","message":"Conversation belongs to another host"}}).to_string();
+        let request =
+            json!({"op":"conversation-agent","scope":{"hostId":"host","conversationId":"chat"}});
+        for (answering, changed) in [("host", false), ("elsewhere", true)] {
+            let (endpoint, server) =
+                serve_statuses(vec![(403, forbidden.clone()), (200, metadata(answering))]);
+            let fixture = Fixture::new(&endpoint);
+            let observation = fixture.bound("host");
+            let result = run(
+                &fixture.owner,
+                Command::Execute {
+                    observation: observation.clone(),
+                    request: request.clone(),
+                },
+            );
+            let requests = server.join().unwrap();
+            assert_eq!(
+                serde_json::from_str::<Value>(requests[1].last().unwrap()).unwrap(),
+                json!({"op":"metadata"})
+            );
+            if changed {
+                assert_eq!(result, Err("host-changed"));
+                assert!(locked(&fixture.owner).unwrap().binding.is_none());
+                assert_eq!(
+                    run(
+                        &fixture.owner,
+                        Command::Execute {
+                            observation,
+                            request: request.clone(),
+                        },
+                    ),
+                    Err("stale")
+                );
+            } else {
+                let result = result.unwrap();
+                assert_eq!(result["status"], 403);
+                assert_eq!(
+                    serde_json::from_str::<Value>(result["body"].as_str().unwrap()).unwrap(),
+                    serde_json::from_str::<Value>(&forbidden).unwrap()
+                );
+                assert!(locked(&fixture.owner).unwrap().guard(&observation).is_ok());
             }
         }
     }
