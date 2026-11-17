@@ -1,0 +1,150 @@
+[
+  {
+    "valid": true,
+    "request": {
+      "op": "output-list",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      }
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-list"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-list",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat",
+        "private": true
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-list",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "private": true
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "ref": "private"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": ""
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "output-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "chat"
+      },
+      "outputId": "output-000000000000000000000000000000000000000000000000000000000000000\u00e9"
+    }
+  }
+]

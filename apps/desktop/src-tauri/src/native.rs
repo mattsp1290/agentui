@@ -896,4 +896,5 @@ mod tests {
             replacement
         );
     }
+    include!("native_output_tests.rs");
 }

@@ -1,3 +1,7 @@
+import { parseOutputList, parseOutputRead } from './output-service.js';
+import { parseOutputId } from './output.js';
+import type { OutputId, OutputListing, OutputRead } from './output.js';
+import type { OutputListValue, OutputReadValue } from './output-service.js';
 import { parseFrontendBinding } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest, FrontendEligibility } from './frontend-sends.js';
 import { IMAGE_FAILURE_KINDS, parseImageInputCapability, parseImageAttachment, parseImageBase64, parseImageId, parseImageName, parseUploadId } from './image.js';
@@ -32,6 +36,8 @@ export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
 }
 export type ServiceRequest =
+  | { readonly op: 'output-list'; readonly scope: ConversationScope }
+  | { readonly op: 'output-read'; readonly scope: ConversationScope; readonly outputId: OutputId }
   | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest)
   | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
@@ -86,6 +92,8 @@ export interface ConversationSearchPage {
   readonly after: string | null;
 }
 export interface ServiceValueMap {
+  readonly 'output-list': OutputListValue;
+  readonly 'output-read': OutputReadValue;
   readonly 'frontend-binding': FrontendBinding;
   readonly 'image-upload': { readonly scope: ConversationScope; readonly attachment: ImageAttachment };
   readonly 'image-read': { readonly scope: ConversationScope; readonly attachment: ImageAttachment; readonly base64: string };
@@ -111,6 +119,8 @@ export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
  * A resolved rejection concerns this attempt and cannot rule out an earlier same-ID attempt.
  * Preserve previously uncertain commands until authoritative receipt settlement. */
 export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
+  conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
+  readOutput(scope: ConversationScope, outputId: OutputId): Promise<OutputRead>;
   frontendBinding(input: FrontendBindingRequest): Promise<FrontendBinding>;
   uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
   readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
@@ -134,6 +144,8 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
   canonicalJson(value);
   const input = record(value);
   switch (input.op) {
+    case 'output-list': exact(input, ['op', 'scope']); return { op: 'output-list', scope: parseScope(input.scope) };
+    case 'output-read': exact(input, ['op', 'scope', 'outputId']); return { op: 'output-read', scope: parseScope(input.scope), outputId: parseOutputId(input.outputId) };
     case 'frontend-binding':
       exact(input, ['op', 'scope', 'id', 'action']);
       if (input.action !== 'recover' && input.action !== 'unavailable') throw new Error('Invalid binding action');
@@ -267,9 +279,12 @@ function catalogEntries(value: unknown) {
     return { scope: parseScope(entry.scope), preview: entry.preview };
   });
 }
-type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, 'frontend-binding'> } | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest);
+type ContextualOp = 'frontend-binding' | 'output-list' | 'output-read';
+type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, ContextualOp> } | Extract<ServiceRequest, { readonly op: ContextualOp }>;
 type RequestFor<K extends keyof ServiceValueMap> = ResponseRequest & { readonly op: K };
 const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, request: RequestFor<K>) => ServiceValueMap[K] } = {
+  'output-list': (value, request) => parseOutputList(request, value),
+  'output-read': (value, request) => parseOutputRead(request, value),
   'frontend-binding'(value, request) {
     const binding = parseFrontendBinding(value);
     if (binding.kind === 'bound' ? binding.command.clientCommandId !== request.id || !sameScope(binding.command.scope, request.scope) : binding.id !== request.id) throw new Error('Foreign frontend binding');
