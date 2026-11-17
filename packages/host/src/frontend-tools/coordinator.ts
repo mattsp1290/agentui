@@ -112,7 +112,7 @@ export function createFrontendCoordinator(store: Pick<SqliteStore<unknown, unkno
   };
   const save = (scope: ConversationScope, run: Run) => {
     const encoded = canonicalJson(run);
-    if (Buffer.byteLength(encoded) > (run.status === 'blocked' ? 1000002 : 1000000)) throw new Error('Frontend run capacity exceeded');
+    if (Buffer.byteLength(encoded) > (run.status === 'blocked' || run.status === 'faulted' ? 1000002 : 1000000)) throw new Error('Frontend run capacity exceeded');
     store.db.prepare('UPDATE frontend_runs SET data=? WHERE host=? AND conversation=? AND thread=? AND run=?')
       .run(encoded, ...keyParts(scope, { threadId: run.threadId, runId: run.identity.runId }));
   };
@@ -196,10 +196,11 @@ export function createFrontendCoordinator(store: Pick<SqliteStore<unknown, unkno
           run.status = 'ready'; break;
         }
       }
+      run.cursor = cursor; run.eventBytes += Buffer.byteLength(encoded);
+      if (Buffer.byteLength(canonicalJson(run)) > 1_000_000) throw new Error('Frontend run capacity exceeded');
     } catch {
       original.status = 'faulted'; save(scope, original); return 'faulted';
     }
-    run.cursor = cursor; run.eventBytes += Buffer.byteLength(encoded);
     store.db.prepare('INSERT INTO frontend_events(host, conversation, thread, run, cursor, data) VALUES (?, ?, ?, ?, ?, ?)').run(...parts, cursor, encoded);
     for (const receipt of receipts) writeReceipt(scope, key, receipt.callId, receipt.result);
     save(scope, run); return 'accepted';

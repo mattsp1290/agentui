@@ -51,8 +51,8 @@ export interface ProviderChange {
 }
 export interface ProviderStreamStore {
   hasFrontendObservations?(scope: ProviderCreation['intent']['scope']): boolean;
-  prepareProviderObservations?(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
-    factory: typeof FrontendObservations, map: (originals: readonly AguiOriginalRun<string>[]) => ProviderObservations):
+  prepareProviderObservations?<I extends string>(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
+    factory: typeof FrontendObservations, describe: (original: AguiOriginalRun<string>) => AguiOriginalRun<I>, map: (originals: readonly AguiOriginalRun<I>[]) => ProviderObservations):
     { readonly kind: 'duplicate'; readonly checkpoint: ProviderCheckpoint } | { readonly kind: 'prepared'; readonly value: PreparedProviderObservations };
   providerCheckpoint(original: ProviderCreation): ProviderCheckpoint | null;
   commitProvider(original: ProviderCreation, expected: number | null,
@@ -114,19 +114,20 @@ export async function observeProvider<M extends ProviderModel, I extends string>
     const event = item.kind === 'event' ? { id: identifier(item.eventId), payload: canonicalJson(item) } : null;
     const revision = committed?.revision ?? null;
     let prepared: { kind: 'snapshot'; state: M['state'] } | { kind: 'event'; event: M['event'] } | undefined;
-    const mapped = observationFactory ? store.prepareProviderObservations?.(original, event, observationFactory, originals => {
+    const mapped = observationFactory ? store.prepareProviderObservations?.(original, event, observationFactory,
+      value => ({ ...value, run: { binding, ref: { ...value.run.ref, instance: binding.creation.agent.instance } } }), originals => {
       if (!observations) return { kind: 'absent' };
       let mapped: unknown;
       if (item.kind === 'snapshot') {
         const input = record(item.snapshot, ['binding', 'cursor', 'projectionVersion', 'state', 'decisions']);
         prepared = { kind: 'snapshot', state: decode(presentation.decodeState, input.state) };
-        const context = originals.map(value => ({ ...value, run: { binding, ref: { ...value.run.ref, instance: binding.creation.agent.instance } } }));
-        mapped = observations.snapshot(structuredClone(prepared.state), structuredClone(context));
+        mapped = observations.snapshot(structuredClone(prepared.state), structuredClone(originals));
       } else {
         prepared = { kind: 'event', event: decode(presentation.decodeEvent, item.event) };
         mapped = observations.event(structuredClone(prepared.event));
       }
-      const parsed = parseProviderObservations(mapped, prepared.kind, storedBinding, original.installation);
+      const parsed: ProviderObservations = prepared.kind === 'snapshot' ? { kind: 'snapshot', value: mapped, binding: storedBinding }
+        : parseProviderObservations(mapped, storedBinding, original.installation);
       ensureRunning();
       return parsed;
     }) : undefined;

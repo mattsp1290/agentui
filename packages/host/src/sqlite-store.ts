@@ -193,8 +193,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if (row.original !== canonicalJson(original)) throw new Error('Provider checkpoint association changed');
     return providerCheckpoint(json(row.data));
   }
-  prepareProviderObservations(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
-    factory: typeof FrontendObservations, map: (originals: readonly AguiOriginalRun<string>[]) => ProviderObservations):
+  prepareProviderObservations<I extends string>(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
+    factory: typeof FrontendObservations, describe: (original: AguiOriginalRun<string>) => AguiOriginalRun<I>, map: (originals: readonly AguiOriginalRun<I>[]) => ProviderObservations):
     { readonly kind: 'duplicate'; readonly checkpoint: ProviderCheckpoint } | { readonly kind: 'prepared'; readonly value: PreparedProviderObservations } {
     if (event) {
       const prior = this.db.prepare('SELECT payload FROM provider_event_ids WHERE host=? AND conversation=? AND id=?').get(...key(original.intent.scope), event.id);
@@ -204,9 +204,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         return { kind: 'duplicate', checkpoint: current };
       }
     }
-    const selection = new factory(this).selection(original);
-    const observations = map(structuredClone(selection.originals));
-    return { kind: 'prepared', value: { factory, selection, observations } };
+    return { kind: 'prepared', value: { factory, payload: new factory(this).prepare(original, describe, map) } };
   }
   commitProvider(original: ProviderCreation, expected: number | null,
     event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange,
@@ -229,7 +227,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if ((current?.revision ?? null) !== expected) throw new Error('Provider checkpoint advanced');
       const change = render();
       if (canonicalJson(this.creation(scope)) !== canonicalJson(creation) || (this.providerCheckpoint(original)?.revision ?? null) !== expected) throw new Error('Provider observation changed during render');
-      if (prepared) new prepared.factory(this).commit(original, prepared.observations, prepared.selection, transaction);
+      if (prepared) new prepared.factory(this).commit(original, prepared.payload, transaction);
       for (const run of change.runs) this.writeProviderRun(scope, run);
       const requireRun = (runId: string) => {
         if (!this.db.prepare('SELECT 1 FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId)) throw new Error('Provider run is missing');

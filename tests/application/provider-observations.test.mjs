@@ -161,7 +161,9 @@ test('snapshot preparation rejects a reentrantly changed original set and retrie
 
 test('a request-only original stays opaque after installing an opted-in mapper',async t=>{
   const f=await observationFixture(t,{enabled:false});await f.submit();await f.restart(true);
-  const before=f.dump();assert.equal(await f.emit([f.batch()]),false);assert.deepEqual(f.dump(),before);assert.equal(f.dump().frontend_observation_runs.length,0);
+  const before=f.dump();assert.equal(await f.emit([f.batch()]),true);
+  assert.notDeepEqual(f.dump().provider_checkpoints,before.provider_checkpoints);assert.equal(f.dump().frontend_observation_runs.length,0);
+  assert.equal(f.dump().frontend_runs.length,0);
 });
 
 test('two original runs in one item keep distinct evidence positions and original activation bindings',async t=>{

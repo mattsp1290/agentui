@@ -33,7 +33,7 @@ export async function observationFixture(t, options = {}) {
     let body = ''; for await (const bytes of request) body += bytes;
     const input = JSON.parse(body); requests.push({ path: request.url, input });
     if (request.url === '/create') {
-      binding = { kind: 'agentui-created', creation: input, authority: { kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: 'original' } } };
+      binding = { kind: 'agentui-created', creation: input, authority: { kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: options.sessionId ?? 'original' } } };
       respond(response, binding);
     } else if (request.url === '/snapshot') respond(response, { cursor: `snapshot-${serial}`, state: { histories } });
     else if (request.url === '/submit') {
@@ -57,7 +57,7 @@ export async function observationFixture(t, options = {}) {
       entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate: context => provider.activate(context, enabled) },
       authority: { credentials: {}, issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {} } }]);
     await registry.activate(); const [discovered] = await registry.discover();
-    host = openLocalHost({ path, projection: transcriptProjection, providers: registry, driver: [], authorize: () => true });
+    host = openLocalHost({ path, projection: transcriptProjection, providers: registry, driver: [], authorize: () => true, ...(options.budgets ? { budgets: options.budgets } : {}) });
     if (create) await host.createProviderConversation(scope, { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance,
       agent: discovered.agents[0], presentationVersion: 1, expectedAuthority: discovered.expectedAuthority }, registry);
     else await host.observeProvider(scope);
