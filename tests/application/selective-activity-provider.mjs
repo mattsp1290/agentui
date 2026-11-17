@@ -5,7 +5,7 @@ import { parseTranscript, transcriptProjection } from '@agentui/contracts/conver
 
 export async function activityProvider(t) {
   const instance = { namespace: 'activity-feed', installationId: 'activity-install', generation: 'one', protocolVersion: '1' };
-  const saved = new Map(), clients = new Set(), requests = [];
+  const saved = new Map(), clients = new Set(), requests = [], errors = [], feeds = new Set();
   let sequence = 0, context, credential;
   const ref = binding => ({ binding, ref: { kind: 'run', instance, opaqueId: 'same-run' } });
   const cursor = binding => ({ kind: 'provider-cursor', binding, opaque: { token: String(++sequence) } });
@@ -36,7 +36,11 @@ export async function activityProvider(t) {
     else { response.statusCode = 404; response.end('{}'); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => { server.closeAllConnections(); server.close(); });
+  t.after(() => {
+    for (const close of feeds) close();
+    server.closeAllConnections(); server.close();
+    assert.deepEqual(errors, []);
+  });
   const service = `http://127.0.0.1:${server.address().port}`;
   const request = (path, input, signal) => context.credentials.use({ credential, service }, async token => {
     const response = await fetch(service + path, { method: 'POST', headers: { authorization: `Bearer ${token}` }, body: JSON.stringify(input), signal });
@@ -61,7 +65,8 @@ export async function activityProvider(t) {
     async reconcileCommand() { return { kind: 'unsupported', reason: 'Unused' }; },
     observe(input, receive) {
       const controller = new AbortController(), end = Promise.withResolvers(); let stopped = false;
-      const close = () => { if (stopped) return; stopped = true; controller.abort(); end.resolve({ kind: 'closed', cursor: null, reason: 'closed' }); };
+      const close = () => { if (stopped) return; stopped = true; feeds.delete(close); controller.abort(); end.resolve({ kind: 'closed', cursor: null, reason: 'closed' }); };
+      feeds.add(close);
       void (async () => {
         try {
           const response = await request('/observe', input, controller.signal); let buffered = '';
@@ -72,8 +77,9 @@ export async function activityProvider(t) {
               if (!stopped) await receive(item);
             }
           }
-        } finally { close(); }
-      })().catch(error => { if (!controller.signal.aborted) throw error; });
+        } catch (error) { if (!stopped) errors.push(error); }
+        finally { close(); }
+      })();
       return { close, ended: end.promise };
     },
     async close() {},
