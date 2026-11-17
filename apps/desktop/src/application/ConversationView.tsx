@@ -11,7 +11,7 @@ import { conversationResponding } from './responding.js';
 import { FileActivity } from './FileActivity.js';
 import { CommandActivity } from './CommandActivity.js';
 import { AssistantReply } from './AssistantReply.js';
-import { CustomizationTranscript, type ContentLayoutSelection, type TranscriptSelection } from './DesktopCustomizations.js';
+import { CustomizationActivity, CustomizationTranscript, type ActivitySelection, type ContentLayoutSelection, type TranscriptSelection } from './DesktopCustomizations.js';
 import { CustomizationContent } from './CustomizationContent.js';
 import { ImageAttachmentCard, imageSize } from './ImageAttachmentCard.js';
 
@@ -37,11 +37,12 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' }, contentLayout = { kind: 'default' }, modules = null }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' }, activity = { kind: 'default' }, contentLayout = { kind: 'default' }, modules = null }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly permissionState?: PermissionState;
   readonly observation?: ConversationObservation | null;
   readonly transcript?: TranscriptSelection;
+  readonly activity?: ActivitySelection;
   readonly contentLayout?: ContentLayoutSelection;
   readonly modules?: ReactNode;
   readonly composerControls?: (canSwitch: boolean) => ReactNode;
@@ -116,7 +117,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     void operation().catch((error: unknown) => setImageError({ store, message: error instanceof Error ? error.message : 'The image could not be changed.' }));
   }
   const conversationKey = `${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`;
-  const nativeTranscript = <div className="transcript" aria-label="Messages" aria-live="polite">
+  const context = { conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions };
+  const nativeMessages = <>
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>
         <strong>{message.role === 'user' ? 'You' : presentation.assistant}</strong>
@@ -124,9 +126,16 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
         {message.image && <ImageAttachmentCard attachment={message.image} read={actions.readImage} />}
         {!message.complete && <span className="progress-label">{paused ? 'Updates paused' : agent === 'recorded' ? 'Recorded response in progress…' : 'Responding…'}</span>}
       </article>)}
+    </>;
+  const nativeActivity = <>
       <CommandActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
       <FileActivity transcript={view.document.domain} connected={view.connection.kind === 'connected'} paused={paused} />
-    </div>;
+    </>;
+  const nativeTranscript = <div className="transcript" aria-label="Messages" aria-live="polite">{nativeMessages}{nativeActivity}</div>;
+  const selectiveTranscript = <div className="transcript" aria-label="Messages" aria-live="polite">{nativeMessages}
+    <CustomizationActivity selection={activity} conversationKey={conversationKey} fallback={nativeActivity}
+      context={{ ...context, updates: paused ? 'paused' : view.connection.kind === 'connected' ? 'connected' : 'reconnecting' }} />
+  </div>;
 
   return <section className="conversation-panel" aria-label="Conversation">
     <header><p className="eyebrow">{agent === 'recorded' ? 'RECORDED CONVERSATION' : 'CONVERSATION'}</p><h1>Your conversation</h1><p className="agent-label">{active.agent.label}</p><p className="scope-label">{active.scope.conversationId}</p></header>
@@ -144,8 +153,8 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     {permissionState && <ConversationPermissions outbox={view.outbox} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationContent selection={contentLayout} conversationKey={conversationKey} modules={modules} nativeTranscript={nativeTranscript}
       transcript={<CustomizationTranscript selection={transcript} conversationKey={conversationKey}
-        context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
-        fallback={nativeTranscript}
+        context={context}
+        fallback={transcript.kind === 'claimed' ? nativeTranscript : selectiveTranscript}
         appendix={sentImages.length > 0 && <section className="sent-images" aria-label="Sent images">
           <h2>Sent images</h2>{sentImages.map(sent => <ImageAttachmentCard key={sent.messageId} attachment={sent.image} read={actions.readImage} />)}
         </section>} />} />

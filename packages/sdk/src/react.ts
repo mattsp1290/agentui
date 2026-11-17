@@ -19,6 +19,9 @@ export interface ConversationModuleProps {
   readonly commands: ConversationCommands;
   readonly permissions: { read(): Promise<ConversationPermissions> };
 }
+export interface ConversationActivityProps extends ConversationModuleProps {
+  readonly updates: 'connected' | 'reconnecting' | 'paused';
+}
 export interface ModuleAction {
   readonly id: string;
   readonly label: string;
@@ -40,7 +43,10 @@ export interface ConversationContentLayoutProps {
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
   readonly contentLayout?: ComponentType<ConversationContentLayoutProps>;
-  readonly overrides?: { readonly transcript?: ComponentType<ConversationModuleProps> };
+  readonly overrides?: {
+    readonly transcript?: ComponentType<ConversationModuleProps>;
+    readonly activity?: ComponentType<ConversationActivityProps>;
+  };
 }
 export interface UiExtensionEntry<K extends FrontendPlatform> {
   readonly kind: K;
@@ -51,6 +57,7 @@ export interface UiExtensionEntry<K extends FrontendPlatform> {
 export interface UiExtensionPresentation {
   readonly modules: readonly ConversationModule[];
   readonly transcript: ComponentType<ConversationModuleProps> | undefined;
+  readonly activity: ComponentType<ConversationActivityProps> | undefined;
   readonly contentLayout: ComponentType<ConversationContentLayoutProps> | undefined;
 }
 export type UiExtensionCapture =
@@ -111,12 +118,12 @@ export function parseConversationModules(value: unknown): readonly ConversationM
   return modules(value);
 }
 
-function parseTranscript(value: unknown): UiExtensionPresentation['transcript'] {
-  if (value === undefined) return undefined;
+function parseOverrides(value: unknown): Pick<UiExtensionPresentation, 'transcript' | 'activity'> {
+  if (value === undefined) return { transcript: undefined, activity: undefined };
   const overrides = behaviour(value);
   for (let current: object | null = overrides; current !== null && current !== Object.prototype; current = Object.getPrototypeOf(current)) {
     for (const key of Reflect.ownKeys(current)) {
-      if (key === 'transcript') continue;
+      if (key === 'transcript' || key === 'activity') continue;
       if (current !== overrides && key === 'constructor') {
         const descriptor = Object.getOwnPropertyDescriptor(current, key);
         if (descriptor && 'value' in descriptor && typeof descriptor.value === 'function' && descriptor.value.prototype === current) continue;
@@ -124,9 +131,10 @@ function parseTranscript(value: unknown): UiExtensionPresentation['transcript'] 
       throw new Error(`Unknown override slot: ${String(key)}`);
     }
   }
-  const transcript = overrides.transcript;
+  const transcript = overrides.transcript, activity = overrides.activity;
   if (transcript !== undefined) validateComponent<ConversationModuleProps>(transcript);
-  return transcript;
+  if (activity !== undefined) validateComponent<ConversationActivityProps>(activity);
+  return { transcript, activity };
 }
 
 /** Captures presentation without acquiring or inspecting disposal. */
@@ -134,7 +142,7 @@ export function parseUiExtensionPresentation(value: unknown): UiExtensionPresent
   const contributions = behaviour(value);
   const modules = contributions.modules, overrides = contributions.overrides, contentLayout = contributions.contentLayout;
   if (contentLayout !== undefined) validateComponent<ConversationContentLayoutProps>(contentLayout);
-  return { modules: parseConversationModules(modules), transcript: parseTranscript(overrides), contentLayout };
+  return { modules: parseConversationModules(modules), ...parseOverrides(overrides), contentLayout };
 }
 
 export function parseUiExtensionContributions(value: unknown): UiExtensionCapture {
