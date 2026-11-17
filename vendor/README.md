@@ -13,7 +13,7 @@ approvals, discovery, provider routes and Apple qualification remain open.
 
 The host installs `@mattsp1290/switchboard@0.0.0` and the existing Pi, Codex,
 and Claude aliases from one immutable artifact at source
-`dadfe09fb2f0090b46168309309ca01bb89b9a0e`.
+`c9179737ec340dbbde284af4b11bcf2608756938`.
 The [active pin](switchboard.json) records the source tree, source-lock SHA-256,
 artifact SHA-256, toolchain, command results, and retained logs.
 The alias pins identify their public entrypoints and native SDK versions. Their
@@ -29,7 +29,7 @@ native SDK versions. The host owns telemetry providers and exporters.
 
 Qualification ran from a clean `git archive` of this revision on Darwin arm64
 with Node 24.22.3 and npm 11.19.1. `npm ci`, build, lint, type checking,
-`npm test`, and `verify:package` passed. The source test runner reported 185
+`npm test`, and `verify:package` passed. The source test runner reported 249
 passing top-level tests. Its package verification also exercised controlled
 installed-package, compiler, observability, and AG-UI fixtures.
 The explicit package-verification command passed separately.
@@ -38,9 +38,14 @@ These results do not renew the historical Linux or Mac application receipts.
 
 Reproduce the artifact from a separate directory. Do not replace a working
 Switchboard checkout to build the dependency.
+Since Switchboard #42, `npm ci` in the source downloads the `@ag-ui/core`
+devDependency from
+`https://raw.githubusercontent.com/mattsp1290/agentui/661216eab627be33067951ffad7a1691127a80fe/vendor/ag-ui/ed2c1d5b63299d3f08676a1418cc2640bbe55fd1/ag-ui-core-1.0.4.tgz`,
+the PR49 fork archive retained in AgentUI, so rebuilding needs network access
+to GitHub.
 
 ```sh
-	git -C /path/to/switchboard archive dadfe09fb2f0090b46168309309ca01bb89b9a0e | tar -x -C /path/to/empty-source
+	git -C /path/to/switchboard archive c9179737ec340dbbde284af4b11bcf2608756938 | tar -x -C /path/to/empty-source
 	cd /path/to/empty-source
 	npm ci
 	npm run build

@@ -70,7 +70,7 @@ enum Body {
         #[serde(
             default,
             skip_serializing_if = "Option::is_none",
-            deserialize_with = "present_offer"
+            deserialize_with = "present"
         )]
         frontend: Option<FrontendOffer>,
         #[serde(
@@ -96,25 +96,15 @@ struct FrontendDefinition {
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_object"
+        deserialize_with = "present"
     )]
     parameters: Option<serde_json::Map<String, Value>>,
     #[serde(
         default,
         skip_serializing_if = "Option::is_none",
-        deserialize_with = "present_object"
+        deserialize_with = "present"
     )]
     metadata: Option<serde_json::Map<String, Value>>,
-}
-fn present_object<'de, D: serde::Deserializer<'de>>(
-    de: D,
-) -> Result<Option<serde_json::Map<String, Value>>, D::Error> {
-    serde_json::Map::deserialize(de).map(Some)
-}
-fn present_offer<'de, D: serde::Deserializer<'de>>(
-    de: D,
-) -> Result<Option<FrontendOffer>, D::Error> {
-    FrontendOffer::deserialize(de).map(Some)
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -276,8 +266,8 @@ fn encoded_bytes(value: &impl Serialize) -> Result<usize, &'static str> {
         .map(|bytes| bytes.len())
         .map_err(|_| INVALID)
 }
-fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    String::deserialize(deserializer).map(Some)
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(de: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(de).map(Some)
 }
 pub fn image_operation(value: &Value) -> bool {
     matches!(value["op"].as_str(), Some("image-upload" | "image-read"))

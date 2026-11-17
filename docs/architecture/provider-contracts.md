@@ -186,9 +186,13 @@ The joint format-5 release preserves released format-4 images. Earlier hosts ref
 Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
 Format 5 stores keyed admitted owners in `frontend_send_owners` and keyless actor-specific tombstones in `frontend_send_tombstones`.
 Each owner has one command and a unique host, conversation, thread and run key. Both available and unavailable owners retain that key.
+The command foreign key is deferred until commit so admission authorization callbacks keep their existing position before command insertion.
+An admitted owner stores the original run key as a permanent reservation. The saved target retains the provider request used for evidence and retry.
+The host requires these records to agree when it reads an offered command. A missing owner, unreadable capture or disagreement is corruption and fails closed.
+The host does not reconstruct the reservation from whichever record still parses. Releasing closures changes availability and retains the original reservation.
 An admitted owner takes precedence over foreign actor tombstones for the same command. Tombstones never reserve a run key.
 The tagged history index derives its keys from immutable saved targets. Admission checks that those raw JSON keys agree with the parsed capture.
-Existing format 5 requires both ownership tables, their command keys, owner run uniqueness and a usable tagged history index. Opening does not repair missing objects.
+Existing format 5 requires both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
 Wire 9 and SDK 0.6.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
@@ -204,7 +208,7 @@ On reload, the desktop scans draft keys for the physical view whose exclusive lo
 Each page contains at most 100 keys. One worker borrows the conversation's canonical store and examines at most 32 journal references per slice.
 Lost closures become unavailable locally. Only the original matching principal can send their unavailable notifications.
 The worker never submits a saved command, binds replacement tools, or opens another tab's view.
-It advances past foreign owners and failed requests, then retries completed passes every two seconds.
+It advances past foreign owners and failed requests, then retries passes with actionable pending work every two seconds and wakes after durable capture release.
 
 Live captures retain their original store and view lock through navigation.
 Bound captures keep that lock until explicit release, a change of principal, storage failure, or reload.

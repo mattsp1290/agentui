@@ -16,7 +16,8 @@ import { canonicalJson, CORE_SNAPSHOT_DOCUMENT_JSON_BUDGET, JsonLimitError, fold
 import type { ClientCommand, ConversationDocument, ConversationScope, Envelope, HostEvent, Projection, Receipt, ReceiptState, Snapshot } from '@agentui/contracts';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { migrateTranscriptDatabase } from './transcript-migration.js';
-import { openDatabase } from './sqlite-schema.js';
+import { CURRENT_DATABASE_FORMAT, openDatabase, readDatabaseFormat } from './sqlite-schema.js';
+import { migrateFrontendSends, taggedKeySql, taggedHistorySql } from './sqlite-frontend-sends.js';
 import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
@@ -34,11 +35,6 @@ class AdmissionError extends Error {}
 class OutputApplicationError extends Error {}
 export class CapacityError extends Error {}
 const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
-const taggedSendSql = `json_extract(target, '$.kind')='provider' AND json_extract(target, '$.operation.kind')='send' AND json_extract(target, '$.operation.protocol')='ag-ui'`;
-const taggedThreadSql = `json_extract(target, '$.operation.request.threadId')`;
-const taggedRunSql = `json_extract(target, '$.operation.request.runId')`;
-const taggedKeySql = `${taggedSendSql} AND ${taggedThreadSql}=? AND ${taggedRunSql}=?`;
-const taggedHistorySql = `SELECT 1 FROM commands INDEXED BY commands_tagged_send_key WHERE host=? AND conversation=? AND ${taggedKeySql} LIMIT 1`;
 
 export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
@@ -68,32 +64,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
           host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, payload TEXT NOT NULL,
           PRIMARY KEY(host, conversation, id), FOREIGN KEY(host, conversation) REFERENCES provider_checkpoints(host, conversation));`);
       this.transaction(() => {
-        const format = this.db.prepare('PRAGMA user_version').get()?.user_version;
-        if (format !== 2 && format !== 3 && format !== 4 && format !== 5) throw new Error('Unsupported database version');
+        const format = readDatabaseFormat(this.db, 2);
         migrateImages(this.db);
-        if (format !== 5) this.db.exec(`CREATE TABLE frontend_send_owners (
-          host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
-          state TEXT NOT NULL CHECK(state IN ('available','unavailable')), thread_id TEXT NOT NULL, run_id TEXT NOT NULL,
-          PRIMARY KEY(host,conversation,command_id), UNIQUE(host,conversation,thread_id,run_id),
-          FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
-          CREATE TABLE frontend_send_tombstones (
-            host TEXT NOT NULL, conversation TEXT NOT NULL, command_id TEXT NOT NULL, actor_id TEXT NOT NULL,
-            PRIMARY KEY(host,conversation,command_id,actor_id), FOREIGN KEY(host,conversation) REFERENCES conversations(host,conversation));
-          CREATE INDEX commands_tagged_send_key ON commands(host,conversation,${taggedThreadSql},${taggedRunSql}) WHERE ${taggedSendSql};`);
-        for (const [table, names, primary] of [
-          ['frontend_send_owners', ['host', 'conversation', 'command_id', 'actor_id', 'state', 'thread_id', 'run_id'], ['host', 'conversation', 'command_id']],
-          ['frontend_send_tombstones', ['host', 'conversation', 'command_id', 'actor_id'], ['host', 'conversation', 'command_id', 'actor_id']],
-        ] as const) {
-          const columns = this.db.prepare('SELECT name,type,"notnull",pk FROM pragma_table_info(?) ORDER BY cid').all(table);
-          if (canonicalJson(columns.map(row => row.name)) !== canonicalJson(names) ||
-            columns.some(row => row.type !== 'TEXT' || row.notnull !== 1 || row.pk !== primary.findIndex(name => name === row.name) + 1)) throw new Error('Invalid frontend ownership schema');
-          const indexes = this.db.prepare('SELECT name FROM pragma_index_list(?) WHERE "unique"=1 AND partial=0').all(table);
-          const unique = indexes.map(row => this.db.prepare('SELECT name FROM pragma_index_info(?) ORDER BY seqno').all(nonempty(row.name)).map(column => column.name));
-          if (!unique.some(columns => canonicalJson(columns) === canonicalJson(primary)) ||
-            (table === 'frontend_send_owners' && !unique.some(columns => canonicalJson(columns) === canonicalJson(['host', 'conversation', 'thread_id', 'run_id'])))) throw new Error('Invalid frontend ownership uniqueness');
-        }
-        this.db.prepare(taggedHistorySql);
-        if (format !== 5) this.db.exec('PRAGMA user_version=5');
+        migrateFrontendSends(this.db, format);
+        if (format !== CURRENT_DATABASE_FORMAT) this.db.exec(`PRAGMA user_version=${CURRENT_DATABASE_FORMAT}`);
       });
     } catch (error) { this.db.close(); throw error; }
   }

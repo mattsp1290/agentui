@@ -235,3 +235,78 @@ test('initial active acquisition reports a native readonly abort through readine
   assert.match(result.storageFailure, /transaction/);
   assert.notEqual(result.active, 'connected');
 });
+
+test('synchronous browser restart preserves the original view beyond the lock fallback deadline', { timeout: 20_000 }, async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const scope = { hostId: 'host', conversationId: 'restart' }, viewId = '00000000-0000-4000-8000-000000000001';
+    const original = await BrowserViewStorage.reopen(viewId, () => {});
+    await original.saveView('host', { version: 2, route: scope, pendingCreation: null });
+    await original.close(); sessionStorage.setItem('agentui.viewId', viewId);
+    const descriptor = { id: 'default', label: 'Default', runtime: RECORDED_RUNTIME,
+      frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
+    const connection = {
+      async metadata() { return { hostId: 'host', principalId: 'principal', agents: [descriptor], defaultAgentId: 'default', compatibility: {
+        wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
+        desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
+      async catalog() { return []; }, async conversationAgent() { return descriptor; },
+      async conversationPermissions() { return { kind: 'available', observedAt: new Date().toISOString(), permissions: [] }; },
+      async providerObservation() { return { kind: 'not-applicable' }; },
+      conversation(selected) { return { scope: selected, async receipt() { return null; },
+        watch() { return { ended: new Promise(() => {}), close() {} }; } }; },
+    };
+    let acquisitions = 0;
+    const app = createApplicationController({ createConnection: () => connection, createId: () => 'never', ownedViewStorage: {
+      async open(failure) { acquisitions++; return BrowserViewStorage.open(failure); },
+      reopen: (id, failure) => BrowserViewStorage.reopen(id, failure),
+    } });
+    const put = IDBObjectStore.prototype.put, get = IDBObjectStore.prototype.get;
+    const entered = Promise.withResolvers();
+    let held = true, armed = false, unsubscribe, writing, closing, restarted;
+    try {
+      await app.start();
+      const store = app.getSnapshot().active.store;
+      IDBObjectStore.prototype.put = function(value, key) {
+        const request = put.call(this, value, key);
+        if (Array.isArray(key) && key[0] === 'draft' && key[1] === viewId) {
+          const records = this;
+          request.addEventListener('success', function keepAlive() {
+            entered.resolve();
+            if (held) get.call(records, ['keepalive']).addEventListener('success', keepAlive, { once: true });
+          }, { once: true });
+        }
+        return request;
+      };
+      writing = store.setDraft('Preserved through slow physical commit');
+      await entered.promise;
+      unsubscribe = app.subscribe(() => {
+        if (armed && app.getSnapshot().active === null) { armed = false; restarted = app.start(); }
+      });
+      armed = true;
+      closing = app.dispose();
+      let oldClosed = false;
+      await store.setDraft('Obsolete write').catch(error => { oldClosed = /closed/.test(error.message); });
+      await new Promise(resolve => setTimeout(resolve, 1700));
+      const heldState = { acquisitions, oldClosed, viewId: sessionStorage.getItem('agentui.viewId'),
+        locks: (await navigator.locks.query()).held.map(lock => lock.name) };
+      held = false;
+      await Promise.all([writing, closing, restarted]);
+      const state = app.getSnapshot();
+      const restored = { viewId: state.active?.viewId, route: state.saved.route, draft: state.active?.store.getSnapshot().draft,
+        acquisitions, error: state.error, storageFailure: state.storageFailure };
+      unsubscribe();
+      await app.dispose();
+      return { viewId, scope, heldState, restored, remainingLocks: (await navigator.locks.query()).held.map(lock => lock.name) };
+    } finally {
+      held = false; armed = false; unsubscribe?.(); IDBObjectStore.prototype.put = put;
+      await Promise.allSettled([writing, closing, restarted]); await app.dispose();
+    }
+  });
+  assert.equal(result.heldState.acquisitions, 1);
+  assert.equal(result.heldState.oldClosed, true);
+  assert.equal(result.heldState.viewId, result.viewId);
+  assert.deepEqual(result.heldState.locks, [`agentui-view:${result.viewId}`]);
+  assert.deepEqual(result.restored, { viewId: result.viewId, route: result.scope, draft: 'Preserved through slow physical commit',
+    acquisitions: 2, error: '', storageFailure: '' });
+  assert.deepEqual(result.remainingLocks, []);
+});

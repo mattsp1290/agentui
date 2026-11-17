@@ -187,7 +187,7 @@ test('disposal clears published active state and disconnects the captured old ta
 });
 
 for (const failure of ['view read', 'missing conversation', 'catalog', 'connect']) {
-  test(`principal refresh ${failure} failure releases only an unfinished active handover`, async t => {
+  test(`principal refresh ${failure} failure releases only the refresh-local borrow`, async t => {
     const f = fixture();
     t.after(() => f.app.dispose());
     f.views.set('original-view/host', { ...empty(), route: scope });
@@ -243,3 +243,155 @@ for (const publication of ['disconnect', 'install', 'same-store']) {
     assert.equal(f.app.getSnapshot().host.kind, 'ready');
   });
 }
+
+test('synchronous restart waits for the disposed session durable save', async () => {
+  const f = fixture(), entered = deferred(), gate = deferred();
+  let writing, closing, restarted, unsubscribe, acquisitions = 0, armed = false;
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.behavior.acquire = async () => { acquisitions++; };
+  try {
+    await f.app.start();
+    f.behavior.write = async () => { entered.resolve(); await gate.promise; };
+    const originalStore = f.app.getSnapshot().active.store;
+    writing = originalStore.setDraft('Durable previous session');
+    await entered.promise;
+    unsubscribe = f.app.subscribe(() => {
+      if (!armed || f.app.getSnapshot().active !== null) return;
+      armed = false;
+      restarted = f.app.start();
+    });
+    armed = true;
+    closing = f.app.dispose();
+    await assert.rejects(originalStore.setDraft('Too late'), /closed/);
+    await new Promise(resolve => setImmediate(resolve));
+    assert.ok(restarted, 'Subscriber synchronously restarts on cleared active state');
+    assert.equal(acquisitions, 1, 'Replacement storage acquisition must wait for old durable save');
+    assert.equal(f.leases[0].closed, false);
+    gate.resolve();
+    await Promise.all([writing, closing, restarted]);
+    assert.equal(acquisitions, 2);
+    assert.equal(f.leases[0].closed, true);
+    assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
+    assert.deepEqual(f.app.getSnapshot().saved.route, scope);
+    assert.equal(f.app.getSnapshot().storageFailure, '');
+    assert.equal(f.app.getSnapshot().error, '');
+    assert.equal(f.app.getSnapshot().active.store.getSnapshot().draft, 'Durable previous session');
+  } finally {
+    armed = false;
+    unsubscribe?.();
+    gate.resolve();
+    await Promise.allSettled([writing, closing, restarted]);
+    await f.app.dispose();
+  }
+});
+
+for (const throws of [false, true]) {
+  test(`nested disposal retains the original drain when its subscriber ${throws ? 'throws' : 'restarts twice'}`, async t => {
+    const f = fixture(), gate = deferred(), entered = deferred();
+    let writing, outer, nested, firstStart, secondStart, unsubscribe;
+    t.after(async () => {
+      unsubscribe?.(); gate.resolve();
+      await Promise.allSettled([writing, outer, nested, firstStart, secondStart]);
+      await f.app.dispose().catch(() => {});
+    });
+    f.views.set('original-view/host', { ...empty(), route: scope });
+    await f.app.start();
+    const store = f.app.getSnapshot().active.store;
+    f.behavior.write = async () => { entered.resolve(); await gate.promise; };
+    writing = store.setDraft('Original durable draft');
+    await entered.promise;
+    const failure = new Error('Subscriber failed');
+    unsubscribe = f.app.subscribe(() => {
+      if (f.app.getSnapshot().active !== null) return;
+      unsubscribe();
+      firstStart = f.app.start();
+      nested = f.app.dispose();
+      secondStart = f.app.start();
+      if (throws) throw failure;
+    });
+    outer = f.app.dispose();
+    assert.notEqual(outer, nested, 'Each disposal returns its own captured drain');
+    let settled = false;
+    const observed = outer.then(() => { settled = true; }, error => { settled = true; assert.equal(error, failure); });
+    await flush();
+    assert.equal(settled, false);
+    assert.equal(f.leases.length, 1);
+    await assert.rejects(store.setDraft('Too late'), /closed/);
+    gate.resolve();
+    await Promise.allSettled([writing, outer, nested, firstStart, secondStart]);
+    await observed;
+    assert.equal(f.leases[0].closed, true);
+    assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Original durable draft');
+    if (throws) {
+      await assert.rejects(outer, error => error === failure);
+      await assert.rejects(nested, error => error === failure);
+      assert.equal(f.leases.length, 1);
+      assert.match(f.app.getSnapshot().storageFailure, /Subscriber failed/);
+    } else {
+      assert.equal(f.leases.length, 2);
+      assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
+      assert.equal(f.app.getSnapshot().active.store.getSnapshot().draft, 'Original durable draft');
+    }
+  });
+}
+
+for (const throws of [false, true]) {
+  test(`store disposal subscriber ${throws ? 'failure' : 'restart'} preserves the admitted save drain`, async t => {
+    const f = fixture(), gate = deferred(), entered = deferred();
+    let writing, closing, restarted, unsubscribe;
+    t.after(async () => {
+      unsubscribe?.(); gate.resolve(); await Promise.allSettled([writing, closing, restarted]);
+      await f.app.dispose().catch(() => {});
+    });
+    f.views.set('original-view/host', { ...empty(), route: scope });
+    await f.app.start();
+    const store = f.app.getSnapshot().active.store;
+    f.behavior.write = async () => { entered.resolve(); await gate.promise; };
+    writing = store.setDraft('Keep the admitted save');
+    await entered.promise;
+    const failure = new Error('Store subscriber failed'), publications = [];
+    unsubscribe = store.subscribe(() => {
+      unsubscribe();
+      restarted = f.app.start();
+      t.after(f.app.subscribe(() => publications.push(f.app.getSnapshot())));
+      if (throws) throw failure;
+    });
+    closing = f.app.dispose();
+    const observed = closing.catch(error => error);
+    await flush();
+    assert.equal(f.leases.length, 1);
+    assert.equal(f.leases[0].closed, false);
+    assert.deepEqual(publications, [], 'Old cleanup must not publish into the restarted session');
+    gate.resolve();
+    await Promise.allSettled([writing, closing, restarted]);
+    assert.equal(await observed, throws ? failure : undefined);
+    assert.equal(f.leases[0].closed, true);
+    assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Keep the admitted save');
+  });
+}
+
+test('disposal reports both subscriber and physical close failures after the save drains', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred();
+  let writing, closing, unsubscribe;
+  t.after(async () => { unsubscribe?.(); gate.resolve(); await Promise.allSettled([writing, closing]); await f.app.dispose().catch(() => {}); });
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  const listenerFailure = new Error('Listener failed'), closeFailure = new Error('Physical close failed');
+  f.behavior.write = async () => { entered.resolve(); await gate.promise; };
+  writing = f.app.getSnapshot().active.store.setDraft('Drained before failure');
+  await entered.promise;
+  f.behavior.close = async () => { throw closeFailure; };
+  unsubscribe = f.app.subscribe(() => { unsubscribe(); throw listenerFailure; });
+  closing = f.app.dispose();
+  let settled = false;
+  const observed = closing.catch(error => { settled = true; return error; });
+  await flush();
+  assert.equal(settled, false);
+  assert.equal(f.leases[0].closed, false);
+  gate.resolve();
+  await writing;
+  const failure = await observed;
+  assert.ok(failure instanceof AggregateError);
+  assert.deepEqual(new Set(failure.errors), new Set([listenerFailure, closeFailure]));
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Drained before failure');
+});

@@ -88,11 +88,7 @@ interface ImageTransfers {
   upload: ServiceConnection['uploadImage'];
   read(scope: ConversationScope, imageId: ImageId): Promise<Uint8Array>;
 }
-type ActiveStoreOwner =
-  | { readonly kind: 'handover'; readonly borrow: StoreBorrow }
-  | { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: OpenConversation };
-type VisibleTransition = { readonly kind: 'visible'; readonly borrow: StoreBorrow; readonly target: Omit<OpenConversation, 'store'> };
-type ActiveTransition = VisibleTransition | Extract<ActiveStoreOwner, { kind: 'handover' }> | null;
+interface ActiveStoreOwner { readonly borrow: StoreBorrow; readonly target: OpenConversation }
 interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends; readonly images: ImageTransfers }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
@@ -159,20 +155,15 @@ export function createApplicationController(deps: {
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
-    const active = session?.activeOwner;
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW,
-      active: active?.kind === 'visible' ? active.target : null });
+      active: session?.activeOwner?.target ?? null });
+    syncRecovery();
     for (const listener of listeners) listener();
   }
-  function setActive(owner: Session, next: VisibleTransition): OpenConversation;
-  function setActive(owner: Session, next: ActiveTransition): OpenConversation | null;
-  function setActive(owner: Session, next: ActiveTransition): OpenConversation | null {
+  function setActive(owner: Session, next: ActiveStoreOwner | null): void {
     const previous = owner.activeOwner;
-    const active: ActiveStoreOwner | null = next?.kind === 'visible'
-      ? { kind: 'visible', borrow: next.borrow, target: { ...next.target, store: next.borrow.store } } : next;
-    owner.activeOwner = active;
+    owner.activeOwner = next;
     if (previous?.borrow !== next?.borrow) previous?.borrow.release();
-    return active?.kind === 'visible' ? active.target : null;
   }
   const generations = createGenerationSource();
   function syncRecovery(): void {
@@ -221,12 +212,11 @@ export function createApplicationController(deps: {
   function fail(owner: Session, failure: ApplicationFailure, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
     if (failure.kind === 'access-revoked') {
-      recovery.retarget(null);
       publish({ host: { kind: 'unpaired' }, error: 'Pair this browser to the host. Its previous access may have been revoked.' });
       void owner.frontend.session(null, owner.connection);
       disconnectActive();
     } else {
-      if (phase === 'handshake') { recovery.retarget(null); publish({ host: { kind: 'unavailable' }, error: failure.error }); }
+      if (phase === 'handshake') { publish({ host: { kind: 'unavailable' }, error: failure.error }); }
       else publish({ error: failure.error });
     }
   }
@@ -237,7 +227,6 @@ export function createApplicationController(deps: {
   }
   function failStorage(owner: Session, storage: OwnedViewStorage | null, cause: unknown): void {
     if (session !== owner || (storage !== null && !owner.pool.owns(storage))) return;
-    recovery.retarget(null);
     publish({ storageFailure: message(cause) });
     if (storage) owner.frontend.storageFailed(storage.viewId);
     disconnectActive();
@@ -337,8 +326,9 @@ export function createApplicationController(deps: {
       local(owner);
       const store = borrow.store;
       const previous = owner.activeOwner;
-      if (previous?.kind === 'visible' && previous.target.store === store) {
-        const active = setActive(owner, { kind: 'visible', borrow: previous.borrow, target: { ...previous.target, agent } });
+      if (previous?.target.store === store) {
+        const active: OpenConversation = { ...previous.target, agent };
+        setActive(owner, { borrow: previous.borrow, target: active });
         publish({});
         local(owner);
         observeActive(owner, active);
@@ -347,7 +337,8 @@ export function createApplicationController(deps: {
       }
       disconnectActive();
       local(owner);
-      const active = setActive(owner, { kind: 'visible', borrow, target: { scope, agent, viewId: storage.viewId } });
+      const active: OpenConversation = { scope, agent, viewId: storage.viewId, store };
+      setActive(owner, { borrow, target: active });
       publish({ permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
       local(owner);
       observeActive(owner, active);
@@ -392,18 +383,23 @@ export function createApplicationController(deps: {
   async function refresh(owner: Session): Promise<void> {
     const storage = local(owner);
     const previousHost = state.host;
-    recovery.retarget(null);
     publish({ host: { kind: 'loading' } });
     stopObservation();
     stalePermissions('Reconnecting to refresh permissions.');
+    let held: StoreBorrow | undefined;
     try {
       const received = await current(owner, owner.connection.metadata());
       const metadata = { ...received, agents: received.agents.map(compatibleAgent) };
-      await current(owner, owner.frontend.session(metadata, owner.connection));
+      const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
+      const issues = compatibility.kind === 'incompatible' ? compatibility.issues.filter(issue => issue.dimension !== 'native-runtime') : [];
+      await current(owner, owner.frontend.session(issues.length ? null : metadata, owner.connection));
       if ('metadata' in previousHost && previousHost.metadata.principalId !== metadata.principalId) {
         disconnectActive();
-        if (owner.activeOwner) setActive(owner, { kind: 'handover', borrow: owner.activeOwner.borrow });
+        local(owner);
+        held = owner.activeOwner?.borrow;
+        owner.activeOwner = null;
         publish({});
+        local(owner);
       }
       const previous = owner.view;
       if (previous && previous.saved !== null && previous.hostId !== metadata.hostId) {
@@ -412,8 +408,6 @@ export function createApplicationController(deps: {
         owner.view = { borrow: previous.borrow, saved: null };
         publish(DETACHED_VIEW);
       }
-      const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
-      const issues = compatibility.kind === 'incompatible' ? compatibility.issues.filter(issue => issue.dimension !== 'native-runtime') : [];
       if (issues.length) {
         state.active?.store.disconnect();
         publish({ host: { kind: 'incompatible', metadata, issues } });
@@ -428,13 +422,12 @@ export function createApplicationController(deps: {
       owner.view = { borrow, saved, hostId: metadata.hostId };
       publish({ host: { kind: 'ready', metadata } });
       const { hostId } = metadata;
-      syncRecovery();
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
         saved.route ? install(owner, saved.route) : Promise.resolve()]);
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') fail(owner, classifyFailure(failed.reason));
     } catch (cause) { fail(owner, classifyFailure(cause), 'handshake'); }
-    finally { if (session === owner && owner.activeOwner?.kind === 'handover') { setActive(owner, null); publish({}); } }
+    finally { held?.release(); }
   }
   async function run(operation: (owner: Session) => Promise<void>): Promise<void> {
     const owner = session;
@@ -501,7 +494,7 @@ export function createApplicationController(deps: {
             port: next.connection.conversation(scope), projection: transcriptProjection,
             drafts: storage.drafts(error => next.pool.failed(storage, error)), createCommandId: deps.createId,
             images: { upload: input => next.images.upload(input) },
-            frontend: next.frontend.forStore({ viewId: storage.viewId, scope, capture, eligibility: () => state.host.kind === 'ready'
+            frontend: next.frontend.forStore({ viewId: storage.viewId, scope, capture, recoveryNeeded: () => recovery.wake({ pool: next.pool, storage }), eligibility: () => state.host.kind === 'ready'
               ? state.host.metadata.agents.find(item => item.id === agentId())?.frontendOffers ?? 'unsupported' : 'unsupported' }) }),
           failed: (storage, error) => failStorage(next, storage, error),
         }),
@@ -529,18 +522,25 @@ export function createApplicationController(deps: {
     },
     dispose() {
       if (!session && disposal) return disposal;
-      const owner = session;
+      const owner = session, drains: unknown[] = [disposal];
+      const closing = Promise.resolve().then(async () => {
+        const results = await Promise.allSettled(drains);
+        const failures = results.filter(result => result.status === 'rejected');
+        if (failures.length === 1 && failures[0]) throw failures[0].reason;
+        if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Application disposal failed');
+      });
+      disposal = closing;
+      const observation = observationPoll, unsubscribe = unsubscribeActive;
+      observationPoll = null;
+      unsubscribeActive = null;
       session = null;
-      recovery.retarget(null);
-      disconnectActive();
-      if (owner) setActive(owner, null);
-      const previousDisposal = disposal, capturedClosing = owner?.frontend.dispose();
-      const poolClosing = owner?.pool.dispose();
-      return disposal = (async () => {
-        const drains = await Promise.allSettled([previousDisposal, capturedClosing, poolClosing]);
-        const failure = drains.find(result => result.status === 'rejected');
-        if (failure?.status === 'rejected') throw failure.reason;
-      })();
+      for (const close of [() => owner?.frontend.dispose(), () => owner?.pool.dispose(),
+        () => recovery.retarget(null), () => observation?.stop(), () => unsubscribe?.(),
+        () => { if (owner) setActive(owner, null); },
+        () => { if (session === null && disposal === closing) stalePermissions('Reconnect to refresh permissions.'); }]) {
+        try { drains.push(close()); } catch (error) { drains.push(Promise.reject(error)); }
+      }
+      return closing;
     },
     pair: code => run(async owner => {
       local(owner);

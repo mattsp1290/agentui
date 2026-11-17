@@ -243,7 +243,12 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     ready,
     frontendJournal: journal,
     dispose() {
-      if (!disposal) { closed = true; disposal = saves.then(() => undefined, () => undefined); stop(connection.kind === 'failed' ? connection : { kind: 'disconnected' }); }
+      if (!disposal) {
+        closed = true;
+        disposal = saves.then(() => undefined, () => undefined);
+        try { stop(connection.kind === 'failed' ? connection : { kind: 'disconnected' }); }
+        catch (error) { disposal = disposal.then(() => { throw error; }); }
+      }
       return disposal;
     },
     getSnapshot: () => view,

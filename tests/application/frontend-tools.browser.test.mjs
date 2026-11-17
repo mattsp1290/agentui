@@ -32,7 +32,7 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
         else resolve({default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){frontendTools.add(${tool});return {modules:[],dispose(){}};}}});
       };})}];
     function App(){window.custom=useDesktopCustomizations({customizations,enabled:true,sink:source});return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;}
-    window.capture=()=>{try{const capture=owner.forStore({viewId:'view',scope,capture:captureStore,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
+    window.capture=()=>{try{const capture=owner.forStore({recoveryNeeded(){},viewId:'view',scope,capture:captureStore,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
       const names=capture?.offer.tools.map(tool=>tool.definition.name);capture?.release();return {kind:'captured',names};
     }catch(error){return {kind:'error',message:error.message};}};
     window.finish=()=>owner.dispose();createRoot(document.getElementById('root')).render(<App/>);

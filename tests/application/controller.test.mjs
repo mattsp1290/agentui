@@ -1125,7 +1125,7 @@ for (const count of [1, 40]) test(`${count} own pending notifications keep captu
   assert.deepEqual(saved.frontendSends.map(row => row.command), record.frontendSends.map(row => row.command));
 });
 
-test('settled history beyond 32 references keeps captured rows stable on the next recovery pass', async t => {
+test('settled history beyond 32 references keeps captured rows stable without another recovery pass', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.drafts.set('original-view/host/conversation', journalRecord(scope, 40));
   const requests = [];
@@ -1139,8 +1139,9 @@ test('settled history beyond 32 references keeps captured rows stable on the nex
   const loads = f.loads.length;
   let publications = 0;
   const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
-  await eventually(() => f.loads.length > loads);
-  await new Promise(resolve => setTimeout(resolve, 20));
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (let index = 0; index < 3; index++) { t.mock.timers.tick(2_000); await new Promise(resolve => setImmediate(resolve)); }
+  assert.equal(f.loads.length, loads);
   assert.equal(publications, 0);
   assert.equal(f.app.getSnapshot().capturedSends, rows);
   assert.deepEqual(f.app.getSnapshot().capturedSends.map(row => row.command.clientCommandId), order);

@@ -19,7 +19,7 @@ test('a failed view stays refused across authority changes until a new registry 
     registries.push(owner); return owner;
   };
   const capture = { borrow: () => ({ failed() {}, release() {} }) };
-  const admission = owner => owner.forStore({ viewId: 'view', scope, capture, eligibility: () => 'ag-ui-capture-and-bind' });
+  const admission = owner => owner.forStore({ recoveryNeeded() {}, viewId: 'view', scope, capture, eligibility: () => 'ag-ui-capture-and-bind' });
   const original = create(); await original.session({ hostId: scope.hostId, principalId: 'A' }, connection);
   admission(original).capture().release();
   original.storageFailed('view');

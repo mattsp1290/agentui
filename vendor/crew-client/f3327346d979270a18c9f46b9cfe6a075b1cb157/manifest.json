@@ -1,0 +1,24 @@
+{
+  "package": "@birbcrew/client",
+  "version": "0.1.0",
+  "sourceRevision": "f3327346d979270a18c9f46b9cfe6a075b1cb157",
+  "sourcePackageTree": "3a7c73b158ef21e7e0ccfa767a0b4aebff106509",
+  "sourceRepository": "git@github.com:mattsp1290/crew.git",
+  "sourceWasClean": true,
+  "sourceArchive": "source.tar.gz",
+  "sourceArchiveSha256": "d02ac853304cf2acdbf6a7010db557ca87809b7cd98d00a01e6a643fe67ba455",
+  "packageArchive": "birbcrew-client-0.1.0.tgz",
+  "packageArchiveSha256": "292521ec9f489fdc4747daf3ed2089ac822c2c98e8df7b6e2d5c05ebcc1f09d5",
+  "npmIntegrity": "sha512-Cmmb46ynUDIEzpusKhcvI45Q0+a5Jylk3PDHzhbfDbJmLnFqKrp39fi5nv7GwjRBIbAJONirP+rDQ6wxWnZ1Hg==",
+  "build": {
+    "node": "24.22.3",
+    "npm": "11.19.1",
+    "typescript": "5.9.3",
+    "command": "npm pack ./packages/client --json --pack-destination <output>; the existing prepack script runs the client build",
+    "sourceRevision": "f3327346d979270a18c9f46b9cfe6a075b1cb157",
+    "sourceExtraction": "git archive --format=tar.gz f3327346d979270a18c9f46b9cfe6a075b1cb157 packages/client",
+    "dependencySource": "npm ci --ignore-scripts --force in a clean full git archive of sourceRevision on darwin-arm64; --force bypasses the root linux-only os/cpu declaration. npm run build:client, npm run check:openapi and npm run test:client passed on Node 24.22.3. npm run verify:client was not run because Node 22.23.3 was unavailable."
+  },
+  "license": "MIT",
+  "sourceTree": "d0b9f8b90b95dd55e27b96ab11c754c3f432fc39"
+}

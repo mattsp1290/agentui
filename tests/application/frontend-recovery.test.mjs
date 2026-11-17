@@ -286,3 +286,38 @@ test('released recovery repairs a crash between registration and cancellation af
   assert.deepEqual(binding, { kind: 'unavailable', id: 'offered', reason: 'closures-unavailable' });
   assert.equal(repair.inspect(key).status, 'blocked');
 });
+
+
+test('released binding refuses actor revocation during producer cancellation', async t => {
+  const { host } = await localOfferedHost(t, aguiExtension());
+  let authorized = true;
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => authorized };
+  await host.conversation(hostScope, actor).submit(offered(hostScope));
+  const producer = frontendToolsFor(host).producer(hostScope), key = { threadId: 'actual-thread', runId: 'actual-run' };
+  await assert.rejects(host.frontendBinding({ scope: hostScope, id: 'offered', action: 'unavailable' }, actor, () => ({
+    register: value => producer.register(value),
+    cancel(value) { producer.cancel(value); authorized = false; },
+  })), /frontend-owner-unavailable/);
+  assert.equal(producer.inspect(key).status, 'blocked');
+});
+
+test('binding recovery retains quarantined terminal evidence while explicit reconciliation reapplies it', async t => {
+  const a = aguiExtension(), { host, f } = await localOfferedHost(t, a);
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => true }, db = new DatabaseSync(f.path);
+  try {
+    db.prepare('INSERT INTO runs(host,conversation,id,data) VALUES(?,?,?,?)').run(hostScope.hostId, hostScope.conversationId, 'actual-run', '{}');
+    const receipt = (await host.conversation(hostScope, actor).submit(offered(hostScope))).receipt;
+    assert.deepEqual(receipt.state, { kind: 'uncertain', reason: 'output-rejected' });
+    assert.equal(JSON.parse(db.prepare("SELECT observation FROM commands WHERE id='offered'").get().observation).kind, 'conclusive');
+    db.exec("DELETE FROM runs WHERE id='actual-run'");
+    const saved = () => Object.fromEntries(['commands', 'events', 'conversations', 'runs'].map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()]));
+    const before = saved();
+    assert.equal((await host.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor, scope => frontendToolsFor(host).producer(scope))).kind, 'bound');
+    assert.deepEqual(saved(), before);
+    assert.equal((await host.reconcile(hostScope, 'offered', actor)).state.kind, 'completed');
+    assert.notDeepEqual(saved(), before);
+    assert.equal(db.prepare("SELECT COUNT(*) n FROM runs WHERE id='actual-run'").get().n, 1);
+    assert.equal(a.calls.submits.length, 1);
+    assert.equal(a.calls.reconciles.length, 0);
+  } finally { db.close(); }
+});
