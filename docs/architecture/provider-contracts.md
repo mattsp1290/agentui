@@ -426,4 +426,4 @@ Snapshot preparation reserves every unavailable marker before admitting complete
 
 The coordinator checks candidate state capacity before persistence. Capacity faults preserve the pre-event cursor, calls, permits and receipts while the provider journal and canonical checkpoint advance. SQL failures, including fault persistence, still roll back the entire transaction.
 
-Genuine released formats 5 and 6 migrate through the public host opener to format 7 without rewriting old command, image, transcript, permit or receipt rows. Their frozen old openers refuse the migrated file before changing WAL state. Core contract 1, projection 4, wire 9 and backend provider contract 1 remain unchanged.
+Genuine released formats 5 and 6 migrate through the public host opener to format 7 without rewriting old command, image, transcript, permit or receipt rows. Their frozen old openers refuse the migrated file before changing WAL state. Core contract 1, projection 4, wire 10 and backend provider contract 1 remain unchanged.

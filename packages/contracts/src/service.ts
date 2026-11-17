@@ -1,7 +1,7 @@
 import { parseFrontendBinding } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest, FrontendEligibility } from './frontend-sends.js';
-import { IMAGE_FAILURE_KINDS, parseImageAttachment, parseImageBase64, parseImageId, parseImageName, parseUploadId } from './image.js';
-import type { ImageAttachment, ImageId, UploadId } from './image.js';
+import { IMAGE_FAILURE_KINDS, parseImageInputCapability, parseImageAttachment, parseImageBase64, parseImageId, parseImageName, parseUploadId } from './image.js';
+import type { ImageAttachment, ImageId, ImageInputCapability, UploadId } from './image.js';
 import { parseConversationPermissions } from './permissions.js';
 import type { ConversationPermissions } from './permissions.js';
 import { parseProviderObservationStatus } from './observation.js';
@@ -49,6 +49,7 @@ export type ServiceRequest =
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string };
 interface AgentDescription {
+  readonly imageInput: ImageInputCapability;
   readonly frontendOffers: FrontendEligibility;
   readonly id: string;
   readonly label: string;
@@ -57,9 +58,8 @@ interface AgentDescription {
 }
 export type NativeAgentDescriptor = AgentDescription & {
   readonly runtime: NativeRuntimeIdentity;
-  readonly model?: { readonly id: string; readonly label: string; readonly inputModalities?: readonly InputModality[] };
+  readonly model?: { readonly id: string; readonly label: string };
 };
-export type InputModality = 'text' | 'image';
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
 });
@@ -190,8 +190,8 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
 }
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
-  exact(input, input.kind === 'provider' ? ['frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
-    : ['frontendOffers', 'id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
+  exact(input, input.kind === 'provider' ? ['imageInput', 'frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
+    : ['imageInput', 'frontendOffers', 'id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
   if (available.kind === 'ready') { exact(available, ['kind']); availability = { kind: 'ready' }; }
@@ -206,19 +206,13 @@ function agentDescriptor(value: unknown): AgentDescriptor {
     return command;
   });
   if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
-  const common: AgentDescription = { frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
+  const common: AgentDescription = { imageInput: parseImageInputCapability(input.imageInput), frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
   if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
-  if (model) exact(model, ['id', 'label', ...(Object.hasOwn(model, 'inputModalities') ? ['inputModalities'] : [])]);
+  if (model) exact(model, ['id', 'label']);
   return { ...common, runtime: { engine: identifier(runtime.engine), version: identifier(runtime.version), format: identifier(runtime.format) },
-    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label),
-      ...(Object.hasOwn(model, 'inputModalities') ? { inputModalities: inputModalities(model.inputModalities) } : {}) } } : {}) };
-}
-function inputModalities(value: unknown): readonly InputModality[] {
-  if (!Array.isArray(value) || !value.length || new Set(value).size !== value.length ||
-    value.some(item => item !== 'text' && item !== 'image')) throw new Error('Invalid model input modalities');
-  return value as InputModality[];
+    ...(model ? { model: { id: identifier(model.id), label: identifier(model.label) } } : {}) };
 }
 function compatibility(value: unknown): HostCompatibility {
   const input = record(value, ['wireVersion', 'extensionSdkVersion', 'nativeRuntime', 'desiredGitRevision', 'appliedArtifact']);

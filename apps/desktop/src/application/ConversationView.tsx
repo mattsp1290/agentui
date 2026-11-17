@@ -108,7 +108,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     });
   }
   const image = view.image;
-  const acceptsImages = 'model' in active.agent && Boolean(active.agent.model?.inputModalities?.includes('image')) && active.agent.commands.includes('send');
+  const acceptsImages = active.agent.imageInput.kind === 'supported' && active.agent.commands.includes('send');
   const canSend = connected && active.agent.commands.includes('send') && !responding && editor.kind === 'saved' &&
     (image ? image.status === 'ready' && acceptsImages : Boolean(editor.text.trim()));
   const sentImages = view.document.domain.messages.flatMap(message => message.image ? [{ messageId: message.messageId, image: message.image }] : []);
@@ -176,7 +176,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
             onClick={() => imageAction(() => active.store.retryImage())}>Retry</button>}
           <button type="button" disabled={Boolean(storageFailure)} onClick={() => imageAction(() => active.store.removeImage())}>Remove</button>
         </div>}
-        {image && !acceptsImages && <span>This agent cannot receive images. Remove the image to send.</span>}
+        {image && !acceptsImages && <span>{active.agent.imageInput.kind === 'unsupported' ? active.agent.imageInput.reason : 'This agent cannot receive images.'} Remove the image to send.</span>}
         {acceptsImages && <>
           <input ref={imageInput} type="file" accept="image/png,image/jpeg" aria-label="Image file" hidden onChange={event => {
             const file = event.target.files?.[0];

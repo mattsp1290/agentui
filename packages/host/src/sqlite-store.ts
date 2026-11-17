@@ -8,7 +8,7 @@ import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import { identifier } from '@agentui/contracts/decode';
 import { parseImageId, parseUploadId } from '@agentui/contracts/image';
-import type { ImageId, UploadId } from '@agentui/contracts/image';
+import type { ImageId, ImageInputCapability, UploadId } from '@agentui/contracts/image';
 import { verifyImageUpload } from './image-input.js';
 import { hasImage, insertImage, migrateImages, readImage } from './sqlite-images.js';
 import { providerCheckpoint, providerDecision, visibleProviderDecision } from './provider-stream.js';
@@ -86,10 +86,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     return !!this.db.prepare(`SELECT 1 FROM commands WHERE host=? AND conversation=?
       AND json_extract(target,'$.operation.observationProtocol')='ag-ui-v1' LIMIT 1`).get(...key(scope));
   }
-  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array) {
+  uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array, imageInput: ImageInputCapability) {
     const target = parseScope(scope), owner = identifier(uploader), upload = parseUploadId(uploadId);
     const verified = verifyImageUpload(name, bytes);
-    return this.transaction(() => insertImage(this.db, target, owner, upload, verified));
+    return this.transaction(() => insertImage(this.db, target, owner, upload, verified, imageInput));
   }
   readImage(scope: ConversationScope, imageId: ImageId) {
     return this.transaction(() => readImage(this.db, parseScope(scope), parseImageId(imageId)), false);

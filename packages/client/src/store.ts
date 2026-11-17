@@ -27,14 +27,12 @@ function settle(local: LocalRecords, receipt: Receipt): LocalRecords {
   const body = entry.command.body;
   const sent = (receipt.state.kind === 'accepted' || receipt.state.kind === 'completed') && entry.draftRevision !== null && body.kind === 'send';
   const clearDraft = sent && entry.draftRevision === local.draftRevision && body.text === local.draft;
-  // The sent image leaves the composer even when the user kept typing, so it is never sent twice. Settlement is not an
-  // edit, so draftRevision stays put: a later capture of the same edit still clears its text, and any newer edit
-  // already advanced the revision past older captures. A different image has a different imageId and is kept.
   const clearImage = sent && 'imageId' in body && body.imageId !== undefined && local.image?.attachment?.imageId === body.imageId;
   return immutable({ ...local, draft: clearDraft ? '' : local.draft, image: clearImage ? null : local.image,
     outbox: local.outbox.filter(value => value.command.clientCommandId !== receipt.clientCommandId) });
 }
 const IMAGE_FAILURES: Record<ImageFailureKind, string> = {
+  'image-unsupported': 'This agent cannot receive images. Remove the image to send.',
   'invalid-image': 'This image could not be read. Choose a different PNG or JPEG.',
   'image-capacity': 'The host has no room for more images. Remove older conversations or try a smaller image.',
   'image-upload-conflict': 'This upload no longer matches the selected image. Remove it and choose the image again.',
@@ -89,7 +87,6 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     const { selectionId, name, byteLength, attachment } = image;
     if (attachment) return Object.freeze({ selectionId, name, byteLength, status: 'ready', attachment });
     if (uploading?.selectionId === selectionId) return Object.freeze({ selectionId, name, byteLength, status: 'uploading' });
-    // A persisted selection without an upload in this session was cut off by a reload.
     return Object.freeze(failure?.selectionId === selectionId ? { selectionId, name, byteLength, status: 'failed', reason: failure.reason }
       : { selectionId, name, byteLength, status: 'interrupted' });
   }
@@ -229,7 +226,6 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
         const offered = capture && command.version === 2 ? { capture, command } : null;
         const reference: FrontendRecoveryReference[] = offered ? [{ command: offered.command, ownerId: offered.capture.ownerId, state: 'retained' }] : [];
-        // Reserved before the outbox publish so observers never see a new command as an unresolved retained one.
         reserve(id);
         await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
         if (offered && !offered.capture.commit(offered.command, journal)) {
@@ -273,7 +269,6 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       const started = await enqueue(async () => {
         const image: ComposerImageRecord = immutable({ selectionId: createImageId(), uploadId: parseUploadId(createImageId()), name, byteLength: bytes.byteLength, attachment: null });
         await persist(revised({ image }), { selectionId: image.selectionId, bytes });
-        // Awaiting here would deadlock: completion enqueues behind this operation.
         return { done: upload(image, bytes) };
       });
       await started.done;

@@ -878,6 +878,13 @@ mod tests {
     }
 
     #[test]
+    fn image_unsupported_failure_is_forwarded_to_the_typed_client_parser() {
+        let request = json!({"op":"image-upload", "scope":scope(), "name":"Screen", "byteLength":1});
+        let response = json!({"ok":false, "error":{"kind":"image-unsupported", "message":"This model cannot read images."}});
+        assert!(image_response(&request, &response));
+    }
+
+    #[test]
     fn invitation_has_exact_version_host_and_base64url_code() {
         let good = json!({"version":1, "hostId":"host", "code":"aA0_-".repeat(6) + "aa"});
         let parsed = invitation(good.clone()).unwrap();

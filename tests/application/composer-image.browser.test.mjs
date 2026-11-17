@@ -18,10 +18,12 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   let records = null, receive = null, count = 0;
   globalThis.submitted = [];
   globalThis.reads = [];
+  globalThis.uploadAttempts = 0;
   const store = createConversationStore({ scope, projection: transcriptProjection, createCommandId: () => '00000000-0000-4000-8000-' + String(++count).padStart(12, '0'),
     drafts: { load: async () => records, async save(next, image) { records = next; for (const id of image?.remove ?? []) saved.delete(id); if (image?.put) saved.set(image.put.selectionId, image.put.bytes); },
       loadImage: async (_, id) => saved.get(id) ?? null },
-    images: { async upload({ name, bytes }) { globalThis.uploadedBytes = bytes.byteLength;
+    images: { async upload({ name, bytes }) { globalThis.uploadAttempts++; globalThis.uploadedBytes = bytes.byteLength;
+      if (globalThis.failUpload) throw Object.assign(new Error('Unsupported'), { kind: 'image-unsupported' });
       return { imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name, mediaType: 'image/png', byteLength: bytes.byteLength, width: 1, height: 1 }; } },
     port: { scope, receipt: async () => null,
       async submit(command) { globalThis.submitted.push(command);
@@ -30,10 +32,17 @@ const bundle = await build({ stdin: { contents: `import React from 'react';
   globalThis.savedImages = () => saved.size;
   globalThis.deliver = item => receive(item);
   const active = { store, viewId: 'view', scope, agent: { id: 'codex', label: 'Codex', runtime: { engine: 'codex', version: '1', format: 'jsonl' },
-    model: { id: 'model', label: 'Model', inputModalities: ['text', 'image'] }, commands: ['send'], availability: { kind: 'ready' } } };
+    imageInput: { kind: 'supported', format: 'png-jpeg-v1' }, commands: ['send'], availability: { kind: 'ready' } } };
   const actions = { submit: operation => operation().then(() => undefined), async readImage(imageId) { globalThis.reads.push(imageId); return globalThis.previewBytes; } };
   void store.connect();
-  createRoot(document.getElementById('conversation')).render(<ConversationView active={active} actions={actions} enabled={true} storageFailure="" />);`, resolveDir: root, loader: 'jsx' },
+  const root = createRoot(document.getElementById('conversation'));
+  const render = () => root.render(<ConversationView active={{ ...active }} actions={actions} enabled={true} storageFailure="" />);
+  globalThis.refuseNewImages = () => {
+    active.agent = { ...active.agent, model: { id: 'image-discovered', label: 'Image discovered' },
+      imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' } };
+    render();
+  };
+  render();`, resolveDir: root, loader: 'jsx' },
   bundle: true, write: false, format: 'iife', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
 const css = (await readFile(new URL('apps/desktop/src/application/application.css', `file://${root}`), 'utf8'));
 const TAURI_CSP = JSON.parse(await readFile(new URL('apps/desktop/src-tauri/tauri.conf.json', `file://${root}`), 'utf8')).app.security.csp;
@@ -100,4 +109,46 @@ test('a preview that the page cannot decode reports itself unavailable', async t
     image: { imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name: 'broken.png', mediaType: 'image/png', byteLength: 7, width: 1, height: 1 } }], currentRun: null }, receipts: {}, decisions: {} } } }), scope);
   await page.locator('.message-user').getByText('Preview unavailable').waitFor();
   assert.equal(await page.locator('.message-user img').count(), 0);
+});
+
+test('model-less capable picker follows operation capability and retains Retry and preview after support loss', async t => {
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await browser.newPage();
+  const assets = { '/': ['text/html', '<!doctype html><main id="conversation"></main><script src="/app.js"></script>'], '/app.js': ['text/javascript', bundle.outputFiles[0].text] };
+  await page.route('**/*', async route => {
+    const asset = assets[new URL(route.request().url()).pathname];
+    await (asset ? route.fulfill({ contentType: asset[0], body: asset[1], headers: { 'content-security-policy': HOST_CSP } }) : route.abort());
+  });
+  await page.goto('https://image.test/');
+  await page.waitForFunction(() => typeof globalThis.deliver === 'function');
+  await page.evaluate(() => {
+    globalThis.failUpload = true;
+    globalThis.deliver({ kind: 'snapshot', snapshot: { scope: { hostId: 'host', conversationId: 'image' }, projectionVersion: 4, cursor: 0,
+      document: { domain: { messages: [], currentRun: null }, receipts: {}, decisions: {} } } });
+  });
+  await page.getByRole('button', { name: 'Add image', exact: true }).waitFor();
+  await page.getByRole('textbox', { name: 'Message', exact: true }).fill('Keep caption');
+  await page.getByLabel('Image file').setInputFiles({ name: 'chart.png', mimeType: 'image/png', buffer: png });
+  const retry = page.getByRole('button', { name: 'Retry', exact: true });
+  await retry.waitFor();
+  await page.evaluate(() => { globalThis.failUpload = false; globalThis.refuseNewImages(); });
+  await page.getByText('This model cannot read images. Remove the image to send.', { exact: true }).waitFor();
+  assert.equal(await page.getByLabel('Image file').count(), 0);
+  assert.equal(await page.getByRole('button', { name: 'Replace image', exact: true }).count(), 0);
+  assert.equal(await retry.isEnabled(), true);
+  await retry.click();
+  await page.getByLabel('Attached image').getByRole('status').filter({ hasText: 'Ready' }).waitFor();
+  assert.equal(await page.evaluate(() => globalThis.uploadAttempts), 2);
+  assert.equal(await page.evaluate(() => globalThis.savedImages()), 1);
+  assert.equal(await page.getByRole('textbox', { name: 'Message', exact: true }).inputValue(), 'Keep caption');
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+  await page.evaluate(bytes => {
+    globalThis.previewBytes = new Uint8Array(bytes);
+    globalThis.deliver({ kind: 'events', events: [{ scope: { hostId: 'host', conversationId: 'image' }, sequence: 1, event: { kind: 'domain', event: {
+      kind: 'message-updated', messageId: 'retained', revision: 1, role: 'user', text: '', complete: true,
+      image: { imageId: '00000000-0000-4000-8000-aaaaaaaaaaaa', name: 'retained.png', mediaType: 'image/png', byteLength: bytes.length, width: 1, height: 1 } } } }] });
+  }, [...png]);
+  await page.waitForFunction(() => document.querySelector('.message-user img')?.naturalWidth === 1);
+  assert.deepEqual(await page.evaluate(() => globalThis.reads), ['00000000-0000-4000-8000-aaaaaaaaaaaa']);
 });

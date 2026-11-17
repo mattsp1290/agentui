@@ -213,7 +213,7 @@ test('overridden live conversation retains approval, Stop and uncertain recovery
       async cancel(runId) { window.calls.push(runId); view = { ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'original-stop', body: { kind: 'cancel', runId } }, draftRevision: null }] }; publish(); },
       async approve(pendingId, choiceId) { window.calls.push([pendingId, choiceId]); }, async retry(id) { window.calls.push(id); } };
     const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {} };
-    const active = { viewId: 'one', scope, store, agent: { commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
+    const active = { viewId: 'one', scope, store, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
     function Broken() { throw new Error('Live failure'); }
     function Transcript() { const [broken, setBroken] = React.useState(false); return broken ? <Broken /> : <button onClick={() => setBroken(true)}>Fail live transcript</button>; }
     const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.8.0', entries: [{kind: 'desktop', module: './desktop.js'}] },

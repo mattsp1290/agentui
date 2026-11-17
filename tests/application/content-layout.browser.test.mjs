@@ -93,7 +93,7 @@ test('layout activation, initial and retained suspension preserve protected DOM 
       async cancel(runId) { window.calls.push(runId); view = { ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'original-stop', body: { kind: 'cancel', runId } }, draftRevision: null }] }; publish(); },
       async approve(pendingId, choiceId) { window.calls.push([pendingId, choiceId]); }, async retry(id) { window.calls.push(id); } };
     const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {} };
-    const active = { viewId: 'one', scope, store, agent: { commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
+    const active = { viewId: 'one', scope, store, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
     window.transcriptInstances = []; window.moduleInstances = []; let identity = 0;
     function Tracked({ kind }) { const [id] = React.useState(() => ++identity); React.useEffect(() => { window[kind + 'Instances'].push(id); }, []); return <p>{kind + ' content'}</p>; }
     let suspended = true, gate; const resetGate = () => { gate = new Promise(resolve => { window.resume = () => { suspended = false; resolve(); }; }); }; resetGate();
