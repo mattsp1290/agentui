@@ -203,7 +203,8 @@ The tagged history index derives its keys from immutable saved targets. Admissio
 Formats 5 and 6 require both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
-Wire 12 and SDK 0.11.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
+Format 9 adds the terminal `abandoned` receipt state without changing the schema; format-8 openers refuse it.
+Wire 13 and SDK 0.11.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
 There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.

@@ -139,7 +139,7 @@ export function applicationEnabled(state: ApplicationSnapshot): boolean {
 }
 const SEND_AWAITING_CONFIRMATION = 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
   + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it. '
-  + 'If it stays unconfirmed, use Stop waiting in the same section to send new messages here; '
+  + 'If it stays unconfirmed, use Stop waiting beside that button to send new messages here; '
   + 'the earlier message may or may not have run.';
 export const NOTHING_TO_STOP_WAITING = 'Nothing to stop waiting on: this command is not holding up new messages.';
 export function refusalMessage(reason: string): string {
