@@ -110,7 +110,8 @@ A backend reports a configuration problem it cannot classify, such as a host cre
 Each cause has one fixed, sanitized reason; provider-supplied reasons and errors are never shown.
 Healthy installations stay selectable. The chooser lists an unavailable installation as a disabled entry labeled with its namespace and installation ID, and existing conversations show its reason instead of "no longer configured".
 Every cause except `invalid-installation` is retried on the next discovery: a refused connection holds nothing and reconnects, a reported `version-unsupported` closes its connection so the reconnect probes capabilities again, and other reported causes keep their connection.
-When metadata or conversation reads find a retryable outage and the last discovery started at least 30 seconds ago, the host starts one background discovery without waiting for it. No timer runs, and shutdown waits for that discovery.
+When metadata or conversation reads find that the last discovery started at least 30 seconds ago, the host starts one background discovery without waiting for it. This both recovers retryable outages and reports outages that begin after a healthy discovery. No timer runs, and shutdown waits for that discovery.
+An `authentication-failed` installation recovers automatically when the credential is fixed on the provider. AgentUI reads its own extension secret once at startup, so changing that secret needs a host restart.
 `providers-refresh` (`node apps/host/dist/main.js providers-refresh --data-dir /private/host`) discovers immediately and returns every installation's status.
 An `invalid-installation` closes that installation's connection and recovers only after the configuration is fixed and the extension is replaced, normally by restarting the host.
 Transient and durable serving keep running through provider discovery failures.

@@ -8,7 +8,7 @@ import { local, localBackend, localPresentation } from '../extensions/providers/
 const sentinel = 'PRIVATE_PROVIDER_STATUS_SENTINEL_31';
 const reasons = {
   offline: 'The provider service is offline or unreachable. AgentUI checks again automatically.',
-  'authentication-failed': 'The provider rejected the configured credential. Update the secret it uses; AgentUI checks again automatically.',
+  'authentication-failed': 'The provider rejected the configured credential. Fix it on the provider and AgentUI checks again automatically, or change the extension secret and restart the host.',
   unauthorized: 'The configured credential is not authorized for this provider. Grant it access; AgentUI checks again automatically.',
   'version-unsupported': 'The provider service version is unsupported. Install a compatible version; AgentUI checks again automatically.',
   'invalid-installation': 'The provider installation is invalid. Fix the extension configuration, then restart the host.',
@@ -110,7 +110,23 @@ test('browser chooser lists an offline provider as a disabled choice with its fi
   assert.equal(await offline.getAttribute('title'), reasons.offline);
 });
 
-test('an offline provider becomes available after its service recovers without a refresh command, checked at most once per interval', { timeout: 15000 }, async t => {
+test('a provider that goes offline after a healthy discovery is reported unavailable without a refresh command', { timeout: 15000 }, async t => {
+  const remote = await providerService(t), { extension, state } = faulty(remote);
+  const f = await fixture(t, [extension, healthy()]);
+  t.mock.timers.enable({ apis: ['Date'], now: Date.now() });
+  const status = async () => (await f.client.metadata()).agents.filter(agent => agent.namespace === 'stream-fixture').map(agent => agent.availability);
+  assert.deepEqual((await status()).map(availability => availability.kind), ['ready']);
+  state.fault = { at: 'discover', result: { kind: 'unavailable', reason: sentinel } };
+  t.mock.timers.tick(30_000);
+  let current = await status();
+  for (let attempt = 0; attempt < 200 && current[0]?.kind === 'ready'; attempt++) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    current = await status();
+  }
+  assert.deepEqual(current, [{ kind: 'unavailable', reason: reasons.offline }]);
+});
+
+test('an offline provider becomes available after its service recovers without a refresh command, checked at most once per interval',{ timeout: 15000 }, async t => {
   const remote = await providerService(t), { extension, state } = faulty(remote);
   state.fault = causes[0][1];
   const f = await fixture(t, [extension, healthy()]);

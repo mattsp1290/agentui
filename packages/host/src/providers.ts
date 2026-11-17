@@ -49,7 +49,7 @@ export interface UnavailableProvider {
 export type ProviderStatus = DiscoveredProvider | UnavailableProvider;
 export const providerUnavailableReasons: Readonly<Record<ProviderUnavailableCause, string>> = Object.freeze({
   offline: 'The provider service is offline or unreachable. AgentUI checks again automatically.',
-  'authentication-failed': 'The provider rejected the configured credential. Update the secret it uses; AgentUI checks again automatically.',
+  'authentication-failed': 'The provider rejected the configured credential. Fix it on the provider and AgentUI checks again automatically, or change the extension secret and restart the host.',
   unauthorized: 'The configured credential is not authorized for this provider. Grant it access; AgentUI checks again automatically.',
   'version-unsupported': 'The provider service version is unsupported. Install a compatible version; AgentUI checks again automatically.',
   'invalid-installation': 'The provider installation is invalid. Fix the extension configuration, then restart the host.',
@@ -419,10 +419,9 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     catalog = results;
     return structuredClone(catalog);
   }
-  // Reads never wait on backend I/O; a retryable outage is rediscovered behind the response, at most once per interval.
+  // Reads never wait on backend I/O; the catalog is rediscovered behind the response at most once per interval, so outages that begin after a healthy discovery also surface.
   function rediscover(): void {
-    if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval ||
-      !catalog.some(provider => provider.kind === 'unavailable' && provider.cause !== 'invalid-installation')) return;
+    if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
     background = refresh().catch(() => {}).finally(() => { background = undefined; });
   }
   function stop(stream: ProviderStream): void {
