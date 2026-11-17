@@ -194,9 +194,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       authorized(scope);
     };
     assertRequester();
-    const receipt = await reconcileStored(blocker, assertRequester);
+    await reconcileStored(blocker, assertRequester);
     assertRequester();
-    return receipt.state.kind === 'completed' || receipt.state.kind === 'rejected';
+    return store.blockingSend(scope, 'provider') === null;
   };
   const host: LocalHost<E, P> = {
     imageInput,

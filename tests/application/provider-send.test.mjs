@@ -85,6 +85,18 @@ test('a send the provider reported finished but the host could not project does 
   assert.equal(a.calls.submits.length, 2);
 });
 
+test('a blocker settled by lookup into a conclusive projection failure admits the follow-up', async t => {
+  const a = extension({ reconcile: operation => a.effect(operation, 'completed') });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  assert.equal((await port.submit(send(scope))).receipt.state.kind, 'accepted');
+  f.inspect(db => db.prepare("UPDATE runs SET data='{}' WHERE host=? AND conversation=? AND id='same-run'").run(scope.hostId, scope.conversationId));
+  const next = await port.submit(send(scope, 'next'));
+  assert.equal(next.kind, 'receipt', JSON.stringify(next));
+  assert.deepEqual((await port.receipt('send')).state, { kind: 'uncertain', reason: 'output-rejected' });
+  assert.equal(a.calls.reconciles.length, 1);
+  assert.equal(a.calls.submits.length, 2);
+});
+
 test('an accepted send quarantined for capacity still blocks a follow-up after one lookup', async t => {
   const a = extension({ reconcile: () => ({ kind: 'uncertain', evidence: null }) });
   const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
