@@ -43,7 +43,7 @@ Status = Ready(Observation<Ready>, hostId, principalId) | Absent(Observation<Abs
 The exact approved endpoint is part of the key. A changed destination or port requires a distinct selection.
 The current protocol permits only literal `http://127.0.0.1:<port>`. The host ID checks enrollment intent, not cryptographic server identity.
 The [wire credential](../../apps/host/src/native-wire.ts) contains `hostId`, `principalId`, and `secret`, with no expiry field.
-The [host policy](../../apps/host/src/access.ts) gives newly enrolled native credentials 30 days and browser development credentials one hour. Existing rows are not extended. Revocation remains authoritative. `Ready` establishes local admission only.
+The [host](../../apps/host/src/access.ts) admits every native and browser request as its single owner. Credential lifetimes and device revocation no longer control access. `Ready` establishes local admission only.
 
 The owner keeps at most one live reference per slot and reuses it for unchanged status reads.
 Each owner lifetime has a fresh tag from at least 128 CSPRNG bits. Each reference carries that tag and at least 128 fresh CSPRNG bits.
@@ -145,7 +145,7 @@ The [service engine](../../packages/client/src/service-engine.ts) retains servic
 Its `onUnauthorized` hook is the callback isolated to the original connection, never a replacement connection.
 Its `ServiceExecutor` returns a fetch `Response` through an internal seam, not a [public package export](../../packages/client/package.json).
 Its browser `pair()` state does not coordinate native ownership. A future adapter must enforce the table's admission and callback rules.
-Forgetting is local. The existing host device-revocation command remains authoritative for server access.
+Forgetting is local. The host admits native requests as its single owner, so no device command controls server access.
 Credential transitions preserve drafts, saved commands, receipts, and unresolved effects.
 Aborting a request, closing a feed, removing a credential, or losing a process does not prove that an admitted command failed.
 Recovery preserves the original host, conversation, command ID, and body. No credential transition automatically replays or replaces a command.
@@ -165,7 +165,7 @@ Protected storage does not isolate credentials from a compromised native process
 
 The [Rust entrypoint](../../apps/desktop/src-tauri/src/main.rs) restricts native admission and bundled navigation for the current Mac subset.
 The [Swift entrypoint](../../apps/ios/native/ios/AgentUI/AppDelegate.swift) starts React Native and does not implement these interfaces.
-[Native HTTP tests](../../tests/application/native-http.test.mjs) cover route and class separation, expiry, revocation, and original-command recovery.
+[Native HTTP tests](../../tests/application/native-http.test.mjs) cover route and class separation and original-command recovery.
 Their [private fixture](../../tests/application/support/native-client.mjs) holds one immutable in-memory credential.
 Those tests do not qualify protected persistence, native IPC, replacement safety, installed applications, TLS, LAN access, or remote phone access.
 
