@@ -22,6 +22,8 @@ type Run = { identity: RunIdentity; threadId: string; platform: FrontendPlatform
   cursor: number; eventBytes: number; status: 'collecting' | 'ready' | 'blocked' | 'faulted'; calls: Call[]; pending: string[] };
 export type PreparedFrontendObservation = { readonly cursor: number; readonly input: unknown; readonly encoded: string | null };
 export interface FrontendCoordinatorWriter {
+  progress(key: FrontendRunKey): { readonly cursor: number; readonly status: Run['status'] };
+  block(key: FrontendRunKey): void;
   register(registration: ReturnType<typeof prepareFrontendRegistration>): void;
   observe(key: FrontendRunKey, observation: PreparedFrontendObservation): ReturnType<FrontendToolProducer['observe']>;
 }
@@ -314,5 +316,13 @@ export function createFrontendCoordinator(store: Pick<SqliteStore<unknown, unkno
       },
     };
   };
-  return { register, observe, tools };
+  const progress = (scope: ConversationScope, key: FrontendRunKey) => {
+    const { run } = load(scope, key);
+    return { cursor: run.cursor, status: run.status };
+  };
+  const block = (scope: ConversationScope, key: FrontendRunKey) => {
+    const { run } = load(scope, key);
+    if (run.status === 'collecting' || run.status === 'ready') { run.status = 'blocked'; save(scope, run); }
+  };
+  return { register, observe, progress, block, tools };
 }

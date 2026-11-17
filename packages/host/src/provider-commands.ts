@@ -10,7 +10,8 @@ import type { SettlementObservation } from './settlement.js';
 export interface ProviderTarget extends Pick<ProviderCreation, 'installation' | 'credential'> {
   readonly kind: 'provider';
   readonly operation: { readonly operationId: string; readonly binding: ProviderConversation<string> } & (
-    { readonly kind: 'send'; readonly request: Json; readonly protocol?: 'ag-ui' }
+    ({ readonly kind: 'send'; readonly request: Json } & (
+      { readonly protocol?: never; readonly observationProtocol?: never } | { readonly protocol: 'ag-ui'; readonly observationProtocol?: 'ag-ui-v1' }))
     | { readonly kind: 'revoke-permission'; readonly permission: ConversationRef<string, 'permission'>; readonly scope: PermissionScope }
     | { readonly kind: 'cancel'; readonly run: ConversationRef<string, 'run'> }
     | { readonly kind: 'decide'; readonly run: ConversationRef<string, 'run'>;
@@ -43,7 +44,7 @@ export type MatchedProviderCommand =
 export function parseProviderCapture(value: unknown, scope: ConversationScope): ProviderCapture {
   const input = record(value, ['kind', 'installation', 'credential', 'operation']);
   const operation = record(input.operation);
-  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'revoke-permission' ? ['permission', 'scope'] : operation.kind === 'send' ? ['request', ...(Object.hasOwn(operation, 'protocol') ? ['protocol'] : [])] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
+  record(operation, ['kind', 'operationId', 'binding', ...(operation.kind === 'revoke-permission' ? ['permission', 'scope'] : operation.kind === 'send' ? ['request', ...(Object.hasOwn(operation, 'protocol') ? ['protocol'] : []), ...(Object.hasOwn(operation, 'observationProtocol') ? ['observationProtocol'] : [])] : operation.kind === 'cancel' ? ['run'] : ['run', 'decision', 'choice'])]);
   const binding = record(operation.binding, ['kind', 'creation', 'authority']);
   const original = providerCreation({ installation: input.installation, credential: input.credential, intent: binding.creation }, scope);
   const operationId = identifier(operation.operationId);
@@ -55,11 +56,12 @@ export function parseProviderCapture(value: unknown, scope: ConversationScope): 
   let agui: AguiRunKey | null = null;
   if (operation.kind === 'send') {
     const request = copyJson(operation.request);
+    if (Object.hasOwn(operation, 'observationProtocol') && (operation.protocol !== 'ag-ui' || operation.observationProtocol !== 'ag-ui-v1')) throw new Error('Invalid observation protocol');
     if (Object.hasOwn(operation, 'protocol')) {
       if (operation.protocol !== 'ag-ui') throw new Error('Invalid provider protocol');
       const { threadId, runId } = aguiInput(request);
       agui = { threadId, runId };
-      captured = { ...base, kind: 'send', request, protocol: 'ag-ui' };
+      captured = { ...base, kind: 'send', request, protocol: 'ag-ui', ...(operation.observationProtocol === 'ag-ui-v1' ? { observationProtocol: 'ag-ui-v1' } : {}) };
     } else captured = { ...base, kind: 'send', request };
   } else if (operation.kind === 'revoke-permission') captured = { ...base, kind: 'revoke-permission', permission: reference(operation.permission, 'permission'), scope: parsePermissionScope(operation.scope) };
   else if (operation.kind === 'cancel') captured = { ...base, kind: 'cancel', run: reference(operation.run, 'run') };

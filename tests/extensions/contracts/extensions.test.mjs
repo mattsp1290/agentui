@@ -13,7 +13,7 @@ const module = { id: 'notes', label: 'Notes', component: () => null };
 
 test('provider-free nested module activates, renders changing activity and preserves scoped command results', async () => {
   let disposals = 0;
-  assert.equal(EXTENSION_SDK_VERSION, '0.7.0');
+  assert.equal(EXTENSION_SDK_VERSION, '0.8.0');
   const fixture = createNotesFixture(() => { disposals++; });
   const metadata = parseExtensionManifest(manifest);
   assert.deepEqual(checkExtensionEntrypoint(metadata, 'desktop', fixture), { kind: 'compatible' });

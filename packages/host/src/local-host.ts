@@ -143,7 +143,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
-    if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation);
+    const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
+      ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
+    if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation, observations);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
       ? await options.providers?.executeCommand(stored, false, () => effectFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
@@ -153,7 +155,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       if (!current) throw new Error('Unknown command');
       return current.receipt;
     }
-    return store.settle(scope, id, observed);
+    return store.settle(scope, id, observed, observations);
   });
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const blocker = store.blockingSend(scope);
@@ -285,7 +287,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
               const observed = 'kind' in stored
                 ? await registry?.executeCommand(stored, true, () => dispatchFence(stored, actor)) ?? { kind: 'not-dispatched', reason: 'provider-local-refusal' } as const
                 : await dispatchNative(stored, driverFor, () => store.verifyIntent(stored));
-              const receipt = store.settle(scope, command.clientCommandId, observed);
+              const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
+                ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
+              const receipt = store.settle(scope, command.clientCommandId, observed, observations);
               assertMayReceiveEvidence(stored, actor);
               return { kind: 'receipt' as const, receipt };
             } finally { dispatching.delete(key); }

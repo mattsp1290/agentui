@@ -1,5 +1,9 @@
 import type { createFrontendCoordinator } from './frontend-tools/coordinator.js';
 import type { FrontendCoordinatorWriter } from './frontend-tools/coordinator.js';
+import type { FrontendObservations, PreparedProviderObservations } from './frontend-observations.js';
+import { migrateFrontendObservations } from './sqlite-frontend-observations.js';
+import type { ProviderObservations } from './provider-observations.js';
+import type { AguiOriginalRun } from '@agentui/sdk';
 import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import { identifier } from '@agentui/contracts/decode';
@@ -73,9 +77,14 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         const format = readDatabaseFormat(this.db, 2);
         migrateImages(this.db);
         migrateFrontendSends(this.db, format);
+        migrateFrontendObservations(this.db, format);
         if (format !== CURRENT_DATABASE_FORMAT) this.db.exec(`PRAGMA user_version=${CURRENT_DATABASE_FORMAT}`);
       });
     } catch (error) { this.db.close(); throw error; }
+  }
+  hasFrontendObservations(scope: ConversationScope): boolean {
+    return !!this.db.prepare(`SELECT 1 FROM commands WHERE host=? AND conversation=?
+      AND json_extract(target,'$.operation.observationProtocol')='ag-ui-v1' LIMIT 1`).get(...key(scope));
   }
   uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array) {
     const target = parseScope(scope), owner = identifier(uploader), upload = parseUploadId(uploadId);
@@ -99,6 +108,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     check();
     const boundScope = parseScope(scope), coordinator = this.coordinator(factory);
     return {
+      progress: key => { check(); return coordinator.progress(boundScope, key); },
+      block: key => { check(); coordinator.block(boundScope, key); },
       register: registration => { check(); coordinator.register(boundScope, registration); },
       observe: (key, observation) => { check(); return coordinator.observe(boundScope, key, observation); },
     };
@@ -182,9 +193,26 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if (row.original !== canonicalJson(original)) throw new Error('Provider checkpoint association changed');
     return providerCheckpoint(json(row.data));
   }
+  prepareProviderObservations(original: ProviderCreation, event: { readonly id: string; readonly payload: string } | null,
+    factory: typeof FrontendObservations, map: (originals: readonly AguiOriginalRun<string>[]) => ProviderObservations):
+    { readonly kind: 'duplicate'; readonly checkpoint: ProviderCheckpoint } | { readonly kind: 'prepared'; readonly value: PreparedProviderObservations } {
+    if (event) {
+      const prior = this.db.prepare('SELECT payload FROM provider_event_ids WHERE host=? AND conversation=? AND id=?').get(...key(original.intent.scope), event.id);
+      if (prior) {
+        const current = this.providerCheckpoint(original);
+        if (prior.payload !== event.payload || !current) throw new Error('Conflicting provider event');
+        return { kind: 'duplicate', checkpoint: current };
+      }
+    }
+    const selection = new factory(this).selection(original);
+    const observations = map(structuredClone(selection.originals));
+    return { kind: 'prepared', value: { factory, selection, observations } };
+  }
   commitProvider(original: ProviderCreation, expected: number | null,
-    event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange): ProviderCheckpoint {
-    return this.transaction(() => {
+    event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange,
+    prepared?: PreparedProviderObservations): ProviderCheckpoint {
+    if (!prepared && this.hasFrontendObservations(original.intent.scope)) throw new Error('Observation preparation required');
+    return this.transaction(transaction => {
       const scope = original.intent.scope, creation = this.creation(scope);
       if (this.projection !== transcriptProjection || creation?.observation?.kind !== 'confirmed' ||
         canonicalJson({ installation: creation.installation, intent: creation.intent, credential: creation.credential }) !== canonicalJson(original)) {
@@ -200,6 +228,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       }
       if ((current?.revision ?? null) !== expected) throw new Error('Provider checkpoint advanced');
       const change = render();
+      if (canonicalJson(this.creation(scope)) !== canonicalJson(creation) || (this.providerCheckpoint(original)?.revision ?? null) !== expected) throw new Error('Provider observation changed during render');
+      if (prepared) new prepared.factory(this).commit(original, prepared.observations, prepared.selection, transaction);
       for (const run of change.runs) this.writeProviderRun(scope, run);
       const requireRun = (runId: string) => {
         if (!this.db.prepare('SELECT 1 FROM runs WHERE host=? AND conversation=? AND id=?').get(...key(scope), runId)) throw new Error('Provider run is missing');
@@ -492,18 +522,22 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
-  settle(scope: ConversationScope, id: string, value: Observation): Receipt {
-    return this.transaction(() => {
+  settle(scope: ConversationScope, id: string, value: Observation, observations?: typeof FrontendObservations): Receipt {
+    return this.transaction(transaction => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
       if ('kind' in stored) {
+        if (stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol && !observations) throw new Error('Observation settlement required');
         const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored), stored.observation), { quarantined: isQuarantined(stored) });
+        let receipt: Receipt;
         switch (transition.kind) {
-          case 'keep': return stored.receipt;
+          case 'keep': receipt = stored.receipt; break;
           case 'conflict': throw new Error(`Conflicting ${transition.reason}`);
-          case 'record-evidence': this.writeObservation(stored, transition.observed); return stored.receipt;
-          case 'apply': return this.applyObservation(stored, transition.observed);
+          case 'record-evidence': this.writeObservation(stored, transition.observed); receipt = stored.receipt; break;
+          case 'apply': receipt = this.applyObservation(stored, transition.observed); break;
         }
+        if (observations) new observations(this).materialize(scope, id, transaction);
+        return receipt;
       }
       const transition = settlement(stored.observation === null ? null : settlementObservation(stored.observation),
         settlementObservation(observation(value, stored.target)), { quarantined: isQuarantined(stored) });

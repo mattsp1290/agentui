@@ -1,6 +1,6 @@
 import { DatabaseSync } from 'node:sqlite';
 
-export const CURRENT_DATABASE_FORMAT = 6;
+export const CURRENT_DATABASE_FORMAT = 7;
 
 export function readDatabaseFormat(db: DatabaseSync, minimum = 0): number {
   const version = db.prepare('PRAGMA user_version').get()?.user_version;

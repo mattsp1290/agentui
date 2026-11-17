@@ -16,3 +16,5 @@ export type {
   ProviderFailure, ProviderOutcome, ProviderCommandEffect, ProviderSnapshot, ProviderItem, ProviderFeed,
   ConnectedProvider, BackendProvider, ProviderPermission, PermissionListing, RevokePermission, PermissionRevokeEffect, ProviderPermissions,
 } from './providers.js';
+
+export type { AguiObservations, AguiOriginalRun, AguiRunBatch, AguiRunSnapshot } from './agui-observations.js';

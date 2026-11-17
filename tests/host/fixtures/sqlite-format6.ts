@@ -1,0 +1,113 @@
+import { DatabaseSync } from 'node:sqlite';
+
+export const CURRENT_DATABASE_FORMAT = 6;
+
+export function readDatabaseFormat(db: DatabaseSync, minimum = 0): number {
+  const version = db.prepare('PRAGMA user_version').get()?.user_version;
+  if (typeof version !== 'number' || !Number.isInteger(version) || version < minimum || version > CURRENT_DATABASE_FORMAT) throw new Error('Unsupported database version');
+  return version;
+}
+
+const WAL_SWITCH_TIMEOUT_MS = 5000;
+const SQLITE_BUSY = 5;
+const sleeper = new Int32Array(new SharedArrayBuffer(4));
+
+// Entering WAL rewrites the header from inside a read transaction, so SQLite
+// refuses the read-to-write upgrade with SQLITE_BUSY instead of calling the
+// busy handler. Concurrent first opens therefore need their own bounded retry;
+// repeating the pragma is a no-op once any opener has switched the file.
+function requireWal(db: DatabaseSync): void {
+  const deadline = Date.now() + WAL_SWITCH_TIMEOUT_MS;
+  for (let delay = 1; ; delay = Math.min(delay * 2, 50)) {
+    try {
+      if (db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode !== 'wal') throw new Error('Database requires WAL mode');
+      return;
+    } catch (error) {
+      if (!isBusy(error) || Date.now() >= deadline) throw error;
+      Atomics.wait(sleeper, 0, 0, delay);
+    }
+  }
+}
+
+function isBusy(error: unknown): boolean {
+  return error instanceof Error && 'errcode' in error && typeof error.errcode === 'number' && (error.errcode & 0xff) === SQLITE_BUSY;
+}
+
+export function openDatabase(path: string): DatabaseSync {
+  const db = new DatabaseSync(path);
+  try {
+    db.exec('PRAGMA busy_timeout=5000;');
+    const version = readDatabaseFormat(db);
+    db.exec('PRAGMA foreign_keys=ON;');
+    if (version === 0) {
+      db.exec('BEGIN IMMEDIATE');
+      const lockedVersion = readDatabaseFormat(db);
+      if (lockedVersion === 0) db.exec(`
+        CREATE TABLE conversations (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, installation TEXT NOT NULL,
+          head INTEGER NOT NULL, version INTEGER NOT NULL, document TEXT NOT NULL, bytes INTEGER NOT NULL,
+          PRIMARY KEY(host, conversation));
+        CREATE TABLE runs (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, id),
+          FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE commands (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, operation TEXT NOT NULL,
+          intent TEXT NOT NULL, target TEXT NOT NULL, observation TEXT, receipt TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, id), UNIQUE(host, operation),
+          FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE pending_decisions (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, id TEXT NOT NULL, run TEXT NOT NULL,
+          data TEXT NOT NULL, status TEXT NOT NULL CHECK(status IN ('open','reserved','closed')),
+          operation TEXT,
+          CHECK((status = 'reserved') = (operation IS NOT NULL)),
+          PRIMARY KEY(host, conversation, id),
+          FOREIGN KEY(host, conversation, run) REFERENCES runs(host, conversation, id));
+        CREATE TABLE events (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, sequence INTEGER NOT NULL,
+          payload TEXT NOT NULL, bytes INTEGER NOT NULL,
+          PRIMARY KEY(host, conversation, sequence),
+          FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE host_limits (id INTEGER PRIMARY KEY CHECK(id=1), value TEXT NOT NULL);
+        PRAGMA user_version=1;`);
+      db.exec('COMMIT');
+    }
+    const tables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
+    const missing = ['conversations', 'runs', 'commands', 'pending_decisions', 'events', 'host_limits'].filter(name => !tables.has(name));
+    if (missing.length) throw new Error(`Incomplete database schema version 1: missing ${missing.join(', ')}`);
+    if (version < 2) {
+      db.exec('BEGIN IMMEDIATE');
+      const lockedVersion = readDatabaseFormat(db, 1);
+      if (lockedVersion === 1) db.exec(`
+        CREATE TABLE frontend_runs (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run),
+          FOREIGN KEY(host, conversation) REFERENCES conversations(host, conversation));
+        CREATE TABLE frontend_events (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, cursor INTEGER NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run, cursor),
+          FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
+        CREATE TABLE frontend_receipts (
+          host TEXT NOT NULL, conversation TEXT NOT NULL, thread TEXT NOT NULL, run TEXT NOT NULL, call TEXT NOT NULL, data TEXT NOT NULL,
+          PRIMARY KEY(host, conversation, thread, run, call),
+          FOREIGN KEY(host, conversation, thread, run) REFERENCES frontend_runs(host, conversation, thread, run));
+        PRAGMA user_version=2;`);
+      db.exec('COMMIT');
+    }
+    const allTables = new Set(db.prepare("SELECT name FROM sqlite_schema WHERE type='table'").all().map(row => row.name));
+    const missingFrontend = ['frontend_runs', 'frontend_events', 'frontend_receipts'].filter(name => !allTables.has(name));
+    if (missingFrontend.length) throw new Error(`Incomplete database schema version 2: missing ${missingFrontend.join(', ')}`);
+    if (allTables.has('provider_creations') && db.prepare('SELECT 1 FROM provider_creations WHERE NOT json_valid(original) OR (observation IS NOT NULL AND NOT json_valid(observation)) LIMIT 1').get()) {
+      throw new Error('Corrupt creation metadata');
+    }
+    if (allTables.has('provider_checkpoints') && db.prepare('SELECT 1 FROM provider_checkpoints WHERE NOT json_valid(original) OR NOT json_valid(data) OR floor<1 LIMIT 1').get()) {
+      throw new Error('Corrupt provider checkpoint');
+    }
+    requireWal(db);
+    db.exec('PRAGMA synchronous=FULL;');
+    return db;
+  } catch (error) {
+    db.close();
+    throw error;
+  }
+}
