@@ -7,6 +7,8 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
+import { transcriptProjection } from '@agentui/contracts/conversation';
+import type { Transcript } from '@agentui/contracts/conversation';
 import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
@@ -63,6 +65,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       : { kind: 'unsupported', reason: 'This model cannot read images.' };
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
+  store.onProviderCommit = scope => { void Promise.resolve().then(() => settleEndedSend(scope)); };
   let closed = false, observationCleanupFailed = false;
   let active = 0;
   const dispatching = new Set<string>();
@@ -138,6 +141,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       try {
         const stream = await Promise.resolve().then(() => registry.observe(original, store, freshSnapshot));
         entry.state = { kind: 'live', stream };
+        settleEndedSend(scope);
         void stream.drained.then(reason => {
           if (observing.get(key) === entry) entry.state = { kind: 'stopped', reason: reason === 'closed' ? 'provider-disconnected' : reason };
         }, () => {
@@ -185,6 +189,23 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     }
     return store.settle(scope, id, observed, observations);
   });
+  const lookedUp = new Set<string>();
+  // An observed run end is not settlement evidence; it triggers one read of the original request's status.
+  const settleEndedSend = (scope: ConversationScope): void => {
+    try {
+      if (closed || store.projection !== (transcriptProjection as unknown)) return;
+      const stored = store.blockingSend(scope);
+      if (!stored || !('kind' in stored) || isOffered(stored) || stored.receipt.state.kind !== 'accepted') return;
+      const key = commandKey(scope, stored.command.clientCommandId);
+      const run = stored.observation && 'evidence' in stored.observation ? stored.observation.evidence.source.run : null;
+      if (!run || dispatching.has(key) || lookedUp.has(key)) return;
+      const current = (store.snapshot(scope).document.domain as Transcript).currentRun;
+      if (current?.kind !== 'ended' || current.runId !== run.identity.runId) return;
+      lookedUp.add(key);
+      void reconcileStored(stored, () => authorized(scope))
+        .then(receipt => { if (receipt.state.kind !== 'accepted') lookedUp.delete(key); }, () => {});
+    } catch { /* A failed check leaves the receipt for explicit reconciliation. */ }
+  };
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const blocker = store.blockingSend(scope);
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
@@ -328,7 +349,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
               const receipt = store.settle(scope, command.clientCommandId, observed, observations);
               assertMayReceiveEvidence(stored, actor);
               return { kind: 'receipt' as const, receipt };
-            } finally { dispatching.delete(key); }
+            } finally {
+              dispatching.delete(key);
+              if (provider) settleEndedSend(scope);
+            }
           });
         },
         async receipt(id) {

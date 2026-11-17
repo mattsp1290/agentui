@@ -50,6 +50,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
   private frontendCoordinator: ReturnType<typeof createFrontendCoordinator> | undefined;
   private activeTransaction: StoreTransaction | undefined;
   onCommit: (() => void) | undefined;
+  onProviderCommit: ((scope: ConversationScope) => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
     this.frontendSends = new FrontendSends(this.db);
@@ -210,7 +211,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange,
     prepared?: PreparedProviderObservations): ProviderCheckpoint {
     if (!prepared && this.hasFrontendObservations(original.intent.scope)) throw new Error('Observation preparation required');
-    return this.transaction(transaction => {
+    const committed = this.transaction(transaction => {
       const scope = original.intent.scope, creation = this.creation(scope);
       if (this.projection !== transcriptProjection || creation?.observation?.kind !== 'confirmed' ||
         canonicalJson({ installation: creation.installation, intent: creation.intent, credential: creation.credential }) !== canonicalJson(original)) {
@@ -279,6 +280,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (event) this.db.prepare('INSERT INTO provider_event_ids(host, conversation, id, payload) VALUES (?, ?, ?, ?)').run(...key(scope), event.id, event.payload);
       return next;
     });
+    this.onProviderCommit?.(original.intent.scope);
+    return committed;
   }
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
     return this.db.prepare('SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ORDER BY conversation LIMIT ?')

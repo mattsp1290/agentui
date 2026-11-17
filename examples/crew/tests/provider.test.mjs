@@ -71,6 +71,39 @@ test('Crew follow-up confirms the original completed request before admitting it
   assert.equal(f.inspect(db => db.prepare("SELECT target FROM commands WHERE id='send'").get().target), target);
 });
 
+const sendReceipt = (f, id = 'send') => JSON.parse(saved(f).commands.find(row => row.id === id).receipt).state.kind;
+
+test('Crew settles a finished send from its original request status once observation sees the run end', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
+  const [requestId, receipt] = [...remote.receipts][0];
+  remote.reply(receipt.conversationId, 'Finished reply');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.outcome === 'completed');
+  await until(() => sendReceipt(f) === 'completed');
+  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source;
+  assert.equal(evidence.source, 'provider-lookup');
+  assert.equal(evidence.data.status, 'completed');
+  assert.deepEqual(remote.calls.filter(call => call.method === 'POST').map(call => call.input?.requestId).filter(Boolean), [requestId]);
+});
+
+test('Crew settles a send whose request finished while the host was stopped after restart', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
+  const [requestId, receipt] = [...remote.receipts][0];
+  remote.setReceiptFailure(true);
+  remote.reply(receipt.conversationId, 'Finished while away');
+  await until(() => JSON.parse(saved(f).conversation.document).domain.messages.at(-1)?.text === 'Finished while away');
+  await f.restart([remote.extension()]);
+  assert.equal(sendReceipt(f), 'accepted');
+  assert.equal(JSON.parse(saved(f).conversation.document).domain.currentRun?.kind, 'running');
+  remote.setReceiptFailure(false);
+  await until(() => sendReceipt(f) === 'completed', 5000);
+  assert.equal(JSON.parse(saved(f).conversation.document).domain.currentRun?.outcome, 'completed');
+  assert.deepEqual(remote.calls.filter(call => call.method === 'POST').map(call => call.input?.requestId).filter(Boolean), [requestId]);
+});
+
 test('Crew lost submit remains original-only GET recovery and does not turn missing lookup into rejection', async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
   remote.setLost(true);
@@ -731,13 +764,14 @@ test('Crew legacy checkpoint without cancellation restores before a fresh confir
   assert.deepEqual(checkpoint.state.run, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
   assert.deepEqual(JSON.parse(restored.conversation.document).domain.currentRun, { kind: 'ended', runId, outcome: 'interrupted' });
   assert.deepEqual(JSON.parse(restored.conversation.document).domain.messages.map(message => message.text), ['A real provider reply']);
+  await until(() => sendReceipt(f) === 'completed');
   const recoveryStart = remote.calls.length;
   assert.equal((await f.client.reconcile(scope, 'send')).state.kind, 'completed');
   assert.equal(saved(f).commands.find(row => row.id === 'send').target, original.target);
   assert(remote.calls.slice(recoveryStart).every(call => call.method === 'GET' && call.path.endsWith(requestId)));
-  assert(remote.calls.slice(recoveryStart).length > 0);
-  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source.data;
-  assert.deepEqual(evidence, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
+  const evidence = JSON.parse(saved(f).commands.find(row => row.id === 'send').observation).evidence.source;
+  assert.equal(evidence.source, 'provider-lookup');
+  assert.deepEqual(evidence.data, { requestId, status: 'uncertain', cancellation: receipt.cancellation });
   const browser = await chromium.launch(); t.after(() => browser.close());
   const context = await browser.newContext();
   const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
