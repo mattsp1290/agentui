@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
 import { isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { canonicalJson } from '@agentui/contracts';
+import { canonicalJson, JsonLimitError } from '@agentui/contracts';
 import { count, hex, identifier, record } from '@agentui/contracts/decode';
 import { parseGitExtensionReference, parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
 import type { GitExtensionReference, ServerCustomizationArtifact } from '@agentui/host/customization';
@@ -22,7 +22,8 @@ export type RefreshBuildResult = { readonly kind: 'failed'; readonly failure: Re
   | { readonly kind: 'built'; readonly pin: Pin; readonly manifest: ServerCustomizationArtifact };
 export type RefreshBuilder = { readonly kind: 'unavailable' } | { readonly kind: 'ready'; readonly identity: ReadyToolchain;
   run(command: RefreshBuildCommand): Promise<RefreshBuildResult>; close(): Promise<void> };
-type PromotionRefusal = 'source-superseded' | 'refresh-intent-conflict' | 'revision-conflict' | 'busy' | 'id-conflict' | 'receipt-too-large' | 'invalid-artifact';
+const promotionRefusals = ['source-superseded', 'refresh-intent-conflict', 'revision-conflict', 'busy', 'id-conflict', 'receipt-too-large', 'invalid-artifact'] as const;
+type PromotionRefusal = typeof promotionRefusals[number];
 type Promotion = { readonly kind: 'unconfirmed'; readonly command: SelectionCommand }
   | { readonly kind: 'refused'; readonly command: SelectionCommand; readonly reason: PromotionRefusal };
 type Job = Readonly<{ request: RefreshRequest; ordinal: number }> & (
@@ -48,10 +49,7 @@ function failure(value: unknown): RefreshBuildFailure {
   throw new Error('Invalid refresh failure');
 }
 function promotionRefusal(value: unknown): PromotionRefusal | undefined {
-  switch (value) {
-    case 'source-superseded': case 'refresh-intent-conflict': case 'revision-conflict': case 'busy': case 'id-conflict': case 'receipt-too-large': case 'invalid-artifact': return value;
-    default: return undefined;
-  }
+  return promotionRefusals.find(reason => reason === value);
 }
 function absolute(value: unknown): string {
   const path = identifier(value, 4096);
@@ -167,7 +165,8 @@ export async function createRefreshController(deps: { readonly database: AccessD
       if (namespace() !== owned) throw new Error('Invalid refresh journal');
       if (owned) {
         assertRefreshSelectionOwner(deps.database);
-        if (canonicalJson(readJobs()) !== canonicalJson(expected)) throw new Error('Invalid refresh journal');
+        const stored = readJobs();
+        if (stored.length !== expected.length || stored.some((job, index) => canonicalJson(job) !== canonicalJson(expected[index]))) throw new Error('Invalid refresh journal');
       } else if (db.prepare("SELECT 1 FROM sqlite_schema WHERE lower(name)='service_extension_refresh_owner'").get()) throw new Error('Missing refresh ownership');
     }
     function transaction<T>(work: () => T): T {
@@ -327,7 +326,13 @@ export async function createRefreshController(deps: { readonly database: AccessD
       }
       const built: Job = { request: job.request, ordinal: job.ordinal, build: { ...result, command },
         promotion: { kind: 'unconfirmed', command: commandFor(command, job.request, result.pin) } };
-      if (Buffer.byteLength(canonicalJson(built)) > RECEIPT_LIMIT) {
+      let fits = false;
+      try {
+        fits = [built, ...promotionRefusals.map(reason => ({ ...built,
+          promotion: { kind: 'refused', command: built.promotion.command, reason } }))]
+          .every(job => Buffer.byteLength(canonicalJson(job)) <= RECEIPT_LIMIT);
+      } catch (error) { if (!(error instanceof JsonLimitError)) throw error; }
+      if (!fits) {
         save({ request: job.request, ordinal: job.ordinal, build: { kind: 'failed', command, failure: 'resource-limit' }, promotion: { kind: 'not-built' } });
         return inspect(job.request.id);
       }
