@@ -23,7 +23,7 @@ test('UI generation captures producer fields once and returns only nested presen
   assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1, contentLayout: 1 });
   assert.deepEqual(nested, { id: 1, label: 1, component: 1, actions: 1, children: 1 });
   assert.deepEqual(actionReads, { id: 1, label: 1, run: 1 });
-  assert.deepEqual(Object.keys(active.presentation).sort(), ['contentLayout', 'modules', 'transcript']);
+  assert.deepEqual(Object.keys(active.presentation).sort(), ['activity', 'contentLayout', 'modules', 'transcript']);
   modules.length = 0;
   assert.equal(active.presentation.modules[0].children[0].label, 'Child');
   assert.deepEqual(await active.presentation.modules[0].children[0].actions[0].run({}), { kind: 'rejected', reason: 'disabled' });

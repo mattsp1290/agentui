@@ -229,7 +229,7 @@ test('the same committed activity artifact retains a decoded native image beside
     imageSha256: hash(bytes), domain: await domain(page), calls, imageReadCount: operations.filter(operation => operation.op === 'image-read').length }, null, 2));
 });
 
-for (const mode of ['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'transcript', 'layout', 'independent-transcript', 'independent-layout']) {
+for (const mode of ['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'transcript', 'layout', 'independent-transcript', 'retained-transcript', 'independent-layout']) {
   test(`committed activity respects ${mode} selection and fallback ownership`, { timeout: 45_000 }, async t => {
     const artifact = await committed(), provider = await activityProvider(t);
     const { page, host } = await surface(t, artifact.assets, { kind: 'extensions' }, [provider.extension]);
@@ -242,7 +242,7 @@ for (const mode of ['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'tr
     const editor = page.getByRole('textbox', { name: 'Message', exact: true });
     await draft(page, 'Lifecycle draft');
     const original = await editor.elementHandle();
-    if (['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'independent-transcript'].includes(mode)) {
+    if (['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'independent-transcript', 'retained-transcript'].includes(mode)) {
       await native.waitFor();
       assert.equal(await count(), 0);
     }
@@ -270,6 +270,17 @@ for (const mode of ['none', 'conflict', 'activation', 'lazy', 'lazy-reject', 'tr
       await page.getByRole('alert').filter({ hasText: 'Independent transcript failed' }).waitFor();
       await selected(page).waitFor(); assert.equal(await count(), 1);
       assert.equal(await native.count(), 0);
+    } else if (mode === 'retained-transcript') {
+      const transcript = page.getByText('Independent whole transcript', { exact: true });
+      const instances = () => page.evaluate(() => window.activityCompanion.transcripts());
+      await page.evaluate(() => window.activityCompanion.resolve());
+      await transcript.waitFor(); assert.equal(await instances(), 1); assert.equal(await count(), 0);
+      await page.evaluate(() => window.activityCompanion.suspend());
+      await native.waitFor(); assert.equal(await transcript.isVisible(), false);
+      assert.equal(await instances(), 1); assert.equal(await count(), 0);
+      assert.equal(await selected(page).count(), 0);
+      await page.evaluate(() => window.activityCompanion.resume());
+      await transcript.waitFor(); assert.equal(await instances(), 1); assert.equal(await count(), 0);
     } else if (mode === 'layout' || mode === 'independent-layout') {
       await selected(page).waitFor(); assert.equal(await count(), 1);
       if (mode === 'layout') await page.getByRole('button', { name: 'Suspend activity layout', exact: true }).click();
