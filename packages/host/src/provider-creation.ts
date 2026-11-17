@@ -71,7 +71,8 @@ export function creationBinding<I extends string>(value: unknown, creation: Crea
   const original = creationIntent(input.creation, selected, creation.agent.instance), authority = parseRunAuthority(input.authority);
   if (input.kind !== 'agentui-created' || canonicalJson(original) !== canonicalJson(creation) || authority.kind !== selected.expectedAuthority ||
     authority.binding.namespace !== selected.instance.namespace || authority.binding.installationId !== selected.instance.installationId ||
-    (authority.kind === 'agentui-host' && authority.hostId !== creation.scope.hostId)) throw new Error('Foreign creation binding');
+    (authority.kind === 'agentui-host' && authority.hostId !== creation.scope.hostId) ||
+    authority.binding.opaqueSessionId === creation.from?.binding.opaqueSessionId) throw new Error('Foreign creation binding');
   return { kind: 'agentui-created', creation, authority: { ...authority,
     binding: { ...authority.binding, installationId: creation.agent.instance.installationId } } };
 }

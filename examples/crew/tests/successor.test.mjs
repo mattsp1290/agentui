@@ -56,10 +56,10 @@ async function predecessor(f) {
   const binding = f.host.creation(before).observation.binding;
   return { binding, source: binding.authority.binding.opaqueSessionId };
 }
-async function activated(remote) {
+async function activated(remote, use = (_request, action) => action('private-crew-test')) {
   const { value } = remote.extension();
   let provider, presentation;
-  await value.entry.activate({ namespace: 'crew', credentials: { use: (_request, action) => action('private-crew-test') },
+  await value.entry.activate({ namespace: 'crew', credentials: { use },
     providers: { add(_id, backend, view) { provider = backend; presentation = view; } } });
   return { provider, presentation, instance: value.installations[0].instance };
 }
@@ -79,7 +79,7 @@ test('Crew creation without a predecessor keeps its derived binding and never re
   assert.equal(Object.hasOwn(f.state('before'), 'handoff'), false);
 });
 
-test('Crew successor binds the target Crew drew, attests it before /events and hides the carried transcript', async t => {
+test('Crew successor binds the target Crew drew, checks it against the handoff record before /events and hides the carried transcript', async t => {
   const f = await harness(t), { binding: earlier, source } = await predecessor(f), after = scope('after');
   const result = await f.create(after, before);
   assert.equal(result.kind, 'confirmed');
@@ -131,7 +131,7 @@ for (const [name, tamper] of [
   ['another source', chain => chain?.incoming ? { ...chain, incoming: { ...chain.incoming, source: { ...chain.incoming.source, conversationId: randomUUID() } } } : chain],
   ['another member', chain => chain?.incoming ? { ...chain, incoming: { ...chain.incoming, target: { ...chain.incoming.target, memberId: randomUUID() } } } : chain],
   ['no incoming record', chain => chain?.incoming ? null : chain],
-]) test(`Crew successor attested with ${name} opens no /events until Crew attests it`, async t => {
+]) test(`Crew successor whose handoff record has ${name} opens no /events until the record matches`, async t => {
   const f = await harness(t), after = scope('after');
   await predecessor(f);
   f.remote.setHandoffRead(tamper);
@@ -247,4 +247,49 @@ test('Crew successor re-posts only re-drivable answers within the first create, 
   assert.equal(confirmed.source, 'lookup');
   assert.equal(f.posts().length, 3);
   assert.equal(f.reads(source), 2);
+});
+
+test('Crew successor refused after an unknown outcome stays uncertain and resolves by lookup', { timeout: 30_000 }, async t => {
+  const f = await harness(t), { source } = await predecessor(f), after = scope('after');
+  f.remote.replyHandoffs('update_rejected', { status: 401, code: 'authentication_required' });
+  assert.equal((await f.create(after, before)).kind, 'uncertain');
+  assert.equal(f.remote.handoffs.length, 1);
+  assert.equal((await f.create(after)).kind, 'pending');
+  assert.equal(f.posts().length, 2);
+  assert.equal(f.reads(source), 1);
+});
+
+test('Crew successor re-posts a 503 only for retry_same_request, and a mapped 409 after it stays a refusal', { timeout: 30_000 }, async t => {
+  const f = await harness(t);
+  await predecessor(f);
+  f.remote.replyHandoffs({ status: 503, code: 'unavailable' });
+  assert.equal((await f.create(scope('after-unavailable'), before)).kind, 'uncertain');
+  assert.equal(f.posts().length, 1);
+  f.remote.replyHandoffs({ status: 503, code: 'retry_same_request' }, { status: 409, code: 'busy' });
+  const result = await f.create(scope('after-busy'), before);
+  assert.equal(result.kind, 'rejected');
+  assert.deepEqual(result.evidence, { refused: 'busy', code: 'busy' });
+  assert.equal(f.posts().length, 3);
+  assert.equal(f.remote.handoffs.length, 0);
+});
+
+test('Crew successor sends no further POST once its credential is withdrawn during the repeat', { timeout: 30_000 }, async t => {
+  const remote = await service(t), posts = () => remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/handoffs')).length;
+  let withdrawn = false;
+  const { provider, instance } = await activated(remote, async (_request, action) => {
+    if (withdrawn) throw new Error('Provider credential use refused');
+    try { return await action('private-crew-test'); } finally { withdrawn = posts() > 0; }
+  });
+  const connection = await provider.connect({ apiVersion: 1, instance, credential: credential(instance) });
+  assert.equal(connection.kind, 'connected');
+  t.after(() => connection.backend.close());
+  const agent = { instance, kind: 'agent', opaqueId: memberId }, earlier = { kind: 'create', operationId: randomUUID(), scope: before, agent };
+  assert.equal((await connection.backend.create(earlier)).kind, 'confirmed');
+  remote.replyHandoffs('unavailable', 'admitted');
+  const result = await connection.backend.create({ kind: 'create', operationId: randomUUID(), scope: scope('after'), agent,
+    from: { scope: before, binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: earlier.operationId } } });
+  assert.equal(result.kind, 'uncertain');
+  assert.equal(posts(), 1);
+  assert.equal(remote.handoffs.length, 1);
+  assert.equal(remote.handoffs[0].firstRequestAdmitted, false);
 });

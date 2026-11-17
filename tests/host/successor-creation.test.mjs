@@ -20,11 +20,13 @@ const successors = `SELECT conversation FROM provider_creations INDEXED BY provi
   WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId')=?`;
 const read = (path, action) => { const db = new DatabaseSync(path); try { return action(db); } finally { db.close(); } };
 
-async function providers(t) {
+const drawn = operation => operation.from ? `drawn-for-${operation.operationId}` : operation.operationId;
+const refused = { kind: 'not-dispatched', source: 'host', evidence: null };
+
+async function providers(t, { continuation = true, session = drawn } = {}) {
   const creates = [], lookups = [];
   const confirmed = operation => ({ kind: 'confirmed', evidence: null, value: { kind: 'agentui-created', creation: operation, authority: {
-    kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId,
-      opaqueSessionId: operation.from ? `drawn-for-${operation.operationId}` : operation.operationId } } } });
+    kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: session(operation) } } } });
   const backend = { instance,
     capabilities: { create: supported, send: unsupported, cancel: unsupported, decide: unsupported, reconcile: supported, observe: unsupported },
     async discover() { return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: 'agent' }, name: 'Successor fixture' }] }; },
@@ -34,7 +36,8 @@ async function providers(t) {
     observe() { return { close() {}, ended: Promise.resolve({ kind: 'unsupported', cursor: null, reason: 'Creation fixture only' }) }; },
     async close() {} };
   const presentation = { instance, decodeRequest: value => value, decodeCursor: value => value, decodeState: value => value,
-    decodeEvent: value => value, request: text => ({ text }), snapshot: () => ({ messages: [], currentRun: null }), apply: state => ({ state, events: [] }) };
+    decodeEvent: value => value, request: text => ({ text }), snapshot: () => ({ messages: [], currentRun: null }), apply: state => ({ state, events: [] }),
+    ...(continuation && { continuation: () => null }) };
   const registry = createProviderRegistry([{
     manifest: { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
     entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
@@ -100,6 +103,41 @@ test('capture refuses a predecessor on another host, of another installation, na
     { scope: before, binding: { ...binding, extra: true } },
     { scope: before, binding, extra: true },
   ]) assert.throws(() => p.registry.capture(after, p.target, from), /^Error: (?:Foreign creation predecessor|Unexpected or missing field)$/u);
+});
+
+test('the host refuses a capture that drops, alters or adds the predecessor it built', async t => {
+  const f = fixture(t), host = f.open(), p = await providers(t);
+  assert.equal((await host.createProviderConversation(before, p.target, p.registry)).kind, 'confirmed');
+  const binding = host.creation(before).observation.binding.authority.binding, execute = (...args) => p.registry.execute(...args);
+  for (const [capture, predecessor] of [
+    [(scope, target) => p.registry.capture(scope, target), before],
+    [(scope, target, from) => p.registry.capture(scope, target, { ...from, binding: { ...from.binding, opaqueSessionId: 'another-session' } }), before],
+    [(scope, target) => p.registry.capture(scope, target, { scope: before, binding }), undefined],
+  ]) {
+    assert.deepEqual(await host.createProviderConversation(after, p.target, { capture, execute }, predecessor), refused);
+    assert.equal(host.creation(after), null);
+  }
+  assert.equal(p.creates.length, 1);
+});
+
+test('a provider whose presentation has no continuation hook is never handed a predecessor', async t => {
+  const f = fixture(t), host = f.open(), p = await providers(t, { continuation: false });
+  assert.equal((await host.createProviderConversation(before, p.target, p.registry)).kind, 'confirmed');
+  assert.deepEqual(await host.createProviderConversation(after, p.target, p.registry, before), refused);
+  assert.equal(host.creation(after), null);
+  const binding = host.creation(before).observation.binding.authority.binding;
+  assert.throws(() => p.registry.capture(after, p.target, { scope: before, binding }), /^Error: Provider does not continue conversations$/u);
+  assert.equal(p.creates.length, 1);
+});
+
+test('a successor confirmed on its predecessor\'s session settles uncertain on create and on lookup', async t => {
+  const f = fixture(t), host = f.open(), p = await providers(t, { session: operation => operation.from?.binding.opaqueSessionId ?? operation.operationId });
+  assert.equal((await host.createProviderConversation(before, p.target, p.registry)).kind, 'confirmed');
+  assert.deepEqual(await host.createProviderConversation(after, p.target, p.registry, before), { kind: 'uncertain', source: 'create', evidence: null });
+  assert.deepEqual(await host.createProviderConversation(after, p.target, p.registry), { kind: 'uncertain', source: 'lookup', evidence: null });
+  assert.equal(host.creation(after).observation.kind, 'uncertain');
+  assert.equal(p.creates[1].from.binding.opaqueSessionId, p.creates[0].operationId);
+  assert.equal(p.lookups.length, 1);
 });
 
 test('a saved successor whose predecessor was altered is refused when read', async t => {

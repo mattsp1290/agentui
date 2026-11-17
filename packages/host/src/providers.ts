@@ -290,6 +290,8 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected, from) {
       const granted = validate(selected);
+      // The continuation hook is the provider's opt-in: without it, a provider never receives a predecessor.
+      if (from && typeof presentation.continuation !== 'function') throw new Error('Provider does not continue conversations');
       return providerCreation({ installation: selected, credential: granted.credential,
         intent: { kind: 'create', operationId: randomUUID(), scope,
           agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId }, ...(from && { from }) } }, scope);

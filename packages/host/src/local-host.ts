@@ -260,7 +260,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         const source = predecessor ? continued(predecessor, target) : undefined;
         try { original = providers.capture(scope, target, source?.from); }
         catch { return { kind: 'not-dispatched', source: 'host', evidence: null }; }
-        if (source && canonicalJson(original.credential) !== source.credential) return { kind: 'not-dispatched', source: 'host', evidence: null };
+        // The caller supplies capture, so the captured intent must carry exactly the predecessor the host built, or none.
+        if (canonicalJson(original.intent.from ?? null) !== canonicalJson(source?.from ?? null) ||
+          (source && canonicalJson(original.credential) !== source.credential)) return { kind: 'not-dispatched', source: 'host', evidence: null };
       }
       if (!prior) store.reserveCreation(original);
       const task = inFlight(async () => {

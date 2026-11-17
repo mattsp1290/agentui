@@ -56,9 +56,10 @@ function handoffRefusal(error: unknown): ReturnType<typeof refused> | null {
   const refusal = error.status === 409 ? continuationRefusals.get(error.code) : [400, 401, 403, 404].includes(error.status) ? 'unavailable' : undefined;
   return refusal ? refused(refusal, error.code) : null;
 }
-// Crew re-drives an unadmitted first request when the same handoff is posted again.
+// Crew re-drives an unadmitted first request when the same handoff is posted again after one of these answers.
 const redrivable = (error: unknown) => error instanceof CrewUnknownOutcomeError && error.cause instanceof CrewHttpError &&
-  (error.cause.status === 503 || (error.cause.status === 409 && error.cause.code === 'update_rejected'));
+  ((error.cause.status === 503 && error.cause.code === 'retry_same_request') || (error.cause.status === 409 && error.cause.code === 'update_rejected'));
+type Posted = { readonly record: HandoffRecord } | { readonly error: unknown };
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
   const service = new URL(options.service);
   if (!['http:', 'https:'].includes(service.protocol) || service.username || service.password || service.pathname !== '/' ||
@@ -113,27 +114,36 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId), evidence }
           : { kind: 'pending', evidence };
       }
+      // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.
+      const post = (operation: CreationIntent<string>, source: string): Promise<Posted> => use<Posted>(async client => {
+        try {
+          return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId },
+            { signal: AbortSignal.timeout(15000) }) };
+        } catch (error) { return { error }; }
+      });
       // Only the first create() posts. Lookups and every later call read the source's outgoing handoff.
-      const handoff = (operation: CreationIntent<string>, source: string, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> =>
-        use<ProviderOutcome<ProviderConversation<string>>>(async client => {
-          if (!fresh) {
-            try { return settle(operation, source, (await client.handoff({ conversationId: source }, { signal: AbortSignal.timeout(10000) })).outgoing); }
-            catch { return uncertain(); }
-          }
-          let committed: HandoffRecord | undefined;
+      const handoff = async (operation: CreationIntent<string>, source: string, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
+        if (!fresh) {
+          return use(async client => settle(operation, source,
+            (await client.handoff({ conversationId: source }, { signal: AbortSignal.timeout(10000) })).outgoing)).catch(() => uncertain());
+        }
+        let committed: HandoffRecord | undefined, unresolved = false;
+        try {
           for (let attempt = 1; ; attempt++) {
-            try {
-              committed = await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId },
-                { signal: AbortSignal.timeout(15000) });
+            const posted = await post(operation, source);
+            if ('record' in posted) {
+              committed = posted.record;
               if (committed.firstRequestAdmitted) break;
-            } catch (error) {
-              if (!redrivable(error)) return committed ? settle(operation, source, committed) : handoffRefusal(error) ?? uncertain();
-            }
+            } else if (redrivable(posted.error)) unresolved = true;
+            else if (committed) break;
+            // After an unknown outcome only a 409 proves the earlier POST wrote nothing: Crew raises those after its requestId lookup.
+            else return (!unresolved || (posted.error instanceof CrewHttpError && posted.error.status === 409) ? handoffRefusal(posted.error) : null) ?? uncertain();
             if (attempt === 3) break;
             await delay(5000);
           }
           return committed ? settle(operation, source, committed) : uncertain();
-        }).catch(() => uncertain());
+        } catch { return uncertain(); }
+      };
       const confirm = async (operation: CreationIntent<string>, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
         if (operation.from) {
           member(operation);
