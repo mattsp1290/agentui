@@ -12,7 +12,7 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
   const grants = [];
-  let lost = false, observationMode = 'stream', conflict = false, decisionReply = {};
+  let lost = false, observationMode = 'stream', conflict = null, decisionReply = {}, receiptHold = null, receiptFailure = false;
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, 'Bearer private-crew-test');
     let text = ''; for await (const chunk of request) text += chunk;
@@ -48,11 +48,12 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
       if (observationMode === 'redirect') { response.writeHead(302, { location: '/v1/capabilities' }); response.end(); return; }
       if (observationMode === 'oversized') { response.writeHead(200, { 'content-type': 'text/event-stream' }); response.end(':' + 'x'.repeat(9 * 1024 * 1024) + '\n\n'); return; }
       response.writeHead(200, { 'content-type': 'text/event-stream' });
-      const stream = { conversationId, response }; streams.add(stream); response.on('close', () => streams.delete(stream));
-      for (const event of [{ type: 'RUN_STARTED', threadId: conversationId, runId: randomUUID() },
+      const stream = { conversationId, response, runId: randomUUID() }; streams.add(stream); response.on('close', () => streams.delete(stream));
+      for (const event of [{ type: 'RUN_STARTED', threadId: conversationId, runId: stream.runId },
         { type: 'MESSAGES_SNAPSHOT', messages: conversation.messages }, { type: 'STATE_SNAPSHOT', snapshot: conversation.state }]) {
         response.write(`data: ${JSON.stringify(event)}\n\n`);
       }
+      if (finish(stream, conversation.state.phase)) response.end();
       return;
     }
     if (parts[4] === 'human') {
@@ -64,13 +65,17 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
       const result = detailHandler ? await detailHandler(detail) : { status: detail ? 200 : 404, body: detail ?? { error: 'not_found' } };
       return json(result.status, result.body);
     }
-    if (request.method === 'GET') return receipts.has(requestId) ? json(200, receipts.get(requestId)) : json(404, { error: 'not_found' });
+    if (request.method === 'GET') {
+      await receiptHold;
+      if (receiptFailure) return json(503, { error: 'unavailable' });
+      return receipts.has(requestId) ? json(200, receipts.get(requestId)) : json(404, { error: 'not_found' });
+    }
     if (parts[6] === 'cancel') {
       const receipt = { ...receipts.get(requestId), status: 'cancellation_requested', cancellation: {
         receiptId: randomUUID(), delivery: 'pending', nativeTermination: 'unconfirmed', effects: 'not_assessed' } };
       receipts.set(requestId, receipt); return json(202, receipt);
     }
-    if (conflict) return json(409, { error: 'request_conflict' });
+    if (conflict) return json(409, { error: conflict });
     const receipt = { apiVersion: '1', conversationId, requestId: input.requestId,
       acceptance: { boundary: 'sql_admission_and_temporal_queue' }, status: 'accepted' };
     receipts.set(input.requestId, receipt);
@@ -87,14 +92,32 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
         { type: 'STATE_SNAPSHOT', snapshot: conversation.state }]) response.write(`data: ${JSON.stringify(event)}\n\n`);
     }
   }
+  function finish(stream, phase) {
+    const event = phase === 'failed' ? { type: 'RUN_ERROR', code: 'MEMBER_FAILED', message: 'Member conversation failed' }
+      : phase === 'complete' ? { type: 'RUN_FINISHED', threadId: stream.conversationId, runId: stream.runId }
+      : phase === 'cancelled' ? { type: 'RUN_FINISHED', threadId: stream.conversationId, runId: stream.runId, outcome: { type: 'cancelled' } } : null;
+    if (event) stream.response.write(`data: ${JSON.stringify(event)}\n\n`);
+    return event !== null;
+  }
+  function end(conversationId, phase) {
+    const conversation = conversations.get(conversationId);
+    conversation.state.phase = phase;
+    for (const stream of streams) if (stream.conversationId === conversationId) {
+      stream.response.write(`data: ${JSON.stringify({ type: 'STATE_SNAPSHOT', snapshot: conversation.state })}\n\n`);
+      finish(stream, phase);
+      stream.response.end();
+    }
+  }
   const origin = `http://127.0.0.1:${server.address().port}`;
   const instance = { namespace: 'crew', installationId: 'test', generation: 'one', protocolVersion: '1' };
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => 'private-crew-test' } }] } });
-  return { calls, streams, conversations, receipts, details, emit, extension, grants,
+  return { calls, streams, conversations, receipts, details, emit, end, extension, grants,
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
-    setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict() { conflict = true; } };
+    setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },
+    holdReceipts() { const hold = Promise.withResolvers(); receiptHold = hold.promise; return () => { receiptHold = null; hold.resolve(); }; },
+    setReceiptFailure(value) { receiptFailure = value; } };
 }
 
 test('Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen', async t => {
@@ -1154,4 +1177,200 @@ test('Crew discovery, creation and host restart touch only the member, owned con
   await f.restart([remote.extension()]);
   await until(() => remote.streams.size === 1 && seen(remote.calls.slice(before)).includes(observe));
   assert.deepEqual(seen(remote.calls.slice(before)), ['GET /v1/capabilities', 'GET /v1/members', observe]);
+});
+
+const closure = (f, id = 'chat') => JSON.parse(saved(f, id).checkpoint.data).state.closure;
+async function observationOf(f, scope, kind) {
+  const deadline = Date.now() + 5000;
+  let status = await f.client.providerObservation({ scope, action: 'read' });
+  while (status.kind !== kind && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 10));
+    status = await f.client.providerObservation({ scope, action: 'read' });
+  }
+  return status;
+}
+
+for (const [phase, cause] of [['cancelled', 'cancelled'], ['failed', 'failed'], ['complete', 'exhausted']]) {
+  test(`Crew ${phase} phase saves a ${cause} closure and reports the conversation concluded`, async t => {
+    const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+    await until(() => remote.streams.size === 1);
+    remote.end([...remote.conversations.keys()][0], phase);
+    await until(() => closure(f) !== undefined);
+    assert.deepEqual(closure(f), { cause });
+    assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'concluded', cause });
+    assert.deepEqual(await f.client.providerObservation({ scope, action: 'retry' }), { kind: 'concluded', cause });
+    await until(() => remote.streams.size === 0);
+    assert.equal(remote.calls.filter(call => call.path.endsWith('/events')).length, 1);
+  });
+}
+
+test('Crew concluded conversation stays concluded after restart without observing again', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await until(() => remote.streams.size === 1);
+  remote.end([...remote.conversations.keys()][0], 'cancelled');
+  await until(() => closure(f) !== undefined && remote.streams.size === 0);
+  const observations = () => remote.calls.filter(call => call.path.endsWith('/events')).length, before = observations();
+  await f.restart([remote.extension()]);
+  assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'concluded', cause: 'cancelled' });
+  assert.deepEqual(await f.client.providerObservation({ scope, action: 'retry' }), { kind: 'concluded', cause: 'cancelled' });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  assert.equal(observations(), before);
+  assert.equal(remote.streams.size, 0);
+});
+
+test('Crew terminal snapshot whose receipt read outlasts the stream still concludes', { timeout: 10_000 }, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0];
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.requestId === requestId);
+  const lookups = () => remote.calls.filter(call => call.method === 'GET' && call.path.endsWith(`/requests/${requestId}`)).length;
+  const release = remote.holdReceipts(), before = lookups();
+  remote.end(receipt.conversationId, 'cancelled');
+  await until(() => remote.streams.size === 0 && lookups() > before);
+  await new Promise(resolve => setTimeout(resolve, 50));
+  assert.equal(closure(f), undefined);
+  release();
+  await until(() => closure(f) !== undefined);
+  assert.deepEqual(await f.client.providerObservation({ scope, action: 'read' }), { kind: 'concluded', cause: 'cancelled' });
+});
+
+test('Crew terminal snapshot whose receipt read fails stays stopped and retryable until a retry reads it', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [requestId, receipt] = [...remote.receipts][0];
+  await until(() => JSON.parse(saved(f).checkpoint.data).state.run?.requestId === requestId);
+  const lookups = () => remote.calls.filter(call => call.method === 'GET' && call.path.endsWith(`/requests/${requestId}`)).length;
+  remote.setReceiptFailure(true);
+  receipt.status = 'cancelled';
+  const before = lookups();
+  remote.end(receipt.conversationId, 'cancelled');
+  assert.deepEqual(await observationOf(f, scope, 'stopped'), { kind: 'stopped', reason: 'provider-disconnected' });
+  assert.ok(lookups() > before);
+  assert.equal(closure(f), undefined);
+  assert.equal(JSON.parse(saved(f).conversation.document).domain.currentRun.kind, 'running');
+  remote.setReceiptFailure(false);
+  await f.client.providerObservation({ scope, action: 'retry' });
+  assert.deepEqual(await observationOf(f, scope, 'concluded'), { kind: 'concluded', cause: 'cancelled' });
+  assert.deepEqual(closure(f), { cause: 'cancelled' });
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'ended');
+});
+
+test('Crew observation failure while running and a stream end while idle stay stopped and retryable', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [, receipt] = [...remote.receipts][0], stopped = { kind: 'stopped', reason: 'provider-disconnected' };
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
+  remote.emit(receipt.conversationId, [{ type: 'RUN_ERROR', code: 'OBSERVATION_FAILED', message: 'Reconnect for the current conversation snapshot' }]);
+  assert.deepEqual(await observationOf(f, scope, 'stopped'), stopped);
+  assert.equal((await f.client.providerObservation({ scope, action: 'retry' })).kind, 'observing');
+  await until(() => remote.streams.size === 1);
+  remote.end(receipt.conversationId, 'idle');
+  assert.deepEqual(await observationOf(f, scope, 'stopped'), stopped);
+  assert.equal(closure(f), undefined);
+  assert.equal((await f.client.providerObservation({ scope, action: 'retry' })).kind, 'observing');
+});
+
+test('Crew send after closure is refused without a request while an earlier command ID keeps its receipt', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  const port = f.client.conversation(scope), first = await port.submit(send(scope));
+  assert.equal(first.receipt.state.kind, 'accepted');
+  remote.end([...remote.receipts.values()][0].conversationId, 'cancelled');
+  await until(() => closure(f) !== undefined);
+  const refused = await port.submit(send(scope, 'after-closure'));
+  assert.equal(refused.kind, 'rejected');
+  assert.equal(refused.reason, 'conversation-closed');
+  const retried = await port.submit(send(scope));
+  assert.equal(retried.kind, 'receipt');
+  assert.equal(retried.receipt.hostOperationId, first.receipt.hostOperationId);
+  assert.equal((await port.receipt('send')).hostOperationId, first.receipt.hostOperationId);
+  assert.equal(await port.receipt('after-closure'), null);
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
+});
+
+test('Crew submit refused by a handoff settles rejected while a conflict stays uncertain', async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  const port = f.client.conversation(scope);
+  for (const [code, state] of [['handed_off', 'rejected'], ['handoff_pending', 'rejected'], ['conflict', 'uncertain']]) {
+    remote.setConflict(code);
+    assert.equal((await port.submit(send(scope, code))).receipt.state.kind, state, code);
+  }
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 3);
+});
+
+test('Crew checkpoint saved before closure decodes unchanged and reports no closure', async t => {
+  const remote = await service(t), { backend, binding, presentation } = await direct(remote);
+  t.after(() => backend.close());
+  const historical = { binding, messages: [], run: null };
+  const state = presentation.decodeState(historical);
+  assert.equal(JSON.stringify(state), JSON.stringify(historical));
+  assert.equal(Object.hasOwn(state, 'closure'), false);
+  assert.equal(presentation.closure(state), null);
+  assert.deepEqual(presentation.closure(presentation.decodeState({ ...historical, closure: { cause: 'exhausted' } })), { cause: 'exhausted' });
+  assert.throws(() => presentation.decodeState({ ...historical, closure: { cause: 'paused' } }));
+  remote.conversations.get(binding.authority.binding.opaqueSessionId).state.phase = 'complete';
+  const baseline = await backend.snapshot(binding);
+  assert.equal(baseline.kind, 'available');
+  assert.deepEqual(presentation.closure(baseline.snapshot.state), { cause: 'exhausted' });
+});
+
+test('browser shows a closed Crew conversation without Stop or an update check, even after failed or stopped status reads, and keeps the draft', { timeout: 20_000 }, async t => {
+  const remote = await service(t), f = await fixture(t, [remote.extension()]);
+  const failed = await f.create('chat'), stopped = await f.create('stopped');
+  const crew = id => f.inspect(db => JSON.parse(db.prepare('SELECT original FROM provider_creations WHERE conversation=?').get(id).original).intent.operationId);
+  for (const scope of [failed, stopped]) await f.client.conversation(scope).submit(send(scope));
+  const finished = [...remote.receipts.values()].find(receipt => receipt.conversationId === crew('chat'));
+  finished.status = 'completed'; finished.result = { text: 'Finished' }; remote.emit(finished.conversationId);
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'ended');
+  remote.end(crew('chat'), 'failed'); remote.end(crew('stopped'), 'cancelled');
+  await until(() => closure(f) !== undefined && closure(f, 'stopped') !== undefined);
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  const open = scope => page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  const notice = cause => page.getByRole('status').filter({ hasText: `This conversation ended: ${cause}. Earlier messages and your draft stay available.` });
+  await open(stopped);
+  await notice('it was stopped').waitFor();
+  assert.equal(JSON.parse(saved(f, 'stopped').conversation.document).domain.currentRun.kind, 'running');
+  assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+  await open(failed);
+  await notice('the provider reported a failure').waitFor();
+  await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
+  const message = page.getByRole('textbox', { name: 'Message', exact: true });
+  await message.fill('A draft kept after closure');
+  await page.getByRole('button', { name: /^Harness,/ }).and(page.locator(':enabled')).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check for updates', exact: true }).count(), 0);
+  assert.equal(await page.getByText('Updates paused').count(), 0);
+  let statusReads = 0;
+  // Later status reads first fail, then report the stopped status an extension refresh produces.
+  await page.route('**/api/v1', route => {
+    if (route.request().postDataJSON()?.op !== 'provider-observation') return route.continue();
+    return statusReads++ % 2 ? route.fulfill({ contentType: 'application/json',
+      body: JSON.stringify({ ok: true, value: { kind: 'stopped', reason: 'recovery-failed' } }) }) : route.abort();
+  });
+  await new Promise(resolve => setTimeout(resolve, 2_500));
+  assert.equal(statusReads, 0);
+  for (const [scope, cause, reads] of [[stopped, 'it was stopped', 1], [failed, 'the provider reported a failure', 2]]) {
+    await open(scope);
+    await until(() => statusReads === reads);
+    await new Promise(resolve => setTimeout(resolve, 200));
+    await notice(cause).waitFor();
+    assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).count(), 0);
+    assert.equal(await page.getByRole('button', { name: 'Check for updates', exact: true }).count(), 0);
+    assert.equal(await page.getByText('Updates paused').count(), 0);
+    assert.equal(await page.getByText('Observation status unavailable').count(), 0);
+  }
+  await page.getByRole('status').filter({ hasText: 'Conversation connected' }).first().waitFor();
+  await page.waitForFunction(() => document.querySelector('textarea#message')?.value === 'A draft kept after closure');
+  await page.getByRole('button', { name: /^Harness,/ }).and(page.locator(':enabled')).waitFor();
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+  await page.unroute('**/api/v1');
+  await page.reload();
+  await open(failed);
+  await notice('the provider reported a failure').waitFor();
+  await page.waitForFunction(() => document.querySelector('textarea#message')?.value === 'A draft kept after closure');
+  assert.equal(await page.getByRole('button', { name: 'Send', exact: true }).isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: 'Check for updates', exact: true }).count(), 0);
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 2);
+  assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel')).length, 0);
 });

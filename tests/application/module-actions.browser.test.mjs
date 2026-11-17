@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.9.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { ${body} } } })`;
 const outcome = kind => ({ kind: 'receipt', receipt: { scope: { hostId: 'test', conversationId: 'test' }, clientCommandId: 'test', hostOperationId: 'test', sequence: 1,
   state: ['rejected', 'not-dispatched', 'uncertain'].includes(kind) ? { kind, reason: 'Exact receipt reason' } : { kind } } });
 const status = (page, label) => page.getByRole('status', { name: `${label} status`, exact: true });
@@ -53,6 +53,7 @@ test('module actions report admission, receipt and thrown outcomes without autom
   await draft(page, 'Outcome draft');
   const variants = [
     [{ kind: 'rejected', reason: 'Exact admission reason' }, 'Submission rejected. Exact admission reason'],
+    [{ kind: 'rejected', reason: 'conversation-closed' }, 'Submission rejected. This conversation ended. Start a new chat to keep going.'],
     [outcome('rejected'), 'Submission rejected. Exact receipt reason'],
     [outcome('not-dispatched'), 'Not dispatched. Exact receipt reason'],
     [outcome('uncertain'), 'Submission uncertain. Exact receipt reason Use the conversation recovery controls before trying again.'],

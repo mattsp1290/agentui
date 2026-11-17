@@ -7,7 +7,7 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -112,11 +112,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       return result;
     });
   };
+  const closure = (original: StoredCreation | null): ConversationClosure | null =>
+    original?.observation?.kind === 'confirmed' ? options.providers?.closure?.(original, store) ?? null : null;
   const observationStatus = (scope: ConversationScope): ProviderObservationStatus => {
     authorized(scope);
     const target = store.findInstallation(scope), original = store.creation(scope);
     if (!original && target && !('kind' in target)) return { kind: 'not-applicable' };
     if (original?.observation?.kind !== 'confirmed') return { kind: 'stopped', reason: 'original-binding-unavailable' };
+    const cause = closure(original);
+    if (cause) return { kind: 'concluded', cause };
     const state = observing.get(canonicalJson(scope))?.state;
     if (state?.kind === 'starting') return { kind: 'recovering' };
     if (state?.kind === 'live') return { kind: 'observing' };
@@ -128,7 +132,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (previous?.state.kind === 'starting') return previous.state.task;
     if (previous?.state.kind === 'live' || previous?.state.reason === 'cleanup-failed') return;
     const original = store.creation(scope), registry = options.providers;
-    if (original?.observation?.kind !== 'confirmed' || !registry) return;
+    if (original?.observation?.kind !== 'confirmed' || !registry || closure(original)) return;
     const entry: Observation = { state: { kind: 'stopped', reason: 'recovery-failed' } };
     const task = inFlight(async () => {
       try {
@@ -292,7 +296,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const image = command.version === 1 && command.body.kind === 'send' && command.body.imageId !== undefined;
           const inputCapability = imageInput(target);
           const admit = () => store.admit(command, image && inputCapability.kind === 'unsupported'
-            ? inputCapability : provider ? { kind: 'supported' } : command.version === 2
+            ? inputCapability : provider ? command.body.kind === 'send' && closure(store.creation(scope))
+            ? { kind: 'unsupported', reason: 'conversation-closed' } : { kind: 'supported' } : command.version === 2
             ? { kind: 'unsupported', reason: 'frontend-offers-unsupported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,
