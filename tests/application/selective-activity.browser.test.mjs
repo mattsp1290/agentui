@@ -65,7 +65,7 @@ async function surface(t, assets, startup, extensions = []) {
     rmSync(directory, { recursive: true, force: true });
     for (const result of results) if (result.status === 'rejected') throw result.reason;
   });
-  host = await startBrowserHost({ directory, port: 0, accessMode: 'trusted', agentStartup: startup,
+  host = await startBrowserHost({ directory, port: 0, agentStartup: startup,
     hostArtifactDirectory: join(root, 'apps/host/dist'), assetsDirectory: assets,
     ...(extensions.length ? { extensions: { kind: 'transient', entries: extensions } } : {}) });
   browser = await chromium.launch();
