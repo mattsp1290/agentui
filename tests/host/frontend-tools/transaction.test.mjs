@@ -61,6 +61,23 @@ test('writer refuses a registration prepared for another conversation or host', 
   assert.deepEqual(frontendToolsFor(f.open()).producer(scope).inspect(key), { status: 'collecting', calls: [] });
 });
 
+test('issued writer retains its scope when the caller changes the original object', t => {
+  const f = setup(t), other = { ...scope, conversationId: 'other' };
+  f.store.create(other, installed);
+  f.store.transaction(transaction => {
+    const local = { ...scope }, writer = f.store.frontendWriter(transaction, local);
+    local.hostId = other.hostId; local.conversationId = other.conversationId;
+    writer.register(registration());
+    assert.equal(writer.observe(key, prefix()[0]), 'accepted');
+    const foreign = prepareFrontendRegistration(other, { identity: { ...run().identity, conversation: other }, threadId: key.threadId,
+      platform: 'desktop', bindings: [] });
+    assert.throws(() => writer.register(foreign), /scope mismatch/);
+  });
+  const rows = f.store.db.prepare('SELECT host, conversation FROM frontend_runs').all();
+  assert.deepEqual(rows.map(row => ({ hostId: row.host, conversationId: row.conversation })), [scope]);
+  assert.deepEqual(counts(f.store.db), [1, 1, 0]);
+});
+
 test('outer failure rolls registration, prefix and generated refusal receipt back together', t => {
   const f = setup(t), prepared = registration(), events = prefix('{');
   let commits = 0, escaped;

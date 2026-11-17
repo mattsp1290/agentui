@@ -93,9 +93,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (transaction !== this.activeTransaction || !transaction.write || !this.db.isTransaction) throw new Error('Inactive frontend write transaction');
     };
     check();
+    const boundScope = parseScope(scope);
     return {
-      register: registration => { check(); this.frontendCoordinator.register(scope, registration); },
-      observe: (key, observation) => { check(); return this.frontendCoordinator.observe(scope, key, observation); },
+      register: registration => { check(); this.frontendCoordinator.register(boundScope, registration); },
+      observe: (key, observation) => { check(); return this.frontendCoordinator.observe(boundScope, key, observation); },
     };
   }
   transaction<T>(work: (transaction: StoreTransaction) => T, write = true): T {
