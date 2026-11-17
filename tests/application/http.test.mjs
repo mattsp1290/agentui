@@ -135,7 +135,8 @@ test('real host admits the owner directly and protects metadata, scope and expli
   const foreign = { ...scope, hostId: 'another-host' };
   for (const request of [{ op: 'create', agentId: recordedAgentId, scope: foreign },
     { op: 'watch', scope: foreign, after: null, projectionVersion: 4 },
-    { op: 'submit', command: command(foreign) }, { op: 'receipt', scope: foreign, id: 'send-once' }]) {
+    { op: 'submit', command: command(foreign) }, { op: 'receipt', scope: foreign, id: 'send-once' },
+    { op: 'abandon', scope: foreign, id: 'send-once' }]) {
     denied(await f.call(request), 403, 'forbidden');
   }
   assert.deepEqual(await f.ok(catalog), []);
@@ -277,6 +278,7 @@ test('SIGTERM during playback retains exclusive process ownership until the acce
   await f.start(Number(new URL(origin).port));
   assert.equal(f.hostId, hostId);
   assert.equal((await f.ok({ op: 'receipt', scope, id: intent.clientCommandId }, alice.cookie)).state.kind, 'completed');
+  assert.equal((await f.ok({ op: 'abandon', scope, id: intent.clientCommandId }, alice.cookie)).state.kind, 'completed');
   assert.equal((await f.ok({ op: 'submit', command: intent }, alice.cookie)).receipt.state.kind, 'completed');
   assert.equal(readFileSync(path, 'utf8').trim().split('\n').length, 1);
 });

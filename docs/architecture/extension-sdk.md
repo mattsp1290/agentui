@@ -299,7 +299,8 @@ Resolving an action does not establish native execution success.
 The desktop customization host renders nested modules as labeled sections after the transcript, before approvals and the composer.
 Transcript and modules share one content scrollbar by default.
 It renders declarative actions as labeled buttons, suppresses duplicate clicks while an action is pending, and reports the returned submission state.
-The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, and thrown errors.
+The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, abandoned receipts, and thrown errors.
+An abandoned receipt means the user stopped waiting on the command; it does not say whether the command ran.
 An accepted or pending receipt does not mean the agent has finished.
 Uncertain feedback points to the conversation recovery controls; the host never automatically replays an action callback.
 Action state belongs to its namespace, complete module path, action ID, and current conversation.

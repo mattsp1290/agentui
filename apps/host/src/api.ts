@@ -37,7 +37,7 @@ export function createApi(options: {
   function requestScope(request: ServiceRequest): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'abandon': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -134,6 +134,7 @@ export function createApi(options: {
       case 'submit': return host.conversation(request.command.scope, actor).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
       case 'receipt': return host.conversation(request.scope, actor).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;
       case 'reconcile': return host.reconcile(request.scope, request.id, actor) satisfies Promise<ServiceValueMap['reconcile']>;
+      case 'abandon': return host.abandon(request.scope, request.id, actor) satisfies Promise<ServiceValueMap['abandon']>;
       case 'watch': return { feedId: feeds.open(principal.id, host.conversation(request.scope), request) } satisfies ServiceValueMap['watch'];
       case 'pull': return feeds.pull(principal.id, request.feedId, request.ack) satisfies Promise<ServiceValueMap['pull']>;
       case 'close': feeds.close(principal.id, request.feedId); return null satisfies ServiceValueMap['close'];

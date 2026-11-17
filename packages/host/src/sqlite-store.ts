@@ -543,10 +543,25 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
+  /** Records that the user stopped waiting on a provider send that still blocks its conversation. The stored
+   * observation is kept; the receipt event is the audit record. Any other command is returned unchanged. */
+  abandon(scope: ConversationScope, id: string): Receipt | null {
+    return this.transaction(() => {
+      const stored = this.command(scope, id);
+      if (!stored) return null;
+      if (!('kind' in stored) || stored.command.body.kind !== 'send' || sendBlock('provider', stored) !== 'blocked-reconcilable') return stored.receipt;
+      const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state: { kind: 'abandoned' } };
+      this.db.prepare('UPDATE commands SET receipt=? WHERE host=? AND conversation=? AND id=?')
+        .run(canonicalJson(next), ...key(scope), id);
+      this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
+      return next;
+    });
+  }
   settle(scope: ConversationScope, id: string, value: Observation, observations?: typeof FrontendObservations): Receipt {
     return this.transaction(transaction => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
+      if (stored.receipt.state.kind === 'abandoned') return stored.receipt;
       if ('kind' in stored) {
         if (stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol && !observations) throw new Error('Observation settlement required');
         const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored), stored.observation), { quarantined: isQuarantined(stored) });

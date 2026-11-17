@@ -39,7 +39,9 @@ export type ReceiptState =
   | { readonly kind: 'completed' }
   | { readonly kind: 'not-dispatched'; readonly reason: string }
   | { readonly kind: 'rejected'; readonly reason: string }
-  | { readonly kind: 'uncertain'; readonly reason: string };
+  | { readonly kind: 'uncertain'; readonly reason: string }
+  /** The user stopped waiting. Says nothing about whether the command took effect. Terminal. */
+  | { readonly kind: 'abandoned' };
 export interface Receipt {
   readonly scope: ConversationScope;
   readonly clientCommandId: string;
@@ -131,7 +133,7 @@ export function foldDocument<E, P>(document: ConversationDocument<P>, event: Hos
     case 'receipt': {
       const receipts = { ...document.receipts, [event.receipt.clientCommandId]: event.receipt };
       const terminal = Object.values(receipts).filter(value => value.state.kind === 'completed' ||
-        value.state.kind === 'rejected' || value.state.kind === 'not-dispatched')
+        value.state.kind === 'rejected' || value.state.kind === 'not-dispatched' || value.state.kind === 'abandoned')
         .sort((a, b) => b.sequence - a.sequence);
       for (const value of terminal.slice(TERMINAL_RECEIPT_RETENTION)) delete receipts[value.clientCommandId];
       return { ...document, receipts };
@@ -245,7 +247,7 @@ export function parseReceipt(value: unknown): Receipt {
   const base = { scope: parseScope(input.scope), clientCommandId: nonempty(input.clientCommandId),
     hostOperationId: nonempty(input.hostOperationId), sequence: count(input.sequence) };
   switch (state.kind) {
-    case 'pending': case 'accepted': case 'completed':
+    case 'pending': case 'accepted': case 'completed': case 'abandoned':
       exact(state, ['kind']); return { ...base, state: { kind: state.kind } };
     case 'not-dispatched': case 'rejected': case 'uncertain':
       exact(state, ['kind', 'reason']);

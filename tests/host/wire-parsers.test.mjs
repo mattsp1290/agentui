@@ -1,13 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { parseDecision, parseHostEvent, parseReceipt } from '@agentui/contracts';
+import { parseServiceRequest, parseServiceResponse } from '@agentui/contracts/service';
 import { connected, snapshot as clientSnapshot } from '../client/support.mjs';
 import { empty, fixture, installed, question, run, scope } from './fixture.mjs';
 
 const receipt = { scope, clientCommandId: 'command', hostOperationId: 'operation', sequence: 1, state: { kind: 'accepted' } };
 
 test('public receipt parser retains strict identifiers, reasons, states and sequence bounds', () => {
-  for (const kind of ['pending', 'accepted', 'completed', 'uncertain', 'rejected', 'not-dispatched']) {
+  for (const kind of ['pending', 'accepted', 'completed', 'uncertain', 'rejected', 'not-dispatched', 'abandoned']) {
     const state = ['uncertain', 'rejected', 'not-dispatched'].includes(kind) ? { kind, reason: 'recorded' } : { kind };
     const valid = { ...receipt, state };
     assert.deepEqual(parseReceipt(valid), valid);
@@ -17,7 +18,18 @@ test('public receipt parser retains strict identifiers, reasons, states and sequ
     ...['uncertain', 'rejected', 'not-dispatched'].map(kind => ({ ...receipt, state: { kind, reason: '' } })),
     ...[-1, 0.5, Number.MAX_SAFE_INTEGER + 1, '1'].map(sequence => ({ ...receipt, sequence })),
     { ...receipt, state: { kind: 'unknown' } },
+    { ...receipt, state: { kind: 'abandoned', reason: 'recorded' } },
   ]) assert.throws(() => parseReceipt(invalid));
+});
+
+test('abandon request carries only scope and command id and returns a receipt or null', () => {
+  const request = { op: 'abandon', scope, id: 'command' };
+  assert.deepEqual(parseServiceRequest(request), request);
+  for (const invalid of [{ ...request, id: '' }, { ...request, extra: true }, { op: 'abandon', scope }]) assert.throws(() => parseServiceRequest(invalid));
+  const abandoned = { ...receipt, state: { kind: 'abandoned' } };
+  assert.deepEqual(parseServiceResponse(request, { ok: true, value: abandoned }), { ok: true, value: abandoned });
+  assert.deepEqual(parseServiceResponse(request, { ok: true, value: null }), { ok: true, value: null });
+  assert.throws(() => parseServiceResponse(request, { ok: true, value: { kind: 'abandoned' } }));
 });
 
 test('public event parser preserves receiver, scope, sequence and decision checks', () => {
