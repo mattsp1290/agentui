@@ -32,10 +32,12 @@ export function createViewLeasePool(deps: {
   }
   function closeStore(lease: Lease, key: string, slot: Slot): void {
     if (slot.closing) return;
-    slot.closing = track(Promise.resolve().then(() => slot.store.dispose()).finally(() => {
+    let drain: Promise<void>;
+    slot.closing = track(Promise.resolve().then(() => drain).finally(() => {
       if (lease.stores.get(key) === slot) lease.stores.delete(key);
       closeView(lease);
     }));
+    try { drain = slot.store.dispose(); } catch (error) { drain = Promise.reject(error); }
   }
   function viewBorrow(lease: Lease, interested: boolean): ViewBorrow {
     if (disposal || lease.closing) throw new Error('The original view lease is unavailable.');

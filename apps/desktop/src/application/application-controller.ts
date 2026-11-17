@@ -522,18 +522,25 @@ export function createApplicationController(deps: {
     },
     dispose() {
       if (!session && disposal) return disposal;
-      const owner = session;
+      const owner = session, drains: unknown[] = [disposal];
+      const closing = Promise.resolve().then(async () => {
+        const results = await Promise.allSettled(drains);
+        const failures = results.filter(result => result.status === 'rejected');
+        if (failures.length === 1 && failures[0]) throw failures[0].reason;
+        if (failures.length) throw new AggregateError(failures.map(result => result.reason), 'Application disposal failed');
+      });
+      disposal = closing;
+      const observation = observationPoll, unsubscribe = unsubscribeActive;
+      observationPoll = null;
+      unsubscribeActive = null;
       session = null;
-      recovery.retarget(null);
-      disconnectActive();
-      if (owner) setActive(owner, null);
-      const previousDisposal = disposal, capturedClosing = owner?.frontend.dispose();
-      const poolClosing = owner?.pool.dispose();
-      return disposal = (async () => {
-        const drains = await Promise.allSettled([previousDisposal, capturedClosing, poolClosing]);
-        const failure = drains.find(result => result.status === 'rejected');
-        if (failure?.status === 'rejected') throw failure.reason;
-      })();
+      for (const close of [() => owner?.frontend.dispose(), () => owner?.pool.dispose(),
+        () => recovery.retarget(null), () => observation?.stop(), () => unsubscribe?.(),
+        () => { if (owner) setActive(owner, null); },
+        () => { if (session === null && disposal === closing) stalePermissions('Reconnect to refresh permissions.'); }]) {
+        try { drains.push(close()); } catch (error) { drains.push(Promise.reject(error)); }
+      }
+      return closing;
     },
     pair: code => run(async owner => {
       local(owner);
