@@ -5,16 +5,16 @@ import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderCommand, ProviderCommandEffect,
   ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
-import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome } from './provider-model.js';
+import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome, uncertain } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
+import { decide, decisionReceipts } from './provider-decisions.js';
 
 export interface CrewProviderOptions {
   readonly service: string;
   readonly memberId: string;
   readonly instance: ProviderInstance<string>;
 }
-const uncertain = () => ({ kind: 'uncertain', reason: 'Crew outcome is unresolved. Recover the original operation.', evidence: null } as const);
 const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable.' } as const);
 type CrewError = 'credential' | 'forbidden' | 'invalid-request' | 'unsupported' | 'transient';
 function classify(error: unknown): CrewError {
@@ -59,6 +59,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         canonicalJson(request.credential.instance) !== canonicalJson(instance)) throw new Error('Crew installation is misconfigured');
       const credential = request.credential;
       let capabilities: Capabilities;
+      let naming: ReturnType<typeof decisionReceipts> = null;
       let closed = false;
       const observations = new Map<string, ReturnType<typeof observation>>();
       const use = <T>(action: (client: CrewClient, token: string) => Promise<T>): Promise<T> => {
@@ -97,11 +98,8 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
             const [requestId, invocationId, approvalId, version] = decisionKey.parse(JSON.parse(operation.decision.ref.opaqueId));
             const [key, choice] = z.tuple([z.string(), choiceSchema]).parse(JSON.parse(operation.choice.ref.opaqueId));
             if (key !== operation.decision.ref.opaqueId) throw new Error('Foreign Crew choice');
-            if (!fresh) { await client.requestStatus({ conversationId, requestId }, { signal: AbortSignal.timeout(10000) }); return uncertain(); }
-            const receipt = await client.decide({ conversationId, memberId, requestId, invocationId, approvalId, version, choice },
-              { signal: AbortSignal.timeout(15000) });
-            if (receipt.approvalId !== approvalId || receipt.decision !== choice) return uncertain();
-            return { kind: 'confirmed', value: { kind: 'decide', state: 'completed' }, evidence: { approvalId, choice } };
+            const decisionId = naming?.(choice) ? z.uuid().parse(operation.operationId).toLowerCase() : null;
+            return decide(client, { conversationId, memberId, requestId, invocationId, approvalId, version, choice, decisionId }, fresh);
           }
           const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
           if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
@@ -141,6 +139,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
       const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
         standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
+      naming = decisionReceipts(capabilities);
       const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
         validate(binding);
         const list = await client.listGrants({ memberId }, { signal: AbortSignal.timeout(10000) });

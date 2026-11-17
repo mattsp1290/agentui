@@ -1,12 +1,9 @@
 import assert from 'node:assert/strict';
-import { chmodSync, readFileSync, statSync, symlinkSync } from 'node:fs';
-import { join } from 'node:path';
 import test from 'node:test';
-import { cli, connect, data, fixture, privateDirectory, tools, writeProfile } from './support.mjs';
+import { cli, compatibility as foreignCompatibility, connect, data, fixture, listen, tools } from './support.mjs';
 
 test('official SDK stdio tools preserve recorded uncertainty and leave durable state and providers untouched', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), paired = await f.pair(), mcp = await connect(t, paired.path);
-  assert.equal(statSync(paired.path).mode & 0o777, 0o600);
+  const f = await fixture(t), mcp = await connect(t, f.origin);
   const listed = await mcp.client.listTools();
   assert.deepEqual(listed.tools.map(tool => tool.name).sort(), tools.toSorted());
   assert.ok(listed.tools.every(tool => tool.annotations.readOnlyHint && !tool.annotations.destructiveHint));
@@ -58,30 +55,52 @@ test('official SDK stdio tools preserve recorded uncertainty and leave durable s
 });
 
 test('live data tool inputs cannot select mutations or another host', { timeout: 15_000 }, async t => {
-  const f = await fixture(t), paired = await f.pair(), mcp = await connect(t, paired.path);
+  const f = await fixture(t), mcp = await connect(t, f.origin);
   for (const [name, args] of [
     ['agentui_agents', { op: 'reconcile' }], ['agentui_conversations', { limit: 0 }],
     ['agentui_inspect', { conversationId: '', hostId: 'other' }],
     ['agentui_receipt', { conversationId: f.scope.conversationId, clientCommandId: 'x', secret: 'sentinel' }],
   ]) assert.equal((await mcp.client.callTool({ name, arguments: args })).isError, true);
   assert.equal((await mcp.client.callTool({ name: 'reconcile', arguments: {} })).isError, true);
-  assert.ok(!mcp.stderr.includes(paired.record.secret));
+  assert.equal(mcp.stderr, '');
 });
 
-test('startup refuses missing, malformed, insecure, symlinked and host-mismatched profiles without secret output', { timeout: 20_000 }, async t => {
-  const f = await fixture(t), paired = await f.pair(), privateDir = privateDirectory(t);
-  const profiles = [join(privateDir, 'missing'), writeProfile(privateDir, { ...paired.record, hostId: 'other' }, 'host'),
-    writeProfile(privateDir, { ...paired.record, unexpected: true }, 'malformed')];
-  const insecure = writeProfile(privateDir, paired.record, 'insecure');
-  chmodSync(insecure, 0o644); profiles.push(insecure);
-  const link = join(privateDir, 'link'); symlinkSync(paired.path, link); profiles.push(link);
-  for (const path of profiles) {
-    const result = await cli(['serve', path]);
-    assert.equal(result.code, 1);
+test('startup refuses invalid origins, unreachable hosts, extra arguments and the removed pair command', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
+  const closed = await listen(t, (_, response) => response.destroy());
+  const unreachable = `http://127.0.0.1:${Number(new URL(f.origin).port) === 65535 ? 65534 : 65535}`;
+  const cases = [[], ['serve'], ['serve', f.origin, 'extra'], ['serve', 'https://127.0.0.1:7140'], ['serve', 'http://localhost:7140'],
+    ['serve', `${f.origin}/`], ['serve', 'http://user@127.0.0.1:7140'], ['serve', `${f.origin}?x=1`], ['serve', `${f.origin}#x`],
+    ['serve', 'http://127.0.0.1:0'], ['serve', 'http://127.0.0.1:99999'], ['serve', '/some/profile.json'], ['serve', unreachable], ['serve', closed],
+    ['pair', f.origin], ['pair', f.origin, '/tmp/profile.json']];
+  for (const args of cases) {
+    const result = await cli(args);
+    assert.equal(result.code, 1, args.join(' '));
     assert.equal(result.stdout, '');
-    assert.ok(!result.stderr.includes(paired.record.secret));
+    assert.match(result.stderr, /^AgentUI MCP startup failed\./u);
   }
-  const original = readFileSync(paired.path, 'utf8');
-  assert.equal((await cli(['pair', f.origin, paired.path], f.invitation())).code, 1);
-  assert.equal(readFileSync(paired.path, 'utf8'), original);
+});
+
+test('a host answering a different host identity after startup fails tool calls', { timeout: 15_000 }, async t => {
+  const f = await fixture(t);
+  let foreign = false;
+  const origin = await listen(t, async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const input = JSON.parse(Buffer.concat(chunks).toString());
+    if (!foreign) {
+      const forward = await fetch(`${f.origin}/native/v1`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
+      response.end(await forward.text());
+    } else response.end(JSON.stringify({ ok: true, value: { hostId: 'foreign', principalId: 'trusted-owner', compatibility: foreignCompatibility, agents: [], defaultAgentId: null } }));
+  });
+  const mcp = await connect(t, origin);
+  data(await mcp.client.callTool({ name: 'agentui_agents', arguments: {} }));
+  foreign = true;
+  for (const [name, args] of [['agentui_agents', {}], ['agentui_conversations', {}],
+    ['agentui_inspect', { conversationId: f.scope.conversationId }], ['agentui_receipt', { conversationId: f.scope.conversationId, clientCommandId: 'x' }]]) {
+    const result = await mcp.client.callTool({ name, arguments: args });
+    assert.equal(result.isError, true, name);
+    assert.equal(result.structuredContent, undefined);
+    assert.match(result.content[0].text, /Host identity changed/u);
+  }
 });

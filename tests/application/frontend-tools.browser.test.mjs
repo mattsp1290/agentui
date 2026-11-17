@@ -21,7 +21,7 @@ for (const failure of ['load', 'ready activation']) test(`capture keeps a health
     import {createFrontendSends,createGenerationSource} from './apps/desktop/src/application/frontend-sends.ts';
     const scope={hostId:'host',conversationId:'conversation'};
     const source=createGenerationSource();
-    const owner=createFrontendSends({generations:source,rowsChanged(){},unauthorized(){throw Error('Unexpected authorization failure');}});
+    const owner=createFrontendSends({generations:source,rowsChanged(){}});
     window.borrows=0;
     const captureStore={borrow(){window.borrows++;let released=false;return {failed(error){throw error;},release(){if(!released){released=true;window.borrows--;}}};}};
     window.ready=owner.session({hostId:'host',principalId:'principal'},{frontendBinding(){throw Error('No network before commit');}});

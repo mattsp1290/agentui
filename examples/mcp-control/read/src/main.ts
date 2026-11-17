@@ -2,13 +2,11 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { z } from 'zod';
-import { idSchema, loadAccess, ReadError } from './access.js';
-import { pair } from './pair.js';
+import { idSchema, parseOrigin, ReadError } from './host.js';
 import { Reader } from './reader.js';
 
-async function serve(path: string): Promise<void> {
-  const reader = new Reader(await loadAccess(path));
-  await reader.authorize(AbortSignal.timeout(5000));
+async function serve(origin: string): Promise<void> {
+  const reader = await Reader.connect(parseOrigin(origin), AbortSignal.timeout(5000));
   const server = new McpServer({ name: 'agentui-read', version: '0.0.0' });
   const annotations = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
   const call = async (operation: (signal: AbortSignal) => Promise<Record<string, unknown>>, signal: AbortSignal) => {
@@ -40,11 +38,10 @@ async function serve(path: string): Promise<void> {
 }
 
 try {
-  const [command, first, second, ...extra] = process.argv.slice(2);
-  if (command === 'serve' && first && second === undefined) await serve(first);
-  else if (command === 'pair' && first && second && extra.length === 0) await pair(first, second);
+  const [command, origin, ...extra] = process.argv.slice(2);
+  if (command === 'serve' && origin && extra.length === 0) await serve(origin);
   else throw new Error('Invalid arguments');
 } catch {
-  process.stderr.write('AgentUI MCP startup failed. Check the command, private profile and host authorization. Pairing is never retried automatically.\n');
+  process.stderr.write('AgentUI MCP startup failed. Check the command and that the host is running at the given loopback origin.\n');
   process.exitCode = 1;
 }

@@ -35,9 +35,6 @@ export class FeedRegistry {
     this.feeds.get(id)?.close();
     this.feeds.delete(id);
   }
-  closePrincipal(principalId: string): void {
-    for (const [id, feed] of this.feeds) if (feed.principalId === principalId) this.drop(id);
-  }
   sweep(now = Date.now()): void {
     for (const [id, feed] of this.feeds) if (feed.isIdle(now, 25_000)) this.drop(id);
   }

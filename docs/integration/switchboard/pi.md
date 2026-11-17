@@ -18,7 +18,7 @@ stream normalization, cancellation and cleanup. Its native compiler project
 isolates known upstream declaration defects. Public declarations expose no
 native SDK types. AgentUI and Switchboard core keep strict checking.
 
-AgentUI owns pairing, authorization, durable command admission, exact-command
+AgentUI owns authorization, durable command admission, exact-command
 retry behavior, transcript persistence, replay and crash recovery. It only
 reopens session references saved for its own conversations. A native reference
 is recorded only after its journal exists. A failure before persistence leaves
@@ -51,7 +51,7 @@ browser reload, host restart with the same native journal, Stop, interrupted
 terminal state and credential absence from saved host files and web storage.
 `tests/host/pi-driver.test.mjs` exercises the actual SDK against a controlled
 provider response for command deduplication, partial output, reopening and
-shutdown. `pi-startup.test.mjs` checks paired browser and native endpoints.
+shutdown. `pi-startup.test.mjs` checks browser and native endpoints.
 
 The broader Pi graph remains open. External-session discovery, native
 extensions, tool approvals, LiteLLM routing, credential renewal, AG-UI native

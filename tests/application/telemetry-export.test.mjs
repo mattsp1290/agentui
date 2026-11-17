@@ -40,7 +40,7 @@ function observe(t, collector, headers = {}) {
 
 function recordRequests(observations, count) {
   for (let index = 0; index < count; index++) observations.record({ operation: 'metadata',
-    credentialClass: 'native', outcome: 'ok', statusCode: 200, startTime: performance.timeOrigin + performance.now() });
+    client: 'native', outcome: 'ok', statusCode: 200, startTime: performance.timeOrigin + performance.now() });
 }
 
 async function until(predicate, message) {

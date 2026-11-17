@@ -5,7 +5,6 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
 import { assertPrivateValuesAbsent, assertRequestSpan, attributes, receiver } from './support/observability.mjs';
-import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createHostObservability } from '../../apps/host/build/tsc/observability.js';
 import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
@@ -16,18 +15,16 @@ const deferred = () => {
   return { promise, resolve };
 };
 
-async function fixture(t, credentialClass, api) {
+async function fixture(t, client, api) {
   const collector = await receiver(t);
   const exports = collector.received;
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-disconnect-'));
-  const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
-  const invitation = access.invite(credentialClass);
-  const paired = access.pair(invitation, credentialClass);
+  const access = openAccessDatabase(join(directory, 'host.sqlite'));
   const observability = createHostObservability({ kind: 'otlp',
     endpoint: `${collector.endpoint}/v1/traces`, headers: {},
     serviceName: 'agentui-host', datadogLlmObservability: false });
-  const handler = serviceEndpoint({ credentialClass, access, api, observability,
-    isClosing: () => false, ...(credentialClass === 'browser-development' ? { files: new Map() } : {}) });
+  const handler = serviceEndpoint({ client, hostId: access.hostId, api, observability,
+    isClosing: () => false, ...(client === 'browser-development' ? { files: new Map() } : {}) });
   const receipts = [];
   const received = deferred();
   const server = createServer((incoming, outgoing) => {
@@ -44,17 +41,15 @@ async function fixture(t, credentialClass, api) {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await observability.close();
-    access.close();
+    access.database.close();
     rmSync(directory, { recursive: true, force: true });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const headers = { 'Content-Type': 'application/json',
-    ...(credentialClass === 'native' ? { Authorization: `Bearer ${paired.secret}` }
-      : { Origin: origin, Cookie: `agentui_device_${access.hostId}=${paired.secret}` }) };
-  const endpoint = `${origin}${credentialClass === 'native' ? '/native/v1' : '/api/v1'}`;
+  const headers = { 'Content-Type': 'application/json', ...(client === 'native' ? {} : { Origin: origin }) };
+  const endpoint = `${origin}${client === 'native' ? '/native/v1' : '/api/v1'}`;
   return { exports, receipts, received: received.promise, headers, endpoint,
-    privateValues: [invitation, paired.secret, paired.principal.id, access.hostId],
+    privateValues: [access.hostId],
     flush: async () => {
       await Promise.all(receipts.map(receipt => receipt.handled));
       await observability.close();
@@ -76,14 +71,14 @@ function checkSpan(span, expected, privateValues, exports) {
 test('a browser body disconnect exports invalid admission without inventing an HTTP response status', { timeout: 15_000 }, async t => {
   let apiCalls = 0;
   const f = await fixture(t, 'browser-development', async () => { apiCalls += 1; return null; });
-  const privateBody = 'private-partial-pair-body-8f16f0';
+  const privateBody = 'private-partial-body-8f16f0';
   const privateHeader = 'private-disconnect-header-a70ac5';
   let responseCount = 0;
   const client = request(f.endpoint, { method: 'POST', headers: { ...f.headers,
     'Content-Length': '1000', 'X-Private': privateHeader } }, () => { responseCount += 1; });
   client.on('error', () => {});
   t.after(() => client.destroy());
-  client.write(`{"op":"pair","code":"${privateBody}`);
+  client.write(`{"op":"search","query":"${privateBody}`);
   const receipt = await f.received;
   await receipt.bodyStarted;
   client.destroy();

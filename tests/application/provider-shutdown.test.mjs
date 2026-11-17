@@ -16,6 +16,7 @@ const childSource = `
   const [mode, directory] = process.argv.slice(1);
   const root = pathToFileURL(process.cwd() + '/');
   const artifact = new URL('apps/host/build/tsc/artifact.js', root).href;
+  const accessDatabase = new URL('apps/host/build/tsc/access-database.js', root).href;
   const hostPackage = import.meta.resolve('@agentui/host');
   const piPackage = import.meta.resolve('@agentui/host/pi');
   const sourceModule = source => ({ url: 'data:text/javascript,' + encodeURIComponent(source), shortCircuit: true });
@@ -26,6 +27,12 @@ const childSource = `
         'import { readInstalledArtifact as read } from ' + JSON.stringify(artifact) + ';' +
         'export function readInstalledArtifact() { return read(' +
         JSON.stringify(fileURLToPath(new URL('apps/host/dist/', root))) + '); }'
+      );
+    }
+    if (specifier === './access-database.js' && context.parentURL?.endsWith('/server.js')) {
+      return sourceModule(
+        'import { openAccessDatabase as open } from ' + JSON.stringify(accessDatabase) + ';' +
+        'export function openAccessDatabase(path) { const state = open(path); globalThis.shutdownTestAccess = state; return state; }'
       );
     }
     if (specifier === '@agentui/host' && context.parentURL?.endsWith('/server.js')) {
@@ -69,8 +76,7 @@ const childSource = `
       globalThis.shutdownTestDriverFailure = mode === 'driver';
       globalThis.shutdownTestDrainFailure = mode === 'drain';
       if (mode === 'access') {
-        const { Access } = await import(new URL('apps/host/build/tsc/access.js', root));
-        Access.prototype.close = () => { throw new Error('injected access close failure'); };
+        globalThis.shutdownTestAccess.database.close = () => { throw new Error('injected access close failure'); };
       }
       const closing = running.close();
       assert.equal(running.close(), closing, 'shutdown must retain its original result');

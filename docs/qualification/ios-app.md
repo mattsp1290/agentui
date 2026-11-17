@@ -1,6 +1,6 @@
 # Build and launch AgentUI on iOS Simulator
 
-AgentUI packages its React Native shell in a local iOS Release app. It opens a disconnected screen and explains that pairing and conversations are unavailable. Packaging is tracked by `agentui-kq76`. Host pairing, credentials, reconnect, and conversation navigation remain in `agentui-3xme` and its prerequisites.
+AgentUI packages its React Native shell in a local iOS Release app. It opens a disconnected screen and explains that host connection and conversations are unavailable. Packaging is tracked by `agentui-kq76`. Host connection, reconnect, and conversation navigation remain in `agentui-3xme` and its prerequisites.
 
 ## Prepare your Mac
 
@@ -72,7 +72,7 @@ The committed native project is a pruned React Native Community 0.86.0 template.
 
 Release loads `main.jsbundle` from the application bundle. Changes to the shell require another build and installation. The independent [iOS update probe](ios-updates.md) records the earlier rebuild strategy qualification.
 
-This slice covers an iOS Simulator app. Physical-device provisioning, signing, installation, distribution, VoiceOver, and live customization updates are not qualified. The app has no host connection or credential storage. Pairing, reconnect, pending decisions, and shared conversations require their own acceptance checks. The current mobile plan targets iOS and does not define an Android package.
+This slice covers an iOS Simulator app. Physical-device provisioning, signing, installation, distribution, VoiceOver, and live customization updates are not qualified. The app has no host connection or credential storage. Host connection, reconnect, pending decisions, and shared conversations require their own acceptance checks. The current mobile plan targets iOS and does not define an Android package.
 
 ## Reproduce the offline check
 
