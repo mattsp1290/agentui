@@ -1,3 +1,5 @@
+import type { createFrontendCoordinator } from './frontend-tools/coordinator.js';
+import type { FrontendCoordinatorWriter } from './frontend-tools/coordinator.js';
 import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import { identifier } from '@agentui/contracts/decode';
@@ -24,6 +26,8 @@ import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from '
 import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
 import { scopeKey as key } from './durable-model.js';
 
+type StoreTransaction = { readonly write: boolean };
+
 type AdmissionTarget =
   | { readonly kind: 'provider'; readonly installation: ProviderInstallation }
   | { readonly kind: 'native'; readonly installation: Installation; readonly command: V1Command };
@@ -39,6 +43,8 @@ const QUARANTINE_RECEIPT_GROWTH_BYTES = 128;
 export class SqliteStore<E, P> implements ProviderStreamStore {
   readonly db;
   readonly frontendSends: FrontendSends;
+  private frontendCoordinator: ReturnType<typeof createFrontendCoordinator> | undefined;
+  private activeTransaction: StoreTransaction | undefined;
   onCommit: (() => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
@@ -80,11 +86,31 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     return this.transaction(() => readImage(this.db, parseScope(scope), parseImageId(imageId)), false);
   }
   close(): void { this.db.close(); }
-  transaction<T>(work: () => T, write = true): T {
+  private coordinator(factory: typeof createFrontendCoordinator): ReturnType<typeof createFrontendCoordinator> {
+    return this.frontendCoordinator ??= factory(this);
+  }
+  frontendTools(factory: typeof createFrontendCoordinator, authorized: (scope: ConversationScope) => ConversationScope) {
+    return this.coordinator(factory).tools(authorized);
+  }
+  frontendWriter(transaction: StoreTransaction, scope: ConversationScope, factory: typeof createFrontendCoordinator): FrontendCoordinatorWriter {
+    const check = () => {
+      if (transaction !== this.activeTransaction || !transaction.write || !this.db.isTransaction) throw new Error('Inactive frontend write transaction');
+    };
+    check();
+    const boundScope = parseScope(scope), coordinator = this.coordinator(factory);
+    return {
+      register: registration => { check(); coordinator.register(boundScope, registration); },
+      observe: (key, observation) => { check(); return coordinator.observe(boundScope, key, observation); },
+    };
+  }
+  transaction<T>(work: (transaction: StoreTransaction) => T, write = true): T {
     this.db.exec(write ? 'BEGIN IMMEDIATE' : 'BEGIN');
+    const transaction = Object.freeze({ write });
+    this.activeTransaction = transaction;
     let result: T;
-    try { result = work(); this.db.exec('COMMIT'); }
+    try { result = work(transaction); this.db.exec('COMMIT'); }
     catch (error) { this.db.exec('ROLLBACK'); throw error; }
+    finally { this.activeTransaction = undefined; }
     if (write) this.onCommit?.();
     return result;
   }
