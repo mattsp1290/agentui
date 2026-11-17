@@ -8,7 +8,7 @@ import { fixture, saved, send } from '../../../tests/application/provider-stream
 import { until } from '../../../tests/host/fixture.mjs';
 
 const memberId = randomUUID();
-async function service(t, { approvalDetails, standingGrants } = {}) {
+async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
   const grants = [];
@@ -33,7 +33,7 @@ async function service(t, { approvalDetails, standingGrants } = {}) {
       if (lost) { response.destroy(); return; }
       return json(200, { apiVersion: '1', grant: revokeHandler ? revokeHandler(grant) : grant });
     }
-    if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test' }], next: null });
+    if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test', ...(subagents && { subagents }) }], next: null });
     if (path === '/v1/conversations') {
       conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId, engine: 'codex', profile: 'test',
         phase: 'idle', openStep: null, pendingApprovals: [] }, messages: [], cursor: 0, openTools: {}, openText: null, childText: {} });
@@ -187,6 +187,22 @@ async function direct(remote) {
   assert.equal(created.kind, 'confirmed');
   return { backend, binding: created.value, presentation };
 }
+
+test('Crew discovery resolves a member that declares named subagents', async t => {
+  const remote = await service(t, { subagents: { mode: 'named', targets: [{ role: 'analyst', engine: 'claude', profile: 'review',
+    model: 'claude-test', providerHost: 'api.example.test', accountDigest: 'a'.repeat(64), availability: 'executable' }] } });
+  const { value } = remote.extension(), installation = value.installations[0];
+  let provider;
+  await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend) { provider = backend; } },
+    credentials: { use: (_request, action) => action('private-crew-test') } });
+  const result = await provider.connect({ apiVersion: 1, instance: installation.instance,
+    credential: { kind: 'credential-handle', instance: installation.instance, hostId: 'test-host', opaqueHandle: 'test-handle' } });
+  assert.equal(result.kind, 'connected');
+  t.after(() => result.backend.close());
+  assert.deepEqual(await result.backend.discover(), { kind: 'available', agents: [
+    { ref: { instance: installation.instance, kind: 'agent', opaqueId: memberId }, name: 'Crew · codex · test' }] });
+  assert.equal(remote.calls.filter(call => call.path === '/v1/members').length, 1);
+});
 
 for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
   const remote = await service(t), extension = remote.extension();
