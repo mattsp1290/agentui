@@ -7,7 +7,7 @@ import { scope, projection, storage, fakePort, deferred, receipt } from '../clie
 
 const recoveryPass = () => ({ failed(error) { throw error; }, current: () => true, signal: new AbortController().signal });
 const flush = () => new Promise(resolve => setImmediate(resolve));
-async function fixture(t, { drafts = storage(), reply } = {}) {
+async function fixture(t, { drafts = storage(), reply, images } = {}) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const disposed = [], calls = [], failures = [], requests = [];
   let changes = 0;
@@ -37,7 +37,7 @@ async function fixture(t, { drafts = storage(), reply } = {}) {
   source.begin(token); source.publish(token, { kind: 'ready', generations: [a] });
   const port = fakePort(); let id = 0;
   const frontend = owner.forStore({ viewId: 'view', scope, capture: captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' });
-  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), frontend });
+  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), createImageId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, '0')}`, frontend, images });
   t.after(async () => { await Promise.all(owners.map(item => item.dispose())); await a.retire(); });
   const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
   const tick = async () => { t.mock.timers.tick(2000); await flush(); await recover(); };
@@ -388,5 +388,25 @@ test('reload remembers local repairs and later acknowledgments but leaves unchan
   assert.deepEqual(drafts.value.frontendSends.map(row => row.state), ['unavailable-confirmed', 'unavailable-confirmed', 'unavailable-pending']);
   assert.deepEqual(drafts.value.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })), saved.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })));
   assert.ok(f.requests.every(request => request.id !== 'foreign' && request.action === 'unavailable'));
+  assert.deepEqual(f.calls, []);
+});
+
+
+test('unsupported captured image releases only its provisional hold and original generation stays available', async t => {
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10]);
+  const f = await fixture(t, { images: { async upload(input) { return { imageId: '33333333-3333-4333-8333-333333333333',
+    name: input.name, mediaType: 'image/png', byteLength: input.bytes.length, width: 1, height: 1 }; } } });
+  await f.store.send('Original capture');
+  const original = f.owner.snapshot()[0];
+  await f.store.setDraft('Caption'); await f.store.selectImage({ name: 'pixel.png', bytes });
+  const before = structuredClone(f.drafts.value), writes = f.drafts.writes.length;
+  await assert.rejects(f.store.send(), error => error.kind === 'frontend-images-unsupported');
+  assert.deepEqual(f.drafts.value, before); assert.equal(f.drafts.writes.length, writes);
+  assert.equal(f.port.submitted.length, 1); assert.equal(f.owner.snapshot()[0], original);
+  assert.equal(f.owner.snapshot().length, 1); assert.deepEqual(f.disposed, []);
+  await f.store.send('Explicit supported send');
+  assert.equal(f.port.submitted.length, 2);
+  assert.deepEqual(f.port.submitted[1].body.frontend, original.command.body.frontend);
+  assert.deepEqual(f.drafts.value.image, before.image); assert.equal(f.drafts.value.draft, 'Caption');
   assert.deepEqual(f.calls, []);
 });

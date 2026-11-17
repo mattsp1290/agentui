@@ -1,0 +1,8 @@
+{
+  "commit": "8ce356c13e474ba0efad3b9534c6b79c26971cfa",
+  "databaseSha256": "5a6994e25cab10022b21618aae322c1fa82f3dbc32dfe0630a7d7c4161640214",
+  "compressedSha256": "105c771adff35fe441a459f92715646c010af35c1fd703b89421e36205fb6e4b",
+  "openerSource": "packages/host/src/sqlite-schema.ts",
+  "openerSha256": "27b97e0df38a48c9be651468d8c730173b231ad257e3f257b956b7a9cfd803de",
+  "generation": "Actual released public host API and Codex driver with released protocol stub. One upload, completed and uncertain linked image sends, transcript events and receipts, and a real frontend producer/client permit and completed receipt. Gzip mtime is zero. All credentials and provider replies are test fixtures."
+}

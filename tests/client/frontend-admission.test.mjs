@@ -29,7 +29,7 @@ test('version one local records upgrade without changing canonical commands and 
   const drafts = storage(old), port = fakePort();
   const store = createConversationStore({ scope, port, projection, drafts, createCommandId: () => 'new' });
   await store.setDraft('Edited');
-  assert.equal(drafts.value.version, 2); assert.deepEqual(drafts.value.frontendSends, []); assert.deepEqual(drafts.value.outbox[0].command, plain);
+  assert.equal(drafts.value.version, 3); assert.deepEqual(drafts.value.frontendSends, []); assert.deepEqual(drafts.value.outbox[0].command, plain);
   const command = { ...plain, version: 2, body: { ...plain.body, frontend: offer } };
   const valid = { ...drafts.value, outbox: [{ command: structuredClone(command), draftRevision: 0 }], frontendSends: [{ command, ownerId: 'original', state: 'retained' }] };
   for (const change of [value => { value.frontendSends = []; }, value => { value.frontendSends[0].ownerId = ''; },

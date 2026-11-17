@@ -18,7 +18,7 @@ for (const native of [false, true]) test(`actual ${native ? 'host' : 'remote'} a
   f = await fixture(t, [a]); const scope = await f.create(), binding = remote.conversations.get('chat').snapshot.binding;
   await until(() => remote.clients.size === 1);
   const port = f.client.conversation(scope), items = [];
-  const feed = port.watch({ after: null, projectionVersion: 3 }, async item => { items.push(item); });
+  const feed = port.watch({ after: null, projectionVersion: 4 }, async item => { items.push(item); });
   t.after(() => feed.close());
   assert.equal((await port.submit(send(scope))).receipt.state.kind, 'accepted');
   remote.emit(remote.makeEvent(binding, 'A growing', 1));
@@ -76,7 +76,7 @@ test('authoritative replacement reaches an active reader and preserves receipts,
   await f.client.conversation(scope).submit(send(scope));
   remote.emit(remote.makeEvent(binding, 'Immutable completed answer', 1, true)); await until(() => a.calls.ack.length === 1);
   const items = [], before = saved(f);
-  const feed = f.client.conversation(scope).watch({ after: before.conversation.head, projectionVersion: 3 }, async item => { items.push(item); });
+  const feed = f.client.conversation(scope).watch({ after: before.conversation.head, projectionVersion: 4 }, async item => { items.push(item); });
   t.after(() => feed.close()); await until(() => items.length === 1);
   const snapshot = structuredClone(remote.conversations.get('chat').snapshot);
   snapshot.cursor = remote.cursor(binding);
@@ -133,7 +133,7 @@ test('missing generation and changed credentials leave saved history readable wi
   for (const options of [{ generation: 'replacement' }, { revision: 'replacement' }]) {
     const b = remote.extension(options); await f.restart([b]);
     assert.equal(b.calls.observe.length, 0); assert.deepEqual(saved(f), before);
-    const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, async item => { items.push(item); });
+    const items = [], feed = f.client.conversation(scope).watch({ after: null, projectionVersion: 4 }, async item => { items.push(item); });
     await until(() => items.length === 1); feed.close();
     assert.equal(items[0].snapshot.document.domain.messages.at(-1).text, 'Saved output');
   }
@@ -179,7 +179,7 @@ test('real browser selection and send render a growing reply, completion, and pe
 
 test('concurrent provider callbacks serialize against the last committed state; browser watches share one upstream feed', async t => {
   const remote = await providerService(t), a = remote.extension(), f = await fixture(t, [a]), scope = await f.create();
-  const readers = Array.from({ length: 3 }, () => f.client.conversation(scope).watch({ after: null, projectionVersion: 3 }, async () => {}));
+  const readers = Array.from({ length: 3 }, () => f.client.conversation(scope).watch({ after: null, projectionVersion: 4 }, async () => {}));
   t.after(() => readers.forEach(reader => reader.close()));
   const binding = remote.conversations.get('chat').snapshot.binding;
   await Promise.all([a.calls.receive(remote.makeEvent(binding, 'First', 1)), a.calls.receive(remote.makeEvent(binding, 'Second', 2))]);
@@ -284,7 +284,16 @@ test('V2 transcript migration preserves provider snapshot gaps and every committ
   assert.ok(before.checkpoint.floor > 0);
   const b = remote.extension();
   await f.restart([b]); await until(() => b.calls.ready === 1);
-  before.conversation.version = 3;
+  before.conversation.version = 4;
   assert.deepEqual(saved(f), before);
   assert.deepEqual(b.calls.observe[0].after, JSON.parse(before.checkpoint.data).cursor);
+});
+
+test('provider conversations refuse image sends before storing or capturing a command', async t => {
+  const remote = await providerService(t), a = remote.extension();
+  const f = await fixture(t, [a]), scope = await f.create();
+  const image = { ...send(scope, 'image'), body: { kind: 'send', text: 'look', imageId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa' } };
+  assert.deepEqual(await f.client.conversation(scope).submit(image), { kind: 'rejected', reason: 'This model cannot read images.' });
+  assert.deepEqual(saved(f).commands, []);
+  assert.equal(remote.requests.some(value => value.path === '/submit'), false);
 });

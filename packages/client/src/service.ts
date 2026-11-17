@@ -12,7 +12,7 @@ export interface BrowserConnectionOptions {
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);
-  return createServiceConnection((body, { op, signal }) => fetch('/api/v1', { method: 'POST', credentials: 'same-origin',
+  return createServiceConnection((body, { op, signal }) => fetch(op === 'image-upload' || op === 'image-read' ? '/api/v1/images' : '/api/v1', { method: 'POST', credentials: 'same-origin',
     headers: { 'Content-Type': 'application/json' }, body, signal, keepalive: op === 'close' }),
     transcriptProjection, options);
 }

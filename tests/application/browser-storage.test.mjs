@@ -369,3 +369,123 @@ test('draft key discovery pages only the acquired view and host and drains scans
   assert.ok(result.malformed); assert.equal(result.retained.length, 107);
   assert.ok(result.retained.every(row => Object.hasOwn(row, 'untouched')));
 });
+
+test('draft image bytes change with their records in one transaction and stay outside saved views', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const drafts = owner.drafts(() => {});
+    const scope = { hostId: 'host', conversationId: 'image-draft' };
+    const records = image => ({ version: 2, scope, draft: '', draftRevision: 1, outbox: [], image });
+    await drafts.save(records('first'), { put: { selectionId: 'first', bytes: new Uint8Array([1, 2]) } });
+    await drafts.save(records('second'), { put: { selectionId: 'second', bytes: new Uint8Array([3]) }, remove: ['first'] });
+    const replaced = [await drafts.loadImage(scope, 'first'), [...await drafts.loadImage(scope, 'second')], (await drafts.load(scope)).image];
+    const refused = await drafts.save({ ...records('third'), unclonable: () => {} }, { put: { selectionId: 'third', bytes: new Uint8Array([4]) }, remove: ['second'] })
+      .then(() => 'saved', error => error.name);
+    const afterRefusal = [await drafts.loadImage(scope, 'third'), [...await drafts.loadImage(scope, 'second')], (await drafts.load(scope)).image];
+    await drafts.save(records(null), { remove: ['second'] });
+    const removed = await drafts.loadImage(scope, 'second');
+    const views = await owner.savedViews('host', null);
+    await owner.close();
+    return { replaced, refused, afterRefusal, removed, views };
+  });
+  assert.deepEqual(result.replaced, [null, [3], 'second']);
+  assert.equal(result.refused, 'DataCloneError');
+  assert.deepEqual(result.afterRefusal, [null, [3], 'second']);
+  assert.equal(result.removed, null);
+  assert.deepEqual(result.views, { ids: [], unreadable: 0, after: null });
+});
+
+test('a replaced draft port for the same conversation cannot overwrite its successor', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const failures = [];
+    const scope = { hostId: 'host', conversationId: 'replaced' };
+    const records = (draft, image) => ({ version: 2, scope, draft, draftRevision: 1, outbox: [], image });
+    const stale = owner.drafts(error => failures.push(error)), current = owner.drafts(error => failures.push(error));
+    await stale.load(scope);
+    await stale.save(records('old', 'first'), { put: { selectionId: 'first', bytes: new Uint8Array([1]) } });
+    await current.load(scope);
+    await current.save(records('new', 'second'), { put: { selectionId: 'second', bytes: new Uint8Array([2]) }, remove: ['first'] });
+    const refused = await stale.save(records('old', 'first'), { put: { selectionId: 'first', bytes: new Uint8Array([1]) }, remove: ['second'] })
+      .then(() => null, error => ({ name: error.name, message: error.message }));
+    const saved = await current.load(scope);
+    const bytes = [await current.loadImage(scope, 'first'), [...await current.loadImage(scope, 'second')]];
+    const submitted = [], port = { scope, receipt: async () => null, async submit(command) { submitted.push(command); return { kind: 'rejected', reason: 'unexpected' }; },
+      watch() { return { ended: new Promise(() => {}), close() {} }; } };
+    const storeScope = { hostId: 'host', conversationId: 'replaced-store' };
+    const makeStore = () => globalThis.createConversationStore({ scope: storeScope, port: { ...port, scope: storeScope }, projection: globalThis.transcriptProjection,
+      drafts: owner.drafts(error => failures.push(error)), createCommandId: () => '00000000-0000-4000-8000-000000000001' });
+    const older = makeStore();
+    await older.ready;
+    await older.setDraft('Typed in the older view');
+    const newer = makeStore();
+    await newer.ready;
+    const blocked = await Promise.all([older.send(), older.setDraft('More')].map(attempt => attempt.then(() => 'written', error => error.name)));
+    const kept = await owner.drafts(() => {}).load(storeScope);
+    await owner.close();
+    return { refused, blocked, submitted: submitted.length, kept: [kept.draft, kept.outbox.length], draft: saved.draft, image: saved.image, bytes, failures: failures.length };
+  });
+  assert.deepEqual(result, { refused: { name: 'SupersededDrafts', message: 'This conversation was reopened in a newer view.' },
+    blocked: ['SupersededDrafts', 'SupersededDrafts'], submitted: 0, kept: ['Typed in the older view', 0], draft: 'new', image: 'second', bytes: [null, [2]], failures: 0 });
+});
+
+for (const shape of ['private-frontend-v2', 'mixed-v2', 'missing-v3-journal']) test(`${shape} refuses without changing raw records or image bytes`, async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async shape => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {}), failures = [], submitted = [];
+    const scope = { hostId: 'host', conversationId: 'refusal' };
+    const command = { version: 2, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Original', frontend: {
+      platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] } } };
+    const image = { selectionId: 'selection', uploadId: '22222222-2222-4222-8222-222222222222', name: 'pixel.png', byteLength: 2, attachment: null };
+    const original = { version: shape === 'missing-v3-journal' ? 3 : 2, scope, draft: 'Keep', draftRevision: 1, outbox: [{ command, draftRevision: 1 }],
+      ...(shape !== 'private-frontend-v2' ? { image } : {}),
+      ...(shape !== 'missing-v3-journal' ? { frontendSends: [{ command, ownerId: 'principal', state: 'retained' }] } : {}) };
+    const port = owner.drafts(error => failures.push(error.message));
+    await port.save(original, { put: { selectionId: image.selectionId, bytes: new Uint8Array([7, 8]) } });
+    const store = globalThis.createConversationStore({ scope, projection: globalThis.transcriptProjection, drafts: port, createCommandId: () => 'never',
+      port: { scope, async submit(command) { submitted.push(command); }, async receipt() { return null; }, watch() { return { ended: new Promise(() => {}), close() {} }; } } });
+    const errors = [];
+    for (const operation of [() => store.ready, () => store.setDraft('Erase'), () => store.removeImage(), () => store.retryImage(),
+      () => store.frontendJournal.unavailable('original'), () => store.frontendJournal.acknowledged('original'), () => store.send('Erase')]) {
+      await operation().then(() => errors.push(null), error => errors.push(error.message));
+    }
+    const saved = await port.load(scope), bytes = [...await port.loadImage(scope, image.selectionId)];
+    await store.dispose(); await owner.close();
+    return { original, saved, bytes, errors, submitted, failures };
+  }, shape);
+  assert.deepEqual(result.saved, result.original); assert.deepEqual(result.bytes, [7, 8]);
+  assert.ok(result.errors.every(Boolean)); assert.deepEqual(result.submitted, []); assert.deepEqual(result.failures, []);
+});
+
+test('an aborted combined image and journal save leaves the whole prior transaction intact', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {}), failures = [];
+    const scope = { hostId: 'host', conversationId: 'atomic-journal' }, port = owner.drafts(error => failures.push(error.message));
+    const command = { version: 2, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Original', frontend: {
+      platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] } } };
+    const image = { selectionId: 'first', uploadId: '22222222-2222-4222-8222-222222222222', name: 'pixel.png', byteLength: 2, attachment: null };
+    const original = { version: 3, scope, draft: 'Keep', draftRevision: 1, outbox: [{ command, draftRevision: 1 }], image,
+      frontendSends: [{ command, ownerId: 'principal', state: 'retained' }] };
+    await port.load(scope); await port.save(original, { put: { selectionId: 'first', bytes: new Uint8Array([7, 8]) } });
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      const request = put.call(this, value, key);
+      if (Array.isArray(key) && key[0] === 'draft') request.addEventListener('success', () => this.transaction.abort(), { once: true });
+      return request;
+    };
+    let error;
+    try { await port.save({ ...original, image: { ...image, selectionId: 'second' }, frontendSends: [{ ...original.frontendSends[0], state: 'unavailable-pending' }] },
+      { put: { selectionId: 'second', bytes: new Uint8Array([9, 10]) }, remove: ['first'] }); }
+    catch (failure) { error = failure.message; }
+    finally { IDBObjectStore.prototype.put = put; }
+    const saved = await port.load(scope), first = [...await port.loadImage(scope, 'first')], second = await port.loadImage(scope, 'second');
+    const scopes = await owner.draftScopes('host', null);
+    await owner.close(); return { original, saved, first, second, error, failures, scopes };
+  });
+  assert.deepEqual(result.saved, result.original); assert.deepEqual(result.first, [7, 8]); assert.equal(result.second, null);
+  assert.match(result.error, /transaction/); assert.equal(result.failures.length, 1);
+  assert.deepEqual(result.scopes, { scopes: [{ hostId: 'host', conversationId: 'atomic-journal' }], after: null });
+});

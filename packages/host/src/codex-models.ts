@@ -14,7 +14,8 @@ interface Generation {
 }
 const text = z.string().min(1).max(1024);
 const page = z.object({
-  data: z.array(z.object({ model: text, displayName: text, hidden: z.boolean(), isDefault: z.boolean().optional().default(false) })),
+  data: z.array(z.object({ model: text, displayName: text, hidden: z.boolean(), isDefault: z.boolean().optional().default(false),
+    inputModalities: z.array(z.string()).optional() })),
   nextCursor: text.nullable(),
 });
 function generation(id: string): Generation | null {
@@ -56,8 +57,10 @@ export async function discoverCodexModels(request: (params: { readonly includeHi
     const parsed = page.safeParse(await request({ includeHidden: false, ...(cursor === undefined ? {} : { cursor }) }));
     if (!parsed.success) throw new Error('Codex returned an invalid model catalog.');
     for (const model of parsed.data.data) {
+      const inputModalities = [...new Set(model.inputModalities?.filter(item => item === 'text' || item === 'image'))];
       if (!model.hidden && !models.has(model.model)) models.set(model.model, {
-        model: { id: model.model, label: model.displayName.replace(/(\d)-(?=[a-z])/gi, '$1 ') }, isDefault: model.isDefault,
+        model: { id: model.model, label: model.displayName.replace(/(\d)-(?=[a-z])/gi, '$1 '), ...(inputModalities.length ? { inputModalities } : {}) },
+        isDefault: model.isDefault,
       });
     }
     const next = parsed.data.nextCursor;

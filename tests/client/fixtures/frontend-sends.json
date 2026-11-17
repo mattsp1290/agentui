@@ -2230,5 +2230,347 @@
       },
       "id": "command"
     }
+  },
+  {
+    "name": "version one text",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello"
+        }
+      }
+    }
+  },
+  {
+    "name": "version one image-only",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "",
+          "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      }
+    }
+  },
+  {
+    "name": "version one text and image",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      }
+    }
+  },
+  {
+    "name": "version one approve",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "approve",
+          "pendingId": "pending",
+          "choiceId": "yes"
+        }
+      }
+    }
+  },
+  {
+    "name": "version one cancel",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "cancel",
+          "runId": "run"
+        }
+      }
+    }
+  },
+  {
+    "name": "offered image forbidden",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "demo__inspect",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          },
+          "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        }
+      }
+    }
+  },
+  {
+    "name": "null image",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "imageId": null
+        }
+      }
+    }
+  },
+  {
+    "name": "image unknown nested field",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "frontend": {}
+        }
+      }
+    }
+  },
+  {
+    "name": "invalid image identity",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "Hello",
+          "imageId": "not-a-uuid"
+        }
+      }
+    }
+  },
+  {
+    "name": "empty text without image",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": ""
+        }
+      }
+    }
+  },
+  {
+    "name": "version one revoke",
+    "accepted": true,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 1,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "revoke-permission",
+          "permissionId": "permission",
+          "scope": "conversation"
+        }
+      }
+    }
+  },
+  {
+    "name": "empty offered text",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "send",
+          "text": "",
+          "frontend": {
+            "platform": "desktop",
+            "tools": [
+              {
+                "definition": {
+                  "name": "demo__inspect",
+                  "description": "Inspect",
+                  "parameters": {
+                    "type": "object",
+                    "properties": {
+                      "name": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "metadata": {
+                    "custom": {
+                      "nested": [
+                        true,
+                        null,
+                        3
+                      ]
+                    }
+                  }
+                },
+                "activationId": "generation-a"
+              }
+            ]
+          }
+        }
+      }
+    }
+  },
+  {
+    "name": "version two approval forbidden",
+    "accepted": false,
+    "request": {
+      "op": "submit",
+      "command": {
+        "version": 2,
+        "scope": {
+          "hostId": "host",
+          "conversationId": "conversation"
+        },
+        "clientCommandId": "command",
+        "body": {
+          "kind": "approve",
+          "pendingId": "pending",
+          "choiceId": "yes"
+        }
+      }
+    }
+  },
+  {
+    "name": "image upload operation",
+    "accepted": true,
+    "request": {
+      "op": "image-upload",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "conversation"
+      },
+      "uploadId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "name": "Screen.png",
+      "byteLength": 1,
+      "base64": "AA=="
+    }
+  },
+  {
+    "name": "image read operation",
+    "accepted": true,
+    "request": {
+      "op": "image-read",
+      "scope": {
+        "hostId": "host",
+        "conversationId": "conversation"
+      },
+      "imageId": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    }
   }
 ]
