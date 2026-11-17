@@ -63,6 +63,8 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     assert.equal(typeof CrewClient, 'function');
     assert.equal(typeof CrewClient.prototype.listGrants, 'function');
     assert.equal(typeof CrewClient.prototype.revokeGrant, 'function');
+    assert.equal(typeof CrewClient.prototype.createHandoff, 'function');
+    assert.equal(typeof CrewClient.prototype.handoff, 'function');
     const consumerRequire = createRequire(join(process.cwd(), 'package.json'));
     const exampleRequire = createRequire(consumerRequire.resolve('@agentui/example-crew'));
     const crewRequire = createRequire(exampleRequire.resolve('@birbcrew/client'));
