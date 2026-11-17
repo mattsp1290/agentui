@@ -184,13 +184,14 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     previous?.close();
     publish();
   }
-  async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
-    requireOpen(); requireCompatible();
-    const id = entry.command.clientCommandId;
-    if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
+  function reserve(id: string): void {
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
+  }
+  async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
+    const id = entry.command.clientCommandId;
     try {
+      requireCompatible();
       publish();
       requireOpen();
       if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
@@ -228,6 +229,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
         const offered = capture && command.version === 2 ? { capture, command } : null;
         const reference: FrontendRecoveryReference[] = offered ? [{ command: offered.command, ownerId: offered.capture.ownerId, state: 'retained' }] : [];
+        // Reserved before the outbox publish so observers never see a new command as an unresolved retained one.
+        reserve(id);
         await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
         if (offered && !offered.capture.commit(offered.command, journal)) {
           await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id ? { ...entry, state: 'unavailable-pending' } : entry) }));
@@ -235,7 +238,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         }
         publish();
         return created;
-      } catch (error) { capture?.release(); throw error; }
+      } catch (error) { capture?.release(); inFlight.delete(id); publish(); throw error; }
     });
     return dispatch(entry, 'known-absent');
   }
@@ -316,6 +319,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
         const found = local.outbox.find(value => value.command.clientCommandId === clientCommandId);
         if (!found) throw new Error('Command is not in the outbox');
         await requireWritableRetryStorage();
+        reserve(clientCommandId);
         return found;
       });
       return dispatch(entry, 'unknown-or-observed');

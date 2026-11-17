@@ -3,15 +3,15 @@ import type { OutboxEntry } from '@agentui/client';
 import type { ConversationPermission } from '@agentui/contracts';
 import type { ConversationActions, PermissionState } from './application-controller.js';
 
-export function ConversationPermissions({ state, actions, enabled, outbox }: {
-  readonly outbox: readonly OutboxEntry[];
+export function ConversationPermissions({ state, actions, enabled, retained }: {
+  readonly retained: readonly OutboxEntry[];
   readonly state: PermissionState; readonly actions: ConversationActions; readonly enabled: boolean;
 }) {
   const [confirming, setConfirming] = useState<ConversationPermission | null>(null);
   const [error, setError] = useState('');
   const listing = 'listing' in state ? state.listing : null;
   const fresh = enabled && state.kind === 'fresh';
-  const unresolved = new Set(outbox.flatMap(entry => entry.command.body.kind === 'revoke-permission' ? [entry.command.body.permissionId] : []));
+  const unresolved = new Set(retained.flatMap(entry => entry.command.body.kind === 'revoke-permission' ? [entry.command.body.permissionId] : []));
   useEffect(() => {
     const refresh = () => { if (enabled) void actions.permissions.read().catch(() => {}); };
     window.addEventListener('focus', refresh);
