@@ -30,7 +30,7 @@ function snapshot(path) {
 }
 function open(path) { return openLocalHost({ path, projection: transcriptProjection, driver: [], authorize: () => true }); }
 
-test('authentic released owner5 upgrades to7 and reopens with every original row and image byte intact', async t => {
+test('authentic released owner5 upgrades to8 and reopens with every original row and image byte intact', async t => {
   const f = original(t), before = snapshot(f.path); assert.equal(before.version, 5);
   for (let attempt = 0; attempt < 2; attempt++) {
     const host = open(f.path);
@@ -55,14 +55,14 @@ test('authentic released owner5 upgrades to7 and reopens with every original row
       }
     } finally { host.close(); await host.drained; }
     const after = snapshot(f.path);
-    assert.equal(after.version, 7);
+    assert.equal(after.version, 8);
     for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
-    assert.deepEqual(after.schema.filter(row => !row.name.includes('frontend_observation')), before.schema);
+    assert.deepEqual(after.schema.filter(row => !row.name.includes('frontend_observation') && row.name !== 'provider_creations_from'), before.schema);
     assert.deepEqual(after.tables.frontend_observation_runs, []); assert.deepEqual(after.tables.frontend_observation_events, []);
   }
 });
 
-test('the unchanged genuine5 opener refuses7 before file or WAL mutation', async t => {
+test('the unchanged genuine5 opener refuses8 before file or WAL mutation', async t => {
   assert.equal(digest(readFileSync(new URL('./fixtures/sqlite-format5.ts', import.meta.url))), provenance.openerSha256);
   const f = original(t), old = openOriginal5(f.path); old.close();
   const host = open(f.path); host.close(); await host.drained;
@@ -82,7 +82,7 @@ for (const damage of ['owner-schema', 'history-index', 'image-schema']) test(`ge
   assert.deepEqual(snapshot(f.path), before); assert.equal(before.version, 5);
 });
 
-test('genuine5 permits keep their original receipt after7 withdrawal while untouched calls refuse', async t => {
+test('genuine5 permits keep their original receipt after8 withdrawal while untouched calls refuse', async t => {
   const f = original(t), before = snapshot(f.path);
   const owner = before.tables.frontend_send_owners.find(owner => owner.state === 'available');
   const scope = { hostId: owner.host, conversationId: owner.conversation }, key = { threadId: owner.thread_id, runId: owner.run_id };
@@ -108,7 +108,7 @@ function original6(t) {
   const data = gunzipSync(compressed); assert.equal(digest(data), provenance6.databaseSha256); writeFileSync(f.path, data);
   return f;
 }
-test('genuine released6 migrates and reopens7 preserving every old row, public transcript, image, receipt and permit', async t => {
+test('genuine released6 migrates and reopens8 preserving every old row, public transcript, image, receipt and permit', async t => {
   const f = original6(t), before = snapshot(f.path); assert.equal(before.version, 6);
   for (let attempt = 0; attempt < 2; attempt++) {
     const host = open(f.path);
@@ -126,7 +126,7 @@ test('genuine released6 migrates and reopens7 preserving every old row, public t
         for (const call of run.calls.filter(call => call.state.kind === 'permitted')) assert.equal(client.claim(key, call.id, call.state.activationId).kind, 'uncertain');
       }
     } finally { host.close(); await host.drained; }
-    const after = snapshot(f.path); assert.equal(after.version, 7);
+    const after = snapshot(f.path); assert.equal(after.version, 8);
     for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
   }
   for (const [openOld, filename, provenance] of [[openOriginal5, 'sqlite-format5.ts', JSON.parse(readFileSync(new URL('./fixtures/released-owner5.json', import.meta.url)))], [openOriginal6, 'sqlite-format6.ts', provenance6]]) {

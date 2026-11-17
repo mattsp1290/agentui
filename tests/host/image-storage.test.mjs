@@ -131,7 +131,7 @@ test('version three migration preserves all preexisting tables and exact row val
   store.close();
   const reopened = new SqliteStore(f.path, projection, budgets()); t.after(() => reopened.close());
   for (const [table, rows] of before) assert.deepEqual(reopened.db.prepare(`SELECT * FROM ${table}`).all(), rows);
-  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 7);
+  assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 8);
   assert.ok(upload(reopened, png(), { scope: savedScope }));
   assert.equal(reopened.db.prepare('SELECT version FROM service_schema').get().version, 1);
 });

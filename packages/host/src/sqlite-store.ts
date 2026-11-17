@@ -2,6 +2,7 @@ import type { createFrontendCoordinator } from './frontend-tools/coordinator.js'
 import type { FrontendCoordinatorWriter } from './frontend-tools/coordinator.js';
 import type { FrontendObservations, PreparedProviderObservations } from './frontend-observations.js';
 import { migrateFrontendObservations } from './sqlite-frontend-observations.js';
+import { migrateProviderCreations } from './sqlite-provider-creations.js';
 import type { ProviderObservations } from './provider-observations.js';
 import type { AguiOriginalRun } from '@agentui/sdk';
 import { FrontendSends, FrontendAccessError } from './frontend-sends.js';
@@ -78,6 +79,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         migrateImages(this.db);
         migrateFrontendSends(this.db, format);
         migrateFrontendObservations(this.db, format);
+        migrateProviderCreations(this.db, format);
         if (format !== CURRENT_DATABASE_FORMAT) this.db.exec(`PRAGMA user_version=${CURRENT_DATABASE_FORMAT}`);
       });
     } catch (error) { this.db.close(); throw error; }

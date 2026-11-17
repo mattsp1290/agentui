@@ -336,7 +336,7 @@ test('an actual archived v1 bundled reader refuses database format 6 before impo
   let host = f.launch(); await host.ready; await f.select('build-b', 0); await host.stop();
   const imported = await readFile(f.marker, 'utf8');
   assert.equal(f.database(db => db.prepare('SELECT count(*) AS n FROM conversations').get().n), 0);
-  assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 7);
+  assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 8);
   assert.equal(f.database(db => db.prepare('SELECT version FROM service_extension_selection_schema').get().version), 2);
   const database = join(f.directory, 'host.sqlite'), before = await readFile(database);
   host = f.launch(f.environment, process.env.AGENTUI_OLD_SELECTION_CLI, process.env.AGENTUI_OLD_SELECTION_ASSETS);

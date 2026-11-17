@@ -142,7 +142,16 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   }
   const lifetime = use(async (client, token) => {
     if (closed) return;
-    const observer = createCrewObserver({ baseUrl, token, conversationId: binding.authority.binding.opaqueSessionId });
+    const from = binding.creation.from, target = binding.authority.binding.opaqueSessionId;
+    // The successor's target was drawn by Crew, so Crew must attest it before this acquisition reads it.
+    if (from) {
+      const { incoming } = await client.handoff({ conversationId: target }, { signal: AbortSignal.timeout(10000) });
+      if (!incoming || incoming.requestId !== binding.creation.operationId || incoming.source.conversationId !== from.binding.opaqueSessionId ||
+        incoming.target.conversationId !== target || incoming.target.memberId !== memberId) throw new Error('Crew continuation is not attested');
+      state = { ...state, handoff: { firstRequestId: incoming.firstRequestId } };
+      if (closed) return;
+    }
+    const observer = createCrewObserver({ baseUrl, token, conversationId: target });
     observer.fetch = async (url, init) => {
       const response = await fetch(url, { ...init, redirect: 'error' });
       if (!response.body) return response;

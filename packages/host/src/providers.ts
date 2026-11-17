@@ -12,7 +12,7 @@ import type { ConversationClosure, ConversationPermissions, ConversationScope, R
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
-import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
+import type { CreationPredecessor, ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
   ProviderCommand, ProviderInstance, ProviderModel, ProviderOutputs, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
@@ -94,7 +94,7 @@ interface BoundProvider {
   outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
   assertFrontendInput(target: ProviderTarget): void;
   discover(): Promise<ProviderStatus>;
-  capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
+  capture(scope: ConversationScope, selected: ProviderInstallation, from?: CreationPredecessor): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
   readPermissions(original: StoredCreation): Promise<ConversationPermissions>;
   captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
@@ -288,11 +288,11 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     outputs,
     assertFrontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
-    capture(scope, selected) {
+    capture(scope, selected, from) {
       const granted = validate(selected);
       return providerCreation({ installation: selected, credential: granted.credential,
         intent: { kind: 'create', operationId: randomUUID(), scope,
-          agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId } } }, scope);
+          agent: { kind: 'agent', instance: identity, opaqueId: selected.agent.opaqueId }, ...(from && { from }) } }, scope);
     },
     async observe(original, store, freshSnapshot) {
       const authorize = () => {
@@ -586,7 +586,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
                     backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
                     [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
                       presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function') ||
-                    (presentation.closure !== undefined && typeof presentation.closure !== 'function')) {
+                    (presentation.closure !== undefined && typeof presentation.closure !== 'function') ||
+                    (presentation.continuation !== undefined && typeof presentation.continuation !== 'function')) {
                     throw new Error('Invalid provider registration');
                   }
                   ids.add(id); identities.add(key);
@@ -623,13 +624,13 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       const found = status(selected);
       return found && structuredClone(found);
     },
-    capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation {
+    capture(scope: ConversationScope, selected: ProviderInstallation, from?: CreationPredecessor): ProviderCreation {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const discovered = available(selected);
       if (!discovered?.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider agent unavailable');
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding) throw new Error('Provider unavailable');
-      return binding.capture(scope, selected);
+      return binding.capture(scope, selected, from);
     },
     assertFrontendInput(target: ProviderTarget): void {
       const binding = bindings.find(binding => binding.matches(target.installation));

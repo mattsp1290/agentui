@@ -16,15 +16,20 @@ export const runSchema = z.strictObject({ requestId: z.uuid(), status: z.enum([
   'accepted', 'waiting', 'running', 'cancellation_requested', 'completed', 'cancelled', 'failed', 'uncertain']),
   cancellation: requestReceiptResponseSchema.options[0].shape.cancellation.unwrap().nullable().exactOptional() });
 const instanceSchema = z.strictObject({ namespace: id, installationId: id, generation: id, protocolVersion: id });
+const scopeSchema = z.strictObject({ hostId: id, conversationId: id });
+const sessionSchema = z.strictObject({ namespace: id, installationId: id, opaqueSessionId: z.uuid() });
 export const bindingSchema = z.strictObject({ kind: z.literal('agentui-created'),
-  creation: z.strictObject({ kind: z.literal('create'), operationId: z.uuid(),
-    scope: z.strictObject({ hostId: id, conversationId: id }),
-    agent: z.strictObject({ instance: instanceSchema, kind: z.literal('agent'), opaqueId: z.uuid() }) }),
-  authority: z.strictObject({ kind: z.literal('remote-provider'), binding: z.strictObject({
-    namespace: id, installationId: id, opaqueSessionId: z.uuid() }) }) });
+  creation: z.strictObject({ kind: z.literal('create'), operationId: z.uuid(), scope: scopeSchema,
+    agent: z.strictObject({ instance: instanceSchema, kind: z.literal('agent'), opaqueId: z.uuid() }),
+    from: z.strictObject({ scope: scopeSchema, binding: sessionSchema }).exactOptional() }),
+  authority: z.strictObject({ kind: z.literal('remote-provider'), binding: sessionSchema }) });
 export const closureSchema = z.strictObject({ cause: z.enum(['cancelled', 'failed', 'exhausted']) });
 export const stateSchema = z.strictObject({ binding: bindingSchema, messages: z.array(messageSchema).max(2048), run: runSchema.nullable(),
-  closure: closureSchema.exactOptional() });
+  closure: closureSchema.exactOptional(), handoff: z.strictObject({ firstRequestId: z.uuid() }).exactOptional() });
+const carriedSchema = z.strictObject({ handoffId: z.uuid(), firstRequestId: z.uuid(), carriedTurns: z.int().min(1).max(128),
+  omittedTurns: z.int().min(0).max(127), uncertainTurns: z.int().min(0).max(128), transcriptBytes: z.int().min(1).max(65536) });
+const refusedSchema = z.strictObject({ refused: z.enum(['busy', 'limit', 'unavailable', 'continued-elsewhere']), code: z.string().regex(/^[A-Za-z0-9_]{1,128}$/) });
+const handoffTranscriptBytes = 65536;
 export const cursorSchema = z.strictObject({ epoch: z.uuid(), sequence: z.int().nonnegative(), requests: z.array(z.uuid()).max(2048) });
 export const requestSchema = z.strictObject({ text: z.string().min(1).max(65536) });
 export type CrewState = z.infer<typeof stateSchema>;
@@ -61,13 +66,22 @@ export function presentation(instance: ProviderInstance<string>): ProviderPresen
     decodeState: value => stateSchema.parse(value), decodeEvent: value => stateSchema.parse(value),
     request: text => requestSchema.parse({ text }),
     snapshot(state, refs) {
-      const run = state.run;
-      if (!run) return { messages: state.messages, currentRun: null };
+      const carried = state.handoff?.firstRequestId, run = state.run;
+      const messages = carried ? state.messages.filter(message => message.messageId !== carried) : state.messages;
+      if (!run) return { messages, currentRun: null };
       const runId = refs.run(reference(state.binding, 'run', run.requestId)).runId;
       const outcome = runOutcome(run);
-      return { messages: state.messages, currentRun: outcome ? { kind: 'ended', runId, outcome } : { kind: 'running', runId } };
+      return { messages, currentRun: outcome ? { kind: 'ended', runId, outcome } : { kind: 'running', runId } };
     },
     apply() { throw new Error('Crew observation supplies authoritative snapshots'); },
     closure: state => state.closure ?? null,
+    continuation(evidence) {
+      const refused = refusedSchema.safeParse(evidence);
+      if (refused.success) return { refused: refused.data.refused };
+      const carried = carriedSchema.safeParse(evidence);
+      if (!carried.success) return null;
+      return { carriedTurns: carried.data.carriedTurns, omittedTurns: carried.data.omittedTurns, uncertainTurns: carried.data.uncertainTurns,
+        carriedBytes: carried.data.transcriptBytes, limitBytes: handoffTranscriptBytes };
+    },
   };
 }
