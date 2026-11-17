@@ -3,7 +3,7 @@ import { Button, Surface, Text, ThemeScope } from '@agentui/ui-primitives/deskto
 
 type ContentState = { readonly kind: 'ready' } | { readonly kind: 'failed' };
 
-type ContentBoundaryProps = { readonly children: ReactNode; readonly revision: number; readonly concealed?: boolean };
+type ContentBoundaryProps = { readonly children: ReactNode; readonly revision: number };
 
 class ContentBoundary extends Component<ContentBoundaryProps, ContentState> {
   override state: ContentState = { kind: 'ready' };
@@ -18,7 +18,6 @@ class ContentBoundary extends Component<ContentBoundaryProps, ContentState> {
 
   override render() {
     if (this.state.kind === 'failed') {
-      if (this.props.concealed) return null;
       return <Surface className="landing" role="alert">
         <Text variant="title" as="h1">This view could not load.</Text>
         <Text>Your recovery controls are still available. Restore the default view to continue.</Text>
@@ -80,10 +79,14 @@ export function DesktopShell({ children, defaultView, settingsView, protectedCon
     {navigation}
     {protectedContent}
     <main id="main-content">
-      <ContentBoundary key={boundaryKey} revision={revision} concealed={settingsView !== undefined && activeView === 'settings'}>
-        {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
-      </ContentBoundary>
-      {settingsView !== undefined && <ContentBoundary key={`settings-${boundaryKey}`} revision={revision} concealed={activeView !== 'settings'}>{settingsView}</ContentBoundary>}
+      <div className="shell-view" hidden={settingsView !== undefined && activeView === 'settings'}>
+        <ContentBoundary key={boundaryKey} revision={revision}>
+          {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
+        </ContentBoundary>
+      </div>
+      {settingsView !== undefined && <div className="shell-view" hidden={activeView !== 'settings'}>
+        <ContentBoundary key={`settings-${boundaryKey}`} revision={revision}>{settingsView}</ContentBoundary>
+      </div>}
     </main>
     <footer className="shell-footer"><span className="footer-status">{status ?? 'Disconnected'}</span><span>{buildLabel ?? 'Local app · No host connection'}</span></footer>
   </ThemeScope>;

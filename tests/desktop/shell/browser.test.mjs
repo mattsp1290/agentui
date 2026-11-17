@@ -170,7 +170,7 @@ test('connection settings stay reachable while the content boundary is failed', 
   await settingsHeading.waitFor();
   await page.getByRole('heading', { name: 'Connection', exact: true }).waitFor();
   await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
-  assert.equal(await failure.count(), 0, 'the failed content notice does not cover Settings');
+  assert.equal(await failure.isVisible(), false, 'the failed content notice does not cover Settings');
   await chats.click();
   await failure.waitFor();
   assert.equal(await settingsHeading.isVisible(), false);
@@ -181,4 +181,16 @@ test('connection settings stay reachable while the content boundary is failed', 
   assert.equal(await chats.getAttribute('aria-pressed'), 'true');
   await settings.click();
   await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+});
+
+test('settings hide a healthy custom layout and returning keeps its state', async (t) => {
+  const { page } = await serveFixture(t, 'settings-custom-fixture.jsx');
+  const note = page.getByRole('textbox', { name: 'Custom note' });
+  await note.fill('kept');
+  await page.getByRole('button', { name: 'Settings', exact: true }).click();
+  await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
+  assert.equal(await note.isVisible(), false, 'custom layout is hidden behind Settings');
+  await page.getByRole('button', { name: 'Chats', exact: true }).click();
+  await note.waitFor();
+  assert.equal(await note.inputValue(), 'kept');
 });
