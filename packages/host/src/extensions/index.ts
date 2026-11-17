@@ -1,12 +1,12 @@
 import { createProviderRegistry } from '../providers.js';
-import type { DiscoveredProvider, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
+import type { ProviderStatus, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
 export { loadServerArtifact } from './server-artifact.js';
 export { loadServerExtension } from './loader.js';
 export type { InstalledServerEntry, LoadedServerEntry } from './loader.js';
 
 export type ServerExtensionFailure =
-  | { readonly kind: 'failed'; readonly failure: 'load' | 'authorization' | 'activation' | 'discovery'; readonly recovery: 'replace' }
+  | { readonly kind: 'failed'; readonly failure: 'load' | 'authorization' | 'activation'; readonly recovery: 'replace' }
   | { readonly kind: 'failed'; readonly failure: 'cleanup'; readonly recovery: 'restart' };
 export type ServerExtensionPreparation =
   | { readonly kind: 'ready'; readonly extensions: readonly ProviderExtension[] }
@@ -71,13 +71,9 @@ export function createServerExtensions() {
     }
     const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions) };
     change.generation = generation;
-    let failure: 'activation' | 'discovery' = 'activation';
     try {
       if (state === change) await generation.registry.activate();
-      if (state === change) {
-        failure = 'discovery';
-        await generation.registry.discover();
-      }
+      if (state === change) await generation.registry.discover();
       if (state === change) {
         state = { kind: 'active', generation };
         return { kind: 'replaced', generation: generation.id };
@@ -85,7 +81,7 @@ export function createServerExtensions() {
     } catch {
       const cleanup = await retire(change);
       if (!cleanup && state !== change) return { kind: 'unavailable' };
-      return fail(change, cleanup ?? { kind: 'failed', failure, recovery: 'replace' });
+      return fail(change, cleanup ?? { kind: 'failed', failure: 'activation', recovery: 'replace' });
     }
     const cleanup = await retire(change);
     return cleanup ? fail(change, cleanup) : { kind: 'unavailable' };
@@ -104,24 +100,15 @@ export function createServerExtensions() {
     state = change;
     return change.settled.then(result => ({ ...result }));
   }
-  function discover(): Promise<readonly DiscoveredProvider[]> {
+  function discover(): Promise<readonly ProviderStatus[]> {
     if (state.kind === 'empty') return Promise.resolve([]);
     if (state.kind !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
-    const generation = state.generation;
-    return generation.registry.discover().catch(() => {
-      if (state.kind === 'active' && state.generation === generation) {
-        const change: Changing = { kind: 'changing', generation, settled: Promise.resolve().then(async () => {
-          const cleanup = await retire(change);
-          return fail(change, cleanup ?? { kind: 'failed', failure: 'discovery', recovery: 'replace' });
-        }) };
-        state = change;
-      }
-      throw new Error('Provider discovery failed');
-    });
+    return state.generation.registry.discover();
   }
-  function catalog(): readonly DiscoveredProvider[] {
+  function catalog(): readonly ProviderStatus[] {
     return current().catalog();
   }
+  const statusOf: ReturnType<typeof createProviderRegistry>['statusOf'] = selected => current().statusOf(selected);
   function current() { return state.kind === 'active' ? state.generation.registry : inactive; }
   const capture: ProviderCreationOperations['capture'] = (...args) => current().capture(...args);
   const execute: ProviderCreationOperations['execute'] = (...args) => current().execute(...args);
@@ -161,5 +148,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, capture, execute, captureCommand, executeCommand, readPermissions, observe, status, close };
+  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, readPermissions, observe, status, close };
 }

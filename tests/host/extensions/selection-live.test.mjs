@@ -320,6 +320,22 @@ test('live loader failure preserves the immutable receipt and explicit retry ver
   assert.deepEqual((await f.send(f.apply())).value, failed);
 });
 
+test('durable apply keeps serving when the new provider fails discovery and lists it unavailable', { timeout: 120000 }, async t => {
+  const f = await liveFixture(t); await f.select();
+  f.state.hooks['artifact-b'] = { discover() { throw new Error(secret); } };
+  const applied = (await f.send(f.apply())).value;
+  assert.equal(applied.outcome.kind, 'applied');
+  assert.deepEqual((await f.cli('extensions-status')).runtime, { kind: 'active', id: 'build-b', revision: 1, attemptId: 'apply-b' });
+  const current = f.state.modules[1];
+  assert.equal(f.count(current, 'close'), 1); assert.equal(f.count(current, 'dispose'), 0);
+  const metadata = (await api(f.host)({ op: 'metadata' })).value;
+  assert.deepEqual(metadata.agents.filter(agent => agent.kind === 'provider').map(agent => agent.availability),
+    [{ kind: 'unavailable', reason: 'The provider installation is invalid. Fix the extension configuration, then restart the host.' }]);
+  const refreshed = await f.cli('providers-refresh');
+  assert.deepEqual(refreshed.map(entry => [entry.kind, entry.cause]), [['unavailable', 'invalid-installation']]);
+  assert.doesNotMatch(JSON.stringify([applied, metadata, refreshed]), new RegExp(secret));
+});
+
 for (const cleanupFails of [false, true]) test(`programmatic fatal shutdown preserves caller exit policy with cleanup failure ${cleanupFails}`, { timeout: 120000 }, async t => {
   const f = await liveFixture(t); await saved(f, 1); await f.select();
   f.database(db => db.exec(`CREATE TRIGGER fail_embedded_final BEFORE UPDATE ON service_extension_attempts

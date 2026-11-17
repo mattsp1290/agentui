@@ -32,11 +32,40 @@ export interface ProviderExtension {
   readonly dispose?: () => Promise<void>;
 }
 export interface DiscoveredProvider {
+  readonly kind: 'available';
   readonly contributionId: string;
   readonly instance: ProviderIdentity;
   readonly expectedAuthority: RunAuthority['kind'];
   readonly capabilities: Readonly<Record<'create' | 'send' | 'cancel' | 'decide' | 'reconcile' | 'observe', boolean>>;
   readonly agents: readonly { readonly opaqueId: string; readonly name: string }[];
+}
+export type ProviderUnavailableCause = 'offline' | 'authentication-failed' | 'unauthorized' | 'version-unsupported' | 'invalid-installation';
+export interface UnavailableProvider {
+  readonly kind: 'unavailable';
+  readonly contributionId: string;
+  readonly instance: ProviderIdentity;
+  readonly cause: ProviderUnavailableCause;
+}
+export type ProviderStatus = DiscoveredProvider | UnavailableProvider;
+export const providerUnavailableReasons: Readonly<Record<ProviderUnavailableCause, string>> = Object.freeze({
+  offline: 'The provider service is offline or unreachable. AgentUI checks again automatically.',
+  'authentication-failed': 'The provider rejected the configured credential. Fix it on the provider and AgentUI checks again automatically, or change the extension secret and restart the host.',
+  unauthorized: 'The configured credential is not authorized for this provider. Grant it access; AgentUI checks again automatically.',
+  'version-unsupported': 'The provider service version is unsupported. Install a compatible version; AgentUI checks again automatically.',
+  'invalid-installation': 'The provider installation is invalid. Fix the extension configuration, then restart the host.',
+});
+const rediscoveryInterval = 30_000;
+type RetryableCause = Exclude<ProviderUnavailableCause, 'invalid-installation'>;
+export function isProviderUnavailableCause(value: unknown): value is ProviderUnavailableCause {
+  return typeof value === 'string' && Object.hasOwn(providerUnavailableReasons, value);
+}
+function failureCause(kind: unknown): ProviderUnavailableCause {
+  switch (kind) {
+    case 'unavailable': return 'offline';
+    case 'authentication-failed': case 'unauthorized': case 'version-unsupported': return kind;
+    case 'unsupported': return 'version-unsupported';
+    default: return 'invalid-installation';
+  }
 }
 
 function text(value: unknown): string {
@@ -52,7 +81,7 @@ function capability(value: unknown): boolean {
   throw new Error('Invalid provider capability');
 }
 interface BoundProvider {
-  discover(): Promise<DiscoveredProvider>;
+  discover(): Promise<ProviderStatus>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
   execute(original: ProviderCreation, fresh: boolean, beforeEffect: () => void): Promise<CreationObservation>;
   readPermissions(original: StoredCreation): Promise<ConversationPermissions>;
@@ -63,54 +92,106 @@ interface BoundProvider {
   close(): Promise<void>;
 }
 function bindProvider<M extends ProviderModel, I extends string>(id: string, backend: BackendProvider<M, I>,
-  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority, failed: () => void): BoundProvider {
+  presentation: ProviderPresentation<M, I>, authority: ProviderAuthority): BoundProvider {
+  type Attempt = { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> }
+    | { readonly kind: 'refused'; readonly cause: RetryableCause }
+    | { readonly kind: 'invalid'; readonly backend: ConnectedProvider<M, I> | undefined };
+  type Connection = { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> } | { readonly kind: 'unavailable'; readonly cause: ProviderUnavailableCause };
+  type State = { readonly kind: 'idle' | 'retired' }
+    | { readonly kind: 'connecting'; readonly attempt: Promise<Attempt>; readonly settled: Promise<Connection> }
+    | { readonly kind: 'connected'; readonly backend: ConnectedProvider<M, I> };
   const instance: ProviderInstance<I> = Object.freeze({ ...presentation.instance });
   const identity = providerIdentity(instance), key = identityKey(instance);
+  const retired: Connection = { kind: 'unavailable', cause: 'invalid-installation' };
+  let state: State = { kind: 'idle' };
   let authorization: ProviderAuthorization<I> | undefined;
-  let connection: Promise<ConnectedProvider<M, I>> | undefined;
-  let acquired: ConnectedProvider<M, I> | undefined;
-  let closing: Promise<void> | undefined;
-  let discovering: Promise<DiscoveredProvider> | undefined;
+  let released: Promise<void> = Promise.resolve();
+  let cleanupFailed = false;
+  let discovering: Promise<ProviderStatus> | undefined;
   function assertAuthorized(): ProviderAuthorization<I> {
-    if (closing || !authorization) throw new Error('Provider unavailable');
+    if (state.kind === 'retired' || !authorization) throw new Error('Provider unavailable');
     authorization.assertAuthorized();
     return authorization;
   }
-  function connect(): Promise<ConnectedProvider<M, I>> {
-    connection ??= Promise.resolve().then(async () => {
+  function release(next: { readonly kind: 'idle' | 'retired' }): void {
+    const previous = state;
+    state = next;
+    const held = previous.kind === 'connected' ? Promise.resolve(previous.backend)
+      : previous.kind === 'connecting' ? previous.attempt.then(result => result.kind === 'refused' ? undefined : result.backend) : undefined;
+    if (!held) return;
+    const closed = held.then(acquired => acquired?.close()).catch(() => { cleanupFailed = true; });
+    released = Promise.all([released, closed]).then(() => {});
+  }
+  async function attempt(): Promise<Attempt> {
+    let acquired: ConnectedProvider<M, I> | undefined;
+    try {
       authorization = authority.issue(id, instance);
       assertAuthorized();
       const result = await backend.connect({ apiVersion: backendProviderContractVersion, instance, credential: authorization.credential });
-      if (result.kind !== 'connected') throw new Error('Provider unavailable');
+      if (result.kind !== 'connected') {
+        const cause = failureCause(result.kind);
+        return cause === 'invalid-installation' ? { kind: 'invalid', backend: undefined } : { kind: 'refused', cause };
+      }
       acquired = result.backend;
       assertAuthorized();
       if (identityKey(acquired.instance) !== key || typeof acquired.close !== 'function' || typeof acquired.discover !== 'function' ||
         (acquired.permissions && [acquired.permissions.read, acquired.permissions.revoke, acquired.permissions.reconcileRevoke].some(method => typeof method !== 'function'))) {
         throw new Error('Invalid provider connection');
       }
-      return acquired;
-    });
-    return connection;
+      return { kind: 'connected', backend: acquired };
+    } catch { return { kind: 'invalid', backend: acquired }; }
   }
-  function close(): Promise<void> {
-    closing ??= Promise.resolve().then(async () => {
-      await connection?.catch(() => {});
-      try { await acquired?.close(); } catch { throw new Error('Provider cleanup failed'); }
+  function connect(): Promise<Connection> {
+    switch (state.kind) {
+      case 'retired': return Promise.resolve(retired);
+      case 'connecting': return state.settled;
+      case 'connected': return Promise.resolve({ kind: 'connected', backend: state.backend });
+    }
+    const pending = attempt();
+    const settled = pending.then((result): Connection => {
+      if (state.kind !== 'connecting' || state.attempt !== pending) return retired;
+      switch (result.kind) {
+        case 'connected': state = { kind: 'connected', backend: result.backend }; return result;
+        case 'refused': state = { kind: 'idle' }; return { kind: 'unavailable', cause: result.cause };
+        case 'invalid': release({ kind: 'retired' }); return retired;
+      }
     });
-    return closing;
+    state = { kind: 'connecting', attempt: pending, settled };
+    return settled;
   }
-  async function discover(): Promise<DiscoveredProvider> {
+  async function acquire(): Promise<ConnectedProvider<M, I>> {
+    const result = await connect();
+    if (result.kind !== 'connected') throw new Error('Provider unavailable');
+    return result.backend;
+  }
+  async function close(): Promise<void> {
+    if (state.kind !== 'retired') release({ kind: 'retired' });
+    await released;
+    if (cleanupFailed) throw new Error('Provider cleanup failed');
+  }
+  async function discover(): Promise<ProviderStatus> {
+    const unavailable = (cause: ProviderUnavailableCause): ProviderStatus => ({ kind: 'unavailable', contributionId: id, instance: identity, cause });
+    const connection = await connect();
+    if (connection.kind !== 'connected') return unavailable(connection.cause);
+    const current = connection.backend;
     try {
-      if (closing) throw new Error('Provider unavailable');
-      const connected = await connect();
       assertAuthorized();
-      const capabilities = record(connected.capabilities, ['create', 'send', 'cancel', 'decide', 'reconcile', 'observe']);
+      const capabilities = record(current.capabilities, ['create', 'send', 'cancel', 'decide', 'reconcile', 'observe']);
       const normalized = { create: capability(capabilities.create), send: capability(capabilities.send),
         cancel: capability(capabilities.cancel), decide: capability(capabilities.decide),
         reconcile: capability(capabilities.reconcile), observe: capability(capabilities.observe) };
-      const result = record(copyJson(await connected.discover()), ['kind', 'agents']);
-      assertAuthorized();
-      if (result.kind !== 'available' || !Array.isArray(result.agents) || result.agents.length > 1000) throw new Error('Invalid discovery');
+      const result = record(copyJson(await current.discover()));
+      const { expectedAuthority } = assertAuthorized();
+      if (result.kind !== 'available') {
+        record(result, ['kind', 'reason']);
+        const cause = failureCause(result.kind);
+        if (cause === 'invalid-installation') throw new Error('Invalid discovery');
+        // Capabilities are probed at connect, so an upgraded service is only seen through a fresh connection.
+        if (cause === 'version-unsupported' && state.kind === 'connected' && state.backend === current) release({ kind: 'idle' });
+        return unavailable(cause);
+      }
+      record(result, ['kind', 'agents']);
+      if (!Array.isArray(result.agents) || result.agents.length > 1000) throw new Error('Invalid discovery');
       const seen = new Set<string>();
       const agents = result.agents.map(value => {
         const agent = record(value, ['ref', 'name']), ref = record(agent.ref, ['instance', 'kind', 'opaqueId']);
@@ -119,10 +200,10 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         seen.add(opaqueId);
         return { opaqueId, name: text(agent.name) };
       });
-      return { contributionId: id, instance: identity, expectedAuthority: assertAuthorized().expectedAuthority, capabilities: normalized, agents };
+      return { kind: 'available', contributionId: id, instance: identity, expectedAuthority, capabilities: normalized, agents };
     } catch {
-      failed();
-      throw new Error('Provider discovery failed');
+      if (state.kind !== 'retired') release({ kind: 'retired' });
+      return unavailable('invalid-installation');
     }
   }
   function validate(selected: ProviderInstallation): ProviderAuthorization<I> {
@@ -142,7 +223,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     },
     async observe(original, store, freshSnapshot) {
       const authorize = () => {
-        if (closing || !authorization) throw new ObservationFailure('original-provider-unavailable');
+        if (state.kind === 'retired' || !authorization) throw new ObservationFailure('original-provider-unavailable');
         try { authorization.assertAuthorized(); }
         catch { throw new ObservationFailure('original-credentials-unavailable'); }
         if (original.installation.expectedAuthority !== authorization.expectedAuthority ||
@@ -152,7 +233,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       if (original.observation?.kind !== 'confirmed') throw new ObservationFailure('original-binding-unavailable');
       const intent = creationIntent(original.intent, original.installation, instance);
       const binding = creationBinding(original.observation.binding, intent, original.installation);
-      const connected = await connect();
+      const connected = await acquire();
       authorize();
       if (!capability(connected.capabilities.observe)) throw new ObservationFailure('unsupported');
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
@@ -168,7 +249,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         if (original.observation?.kind !== 'confirmed') throw new Error('Original binding unavailable');
         const intent = creationIntent(original.intent, original.installation, instance);
         const binding = creationBinding(original.observation.binding, intent, original.installation);
-        const connected = await connect();
+        const connected = await acquire();
         authorize();
         if (!connected.permissions) return { kind: 'unsupported', reason: 'This provider does not report permissions.' };
         const result = record(copyJson(await connected.permissions.read(binding)));
@@ -194,7 +275,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       const binding = creationBinding(original.observation.binding, intent, original.installation);
       const target = (operation: unknown) => providerTarget({ kind: 'provider', installation: original.installation, credential: original.credential, operation }, intent.scope);
       if (action.kind === 'revoke-permission') {
-        if (!acquired?.permissions) throw new Error('Permission management unavailable');
+        if (state.kind !== 'connected' || !state.backend.permissions) throw new Error('Permission management unavailable');
         return target({ kind: action.kind, operationId, binding, scope: action.scope,
           permission: { binding, ref: { kind: 'permission', instance, opaqueId: action.permissionId } } });
       }
@@ -223,7 +304,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         const captured = original.operation;
         const intent = creationIntent(captured.binding.creation, original.installation, instance);
         const binding = creationBinding(captured.binding, intent, original.installation);
-        const connected = await connect();
+        const connected = await acquire();
         authorize();
         if (captured.kind === 'revoke-permission') {
           const manager = connected.permissions;
@@ -269,7 +350,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         const granted = validate(original.installation);
         if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
         const operation = creationIntent(original.intent, original.installation, instance);
-        const connected = await connect();
+        const connected = await acquire();
         validate(original.installation);
         if (!capability(connected.capabilities[fresh ? 'create' : 'reconcile'])) {
           return { kind: fresh ? 'not-dispatched' : 'uncertain', source, evidence: null };
@@ -315,12 +396,33 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
   let cleanupFailed = false;
   let phase: 'new' | 'activating' | 'active' | 'closing' = 'new';
   let closing: Promise<void> | undefined;
-  let catalog: readonly DiscoveredProvider[] = [];
+  let catalog: readonly ProviderStatus[] = [];
+  let discoveredAt = 0;
+  let background: Promise<unknown> | undefined;
+  function status(selected: Pick<ProviderInstallation, 'contributionId' | 'instance'>): ProviderStatus | undefined {
+    return catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+  }
+  function available(selected: ProviderInstallation): DiscoveredProvider | undefined {
+    const found = status(selected);
+    return found?.kind === 'available' ? found : undefined;
+  }
   function track<T>(operation: () => Promise<T>): Promise<T> {
     const task = Promise.resolve().then(operation);
     pending.add(task);
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
+  }
+  async function refresh(): Promise<readonly ProviderStatus[]> {
+    discoveredAt = Date.now();
+    const results = await Promise.all(bindings.map(binding => binding.discover()));
+    if (phase !== 'active') throw new Error('Provider discovery failed');
+    catalog = results;
+    return structuredClone(catalog);
+  }
+  // Reads never wait on backend I/O; the catalog is rediscovered behind the response at most once per interval, so outages that begin after a healthy discovery also surface.
+  function rediscover(): void {
+    if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
+    background = refresh().catch(() => {}).finally(() => { background = undefined; });
   }
   function stop(stream: ProviderStream): void {
     try { stream.close(); } catch { cleanupFailed = true; }
@@ -333,7 +435,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     const authorities: Promise<void>[] = [];
     // Cleanup can reenter close(), so publish first. The microtask reads authorityResults after initialization.
     closing = Promise.resolve().then(async () => {
-      await Promise.allSettled(pending);
+      await Promise.allSettled([...pending, background]);
       for (const stream of draining) stop(stream);
       const results: PromiseSettledResult<unknown>[] = await Promise.allSettled([...draining].map(stream => stream.drained));
       results.push(...await Promise.allSettled(bindings.map(binding => binding.close())));
@@ -381,7 +483,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
                       throw new Error('Invalid provider registration');
                     }
                     ids.add(id); identities.add(key);
-                    bindings.push(bindProvider(id, backend, presentation, extension.authority, () => { void close().catch(() => {}); }));
+                    bindings.push(bindProvider(id, backend, presentation, extension.authority));
                   } catch { invalid = true; throw new Error('Invalid provider registration'); }
                 } },
               });
@@ -397,19 +499,23 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         }
       });
     },
-    discover(): Promise<readonly DiscoveredProvider[]> {
+    discover(): Promise<readonly ProviderStatus[]> {
       if (phase !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
-      return track(async () => {
-        const results = await Promise.allSettled(bindings.map(binding => binding.discover()));
-        if (phase !== 'active' || results.some(result => result.status === 'rejected')) throw new Error('Provider discovery failed');
-        catalog = results.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
-        return structuredClone(catalog);
-      });
+      return track(refresh);
     },
-    catalog(): readonly DiscoveredProvider[] { return phase === 'active' ? structuredClone(catalog) : []; },
+    catalog(): readonly ProviderStatus[] {
+      if (phase !== 'active') return [];
+      rediscover();
+      return structuredClone(catalog);
+    },
+    statusOf(selected: Pick<ProviderInstallation, 'contributionId' | 'instance'>): ProviderStatus | undefined {
+      if (phase !== 'active') return undefined;
+      const found = status(selected);
+      return found && structuredClone(found);
+    },
     capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation {
       if (phase !== 'active') throw new Error('Provider unavailable');
-      const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+      const discovered = available(selected);
       if (!discovered?.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider agent unavailable');
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding) throw new Error('Provider unavailable');
@@ -418,7 +524,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget {
       if (phase !== 'active') throw new Error('Provider unavailable');
       const selected = original.installation;
-      const discovered = catalog.find(provider => provider.contributionId === selected.contributionId && identityKey(provider.instance) === identityKey(selected.instance));
+      const discovered = available(selected);
       const binding = bindings.find(binding => binding.matches(selected));
       if (!binding || !discovered || (action.kind !== 'revoke-permission' && (!discovered.capabilities[action.kind] || !discovered.capabilities.reconcile)) ||
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');

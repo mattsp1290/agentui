@@ -64,7 +64,7 @@ test('extension-only metadata follows changing, empty and failed replacement wit
     assert.equal(assertDefault(await f.client.metadata()), null);
     await f.host.replaceProviderExtensions([old.value]);
     assert.equal(assertDefault(await f.client.metadata()), oldId);
-    const bad = entry(t, { label: 'bad', discover() { throw new Error('private'); } });
+    const bad = entry(t, { label: 'bad', activate() { throw new Error('private'); } });
     assert.equal((await f.host.replaceProviderExtensions([bad.value])).kind, 'failed');
     assert.equal(assertDefault(await f.client.metadata()), null);
     assert.deepEqual((await f.client.metadata()).agents, []);
@@ -73,7 +73,18 @@ test('extension-only metadata follows changing, empty and failed replacement wit
   } finally { finish.resolve(); await replacing; }
 });
 
-for (const phase of ['import', 'activate', 'discover', 'dispose']) test(`extension-only ${phase} failure never advertises the retired default`, { timeout: 10000 }, async t => {
+test('extension-only discover failure lists the provider unavailable without a default', { timeout: 10000 }, async t => {
+  const old = entry(t, { label: 'old' }), bad = entry(t, { label: 'bad', discover() { throw new Error('private'); } });
+  const f = await open(t, [old]), oldId = assertDefault(await f.client.metadata()); assert.ok(oldId);
+  assert.equal((await f.host.replaceProviderExtensions([bad.value])).kind, 'replaced');
+  await assert.rejects(f.client.create(f.scope('while-unavailable'), oldId), error => error.kind === 'create-rejected');
+  assert.equal(assertDefault(await f.client.metadata()), null);
+  assert.deepEqual((await f.client.metadata()).agents.map(agent => agent.availability.kind), ['unavailable']);
+  assert.doesNotMatch(JSON.stringify(await f.client.metadata()), /private/);
+  assert.deepEqual(await f.client.catalog(), []);
+});
+
+for (const phase of ['import', 'activate', 'dispose']) test(`extension-only ${phase} failure never advertises the retired default`, { timeout: 10000 }, async t => {
   const old = entry(t, { label: 'old', ...(phase === 'dispose' ? { dispose() { throw new Error('private'); } } : {}) });
   const bad = entry(t, { label: 'bad', ...(phase === 'dispose' ? {} : { [phase]() { throw new Error('private'); } }) });
   const f = await open(t, [old], options(t), phase === 'dispose'); assert.ok(assertDefault(await f.client.metadata()));

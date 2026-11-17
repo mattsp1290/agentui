@@ -309,7 +309,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       let result: ServerExtensionReplacement;
       try { result = await deps.replace({ kind: 'artifacts', pins: selection.target.artifacts, grants }); }
       catch (error) {
-        persist(attempt, selection, { kind: 'failed', failure: 'discovery', recovery: 'replace' });
+        persist(attempt, selection, { kind: 'failed', failure: 'activation', recovery: 'replace' });
         throw error;
       }
       let outcome: AttemptOutcome, nextRunning: Running;

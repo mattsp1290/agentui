@@ -237,14 +237,18 @@ for (const [name, source] of [
   const recovered = f.launch(['serve', '--config', f.config, '--port', '0']); await ready(recovered); await stop(recovered);
 });
 
-test('bundled CLI hides discovery exceptions, closes acquired resources and permits restart', { timeout: 10000 }, async t => {
+test('bundled CLI keeps serving through discovery exceptions, retires the acquired connection and reports a safe status', { timeout: 10000 }, async t => {
   const f = await fixture(t);
   await writeFile(join(f.installed, 'server.mjs'), f.module.replace("discover: () => request('/agents')",
     `discover: () => { throw new Error(${JSON.stringify(privateError + secret)}); }`));
-  const failed = f.start(); assert.equal(await failed.exited, 1); assert.equal(failed.stdout, '');
-  assert.match(failed.stderr, /Provider discovery failed/); privateDiagnostics(failed);
+  const running = f.start(); await ready(running);
+  assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\n');
+  const refresh = f.launch(['providers-refresh']); assert.equal(await refresh.exited, 0, refresh.stderr);
+  assert.deepEqual(JSON.parse(refresh.stdout).value, [{ contributionId: 'service', namespace: instance.namespace, kind: 'unavailable',
+    cause: 'invalid-installation', reason: 'The provider installation is invalid. Fix the extension configuration, then restart the host.' }]);
+  privateDiagnostics(refresh); privateDiagnostics(running);
+  await stop(running);
   assert.equal(await readFile(f.lifecycle, 'utf8'), 'close\ndispose\n');
-  const recovered = f.launch(['serve', '--config', f.config, '--port', '0']); await ready(recovered); await stop(recovered);
 });
 
 test('bundled CLI requires a serving configuration, rejects empty selection options and limits --extensions to serve', { timeout: 15000 }, async t => {
