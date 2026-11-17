@@ -13,15 +13,18 @@ export function CommandRecovery({ view, actions, retry, enabled, canRetry = true
   const { retained: recoverable, uncertain, pending } = recoveryModel(view);
   return <>
     {(recoverable.length > 0 || uncertain.length > 0) && <section className="outbox" aria-label="Command recovery">
-      <h2>Command recovery</h2><p>Retry keeps the original command ID. Reconcile checks the host’s recorded result. An absent result or rejected retry cannot rule out an earlier submission; its saved command is kept.</p>
+      <h2>Command recovery</h2><p>Retry keeps the original command ID. Reconcile checks the host’s recorded result. An absent result or rejected retry cannot rule out an earlier submission; its saved command is kept. Stop waiting releases the conversation for new work and does not say whether the earlier command ran.</p>
       {recoverable.map(entry => <article key={entry.command.clientCommandId}>
         <p><strong>{entry.command.body.kind === 'send' ? entry.command.body.text : entry.command.body.kind}</strong></p>
         <code>{entry.command.clientCommandId}</code><p>{view.document.receipts[entry.command.clientCommandId]?.state.kind ?? 'Result unknown'}</p>
         <div className="action-row"><button disabled={!enabled || !canRetry} onClick={() => void actions.submit(() => retry(entry.command.clientCommandId))}>Retry original command</button>
-          <button disabled={!enabled} onClick={() => void actions.reconcile(entry.command.clientCommandId)}>Reconcile command</button></div>
+          <button disabled={!enabled} onClick={() => void actions.reconcile(entry.command.clientCommandId)}>Reconcile command</button>
+          {view.document.receipts[entry.command.clientCommandId]?.state.kind === 'uncertain' &&
+            <button disabled={!enabled} onClick={() => void actions.abandon(entry.command.clientCommandId)}>Stop waiting</button>}</div>
       </article>)}
       {uncertain.map(receipt => <article key={receipt.clientCommandId}><code>{receipt.clientCommandId}</code><p>{receipt.state.kind}</p>
-        <button disabled={!enabled} onClick={() => void actions.reconcile(receipt.clientCommandId)}>Reconcile command</button>
+        <div className="action-row"><button disabled={!enabled} onClick={() => void actions.reconcile(receipt.clientCommandId)}>Reconcile command</button>
+          <button disabled={!enabled} onClick={() => void actions.abandon(receipt.clientCommandId)}>Stop waiting</button></div>
       </article>)}
     </section>}
     {pending.length > 0 && <section className="outbox" aria-label="Pending commands">

@@ -517,8 +517,13 @@ test('a send refused behind an unconfirmed earlier send names the recovery actio
   f.behavior.submit = async () => ({ kind: 'rejected', reason: 'send-awaiting-confirmation' });
   assert.deepEqual(await f.actions.commands.send('behind an unconfirmed send'), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
   assert.equal(f.app.getSnapshot().error, 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
-    + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it, '
-    + 'or start a new chat if it stays unconfirmed.');
+    + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it. '
+    + 'If it stays unconfirmed, use Stop waiting under Command recovery to send new messages here; '
+    + 'the earlier message may or may not have run.');
+  const abandoned = [];
+  f.behavior.abandon = async (selected, id) => { abandoned.push([selected, id]); return null; };
+  await f.actions.abandon('earlier-send');
+  assert.deepEqual(abandoned, [[f.target.scope, 'earlier-send']]);
 });
 
 

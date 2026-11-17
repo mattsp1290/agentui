@@ -59,6 +59,8 @@ export interface ConversationActions {
   readonly permissions: ConversationModuleProps['permissions'];
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
   reconcile(id: string): Promise<void>;
+  /** Stops waiting on an unconfirmed send so the conversation can take new work. Says nothing about whether it ran. */
+  abandon(id: string): Promise<void>;
   retryObservation(): Promise<void>;
   /** Reads an image of this conversation for preview; failures never mark the application failed. */
   readImage(imageId: ImageId): Promise<Uint8Array>;
@@ -136,8 +138,9 @@ export function applicationEnabled(state: ApplicationSnapshot): boolean {
   return state.host.kind === 'ready' && !state.storageFailure && !state.busy;
 }
 const SEND_AWAITING_CONFIRMATION = 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
-  + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it, '
-  + 'or start a new chat if it stays unconfirmed.';
+  + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it. '
+  + 'If it stays unconfirmed, use Stop waiting under Command recovery to send new messages here; '
+  + 'the earlier message may or may not have run.';
 export function refusalMessage(reason: string): string {
   if (reason === 'conversation-closed') return 'This conversation ended. Start a new chat to keep going.';
   if (reason === 'send-awaiting-confirmation') return SEND_AWAITING_CONFIRMATION;
@@ -667,6 +670,11 @@ export function createApplicationController(deps: {
         reconcile: id => run(async owner => {
           requireTarget(owner, target);
           await current(owner, owner.connection.reconcile(target.scope, id));
+          await current(owner, target.store.refreshReceipt(id));
+        }),
+        abandon: id => run(async owner => {
+          requireTarget(owner, target);
+          await current(owner, owner.connection.abandon(target.scope, id));
           await current(owner, target.store.refreshReceipt(id));
         }),
       };

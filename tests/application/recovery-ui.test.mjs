@@ -13,18 +13,21 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
     const scope = { hostId: 'host', conversationId: 'conversation' };
     const own = { version: 1, scope, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' } };
     const foreign = { scope, clientCommandId: 'foreign-pending', hostOperationId: 'operation', sequence: 1, state: { kind: 'pending' } };
+    const unconfirmed = { scope, clientCommandId: 'foreign-uncertain', hostOperationId: 'operation-2', sequence: 2, state: { kind: 'uncertain', reason: 'provider-outcome-unknown' } };
     let view = { submitting: ['own-original'], draft: 'Saved original text', outbox: [{ command: own, draftRevision: 0 }],
       connection: { kind: 'connected' }, cursor: 1,
       document: { domain: { messages: [] }, decisions: {}, receipts: { 'foreign-pending': foreign } } };
+    globalThis.addUncertain = () => { view = { ...view, document: { ...view.document, receipts: { ...view.document.receipts, 'foreign-uncertain': unconfirmed,
+      'own-original': { ...unconfirmed, clientCommandId: 'own-original', hostOperationId: 'operation-3', sequence: 3 } } } }; globalThis.renderRecovery(false); };
     const listeners = new Set();
     globalThis.edits = [];
     const store = { getSnapshot: () => view, subscribe: listener => { listeners.add(listener); return () => listeners.delete(listener); },
       setDraft: value => new Promise((resolve, reject) => globalThis.edits.push({ value, reject,
         resolve() { view = { ...view, draft: value }; for (const listener of listeners) listener(); resolve(); } })) };
     const active = { scope, store, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } } };
-    globalThis.checked = [];
+    globalThis.checked = []; globalThis.abandoned = [];
     let storageFailure = '';
-    const actions = { reconcile: async id => globalThis.checked.push(id) };
+    const actions = { reconcile: async id => globalThis.checked.push(id), abandon: async id => globalThis.abandoned.push(id) };
     const root = createRoot(document.getElementById('root'));
     globalThis.renderRecovery = (busy, submitting = []) => { view = { ...view, submitting }; flushSync(() => root.render(<ConversationView actions={actions} active={active} enabled={!busy && !storageFailure} storageFailure={storageFailure} />)); };
     globalThis.storageUnavailable = () => { storageFailure = 'Storage unavailable'; globalThis.renderRecovery(false); };
@@ -49,6 +52,13 @@ test('recovery UI keeps live pending commands distinct from retained unknown int
   assert.equal(await recovery.getByRole('button', { name: 'Retry original command', exact: true }).count(), 1);
   assert.match(await recovery.textContent(), /absent result or rejected retry cannot rule out an earlier submission/);
   assert.equal(await page.getByRole('button', { name: /Discard|Archive/ }).count(), 0);
+  assert.equal(await recovery.getByRole('button', { name: 'Stop waiting', exact: true }).count(), 0);
+  await page.evaluate(() => globalThis.addUncertain());
+  assert.match(await recovery.textContent(), /Stop waiting releases the conversation for new work and does not say whether the earlier command ran/);
+  const stop = recovery.getByRole('button', { name: 'Stop waiting', exact: true });
+  assert.equal(await stop.count(), 2);
+  await stop.nth(0).click(); await stop.nth(1).click();
+  assert.deepEqual(await page.evaluate(() => globalThis.abandoned), ['own-original', 'foreign-uncertain']);
   assert.deepEqual(await page.evaluate(() => globalThis.savedCommand), {
     version: 1, scope: { hostId: 'host', conversationId: 'conversation' }, clientCommandId: 'own-original', body: { kind: 'send', text: 'Saved original text' },
   });
