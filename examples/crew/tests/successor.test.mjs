@@ -98,7 +98,7 @@ test('Crew successor binds the target and carrying turn Crew drew, observes from
   assert.deepEqual(result.evidence, carried(row));
   assert.equal(f.host.observationStatus(after).kind, 'observing');
   assert.equal(f.events(target), 1);
-  assert.deepEqual(f.remote.calls.filter(call => call.method === 'GET' && /\/handoff$/u.test(call.path)), []);
+  assert.deepEqual(f.remote.calls.filter(call => call.method === 'GET' && call.path.endsWith('/handoff')), []);
   assert.deepEqual(f.host.inspect(after).snapshot.document.domain.messages.map(message => [message.messageId, message.role, message.text]),
     [[`${row.firstRequestId}/assistant`, 'assistant', acknowledgement]]);
   const state = f.state('after');
