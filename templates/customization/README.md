@@ -15,7 +15,7 @@ node apps/host/dist/main.js codex \
   --assets /absolute/custom-desktop
 ```
 
-The existing `pi` and `browser-dev` commands also accept `--assets`. Without it, startup uses the ordinary installed browser artifact. Open the host's browser address, pair, and select a conversation. Plan review and its nested Review guidance section appear below chat. The host renders the declared Review the plan action and reports its result. Click **Review the plan** to submit the committed prompt. An accepted receipt means submitted, not completed. Uncertain outcomes use the existing conversation recovery controls.
+The existing `pi` and `browser-dev` commands also accept `--assets`. Without it, startup uses the ordinary installed browser artifact. Open the host's browser address, pair, and select a conversation. Plan review and its nested Review guidance section appear beside the transcript, or below it in a narrow content area. Both share the content scrollbar. The host renders the declared Review the plan action and reports its result. Click **Review the plan** to submit the committed prompt. An accepted receipt means submitted, not completed. Uncertain outcomes use the existing conversation recovery controls.
 
 To remove the panel, open Settings, expand View options, and choose Restore default view. The current conversation and draft remain available. Reloading the artifact enables the panel again.
 
@@ -79,4 +79,12 @@ An activation can add `overrides: { transcript: MyTranscript }` alongside its re
 See the [SDK transcript example](../../docs/architecture/extension-sdk.md#contribute-conversation-views-and-actions).
 Only transcript presentation changes. The ordinary composer, approvals, Stop, and recovery remain available.
 The host retains the default transcript while selected activations or a lazy override load, and reports a conflict if multiple namespaces claim it.
-A failed namespace is disposed once. Restore default view removes both contributions and preserves the draft.
+A failed namespace is disposed once. Restore default view removes all presentation contributions and preserves the draft.
+
+### Arrange transcript and modules
+
+The template returns `contentLayout: ReviewLayout`. Its `ConversationContentLayoutProps` contains only the host-created `transcript` and `modules` nodes.
+The transcript includes any selected transcript override. Render each node once with ordinary React and CSS.
+This desktop arrangement keeps permissions, approvals, the composer, Stop, and recovery under their existing host owners.
+Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom transcript and module views, actions, and namespace diagnostics wait.
+SDK compatibility is `0.6.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.

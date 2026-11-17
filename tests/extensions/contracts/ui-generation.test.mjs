@@ -18,12 +18,12 @@ test('UI generation captures producer fields once and returns only nested presen
   const action = onceFields({ id: 'send', label: 'Send', run: async () => ({ kind: 'rejected', reason: 'disabled' }) }, actionReads);
   const child = onceFields({ id: 'child', label: 'Child', component: () => null, actions: [action], children: undefined }, nested);
   const modules = [{ id: 'parent', label: 'Parent', component: () => null, children: [child] }];
-  const source = onceFields({ modules, overrides: undefined, dispose() { assert.equal(this, source); disposals++; } }, reads);
+  const source = onceFields({ modules, overrides: undefined, contentLayout: () => null, dispose() { assert.equal(this, source); disposals++; } }, reads);
   const active = await createUiExtensionGeneration({ ...options, activate({ frontendTools }) { frontendTools.add(tool); return source; } });
-  assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1 });
+  assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1, contentLayout: 1 });
   assert.deepEqual(nested, { id: 1, label: 1, component: 1, actions: 1, children: 1 });
   assert.deepEqual(actionReads, { id: 1, label: 1, run: 1 });
-  assert.deepEqual(Object.keys(active.presentation).sort(), ['modules', 'transcript']);
+  assert.deepEqual(Object.keys(active.presentation).sort(), ['contentLayout', 'modules', 'transcript']);
   modules.length = 0;
   assert.equal(active.presentation.modules[0].children[0].label, 'Child');
   assert.deepEqual(await active.presentation.modules[0].children[0].actions[0].run({}), { kind: 'rejected', reason: 'disabled' });
@@ -44,7 +44,7 @@ for (const kind of ['malformed', 'duplicate']) test(`sticky ${kind} registration
   assert.equal(disposals, 1);
 });
 
-for (const field of ['modules', 'overrides', 'dispose']) test(`throwing ${field} getter is read once with only acquired cleanup`, async () => {
+for (const field of ['modules', 'overrides', 'contentLayout', 'dispose']) test(`throwing ${field} getter is read once with only acquired cleanup`, async () => {
   let reads = 0, disposals = 0;
   const failure = new Error(`Bad ${field}`);
   const source = Object.defineProperty({ modules: [], dispose() { disposals++; } }, field, { get() { reads++; throw failure; } });
@@ -122,7 +122,7 @@ for (const lifetime of ['missing', 'noncallable', 'throw']) test(`invalid ${life
   assert.deepEqual(failures, [result]); assert.equal(disposalReads, 1); assert.equal(presentationReads, 0);
 });
 
-for (const field of ['modules', 'overrides']) test(`sticky registration skips poisonous ${field} presentation and releases the acquired lifetime`, async () => {
+for (const field of ['modules', 'overrides', 'contentLayout']) test(`sticky registration skips poisonous ${field} presentation and releases the acquired lifetime`, async () => {
   let registration, reads = 0, disposals = 0;
   const source = Object.defineProperty({ modules: [], dispose() { assert.equal(this, source); disposals++; } }, field, {
     get() { reads++; throw new Error('Presentation must be skipped'); },
@@ -135,7 +135,7 @@ for (const field of ['modules', 'overrides']) test(`sticky registration skips po
   assert.deepEqual(failures, [registration]); assert.equal(reads, 0); assert.equal(disposals, 1);
 });
 
-for (const field of ['modules', 'overrides']) for (const caught of [false, true]) {
+for (const field of ['modules', 'overrides', 'contentLayout']) for (const caught of [false, true]) {
   test(`${field} getter sees closed registration and ${caught ? 'cannot register even when it catches the error' : 'fails creation with acquired cleanup'}`, async () => {
     let sink, registration, disposals = 0, reads = 0;
     const failures = [];

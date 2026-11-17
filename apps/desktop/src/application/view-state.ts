@@ -8,11 +8,13 @@ export interface SavedView {
 }
 export interface OwnedViewStorage {
   readonly viewId: string;
+  select(): void;
   readView(hostId: string): Promise<SavedView>;
   saveView(hostId: string, state: SavedView): Promise<void>;
   savedViews(hostId: string, after: string | null): Promise<{
     readonly ids: readonly string[]; readonly unreadable: number; readonly after: string | null;
   }>;
+  draftScopes(hostId: string, after: string | null): Promise<{ readonly scopes: readonly ConversationScope[]; readonly after: string | null }>;
   drafts(onFailure: (error: unknown) => void): DraftStoragePort;
   close(): void | Promise<void>;
 }

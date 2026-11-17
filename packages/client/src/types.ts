@@ -1,4 +1,4 @@
-import type { ClientCommand, ConversationDocument, ConversationPort, ConversationScope, PermissionScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
+import type { ClientCommand, FrontendOffer, OfferedCommand, ConversationDocument, ConversationPort, ConversationScope, PermissionScope, Projection, Receipt, SubmitResult } from '@agentui/contracts';
 import type { ImageAttachment, UploadId } from '@agentui/contracts/image';
 
 export interface OutboxEntry {
@@ -13,8 +13,24 @@ export interface ComposerImageRecord {
   readonly byteLength: number;
   readonly attachment: ImageAttachment | null;
 }
+export interface FrontendRecoveryReference {
+  readonly command: OfferedCommand;
+  readonly ownerId: string;
+  readonly state: 'retained' | 'unavailable-pending' | 'unavailable-confirmed';
+}
+export interface FrontendJournal {
+  read(): readonly FrontendRecoveryReference[];
+  unavailable(id: string): Promise<void>;
+  acknowledged(id: string): Promise<void>;
+}
+export interface FrontendAdmission {
+  capture(id: string): { readonly ownerId: string; readonly offer: FrontendOffer; commit(command: OfferedCommand, journal: FrontendJournal): boolean; release(): void } | null;
+  canRetry(command: OfferedCommand): boolean;
+  rejected(id: string): Promise<void>;
+}
 export interface LocalRecords {
-  readonly version: 2;
+  readonly version: 3;
+  readonly frontendSends: readonly FrontendRecoveryReference[];
   readonly scope: ConversationScope;
   readonly draft: string;
   readonly draftRevision: number;
@@ -57,6 +73,8 @@ export interface ClientView<P> {
 }
 export interface ConversationStore<P> {
   readonly ready: Promise<void>;
+  readonly frontendJournal: FrontendJournal;
+  dispose(): Promise<void>;
   getSnapshot(): ClientView<P>;
   subscribe(listener: () => void): () => void;
   setDraft(text: string): Promise<void>;
@@ -79,6 +97,7 @@ export interface StoreOptions<E, P> {
   readonly projection: Projection<E, P>;
   readonly drafts: DraftStoragePort;
   readonly createCommandId: () => string;
+  readonly frontend?: FrontendAdmission;
   readonly images?: ImageUploadPort;
   /** Must return UUID v4 strings; defaults to createCommandId. */
   readonly createImageId?: () => string;

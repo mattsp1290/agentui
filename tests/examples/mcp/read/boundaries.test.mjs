@@ -10,7 +10,7 @@ import { cli, compatibility, connect, data, listen, privateDirectory, writeProfi
 
 const identity = { hostId: 'host-a', principalId: 'principal-a', secret: 's'.repeat(43) };
 const metadata = { ...identity, compatibility, agents: [{ id: 'agent-a', label: 'Recorded', runtime: compatibility.nativeRuntime,
-  commands: ['send'], availability: { kind: 'ready' } }], defaultAgentId: 'agent-a' };
+  frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } }], defaultAgentId: 'agent-a' };
 delete metadata.secret;
 const scope = { hostId: identity.hostId, conversationId: 'conversation-a' };
 const snapshot = () => ({ kind: 'page', page: 1, item: { kind: 'snapshot', snapshot: { scope,

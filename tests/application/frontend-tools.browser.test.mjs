@@ -13,6 +13,52 @@ const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersi
 const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, ${entry(`return { modules: [{ id: 'healthy', label: 'Healthy', component() { return <p>Healthy namespace</p>; },
   actions: [{ id: 'send', label: 'Send sibling', run: ({commands}) => commands.send('Sibling command') }] }], dispose() {} };`)} }`;
 const editor = page => page.getByRole('textbox', { name: 'Message', exact: true });
+
+for (const failure of ['load', 'ready activation']) test(`capture keeps a healthy namespace after sibling ${failure} failure and refuses loading`, async t => {
+  const bundle = await build({ stdin: { resolveDir: root, loader: 'jsx', contents: `
+    import React from 'react'; import {createRoot} from 'react-dom/client';
+    import {useDesktopCustomizations} from './apps/desktop/src/application/DesktopCustomizations.tsx';
+    import {createFrontendSends,createGenerationSource} from './apps/desktop/src/application/frontend-sends.ts';
+    const scope={hostId:'host',conversationId:'conversation'};
+    const source=createGenerationSource();
+    const owner=createFrontendSends({generations:source,rowsChanged(){},unauthorized(){throw Error('Unexpected authorization failure');}});
+    window.borrows=0;
+    const captureStore={borrow(){window.borrows++;let released=false;return {failed(error){throw error;},release(){if(!released){released=true;window.borrows--;}}};}};
+    window.ready=owner.session({hostId:'host',principalId:'principal'},{frontendBinding(){throw Error('No network before commit');}});
+    const manifest={namespace:'healthy',sdkVersion:'${EXTENSION_SDK_VERSION}',entries:[{kind:'desktop',module:'./desktop.js'}]};
+    const customizations=[{manifest,${entry(`frontendTools.add(${tool});return {modules:[],dispose(){}};`)}},
+      {manifest:{...manifest,namespace:'failed'},load:()=>new Promise((resolve,reject)=>{window.settle=()=>{
+        if('${failure}'==='load')reject(Error('Expected load failure'));
+        else resolve({default:{kind:'desktop',sdkVersion:'${EXTENSION_SDK_VERSION}',activate({frontendTools}){frontendTools.add(${tool});return {modules:[],dispose(){}};}}});
+      };})}];
+    function App(){window.custom=useDesktopCustomizations({customizations,enabled:true,sink:source});return <input aria-label="Persistent draft" defaultValue="Keep tool draft"/>;}
+    window.capture=()=>{try{const capture=owner.forStore({recoveryNeeded(){},viewId:'view',scope,capture:captureStore,eligibility:()=> 'ag-ui-capture-and-bind'}).capture();
+      const names=capture?.offer.tools.map(tool=>tool.definition.name);capture?.release();return {kind:'captured',names};
+    }catch(error){return {kind:'error',message:error.message};}};
+    window.finish=()=>owner.dispose();createRoot(document.getElementById('root')).render(<App/>);
+  ` }, bundle: true, write: false, jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const page = await browser.newPage(), errors = []; page.on('pageerror', error => errors.push(error.message));
+  await page.route('http://localhost/fixture', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
+  await page.goto('http://localhost/fixture'); await page.addScriptTag({ content: bundle.outputFiles[0].text });
+  await wait(() => page.evaluate(() => window.custom?.namespaces.some(owner => owner.kind === 'ready') && typeof window.settle === 'function'), 'healthy namespace alongside loading sibling');
+  await page.evaluate(() => window.ready);
+  const previous = await page.getByRole('textbox', { name: 'Persistent draft' }).elementHandle();
+  assert.match((await page.evaluate(() => window.capture())).message, /changing/);
+  await page.evaluate(() => window.settle());
+  if (failure === 'ready activation') {
+    await wait(() => page.evaluate(() => window.custom.namespaces.every(owner => owner.kind === 'ready')), 'ready sibling before failure');
+    assert.deepEqual(await page.evaluate(() => window.capture()), { kind: 'captured', names: ['healthy__echo', 'failed__echo'] });
+    await page.evaluate(() => window.custom.namespaces.find(owner => owner.namespace === 'failed').fail(Error('Expected activation failure')));
+  }
+  await wait(() => page.evaluate(() => window.custom.namespaces.some(owner => owner.kind === 'failed')), 'terminal sibling failure');
+  assert.deepEqual(await page.evaluate(() => window.capture()), { kind: 'captured', names: ['healthy__echo'] });
+  assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).evaluate((node, old) => node === old, previous), true);
+  assert.equal(await page.getByRole('textbox', { name: 'Persistent draft' }).inputValue(), 'Keep tool draft');
+  assert.equal(await page.evaluate(() => window.borrows), 0);
+  await page.evaluate(() => window.finish()); assert.deepEqual(errors, []);
+});
+
 async function open(t) {
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click(); await connected(page);

@@ -356,13 +356,13 @@ function uploads({ auto = true, fail = null } = {}) {
   };
 }
 
-test('version 1 records restore without an image and version 2 image records round trip or are refused', async () => {
+test('legacy text records restore without an image and joint image records round trip or are refused', async () => {
   const legacy = fixture({ drafts: storage({ version: 1, scope, draft: 'old', draftRevision: 3, outbox: [] }) });
   await legacy.store.ready;
   assert.equal(legacy.store.getSnapshot().image, null);
   const { store, drafts } = fixture({ images: uploads() });
   await store.selectImage({ name: 'chart.png', bytes: png(1) });
-  assert.equal(drafts.value.version, 2);
+  assert.equal(drafts.value.version, 3);
   const reloaded = fixture({ drafts: storage(structuredClone(drafts.value)) });
   await reloaded.store.ready;
   assert.deepEqual({ ...reloaded.store.getSnapshot().image }, { ...store.getSnapshot().image });

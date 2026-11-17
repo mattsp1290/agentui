@@ -1,3 +1,4 @@
+import { frontendToolsFor } from '@agentui/host/frontend-tools';
 import { imageFailure, providerUnavailableReasons } from '@agentui/host';
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
@@ -37,7 +38,7 @@ export function createApi(options: {
   function requestScope(request: Request): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
-      case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
+      case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
     }
   }
@@ -54,7 +55,7 @@ export function createApi(options: {
         : { kind: 'unavailable', reason: 'This provider does not support conversation creation.' }, provider.capabilities.reconcile ? [
           ...(provider.capabilities.send ? ['send' as const] : []), ...(provider.capabilities.cancel ? ['cancel' as const] : []),
           ...(provider.capabilities.decide ? ['approve' as const] : []),
-        ] : []);
+        ] : [], provider.frontendOffers);
       return [descriptor.id, { installation, descriptor }] as const;
     })));
   }
@@ -70,7 +71,10 @@ export function createApi(options: {
       { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
   }
   async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
+    const actor = { id: principal.id, platform: 'desktop' as const,
+      authorized: () => access.authorized(principal, options.credentialClass) && !options.isClosing() };
     switch (request.op) {
+      case 'frontend-binding': return host.frontendBinding(request, actor, scope => frontendToolsFor(host).producer(scope));
       case 'image-upload': return { scope: request.scope, attachment: host.uploadImage(request.scope, principal.id, request.uploadId, request.name, Buffer.from(request.base64, 'base64')) };
       case 'image-read': {
         const image = host.readImage(request.scope, request.imageId);
@@ -122,9 +126,9 @@ export function createApi(options: {
         host.createConversation(request.scope, selected.installation);
         return request.scope satisfies ServiceValueMap['create'];
       }
-      case 'submit': return host.conversation(request.command.scope).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
-      case 'receipt': return host.conversation(request.scope).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;
-      case 'reconcile': return host.reconcile(request.scope, request.id) satisfies Promise<ServiceValueMap['reconcile']>;
+      case 'submit': return host.conversation(request.command.scope, actor).submit(request.command) satisfies Promise<ServiceValueMap['submit']>;
+      case 'receipt': return host.conversation(request.scope, actor).receipt(request.id) satisfies Promise<ServiceValueMap['receipt']>;
+      case 'reconcile': return host.reconcile(request.scope, request.id, actor) satisfies Promise<ServiceValueMap['reconcile']>;
       case 'watch': return { feedId: feeds.open(principal.id, host.conversation(request.scope), request) } satisfies ServiceValueMap['watch'];
       case 'pull': return feeds.pull(principal.id, request.feedId, request.ack) satisfies Promise<ServiceValueMap['pull']>;
       case 'close': feeds.close(principal.id, request.feedId); return null satisfies ServiceValueMap['close'];

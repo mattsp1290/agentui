@@ -69,6 +69,12 @@ enum Body {
         text: String,
         #[serde(
             default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        frontend: Option<FrontendOffer>,
+        #[serde(
+            default,
             deserialize_with = "present",
             skip_serializing_if = "Option::is_none"
         )]
@@ -81,6 +87,88 @@ enum Body {
     Cancel {
         run_id: String,
     },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FrontendDefinition {
+    name: String,
+    description: String,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    parameters: Option<serde_json::Map<String, Value>>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    metadata: Option<serde_json::Map<String, Value>>,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OfferedTool {
+    definition: FrontendDefinition,
+    activation_id: Id,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+struct FrontendOffer {
+    platform: String,
+    tools: Vec<OfferedTool>,
+}
+impl FrontendOffer {
+    fn valid(&self) -> bool {
+        let mut names = std::collections::HashSet::new();
+        self.platform == "desktop"
+            && !self.tools.is_empty()
+            && self.tools.len() <= 128
+            && self.tools.iter().all(|tool| {
+                let definition = &tool.definition;
+                let Some((namespace, local)) = definition.name.split_once("__") else {
+                    return false;
+                };
+                definition.name.len() <= 64
+                    && !namespace.is_empty()
+                    && namespace.len() <= 32
+                    && namespace.as_bytes()[0].is_ascii_lowercase()
+                    && namespace
+                        .bytes()
+                        .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == b'-')
+                    && !local.is_empty()
+                    && local.as_bytes()[0].is_ascii_alphabetic()
+                    && local
+                        .bytes()
+                        .all(|c| c.is_ascii_alphanumeric() || c == b'_' || c == b'-')
+                    && names.insert(&definition.name)
+                    && !definition
+                        .metadata
+                        .as_ref()
+                        .is_some_and(|value| value.contains_key("ag-ui"))
+            })
+    }
+}
+fn bounded_json(value: &Value, depth: usize, nodes: &mut usize) -> bool {
+    *nodes += 1;
+    if depth > 64 || *nodes > 100_000 {
+        return false;
+    }
+    match value {
+        Value::Array(values) => values
+            .iter()
+            .all(|value| bounded_json(value, depth + 1, nodes)),
+        Value::Object(values) => values
+            .values()
+            .all(|value| bounded_json(value, depth + 1, nodes)),
+        _ => true,
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum BindingAction {
+    Recover,
+    Unavailable,
 }
 #[derive(Deserialize, Serialize)]
 #[serde(rename_all = "lowercase")]
@@ -128,6 +216,11 @@ enum Request {
         scope: Scope,
         agent_id: Id,
     },
+    FrontendBinding {
+        scope: Scope,
+        id: Id,
+        action: BindingAction,
+    },
     ProviderObservation {
         scope: Scope,
         action: ObservationAction,
@@ -173,8 +266,8 @@ fn encoded_bytes(value: &impl Serialize) -> Result<usize, &'static str> {
         .map(|bytes| bytes.len())
         .map_err(|_| INVALID)
 }
-fn present<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<String>, D::Error> {
-    String::deserialize(deserializer).map(Some)
+fn present<'de, D: serde::Deserializer<'de>, T: Deserialize<'de>>(de: D) -> Result<Option<T>, D::Error> {
+    T::deserialize(de).map(Some)
 }
 pub fn image_operation(value: &Value) -> bool {
     matches!(value["op"].as_str(), Some("image-upload" | "image-read"))
@@ -233,6 +326,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         } else {
             MAX_REQUEST_BYTES
         }
+        || !bounded_json(&value, 0, &mut 0)
     {
         return Err(INVALID);
     }
@@ -262,6 +356,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         Request::Create { scope, .. }
         | Request::ConversationPermissions { scope }
         | Request::ConversationAgent { scope }
+        | Request::FrontendBinding { scope, .. }
         | Request::ProviderObservation { scope, .. }
         | Request::Receipt { scope, .. }
         | Request::Reconcile { scope, .. } => Some(scope),
@@ -277,18 +372,24 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         }
         Request::Submit { command } => {
             let valid = match &command.body {
-                Body::RevokePermission { .. } => true,
-                Body::Send { text, image_id: id } => match id {
-                    Some(id) => image_id(id),
-                    None => !text.is_empty(),
+                Body::RevokePermission { .. } => command.version.0 == 1,
+                Body::Send {
+                    text,
+                    frontend,
+                    image_id: id,
+                } => match (command.version.0, frontend, id) {
+                    (1, None, Some(id)) => image_id(id),
+                    (1, None, None) => !text.is_empty(),
+                    (2, Some(offer), None) => !text.is_empty() && offer.valid(),
+                    _ => false,
                 },
                 Body::Approve {
                     pending_id,
                     choice_id,
-                } => !pending_id.is_empty() && !choice_id.is_empty(),
-                Body::Cancel { run_id } => !run_id.is_empty(),
+                } => command.version.0 == 1 && !pending_id.is_empty() && !choice_id.is_empty(),
+                Body::Cancel { run_id } => command.version.0 == 1 && !run_id.is_empty(),
             };
-            if command.version.0 != 1 || !valid || encoded_bytes(command)? > MAX_COMMAND_BYTES {
+            if !valid || encoded_bytes(command)? > MAX_COMMAND_BYTES {
                 return Err(INVALID);
             }
             Some(&mut command.scope)
@@ -409,6 +510,27 @@ mod tests {
     }
     fn invalid(value: Value) {
         assert!(request(value.clone(), "host").is_err(), "accepted {value}");
+    }
+
+    #[test]
+    fn frontend_wire_golden_cases_match_typescript() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../../tests/client/fixtures/frontend-sends.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let input = case["request"].clone();
+            let result = request(input.clone(), "host");
+            assert_eq!(
+                result.is_ok(),
+                case["accepted"].as_bool().unwrap(),
+                "{}",
+                case["name"]
+            );
+            if let Ok(output) = result {
+                assert_eq!(output, input, "{}", case["name"]);
+            }
+        }
     }
 
     #[test]

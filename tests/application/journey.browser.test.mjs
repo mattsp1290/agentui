@@ -303,7 +303,7 @@ test('incompatible metadata and unsupported draft storage block commands without
     const cursor = store.openCursor();
     cursor.onsuccess = () => {
       if (!cursor.result) return;
-      if (cursor.result.value.draft === 'Do not discard this draft') cursor.result.update({ ...cursor.result.value, version: 3 });
+      if (cursor.result.value.draft === 'Do not discard this draft') cursor.result.update({ ...cursor.result.value, version: 99 });
       cursor.result.continue();
     };
     await new Promise((resolve, reject) => { transaction.oncomplete = resolve; transaction.onerror = () => reject(transaction.error); });
@@ -612,7 +612,7 @@ test('a prepared graph renders both hook modules and shares SDK generation state
   second.write('package.json', JSON.stringify(child));
   second.write('desktop/index.tsx', `import React from 'react'; import {pinFrontendTools} from '@agentui/sdk/tools';
     function View(){const [value] = React.useState('Second graph hook'); return <p>{value}</p>}
-    export default {kind:'desktop',sdkVersion:'0.4.0',async activate(){
+    export default {kind:'desktop',sdkVersion:'0.6.0',async activate(){
       while (!window.graphGeneration) await new Promise(resolve => setTimeout(resolve, 0));
       const generation = await window.graphGeneration;
       const run = {conversation:{hostId:'host',conversationId:'conversation'},runId:'run',authority:{kind:'agentui-host',hostId:'host',binding:{namespace:'fixture',installationId:'i',opaqueSessionId:'s'}}};
@@ -626,7 +626,7 @@ test('a prepared graph renders both hook modules and shares SDK generation state
   first.write('desktop/index.tsx', `import React from 'react'; import {createFrontendToolGeneration} from '@agentui/sdk/tools';
     function View(){const [value] = React.useState('First graph hook'); return <p>{value}</p>}
     window.graphGeneration = createFrontendToolGeneration({namespace:'fixture',generation:'one',platform:'desktop',activate(){return {dispose(){}}},capture(){return undefined}}).then(value=>value.generation);
-    export default {kind:'desktop',sdkVersion:'0.4.0',activate(){return {modules:[{id:'module',label:'First',component:View}],dispose(){window.firstDisposed = true}}}};`);
+    export default {kind:'desktop',sdkVersion:'0.6.0',activate(){return {modules:[{id:'module',label:'First',component:View}],dispose(){window.firstDisposed = true}}}};`);
   buildCustom(first);
   const host = await fixture(t, join(first.directory, 'browser')), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
@@ -644,7 +644,7 @@ test('a failed customization leaves its hook-using sibling active and restore di
   await connected(page);
   const failure = "load: async () => { throw new Error('First failed'); }";
   const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, load: async () => ({ default: {
-    kind: 'desktop', sdkVersion: '0.4.0', activate() { return { modules: [{ id: 'same', label: 'Sibling',
+    kind: 'desktop', sdkVersion: '0.6.0', activate() { return { modules: [{ id: 'same', label: 'Sibling',
       component() { const [value] = React.useState('Sibling hook works'); return <p>{value}</p>; } }],
       dispose() { window.siblingDisposals = (window.siblingDisposals || 0) + 1; } }; } } }) }`;
   await customRuntime(page, host, failure, false, sibling);
@@ -657,11 +657,11 @@ test('a failed customization leaves its hook-using sibling active and restore di
 
 for (const [label, body, disposed] of [
   ['import', "load: async () => { throw new Error('Import failed'); }", 0],
-  ['activation', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() { throw new Error('Activation failed'); } } })", 0],
+  ['activation', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() { throw new Error('Activation failed'); } } })", 0],
   ['compatibility', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.2.0', activate() {} } })", 0],
-  ['invalid contributions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: null }; } } })", 1],
-  ['invalid actions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { return null; }, actions: [{ id: 'bad', label: 'Bad', run: null }] }] }; } } })", 1],
-  ['render', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { throw new Error('Render failed'); } }] }; } } })", 1],
+  ['invalid contributions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: null }; } } })", 1],
+  ['invalid actions', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { return null; }, actions: [{ id: 'bad', label: 'Bad', run: null }] }] }; } } })", 1],
+  ['render', "load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() { return { dispose() { window.disposals = (window.disposals || 0) + 1; }, modules: [{ id: 'x', label: 'X', component() { throw new Error('Render failed'); } }] }; } } })", 1],
 ]) test(`custom ${label} failure stays local and disposes its lifetime`, { timeout: 45_000 }, async t => {
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
@@ -682,7 +682,7 @@ test('restoring during activation disposes a late lifetime once and catches clea
   const host = await fixture(t), page = await host.page();
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() {
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() {
     return new Promise(resolve => { window.finishActivation = () => resolve({ modules: [], dispose() { window.disposals = (window.disposals || 0) + 1; return Promise.reject(new Error('Cleanup rejected')); } }); });
   } } })`);
   await wait(() => page.evaluate(() => typeof window.finishActivation === 'function'), 'pending activation');
@@ -703,7 +703,7 @@ test('activation survives navigation and healthy restore disposes once while kee
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   const first = await page.locator('.scope-label').textContent();
-  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.4.0', activate() {
+  await customRuntime(page, host, `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.6.0', activate() {
     window.activations = (window.activations || 0) + 1;
     return { modules: [{ id: 'working', label: 'Working', component({ conversation }) {
       const [count, setCount] = React.useState(0);
