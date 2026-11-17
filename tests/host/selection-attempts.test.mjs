@@ -434,7 +434,7 @@ for (const [phase, error, persisted, effects] of [
   const row = database.prepare("SELECT outcome FROM service_extension_attempts WHERE id='failed'").get();
   assert.equal(row && JSON.parse(row.outcome).kind, persisted);
   if (phase === 'authority') assert.equal(database.prepare("SELECT revision FROM service_extension_selections WHERE id='startup'").get().revision, 0);
-  if (phase === 'observation') assert.deepEqual(JSON.parse(row.outcome), { kind: 'failed', failure: 'discovery', recovery: 'replace' });
+  if (phase === 'observation') assert.deepEqual(JSON.parse(row.outcome), { kind: 'failed', failure: 'activation', recovery: 'replace' });
   assert.equal(owner.status().runtime.kind, error === 'uncertain' ? 'uncertain' : 'closed');
 });
 

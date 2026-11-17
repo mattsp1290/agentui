@@ -57,7 +57,8 @@ test('replacement preserves history across unavailable generations and retries c
   }
   assert.deepEqual(await replace(f, []), { kind: 'replaced', generation: null });
   const failed = remote.extension(); failed.backend.discover = async () => { throw new Error('unavailable'); };
-  assert.deepEqual(await replace(f, [failed]), { kind: 'failed', failure: 'discovery', recovery: 'replace' });
+  assert.equal((await replace(f, [failed])).kind, 'replaced');
+  assert.deepEqual((await f.running.discoverProviders()).map(item => item.cause), ['invalid-installation']);
   assert.equal(failed.calls.observe.length, 0); assert.deepEqual(saved(f), before);
   const resumed = remote.extension(); await replace(f, [resumed]);
   assert.equal(resumed.calls.observe.length, 1); assert.deepEqual(saved(f), before);

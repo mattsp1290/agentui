@@ -111,9 +111,24 @@ An existing checkpoint avoids another snapshot. Recovery does not create convers
 Incompatible identities, credentials, or decoders leave saved history readable without opening a feed.
 Concurrent replacement or shutdown stops an obsolete recovery scan. A later compatible replacement retries failed observation starts.
 
+### Provider status
+
+Discovery is per installation and never retires the generation. Each installation reports `available` with its agents, or `unavailable` with one cause from a closed set: `offline`, `authentication-failed`, `unauthorized`, `version-unsupported`, or `invalid-installation`.
+Backend `unavailable`, `authentication-failed`, `unauthorized`, and `version-unsupported` results map to the same-named cause (`unavailable` becomes `offline`, contract `unsupported` becomes `version-unsupported`). Thrown callbacks, malformed results, identity mismatches, and host authorization refusals are `invalid-installation`.
+A backend reports a configuration problem it cannot classify, such as a host credential it cannot use, by throwing.
+Each cause has one fixed, sanitized reason; provider-supplied reasons and errors are never shown.
+Healthy installations stay selectable. The chooser lists an unavailable installation as a disabled entry labeled with its namespace and installation ID, and existing conversations show its reason instead of "no longer configured".
+Every cause except `invalid-installation` is retried on the next discovery: a refused connection holds nothing and reconnects, a reported `version-unsupported` closes its connection so the reconnect probes capabilities again, and other reported causes keep their connection.
+When metadata or conversation reads find that the last discovery started at least 30 seconds ago, the host starts one background discovery without waiting for it. This both recovers retryable outages and reports outages that begin after a healthy discovery. No timer runs, and shutdown waits for that discovery.
+An `authentication-failed` installation recovers automatically when the credential is fixed on the provider. AgentUI reads its own extension secret once at startup, so changing that secret needs a host restart.
+`providers-refresh` (`node apps/host/dist/main.js providers-refresh --data-dir /private/host`) discovers immediately and returns every installation's status.
+An `invalid-installation` closes that installation's connection and recovers only after the configuration is fixed and the extension is replaced, normally by restarting the host.
+Transient and durable serving keep running through provider discovery failures.
+Backends must bound their own connect and discover calls; the host does not impose a deadline, and an unsettled call keeps refresh and replacement pending.
+
 ### Failure and shutdown
 
-A load, authorization, activation, or discovery failure permits an explicit replacement only after successful cleanup.
+A load, authorization, or activation failure permits an explicit replacement only after successful cleanup.
 A `load` failure caused by the entry module throwing during import stays cached for that path.
 Recover by replacing with a new immutable revision directory, or restart the host.
 The owner does not automatically retry extension callbacks or restore the old generation.
@@ -125,7 +140,6 @@ Recovery requires a process restart, with the failing extension disabled or repa
 Shutdown retains the existing immediate authorization freeze.
 Unlike normal deferred replacement, `close()` revokes credential admission immediately and discards late discovery results. Entered creation and send effects retain uncertain outcomes for later lookup.
 It waits for admitted work before closing connections and disposing lifetimes.
-An independent discovery failure can also start registry cleanup and revoke concurrent work.
 The successful-result guarantee applies to healthy discovery, creation, commands, lookup, and observation acquisition across deferred replacement, not to shutdown or independent provider failure.
 Feed callbacks copy and authorize their input before admission. Already admitted callbacks may commit during retirement after credentials freeze.
 Retirement waits for those callbacks. New callbacks and credential use are refused.

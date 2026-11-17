@@ -3,7 +3,7 @@ import { DatabaseSync } from 'node:sqlite';
 import { join } from 'node:path';
 import test from 'node:test';
 import { ownDirectory } from '../../../apps/host/build/tsc/ownership.js';
-import { entry, listenerLog, options, secret, service, settledStatus, startBrowserHost, turn } from './fixtures.mjs';
+import { entry, listenerLog, options, secret, service, startBrowserHost, turn } from './fixtures.mjs';
 
 function credentialCount(directory) {
   const database = new DatabaseSync(join(directory, 'host.sqlite'));
@@ -159,11 +159,10 @@ test('shutdown still freezes credentials and rejects an admitted late discovery'
   assert.equal(fixture.calls.dispose, 1); assert.equal(fixture.calls.close, 1);
 });
 
-for (const phase of ['load', 'authorization', 'activation', 'discovery']) {
+for (const phase of ['load', 'authorization', 'activation']) {
   test(`explicit replacement recovers from ${phase} failure after cleanup`, { timeout: 5000 }, async t => {
     const listeners = listenerLog(), old = entry(t, { label: 'old', listeners });
-    const bad = entry(t, { label: 'bad', listeners, ...(phase === 'activation' ? { activate() { throw new Error(secret); } }
-      : phase === 'discovery' ? { discover() { throw new Error(secret); } } : {}) });
+    const bad = entry(t, { label: 'bad', listeners, ...(phase === 'activation' ? { activate() { throw new Error(secret); } } : {}) });
     if (phase === 'load') bad.value.manifest.sdkVersion = 'incompatible';
     if (phase === 'authorization') bad.value.installations[0].service = 'invalid service';
     const next = entry(t, { label: 'next', listeners });
@@ -173,45 +172,39 @@ for (const phase of ['load', 'authorization', 'activation', 'discovery']) {
       assert.deepEqual(host.extensionStatus(), failed(phase));
       await assert.rejects(host.discoverProviders(), /unavailable/);
       assert.equal(next.calls.import, 0); assert.equal(old.calls.dispose, 1);
-      assert.deepEqual(await host.replaceProviderExtensions([next.value]), { kind: 'replaced', generation: phase === 'activation' || phase === 'discovery' ? 3 : 2 });
+      assert.deepEqual(await host.replaceProviderExtensions([next.value]), { kind: 'replaced', generation: phase === 'activation' ? 3 : 2 });
       assert.equal((await host.discoverProviders())[0].agents[0].name, 'next');
       assert.equal(listeners.maximum, 1);
     } finally { await host.close(); }
   });
 }
 
-test('discovery failure observes background cleanup without deadlock and refuses retry until cleanup settles', { timeout: 5000 }, async t => {
-  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
-  const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); },
-    async dispose() { entered.resolve(); await finish.promise; } });
+test('replacement with a failing discovery activates and lists the provider unavailable until replaced again', { timeout: 5000 }, async t => {
+  const old = entry(t, { label: 'old' }), bad = entry(t, { label: 'bad', discover() { throw new Error(secret); } });
   const next = entry(t, { label: 'next' });
   const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...options(t), extensions: { kind: 'transient', entries: [old.value] } });
   try {
-    await Promise.all([assert.rejects(host.discoverProviders(), /discovery failed/), assert.rejects(host.discoverProviders(), /discovery failed/)]);
-    await entered.promise;
-    assert.deepEqual(await host.replaceProviderExtensions([next.value]), { kind: 'deferred', reason: 'changing' });
-    assert.equal(next.calls.import, 0); finish.resolve();
-    assert.deepEqual(await settledStatus(host), failed('discovery'));
-    assert.equal((await host.replaceProviderExtensions([next.value])).kind, 'replaced');
-    assert.equal(old.calls.dispose, 1); assert.equal(old.calls.close, 1);
-  } finally { finish.resolve(); await host.close(); }
+    assert.deepEqual(await host.replaceProviderExtensions([bad.value]), { kind: 'replaced', generation: 2 });
+    assert.deepEqual(host.extensionStatus(), { kind: 'active', generation: 2, pending: 0 });
+    const statuses = await host.discoverProviders();
+    assert.deepEqual(statuses.map(item => item.cause), ['invalid-installation']); assert.doesNotMatch(JSON.stringify(statuses), new RegExp(secret));
+    assert.equal(bad.calls.close, 1); assert.equal(bad.calls.dispose, 0); assert.equal(old.calls.dispose, 1);
+    assert.deepEqual(await host.replaceProviderExtensions([next.value]), { kind: 'replaced', generation: 3 });
+    assert.equal(bad.calls.dispose, 1);
+    assert.equal((await host.discoverProviders())[0].agents[0].name, 'next');
+  } finally { await host.close(); }
 });
 
-for (const trigger of ['replacement', 'discovery', 'candidate']) {
+for (const trigger of ['replacement', 'candidate']) {
   test(`${trigger} cleanup failure requires restart and shutdown retains its failure and directory ownership`, { timeout: 5000 }, async t => {
     const configured = options(t);
     const old = entry(t, { label: 'old',
-      ...(trigger === 'candidate' ? {} : { dispose() { throw new Error(secret); } }),
-      ...(trigger === 'discovery' ? { discover(value) { if (value.calls.discover > 1) throw new Error(secret); } } : {}) });
-    const bad = entry(t, { label: 'bad', discover() { throw new Error(secret); }, dispose() { throw new Error(secret); } });
+      ...(trigger === 'candidate' ? {} : { dispose() { throw new Error(secret); } }) });
+    const bad = entry(t, { label: 'bad', dispose() { throw new Error(secret); } });
+    const breaker = entry(t, { label: 'breaker', namespace: 'breaker', activate() { throw new Error(secret); } });
     const next = entry(t, { label: 'next' });
     const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [old.value] } });
-    if (trigger === 'discovery') {
-      await assert.rejects(host.discoverProviders(), /discovery failed/);
-      assert.deepEqual(await settledStatus(host), failed('cleanup', 'restart'));
-    } else {
-      assert.deepEqual(await host.replaceProviderExtensions([trigger === 'candidate' ? bad.value : next.value]), failed('cleanup', 'restart'));
-    }
+    assert.deepEqual(await host.replaceProviderExtensions(trigger === 'candidate' ? [bad.value, breaker.value] : [next.value]), failed('cleanup', 'restart'));
     assert.deepEqual(host.extensionStatus(), failed('cleanup', 'restart'));
     assert.deepEqual(await host.replaceProviderExtensions([next.value]), failed('cleanup', 'restart'));
     assert.equal(next.calls.import, 0);

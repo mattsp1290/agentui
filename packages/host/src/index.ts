@@ -9,8 +9,8 @@ export { imageFailure } from './image-input.js';
 
 export const hostRuntime = 'node';
 export { secretResolver } from './secret-provider.js';
-export { createProviderRegistry, providerIdentity } from './providers.js';
-export type { ProviderConversationOperations, ProviderCreationOperations, ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider } from './providers.js';
+export { createProviderRegistry, isProviderUnavailableCause, providerIdentity, providerUnavailableReasons } from './providers.js';
+export type { ProviderConversationOperations, ProviderCreationOperations, ProviderAuthority, ProviderAuthorization, ProviderIdentity, ProviderExtension, DiscoveredProvider, ProviderStatus, ProviderUnavailableCause, UnavailableProvider } from './providers.js';
 export { openLocalHost } from './local-host.js';
 export type { LocalHost, LocalHostOptions } from './local-host.js';
 export { createRecordedDriver } from './recorded-driver.js';
