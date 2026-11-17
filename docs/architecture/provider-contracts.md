@@ -189,8 +189,8 @@ Invalid cursors retain their existing rejection.
 Database format 5 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
 The format-5 release preserves released format-4 images.
 Format 6 enforces committed ownership for coordinator access without rewriting existing rows or changing ownership tables.
-It validates the existing image and ownership schema and advances the version last in the migration transaction.
-Format-5 hosts refuse format 6 before opening a writer. Already-open mixed-version writers are unsupported.
+It requires the existing image tables, validates the ownership schema, and advances the version last in the migration transaction.
+Format-5 core openers refuse format 6 before returning a core writer. Already-open mixed-version writers are unsupported.
 Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
 Format 5 stores keyed admitted owners in `frontend_send_owners` and keyless actor-specific tombstones in `frontend_send_tombstones`.
 Each owner has one command and a unique host, conversation, thread and run key. Both available and unavailable owners retain that key.
