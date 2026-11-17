@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, realpath, rename, rm, writeFile } from 'node:
 import { basename, dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { build, version as esbuildVersion } from 'esbuild';
 import { fileURLToPath } from 'node:url';
+import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { CustomizationError, assertSupportedNode, planServerCatalog, serverCatalogFile, parseServerCustomizationArtifact, readServerCustomizationArtifact, serverCustomizationArtifactId } from '@agentui/host/customization';
 import { prepareCustomizationSources } from './prepare-customization-sources.mjs';
@@ -77,7 +78,17 @@ async function builderIdentity() {
   return { identity: hash(JSON.stringify(['agentui-server-builder-v1', esbuildVersion, hashes])), esbuildVersion };
 }
 
-async function publishFresh(out, produce) {
+export async function qualifyServerCustomizationToolchain(entry = fileURLToPath(new URL('./build-server-customization.mjs', import.meta.url))) {
+  assertSupportedNode();
+  const [abi, builder] = await Promise.all([serverCustomizationAbi(), builderIdentity()]);
+  const actualEntry = await realpath(entry);
+  const lockfile = await realpath(fileURLToPath(new URL('../package-lock.json', import.meta.url)));
+  return { protocol: 'agentui-refresh-builder-v1', entry: actualEntry, lockfile,
+    identity: { kind: 'ready', node: process.execPath, entrySha256: hash(await readFile(actualEntry)), lockSha256: hash(await readFile(lockfile)), builder },
+    compatibility: { sdkVersion: EXTENSION_SDK_VERSION, nodeVersion: process.versions.node, nodeModules: process.versions.modules, abiIdentity: abi.identity } };
+}
+
+async function publishFresh(out, produce, attempt) {
   let directory = resolve(out);
   let parent = dirname(directory);
   let reserved = false, owner;
@@ -86,7 +97,11 @@ async function publishFresh(out, produce) {
     parent = await realpath(parent); directory = join(parent, basename(directory));
     try { await mkdir(directory, { mode: 0o700 }); reserved = true; }
     catch (error) { if (error.code === 'EEXIST') throw CustomizationError.fixed('output-exists'); throw error; }
-    owner = await mkdtemp(join(parent, '.agentui-server-'));
+    if (attempt) {
+      const scratch = join(parent, `.agentui-server-${attempt}`);
+      await mkdir(scratch, { mode: 0o700 });
+      owner = scratch;
+    } else owner = await mkdtemp(join(parent, '.agentui-server-'));
     const staged = join(owner, 'artifact');
     await mkdir(staged, { mode: 0o700 });
     const manifest = await produce(staged, owner);
@@ -102,9 +117,11 @@ async function publishFresh(out, produce) {
   }
 }
 
-export async function buildServerCustomization({ reference, out }) {
-  assertSupportedNode();
-  const [abi, builder] = await Promise.all([serverCustomizationAbi(), builderIdentity()]);
+export async function buildServerCustomization({ reference, out, expectedToolchain, attempt }) {
+  if (attempt !== undefined && !/^[a-zA-Z0-9_-]{1,80}$/.test(attempt)) throw CustomizationError.fixed('build-failed');
+  const qualified = await qualifyServerCustomizationToolchain();
+  if (expectedToolchain && canonicalJson(qualified) !== canonicalJson(expectedToolchain)) throw CustomizationError.fixed('toolchain-mismatch');
+  const abi = await serverCustomizationAbi(), builder = qualified.identity.builder;
   const runtime = { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity };
   return publishFresh(out, async (staged, owner) => {
     const prepared = await prepareCustomizationSources({ reference, scratchParent: owner });
@@ -120,9 +137,10 @@ export async function buildServerCustomization({ reference, out }) {
         nodeModules: runtime.modules, abiIdentity: runtime.abiIdentity };
       await qualifyServerCatalog({ directory: staged, manifest, abi });
       await readServerCustomizationArtifact({ directory: staged, expected }).catch(() => { throw CustomizationError.fixed('artifact-changed'); });
+      if (canonicalJson(await qualifyServerCustomizationToolchain()) !== canonicalJson(qualified)) throw CustomizationError.fixed('toolchain-mismatch');
       return manifest;
     } finally {
       await prepared.dispose();
     }
-  });
+  }, attempt);
 }
