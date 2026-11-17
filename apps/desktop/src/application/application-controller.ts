@@ -205,7 +205,7 @@ export function createApplicationController(deps: {
     publish(phase === 'handshake' ? { host: { kind: 'unavailable' }, error: message(cause) } : { error: message(cause) });
   }
   function lose(owner: Session, cause: ServiceConnectionLost): void {
-    if (session !== owner) return;
+    if (session !== owner || state.host.kind === 'unavailable') return;
     publish({ host: { kind: 'unavailable' }, error: message(cause) });
     disconnectActive();
     owner.frontend.pause();

@@ -472,6 +472,8 @@ test('a lost native connection during a command disables the app until an explic
   assert.equal(applicationEnabled(snapshot), false);
   assert.equal(f.target.store.getSnapshot().connection.kind, 'disconnected');
   assert.equal(f.target.store.getSnapshot().outbox.length, 1);
+  f.connectionLost(new ServiceConnectionLost('The local host connection changed. Reconnect before continuing.'));
+  assert.match(f.app.getSnapshot().error, /different AgentUI host/);
   await f.app.reconnect();
   assert.equal(f.app.getSnapshot().host.kind, 'ready');
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
