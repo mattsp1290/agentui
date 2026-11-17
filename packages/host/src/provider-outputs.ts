@@ -57,8 +57,10 @@ export function parseProviderOutputList<I extends string>(value: unknown, origin
     return { reference, output: { outputId, ...metadata, lifetime: 'provider-retained' } };
   });
 }
+const typedArrayPrototype = Object.getPrototypeOf(Uint8Array.prototype);
 export function copyOutputBytes(value: unknown, metadata: TextMetadata): Uint8Array {
-  if (!(value instanceof Uint8Array) || value.buffer instanceof SharedArrayBuffer || value.byteLength !== metadata.byteLength) {
+  if (!(value instanceof Uint8Array) || Reflect.get(typedArrayPrototype, 'buffer', value) instanceof SharedArrayBuffer ||
+    Reflect.get(typedArrayPrototype, 'byteLength', value) !== metadata.byteLength) {
     throw new Error('Invalid output bytes');
   }
   const bytes = new Uint8Array(value);

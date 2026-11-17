@@ -241,16 +241,15 @@ test('canonical metadata byte budget admits exactly 1024 bytes and rejects one e
   assert.deepEqual(await f.host.conversationOutputs(f.scope), invalid);
 });
 
-test('capability method getters and byte inspection cannot retain a slot or bypass authorization', async t => {
+test('capability getters and byte-result inspection cannot retain a slot or bypass authorization', async t => {
   const f = await fixture(t), id = await f.id();
   const method = f.outputs.list;
   Object.defineProperty(f.outputs, 'list', { configurable: true, get() { throw new Error(secret); } });
   assert.deepEqual(await f.host.conversationOutputs(f.scope), invalid);
   Object.defineProperty(f.outputs, 'list', { configurable: true, value: method, writable: true });
-  class InspectingBytes extends Uint8Array {
-    get buffer() { f.state.authorized = false; return super.buffer; }
-  }
-  f.hooks.read = () => ({ kind: 'available', bytes: new InspectingBytes(f.state.bytes) });
+  f.hooks.read = () => new Proxy({ kind: 'available', bytes: new Uint8Array(f.state.bytes) }, {
+    ownKeys(target) { f.state.authorized = false; return Reflect.ownKeys(target); },
+  });
   assert.deepEqual(await f.host.readOutput(f.scope, id), unavailable);
   assert.equal(f.registry.activity().pending, 0);
   f.state.authorized = true; delete f.hooks.read;
@@ -267,4 +266,23 @@ test('callers cannot poison fixed failure results returned by later operations',
   const descriptor = (await f.host.conversationOutputs(f.scope)).outputs[0];
   descriptor.name = 'changed.txt'; descriptor.outputId = 'changed';
   assert.equal((await f.host.readOutput(f.scope, id)).output.name, 'report.txt');
+});
+
+test('output storage checks ignore shadowed typed-array properties', async t => {
+  const f = await fixture(t), id = await f.id();
+  const shared = new Uint8Array(new SharedArrayBuffer(f.state.bytes.byteLength));
+  shared.set(f.state.bytes);
+  Object.defineProperty(shared, 'buffer', { value: new ArrayBuffer(0) });
+  f.hooks.read = () => ({ kind: 'available', bytes: shared });
+  assert.deepEqual(await f.host.readOutput(f.scope, id), invalid);
+  const ordinary = new Uint8Array(f.state.bytes);
+  Object.defineProperties(ordinary, {
+    buffer: { get() { throw new Error('Shadowed buffer getter must not run'); } },
+    byteLength: { get() { throw new Error('Shadowed length getter must not run'); } },
+  });
+  f.hooks.read = () => ({ kind: 'available', bytes: ordinary });
+  const result = await f.host.readOutput(f.scope, id);
+  assert.equal(result.kind, 'available');
+  assert.deepEqual(result.bytes, f.state.bytes);
+  assert.notEqual(result.bytes, ordinary);
 });
