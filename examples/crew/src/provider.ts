@@ -8,6 +8,7 @@ import type { BackendProvider, ConnectedProvider, CreationIntent, ProviderComman
 import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
+import { decisionReceipts, decisionVerdict, type DecisionSignal } from './provider-decisions.js';
 
 export interface CrewProviderOptions {
   readonly service: string;
@@ -95,11 +96,29 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
             const [requestId, invocationId, approvalId, version] = decisionKey.parse(JSON.parse(operation.decision.ref.opaqueId));
             const [key, choice] = z.tuple([z.string(), choiceSchema]).parse(JSON.parse(operation.choice.ref.opaqueId));
             if (key !== operation.decision.ref.opaqueId) throw new Error('Foreign Crew choice');
-            if (!fresh) { await client.requestStatus({ conversationId, requestId }, { signal: AbortSignal.timeout(10000) }); return uncertain(); }
-            const receipt = await client.decide({ conversationId, memberId, requestId, invocationId, approvalId, version, choice },
-              { signal: AbortSignal.timeout(15000) });
-            if (receipt.approvalId !== approvalId || receipt.decision !== choice) return uncertain();
-            return { kind: 'confirmed', value: { kind: 'decide', state: 'completed' }, evidence: { approvalId, choice } };
+            const decisionId = naming?.(choice) ? z.uuid().parse(operation.operationId).toLowerCase() : null;
+            const identity = { conversationId, memberId, requestId, invocationId, approvalId, version };
+            let signal: DecisionSignal;
+            if (!fresh) {
+              if (decisionId === null) { await client.requestStatus({ conversationId, requestId }, { signal: AbortSignal.timeout(10000) }); return uncertain(); }
+              signal = { kind: 'record', record: await client.decisionRecord(identity, { signal: AbortSignal.timeout(10000) }) };
+            } else {
+              try {
+                const receipt = await client.decide({ ...identity, choice, ...(decisionId !== null && { decisionId }) }, { signal: AbortSignal.timeout(15000) });
+                if (receipt.approvalId !== approvalId || receipt.decision !== choice) return uncertain();
+                signal = { kind: 'reply' };
+              } catch (error) {
+                if (!(error instanceof CrewHttpError) || error.status !== 409) throw error;
+                signal = { kind: 'refused', code: error.code };
+              }
+            }
+            const evidence = { approvalId, choice, ...(decisionId !== null && { decisionId }) };
+            switch (decisionVerdict(signal, { choice, decisionId })) {
+              case 'confirmed': return { kind: 'confirmed', value: { kind: 'decide', state: 'completed' }, evidence };
+              case 'rejected': return { kind: 'rejected', reason: 'Crew recorded another outcome for this decision; this choice never applied.',
+                evidence: { ...evidence, crew: signal.kind === 'record' ? signal.record.state : signal.kind === 'refused' ? signal.code : null } };
+              case 'uncertain': return uncertain();
+            }
           }
           const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
           if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
@@ -139,6 +158,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
       const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
         standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
+      const naming = decisionReceipts(capabilities);
       const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
         validate(binding);
         const list = await client.listGrants({ memberId }, { signal: AbortSignal.timeout(10000) });
