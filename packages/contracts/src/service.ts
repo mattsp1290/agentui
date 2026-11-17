@@ -26,7 +26,7 @@ export const SERVICE_SEARCH_EXCERPT_LENGTH = 160;
 export const SERVICE_EVENT_PAGE = Object.freeze({ events: HOST_DEFAULT_PAGE_EVENTS, bytes: HOST_DEFAULT_PAGE_BYTES });
 export const SERVICE_SNAPSHOT_BYTES = HOST_DEFAULT_SNAPSHOT_BYTES;
 export const SERVICE_MAX_RESPONSE_BYTES = SERVICE_SNAPSHOT_BYTES + SERVICE_RESPONSE_ENVELOPE_HEADROOM_BYTES;
-export const SERVICE_FAILURE_KINDS = ['unauthorized', 'forbidden', 'invalid', 'unavailable', 'create-rejected', ...IMAGE_FAILURE_KINDS] as const;
+export const SERVICE_FAILURE_KINDS = ['forbidden', 'invalid', 'unavailable', 'create-rejected', ...IMAGE_FAILURE_KINDS] as const;
 export type ServiceFailureKind = typeof SERVICE_FAILURE_KINDS[number];
 export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
