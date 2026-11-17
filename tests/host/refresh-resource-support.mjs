@@ -46,7 +46,7 @@ export async function syntheticResult(f, command, { files = 13000, jobNodes } = 
     assert.ok(manifest, 'valid input-file and dependency-edge counts reach the exact job node budget');
   }
   const job = envelope(manifest);
-  assert.ok(Buffer.byteLength(canonicalJson(manifest)) < RECEIPT_LIMIT);
+  assert.ok(Buffer.byteLength(JSON.stringify(manifest)) < RECEIPT_LIMIT);
   if (jobNodes !== undefined) assert.equal(nodes(job), jobNodes);
   await fs.cp(f.seed.directory, command.directory, { recursive: true });
   await fs.writeFile(join(command.directory, 'customization.json'), JSON.stringify(manifest));

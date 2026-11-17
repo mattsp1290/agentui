@@ -33,17 +33,20 @@ test('valid synthetic metadata history exceeds one JSON budget while each row st
   assert.equal(f.commands.length, 3); assert.equal(f.stops(), 0); assert.equal(f.replacements(), 0);
 });
 
-for (const [name, jobNodes] of [['job envelope', JSON_MAX_NODES + 1], ['later ordinary refusal', JSON_MAX_NODES]]) {
+for (const [name, jobNodes] of [['job envelope', JSON_MAX_NODES + 1], ['later ordinary refusal', JSON_MAX_NODES], ['standalone manifest', undefined]]) {
   test(`valid synthetic metadata ${name} overflow is terminal before selection`, async t => {
     const f = await realFixture(t);
     let selects = 0;
     f.setRun(async command => {
-      const built = await syntheticResult(f, command, { jobNodes });
-      assertFits(built.result.manifest);
-      if (jobNodes > JSON_MAX_NODES) assertExceeds(built.job);
+      const built = await syntheticResult(f, command, jobNodes === undefined ? { files: 26000 } : { jobNodes });
+      if (jobNodes === undefined) assertExceeds(built.result.manifest);
       else {
-        assertFits(built.job);
-        assertExceeds({ ...built.job, promotion: { ...built.job.promotion, kind: 'refused', reason: 'revision-conflict' } });
+        assertFits(built.result.manifest);
+        if (jobNodes > JSON_MAX_NODES) assertExceeds(built.job);
+        else {
+          assertFits(built.job);
+          assertExceeds({ ...built.job, promotion: { ...built.job.promotion, kind: 'refused', reason: 'revision-conflict' } });
+        }
       }
       return built.result;
     });

@@ -316,7 +316,7 @@ export async function createRefreshController(deps: { readonly database: AccessD
           if (input.kind !== 'failed') throw new Error('Invalid refresh result');
           result = { kind: 'failed', failure: failure(input.failure) };
         }
-      } catch { result = { kind: 'failed', failure: 'qualification' }; }
+      } catch (error) { result = { kind: 'failed', failure: error instanceof JsonLimitError ? 'resource-limit' : 'qualification' }; }
       available();
       const current = get(job.request.id);
       if (current.build.kind !== 'building' || canonicalJson(current.build.command) !== canonicalJson(command)) throw new RefreshRefusal('unavailable');
