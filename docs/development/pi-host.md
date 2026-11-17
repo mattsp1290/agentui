@@ -1,6 +1,6 @@
 # Chat with GLM 5.3 through OpenCode Go
 
-For automatic local or SSH setup without pairing, run `./agentui --agent pi`. The Mac app opens without a key and offers protected key entry in **Settings**, then **Open secure Pi setup**. See [launcher setup](launcher.md) for Keychain storage and remote workspaces. The instructions below run an independently managed host with browser pairing.
+For automatic local or SSH setup, run `./agentui --agent pi`. The Mac app opens without a key and offers protected key entry in **Settings**, then **Open secure Pi setup**. See [launcher setup](launcher.md) for Keychain storage and remote workspaces. The instructions below run an independently managed host with browser pairing.
 
 Use your OpenCode Go subscription key with the Pi SDK host. This host uses Pi 1.5.2 with provider `opencode-go` and model `glm-5.3`. It provides text chat without tools, commands, or file access.
 
@@ -32,14 +32,7 @@ Open [the local app](http://127.0.0.1:7140/browser.html). On macOS, you can open
 
 The desktop landing page's **Connect to local Codex** button opens this same address. It connects to the provider already running there. The connected app identifies this host as **Pi · GLM 5.3 · OpenCode Go**.
 
-Request a pairing code from another terminal.
-
-```sh
-node apps/host/dist/main.js invite \
-	--data-dir "$HOME/.local/share/agentui-pi"
-```
-
-Copy `value.code` into **Pairing code**, then select **Pair host**. Each code works once and expires. Request another if needed. Existing native clients use the same host through `invite-native` and its native endpoint.
+The browser connects directly; there is no setup step. The Mac app reaches the same host through its native loopback endpoint.
 
 Select **New conversation**, write a message, and select **Send**. Replies stream into the conversation. Wait for the reply to finish before sending a follow-up. To interrupt a reply, select **Stop**. The partial reply stays in history, and the follow-up draft stays in the composer.
 

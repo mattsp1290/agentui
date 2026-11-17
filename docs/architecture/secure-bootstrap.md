@@ -19,7 +19,7 @@ The eventual setup flow is as follows.
 5. Confirm credential readiness separately from installation success.
 6. Start the target runtime with only the credential source it needs.
 
-The native setup controls belong outside customizable chat content. The launcher opens host-served chat through `--host-url`. That document has no native Keychain command authority. Pi setup opens a separate bundled document with a distinct window identity and a narrowly scoped native command. Its Keychain record is separate from pairing credentials. A per-launch capability admits delivery to a fixed loopback host endpoint. SSH launches use the existing tunnel. The host keeps the delivered key in memory. It does not persist it on the target.
+The native setup controls belong outside customizable chat content. The launcher opens host-served chat through `--host-url`. That document has no native Keychain command authority. Pi setup opens a separate bundled document with a distinct window identity and a narrowly scoped native command. A per-launch capability admits delivery to a fixed loopback host endpoint. SSH launches use the existing tunnel. The host keeps the delivered key in memory. It does not persist it on the target.
 
 ## Let the target own subscription refresh
 

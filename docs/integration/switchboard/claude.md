@@ -5,7 +5,7 @@ The `claude-sdk` host mode consumes Switchboard's public `./claude` adapter and
 [native package pin](../../../vendor/switchboard-claude.json) records the exact
 Switchboard source and artifact digest. It supports the `opus` and `sonnet`
 family selectors. The [startup guide](../../development/claude-sdk-host.md)
-describes credentials, model selection, and pairing.
+describes credentials and model selection.
 
 ## Ownership
 
@@ -34,7 +34,7 @@ than creating replacement conversations.
 
 ## Verification
 
-The opt-in `tests/application/claude-sdk-live.test.mjs` runs the paired-browser
+The opt-in `tests/application/claude-sdk-live.test.mjs` runs the browser
 journey separately for Opus and Sonnet. Each journey checks a first response,
 random follow-up memory, browser reload, host restart, private native session
 continuity, Stop, and the saved interrupted outcome. It scans host files and

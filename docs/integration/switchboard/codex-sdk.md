@@ -3,7 +3,7 @@
 The `codex-sdk` host mode uses Switchboard's public `./codex` adapter and the
 official `@openai/codex-sdk` 0.169.0 package. It fixes the model to
 `gpt-6.1-sol` and uses ChatGPT subscription authentication. The
-[startup guide](../../development/codex-sdk-host.md) describes login and pairing.
+[startup guide](../../development/codex-sdk-host.md) describes login.
 
 ## Ownership
 
@@ -32,7 +32,7 @@ restart recovery and never replayed automatically.
 ## Verification
 
 The opt-in `tests/application/codex-sdk-live.test.mjs` drives the bundled host
-through its paired browser. It checks a first response, follow-up memory,
+through its browser. It checks a first response, follow-up memory,
 browser reload, host restart with native thread continuity, Stop, and the saved
 interrupted outcome. An invalid API key in the host environment detects an
 accidental API-key fallback. The test checks that this sentinel does not reach

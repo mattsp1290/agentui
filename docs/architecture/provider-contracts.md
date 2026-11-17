@@ -69,7 +69,7 @@ await running.close();
 Startup configuration explicitly supplies each contribution's full instance, expected authority kind (`remote-provider` or `agentui-host`), canonical HTTP(S) service origin and secret revision/resolver, or `authentication: { kind: 'unauthenticated' }`.
 Origins contain no path, query, fragment, username or password; adapters own routes within that origin.
 `service_provider_credentials` stores only opaque grant metadata in the existing access database: host, namespace, contribution, installation, generation, protocol, service, revision and revocation.
-The authority borrows that connection and never closes it. Device pairing and native credentials remain independent.
+The authority borrows that connection and never closes it. The native connection is independent of provider credentials.
 Restart requires matching operator provisioning; handles from missing or revised provisioning are refused, and revoked handles are never reassigned or revived.
 The app-side authority supports explicit grant revocation; there is no provisioning or revocation UI in this slice.
 
@@ -128,7 +128,7 @@ It does not qualify a complete provider conversation or upgrade an existing Mac 
 
 An `addAgui` provider advertises `frontendOffers: 'ag-ui-capture-and-bind'` only when send and reconciliation are supported.
 Generic and native providers advertise `unsupported`. This does not change AG-UI executable-tool capabilities.
-The paired service accepts a version-2 text send containing a desktop offer of definitions and original activation IDs.
+The service accepts a version-2 text send containing a desktop offer of definitions and original activation IDs.
 Version-1 text and image sends keep their exact shapes. Version 2 rejects `imageId`; no provider currently supports an offered image send.
 Version-1 commands retain their existing shape and canonical identity.
 The offer definition type follows its parsed wire shape, with optional object-valued parameters and metadata.
@@ -163,7 +163,7 @@ This reservation does not qualify frontend handler execution ownership.
 `connection.frontendBinding({ scope, id, action: 'recover' })` reconciles the original command and returns pending, bound, or unavailable.
 Pending does not prove host admission. Retain the original closures and exact saved command ID and body for submission retry.
 A bound reply includes the full original offered command, host operation ID, provider-confirmed run identity and actual input thread ID.
-Command receipts remain visible to devices that can read the conversation.
+Command receipts remain visible to clients that can read the conversation.
 The owner checks protect direct receipt lookup and the captured offer association.
 Current actor and provider authority are required for lookup and live binding. Another principal cannot submit, reconcile, recover or release that association through its public APIs.
 The host can privately settle a pending or accepted offered-send blocker for a new authorized sender using the original provider evidence.
@@ -390,8 +390,8 @@ intervals after each completed read. A native conversation's first `not-applicab
 response ends that poll. Selection, session changes and disposal suppress stale
 results. The notice and retry progress live outside the canonical document and
 `OpenConversation` identity. A transport error reports unknown observation status;
-only an authenticated stopped status produces the paused notice. Unauthorized
-responses still use the existing access-revoked path. Retry remains local so
+only a stopped status from the host produces the paused notice. Other failures
+surface as ordinary errors. Retry remains local so
 navigation and saved drafts stay available.
 
 

@@ -30,7 +30,7 @@ For Datadog LLM Observability, enable that product on the Agent and set `AGENTUI
 
 ## Configure export
 
-These variables apply only when starting the host. Control commands such as `invite`, `devices`, and `revoke` do not create a telemetry exporter.
+These variables apply only when starting the host. Control commands do not create a telemetry exporter.
 
 | Variable | Behavior |
 | --- | --- |
@@ -57,7 +57,7 @@ Each request span has kind `SERVER` and these attributes:
 
 | Attribute | Values |
 | --- | --- |
-| `agentui.operation` | The admitted service operation, including `pair`. Failures before admission use `admission`. |
+| `agentui.operation` | The admitted service operation. Failures before admission use `admission`. |
 | `agentui.credential_class` | `browser-development` or `native`. |
 | `agentui.outcome` | `ok`, `unauthorized`, `forbidden`, `invalid`, `unavailable`, or `create-rejected`. |
 | `http.response.status_code` | The response code actually written. Omitted if no response headers were sent. |

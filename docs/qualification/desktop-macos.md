@@ -1,6 +1,6 @@
 # Build and launch AgentUI on macOS
 
-AgentUI packages a React shell in a local Tauri application. It opens a disconnected landing page with built-in recovery controls. Pairing, host transport, conversation state, credential storage, and customization activation remain separate work in `agentui-otsp` and its prerequisites. Packaging is tracked by `agentui-gxrk`.
+AgentUI packages a React shell in a local Tauri application. It opens a disconnected landing page with built-in recovery controls. Host connection, host transport, conversation state, credential storage, and customization activation remain separate work in `agentui-otsp` and its prerequisites. Packaging is tracked by `agentui-gxrk`.
 
 ## Prepare your Mac
 
@@ -52,7 +52,7 @@ This changes the build process's tool lookup without changing your system instal
 
 1. Stop the Vite development process.
 2. Open the production `.app` with `./agentui`.
-3. Confirm that the native window says **No host connected** and explains that pairing and conversations are unavailable.
+3. Confirm that the native window says **No host connected** and explains that host connection and conversations are unavailable.
 4. Click **Restore default view**. Confirm that the built-in landing page remains visible.
 5. Click **Reload app**. Confirm that the same page returns.
 6. Quit the app and open the same bundle again.
@@ -70,7 +70,7 @@ The checks build the production web assets, preserve package exports, and exerci
 
 ## Security boundary
 
-The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Production styles use `style-src 'self'`. The shared theme sets CSS custom properties through the CSSOM without an inline-style allowance. Both browser tests fail on CSP violations. The app stores no credentials. Host authorization and OS-protected credential storage must be designed with pairing before connection controls are added.
+The package declares no application IPC commands, native plugins, sidecars, or capabilities. Production CSP denies network connections and loads bundled scripts. Production styles use `style-src 'self'`. The shared theme sets CSS custom properties through the CSSOM without an inline-style allowance. Both browser tests fail on CSP violations. The app stores no credentials. The stock Mac app's host connection is described in the [native connection](../architecture/native-credentials.md) document.
 
 ## Local qualification record
 
