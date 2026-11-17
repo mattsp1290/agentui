@@ -104,7 +104,7 @@ export class RefreshSession {
       const collected = await this.collect(child, signal);
       cleanupAllowed = collected.closed;
       if (collected.absent) this.children.delete(child);
-      else this.uncertain = true;
+      if (!collected.closed || !collected.absent) this.uncertain = true;
       if (collected.reason) result = failure(input.id, collected.reason);
       else {
         try { result = canonicalOutput(collected.bytes, input.id); }
