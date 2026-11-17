@@ -5,10 +5,10 @@ import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, copyJson, isOutputId, parseConversationPermissions } from '@agentui/contracts';
+import { canonicalJson, copyJson, isOutputId, parseConversationClosure, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
+import type { ConversationClosure, ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
@@ -100,6 +100,7 @@ interface BoundProvider {
   captureCommand(original: StoredCreation, action: ProviderAction, operationId: string): ProviderTarget;
   executeCommand(capture: ProviderCapture, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
   observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream>;
+  closure(original: StoredCreation, store: ProviderStreamStore): ConversationClosure | null;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
@@ -310,6 +311,15 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
       if (!capability(connected.capabilities.observe)) throw new ObservationFailure('unsupported');
       return observeProvider(connected, presentation, { installation: original.installation, intent: original.intent,
         credential: original.credential }, binding, authorize, store, freshSnapshot, observations);
+    },
+    closure(original, store) {
+      try {
+        if (!presentation.closure || original.observation?.kind !== 'confirmed') return null;
+        const checkpoint = store.providerCheckpoint({ installation: original.installation, intent: original.intent, credential: original.credential });
+        if (!checkpoint) return null;
+        const result = copyJson(presentation.closure(presentation.decodeState(copyJson(checkpoint.state))));
+        return result === null ? null : parseConversationClosure(record(result, ['cause']).cause);
+      } catch { return null; }
     },
     async readPermissions(original) {
       const authorize = () => {
@@ -575,7 +585,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
                     (observations !== undefined && (mode !== 'ag-ui' || typeof observations.event !== 'function' || typeof observations.snapshot !== 'function')) ||
                     backend.apiVersion !== backendProviderContractVersion || typeof backend.connect !== 'function' ||
                     [presentation.decodeRequest, presentation.decodeCursor, presentation.decodeState, presentation.decodeEvent,
-                      presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function')) {
+                      presentation.request, presentation.snapshot, presentation.apply].some(callback => typeof callback !== 'function') ||
+                    (presentation.closure !== undefined && typeof presentation.closure !== 'function')) {
                     throw new Error('Invalid provider registration');
                   }
                   ids.add(id); identities.add(key);
@@ -648,6 +659,9 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         return binding.readPermissions(original);
       });
     },
+    closure(original: StoredCreation, store: ProviderStreamStore): ConversationClosure | null {
+      return bindings.find(binding => binding.matches(original.installation))?.closure(original, store) ?? null;
+    },
     observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
@@ -683,4 +697,5 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>
+  & Partial<Pick<ReturnType<typeof createProviderRegistry>, 'closure'>>;

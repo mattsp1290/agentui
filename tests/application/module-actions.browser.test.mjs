@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.9.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { ${body} } } })`;
 const outcome = kind => ({ kind: 'receipt', receipt: { scope: { hostId: 'test', conversationId: 'test' }, clientCommandId: 'test', hostOperationId: 'test', sequence: 1,
   state: ['rejected', 'not-dispatched', 'uncertain'].includes(kind) ? { kind, reason: 'Exact receipt reason' } : { kind } } });
 const status = (page, label) => page.getByRole('status', { name: `${label} status`, exact: true });

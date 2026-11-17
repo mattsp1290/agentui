@@ -4,7 +4,7 @@ import { createCrewObserver } from '@birbcrew/client/agui';
 import type { CrewClient } from '@birbcrew/client';
 import type { BaseEvent } from '@ag-ui/core';
 import type { ProviderConversation, ProviderFeed, ProviderItem, ProviderSnapshot } from '@agentui/sdk';
-import { approvalKey, choiceLabels, cursorSchema, reference, remoteSchema, stateSchema } from './provider-model.js';
+import { approvalKey, choiceLabels, closureCause, cursorSchema, reference, remoteSchema, stateSchema } from './provider-model.js';
 import type { CrewModel, CrewCursor, CrewState } from './provider-model.js';
 
 const toolSchema = z.object({ id: z.string(), function: z.object({ name: z.string(), arguments: z.string().max(16384) }) });
@@ -14,13 +14,14 @@ const textFrame = z.object({ messageId: z.string(), delta: z.string().optional()
   subagentRunId: z.string().optional() });
 const workItemArguments = z.strictObject({ operation_id: z.uuid() });
 const questionArguments = z.strictObject({});
+const errorFrame = z.object({ code: z.string().optional() });
 export function observation(binding: ProviderConversation<string>, memberId: string,
   use: <T>(action: (client: CrewClient, token: string) => Promise<T>) => Promise<T>, baseUrl: string,
   previous: CrewCursor | null, ownerDetails: boolean, standingPermissions: boolean) {
   let cursor: CrewCursor = { epoch: randomUUID(), sequence: 0, requests: previous?.requests ?? [] };
   let state: CrewState = { binding: stateSchema.shape.binding.parse(binding), messages: [], run: null };
   let remote: z.infer<typeof remoteSchema> | undefined;
-  let sawMessages = false, closed = false;
+  let sawMessages = false, closed = false, ending = false;
   let endKind: 'closed' | 'disconnected' = 'disconnected';
   const tools = new Map<string, { name: string; arguments: string }>();
   let admitted: ProviderSnapshot<CrewModel, string>['cursor'] | null = null;
@@ -90,7 +91,10 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   }
   async function reduce(event: BaseEvent, client: CrewClient) {
     if (closed) return;
-    if (event.type === 'RUN_ERROR') throw new Error('Crew observation failed');
+    if (event.type === 'RUN_ERROR') {
+      if (errorFrame.parse(event).code === 'MEMBER_FAILED' && state.closure?.cause === 'failed') return;
+      throw new Error('Crew observation failed');
+    }
     if (event.type === 'STATE_DELTA') throw new Error('Crew state requires a fresh snapshot');
     if (event.type === 'MESSAGES_SNAPSHOT') {
       const publicMessages = messagesFrame.parse(event).messages;
@@ -110,6 +114,8 @@ export function observation(binding: ProviderConversation<string>, memberId: str
         throw new Error('Crew observation identity mismatch');
       }
       remote = next;
+      const cause = closureCause(next.phase);
+      if (cause && !state.closure) state = { ...state, closure: { cause } };
       await refresh(client);
     } else if (event.type === 'TOOL_CALL_START' || event.type === 'TOOL_CALL_ARGS') {
       const tool = z.object({ toolCallId: z.string(), toolCallName: z.string().optional(), delta: z.string().optional() }).parse(event);
@@ -129,6 +135,8 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     const replacement = await snapshot(client);
     if (closed) return;
     ready.resolve(replacement);
+    // An ended stream cannot wait for a receiver; the baseline reader already holds this snapshot.
+    if (ending && !receiver) return;
     await gate.promise;
     await publish(replacement);
   }
@@ -159,15 +167,21 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     const subscription = observer.subscribe({ onEvent: ({ event }) => enqueue(() => reduce(event, client)) });
     const run = observer.runAgent();
     const poll = async () => {
-      if (closed) return;
+      if (closed || ending) return;
       try { await enqueue(async () => {
         if (state.run && !['completed', 'cancelled', 'failed'].includes(state.run.status)) { await refresh(client); await publish(await snapshot(client)); }
       }); } catch { return; }
-      if (!closed) timer = setTimeout(() => { void poll(); }, 750);
+      if (!closed && !ending) timer = setTimeout(() => { void poll(); }, 750);
     };
     timer = setTimeout(() => { void poll(); }, 750);
     try { await run; }
     finally {
+      if (!closed) {
+        // Crew ends the stream right after its terminal snapshot, which may still be awaiting its receipt read.
+        ending = true; clearTimeout(timer);
+        let settled: Promise<void>;
+        do { settled = tail; await settled; } while (settled !== tail);
+      }
       closed = true; gate.resolve(); clearTimeout(timer);
       stop(); await detaching?.catch(() => {}); await run.catch(() => {});
       await tail; subscription.unsubscribe();

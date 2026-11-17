@@ -121,7 +121,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 10, SDK compatibility 0.9.0, package versions 0.0 and transcript projection 4.
+The current integration uses wire version 11, SDK compatibility 0.10.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Captured frontend offers
@@ -203,7 +203,7 @@ The tagged history index derives its keys from immutable saved targets. Admissio
 Formats 5 and 6 require both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
-Wire 10 and SDK 0.9.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
+Wire 11 and SDK 0.10.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
 There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
@@ -261,7 +261,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 10, transcript projection 4, SDK compatibility 0.9.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 11, transcript projection 4, SDK compatibility 0.10.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -408,7 +408,7 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.9.0 and wire 10 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.10.0 and wire 11 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.
 
@@ -439,3 +439,21 @@ Payloads contain valid UTF-8 and may be empty. The host accepts at most 65,536 p
 Each registry admits four total output operations, counting a read and its listing as one operation. Excess work returns unavailable without a queue. Pending provider work defers extension replacement and drains during close. Scope and original provider authorization must still hold after asynchronous work. Public failures use fixed reasons; provider reasons and exceptions remain private.
 
 These APIs are in-process contracts. They add no output storage, wire operation, browser download, or native Save behavior. Wire 10, core DB 7, transcript projection 4, and backend provider contract 1 remain unchanged.
+
+## Provider conversation closure
+
+SDK 0.10.0 adds the optional presentation hook `closure(state)`. It returns `{ cause }`, where `cause` is `cancelled`, `failed` or `exhausted`, or `null`. It reads only saved model state and performs no I/O.
+
+The host reads closure from the saved provider checkpoint without connecting to the provider. A decoding or validation failure reads as no closure.
+A confirmed provider conversation with a closure reports the observation status `{ kind: 'concluded', cause }` ahead of any observer state. The status is not retryable. Startup, creation and retry start no observation for it.
+A send to a concluded conversation is rejected with `conversation-closed` after exact-ID retries return their saved receipts. No provider call is made. Cancel, approval and permission commands are unchanged.
+
+The Crew provider records closure from the `STATE_SNAPSHOT` phase: `cancelled`, `failed`, and `complete` as `exhausted`. It never clears a recorded closure.
+`RUN_ERROR` with code `MEMBER_FAILED` after a failed snapshot ends the feed without an observation fault. Every other `RUN_ERROR` is still a fault.
+When Crew ends the stream, the observer finishes queued work, including a pending receipt read, before it closes, so the terminal snapshot is committed. A stream that ends without a terminal phase stays `stopped` with `provider-disconnected`.
+Crew submit answers `409 handed_off` and `409 handoff_pending` are refusals before admission and settle as rejected. Other 409 answers stay uncertain.
+Checkpoints saved before this change have no closure and decode unchanged.
+
+The desktop states that the conversation ended and why, offers no update check, disables Send and hides Stop. An incomplete message reads "Did not finish". Saved messages and the draft remain.
+
+Wire 11 and SDK compatibility 0.10.0 require matching host and client releases and rebuilt extensions. Core DB 7, transcript projection 4 and backend provider contract 1 are unchanged.
