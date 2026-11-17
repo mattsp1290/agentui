@@ -65,7 +65,7 @@ The generic provider host tests in `tests/application/provider-*.test.mjs` cover
 - **Observation is capped at 8 MiB per connection.** Reaching the cap ends observation. Restart the host for a fresh baseline.
 - **There is no remote replay cursor.** The public observer exposes no `after` cursor. Each reopen takes a fresh Crew snapshot as its baseline. The saved cursor is local.
 - **Member-wide grants are deferred.** The extension offers only the conversation standing choice. It filters member-wide grant creation.
-- **Crew handoffs are unused.** The vendored client exposes `createHandoff`, `handoff` and the `HandoffsCapability` metadata. The extension never calls them.
+- **Crew handoffs only create successors.** The extension calls `createHandoff` once to start a successor conversation and afterwards only reads the handoff record while settling that creation. The successor then trusts its stored link. No Continue control reaches users yet.
 - **Subagent child transcripts are hidden.** The observation drops messages that carry a `subagentRunId`. Discovery accepts members that declare subagents.
 - **Receipts are not settled automatically.** A send receipt stays `accepted` until a follow-up send or **Check pending command** reads the original request status. This is `agentui-ulb5`.
 

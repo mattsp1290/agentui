@@ -92,19 +92,21 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         if (from.binding.namespace !== instance.namespace || from.binding.installationId !== instance.installationId) throw new Error('Foreign Crew predecessor');
         return from.binding.opaqueSessionId;
       }
-      // A successor's session is the target Crew drew, so only confirm() can supply it; everything else derives from the intent.
-      function creation(operation: CreationIntent<string>, target = operation.operationId): ProviderConversation<string> {
+      // A successor's session and carrying turn are what Crew drew, so only confirm() can supply them; everything else derives from the intent.
+      function creation(operation: CreationIntent<string>, target = operation.operationId, carryingTurn?: string): ProviderConversation<string> {
         member(operation);
         if (operation.from) {
           const source = predecessor(operation.from);
           if (target === operation.operationId || target === source) throw new Error('Foreign Crew predecessor');
+          if (!carryingTurn) throw new Error('Foreign Crew conversation');
         }
         return bindingSchema.parse({ kind: 'agentui-created', creation: operation, authority: { kind: 'remote-provider',
-          binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: target } } });
+          binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: target } },
+          ...(operation.from && { carryingTurn }) });
       }
       function validate(binding: ProviderConversation<string>) {
         const target = binding.creation.from && binding.authority.binding.opaqueSessionId;
-        if (canonicalJson(binding) !== canonicalJson(creation(binding.creation, target))) throw new Error('Foreign Crew conversation');
+        if (canonicalJson(binding) !== canonicalJson(creation(binding.creation, target, binding.carryingTurn))) throw new Error('Foreign Crew conversation');
       }
       function settle(operation: CreationIntent<string>, source: string, record: HandoffRecord | null): ProviderOutcome<ProviderConversation<string>> {
         if (!record || record.source.conversationId !== source) return uncertain();
@@ -112,7 +114,7 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         if (record.target.memberId !== memberId) return uncertain();
         const evidence = { handoffId: record.handoffId, firstRequestId: record.firstRequestId, carriedTurns: record.carriedTurns,
           omittedTurns: record.omittedTurns, uncertainTurns: record.uncertainTurns, transcriptBytes: record.transcriptBytes };
-        return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId), evidence }
+        return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId, record.firstRequestId), evidence }
           : { kind: 'pending', evidence };
       }
       // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.

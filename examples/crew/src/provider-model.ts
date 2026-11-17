@@ -23,10 +23,10 @@ export const bindingSchema = z.strictObject({ kind: z.literal('agentui-created')
   creation: z.strictObject({ kind: z.literal('create'), operationId: z.uuid(), scope: scopeSchema,
     agent: z.strictObject({ instance: instanceSchema, kind: z.literal('agent'), opaqueId: z.uuid() }),
     from: z.strictObject({ scope: scopeSchema, binding: sessionSchema }).exactOptional() }),
-  authority: z.strictObject({ kind: z.literal('remote-provider'), binding: sessionSchema }) });
+  authority: z.strictObject({ kind: z.literal('remote-provider'), binding: sessionSchema }), carryingTurn: z.uuid().exactOptional() });
 export const closureSchema = z.strictObject({ cause: z.enum(['cancelled', 'failed', 'exhausted']) });
 export const stateSchema = z.strictObject({ binding: bindingSchema, messages: z.array(messageSchema).max(2048), run: runSchema.nullable(),
-  closure: closureSchema.exactOptional(), handoff: z.strictObject({ firstRequestId: z.uuid() }).exactOptional() });
+  closure: closureSchema.exactOptional() });
 const carriedSchema = z.strictObject({ handoffId: z.uuid(), firstRequestId: z.uuid(), carriedTurns: z.int().min(1).max(128),
   omittedTurns: z.int().min(0).max(127), uncertainTurns: z.int().min(0).max(128), transcriptBytes: z.int().min(1).max(65536) });
 const refusedSchema = z.strictObject({ refused: z.enum(['busy', 'limit', 'unavailable', 'continued-elsewhere']), code: z.string().regex(/^[A-Za-z0-9_]{1,128}$/) });
@@ -67,7 +67,7 @@ export function presentation(instance: ProviderInstance<string>): ProviderPresen
     decodeState: value => stateSchema.parse(value), decodeEvent: value => stateSchema.parse(value),
     request: text => requestSchema.parse({ text }),
     snapshot(state, refs) {
-      const carried = state.handoff?.firstRequestId, run = state.run;
+      const carried = state.binding.carryingTurn, run = state.run;
       const messages = carried ? state.messages.filter(message => message.messageId !== carried) : state.messages;
       if (!run) return { messages, currentRun: null };
       const runId = refs.run(reference(state.binding, 'run', run.requestId)).runId;

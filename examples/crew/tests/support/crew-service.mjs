@@ -9,7 +9,7 @@ export const acknowledgement = 'I have read the earlier conversation.';
 /**
  * A controlled Crew service over real HTTP. `intercept` may answer a conversation-scoped request before the default
  * routes; it returns true when it wrote the response. Handoff routes mirror Crew's handoff row: `replyHandoffs` queues
- * per-POST outcomes, `setHandoffRead` rewrites the GET chain, and `commitHandoff`/`admit` drive the row directly.
+ * per-POST outcomes and `commitHandoff`/`admit` drive the row directly.
  */
 export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
@@ -17,7 +17,6 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
   const grants = [];
   let lost = false, observationMode = 'stream', conflict = null, decisionReply = {}, receiptHold = null, receiptFailure = false;
   const handoffs = [], transcripts = new Map(), handoffReplies = [];
-  let handoffRead = null;
   // Mirrors Crew's handoff row: committing seals the source and opens the target; admission adds the reserved first turn.
   function commitHandoff(source, requestId) {
     const prior = handoffs.find(row => row.requestId === requestId);
@@ -90,9 +89,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
     if (request.method === 'GET' && parts[4] === 'handoff') {
       const incoming = handoffs.find(row => row.target.conversationId === conversationId) ?? null;
       const outgoing = handoffs.find(row => row.source.conversationId === conversationId) ?? null;
-      const chain = incoming || outgoing ? structuredClone({ apiVersion: '1', conversationId, incoming, outgoing }) : null;
-      const read = handoffRead ? handoffRead(chain) : chain;
-      return read ? json(200, read) : json(404, { error: 'not_found' });
+      return incoming || outgoing ? json(200, { apiVersion: '1', conversationId, incoming, outgoing }) : json(404, { error: 'not_found' });
     }
     if (parts.length === 4) return json(200, { apiVersion: '1', ...conversation });
     if (parts[4] === 'events') {
@@ -165,7 +162,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => token } }] } });
   return { origin, token, calls, streams, conversations, receipts, details, emit, end, extension, grants, handoffs, commitHandoff, admit,
-    replyHandoffs(...replies) { handoffReplies.push(...replies); }, setHandoffRead(value) { handoffRead = value; },
+    replyHandoffs(...replies) { handoffReplies.push(...replies); },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },
     holdReceipts() { const hold = Promise.withResolvers(); receiptHold = hold.promise; return () => { receiptHold = null; hold.resolve(); }; },

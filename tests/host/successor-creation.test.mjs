@@ -23,10 +23,11 @@ const read = (path, action) => { const db = new DatabaseSync(path); try { return
 const drawn = operation => operation.from ? `drawn-for-${operation.operationId}` : operation.operationId;
 const refused = { kind: 'not-dispatched', source: 'host', evidence: null };
 
-async function providers(t, { continuation = true, session = drawn } = {}) {
+async function providers(t, { continuation = true, session = drawn, carrying = () => undefined } = {}) {
   const creates = [], lookups = [];
   const confirmed = operation => ({ kind: 'confirmed', evidence: null, value: { kind: 'agentui-created', creation: operation, authority: {
-    kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: session(operation) } } } });
+    kind: 'remote-provider', binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: session(operation) } },
+    ...(carrying(operation) !== undefined && { carryingTurn: carrying(operation) }) } });
   const backend = { instance,
     capabilities: { create: supported, send: unsupported, cancel: unsupported, decide: unsupported, reconcile: supported, observe: unsupported },
     async discover() { return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: 'agent' }, name: 'Successor fixture' }] }; },
@@ -151,6 +152,19 @@ test('a successor confirmed on its predecessor\'s session settles uncertain on c
   assert.equal(host.creation(after).observation.kind, 'uncertain');
   assert.equal(p.creates[1].from.binding.opaqueSessionId, p.creates[0].operationId);
   assert.equal(p.lookups.length, 1);
+});
+
+test('only a successor binding keeps the turn that carried its predecessor; any other binding naming one settles uncertain', async t => {
+  let carrying = () => undefined;
+  const f = fixture(t), host = f.open(), p = await providers(t, { carrying: operation => carrying(operation) });
+  assert.equal((await host.createProviderConversation(before, p.target, p.registry)).kind, 'confirmed');
+  assert.deepEqual(Object.keys(host.creation(before).observation.binding).sort(), ['authority', 'creation', 'kind']);
+  carrying = () => 'carrying-turn';
+  assert.equal((await host.createProviderConversation(after, p.target, p.registry, before)).kind, 'confirmed');
+  assert.equal(host.creation(after).observation.binding.carryingTurn, 'carrying-turn');
+  const plain = { hostId: before.hostId, conversationId: 'conversation-plain' };
+  assert.deepEqual(await host.createProviderConversation(plain, p.target, p.registry), { kind: 'uncertain', source: 'create', evidence: null });
+  assert.equal(host.creation(plain).observation.kind, 'uncertain');
 });
 
 test('a saved successor whose predecessor was altered is refused when read', async t => {

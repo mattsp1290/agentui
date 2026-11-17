@@ -48,6 +48,8 @@ export interface ProviderConversation<I extends string> {
   readonly kind: 'agentui-created';
   readonly creation: CreationIntent<I>;
   readonly authority: RunAuthority & { readonly binding: { readonly installationId: I } };
+  /** The provider's ID for the turn that carried `creation.from` into this conversation. Only a `from` creation may name one. */
+  readonly carryingTurn?: string;
 }
 
 export type ConversationRefKind = 'run' | 'decision' | 'choice' | 'permission' | 'output';

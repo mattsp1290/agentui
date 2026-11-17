@@ -142,16 +142,7 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   }
   const lifetime = use(async (client, token) => {
     if (closed) return;
-    const from = binding.creation.from, target = binding.authority.binding.opaqueSessionId;
-    // The successor's target was drawn by Crew, so this acquisition reads it only once Crew's handoff record names it.
-    if (from) {
-      const { incoming } = await client.handoff({ conversationId: target }, { signal: AbortSignal.timeout(10000) });
-      if (!incoming || incoming.requestId !== binding.creation.operationId || incoming.source.conversationId !== from.binding.opaqueSessionId ||
-        incoming.target.conversationId !== target || incoming.target.memberId !== memberId) throw new Error('Crew handoff record does not match this continuation');
-      state = { ...state, handoff: { firstRequestId: incoming.firstRequestId } };
-      if (closed) return;
-    }
-    const observer = createCrewObserver({ baseUrl, token, conversationId: target });
+    const observer = createCrewObserver({ baseUrl, token, conversationId: binding.authority.binding.opaqueSessionId });
     observer.fetch = async (url, init) => {
       const response = await fetch(url, { ...init, redirect: 'error' });
       if (!response.body) return response;

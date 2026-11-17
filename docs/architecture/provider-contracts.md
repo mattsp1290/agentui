@@ -19,7 +19,7 @@ The host's recorded Switchboard driver remains a separate integration.
 | `CredentialHandle<I>` | Host-scoped opaque handle tied to an instance. Contains no secret bytes. `null` requires an explicit operator-configured unauthenticated installation. |
 | `ProviderRef<I, K>` | Instance-scoped opaque ID with a semantic role. Discovery returns agents, never native conversation history. |
 | `CreationIntent<I>` | Immutable host operation ID, allocated `ConversationScope`, and selected agent. |
-| `ProviderConversation<I>` | AgentUI-created provenance with captured creation intent and canonical `RunAuthority` whose binding has installation identity `I`. Its authority owns the session binding. |
+| `ProviderConversation<I>` | AgentUI-created provenance with captured creation intent and canonical `RunAuthority` whose binding has installation identity `I`. Its authority owns the session binding. A `from` creation may also name its `carryingTurn`. |
 | `ConversationRef<I, K>` | Run, decision, or choice reference retaining its originating conversation. |
 | `ProviderCommand<M, I>` | Captured operation ID and conversation, plus send request, cancel run, or decision and choice. |
 | `ProviderOperation<M, I>` | Saved creation intent or command. Narrow by `kind` to route to `reconcileCreation` or `reconcileCommand`. |

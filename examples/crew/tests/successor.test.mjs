@@ -80,10 +80,11 @@ test('Crew creation without a predecessor keeps its derived binding and never re
   assert.deepEqual(f.remote.calls.filter(call => call.method === 'POST' && call.path === '/v1/conversations').map(call => call.input.conversationId), [source]);
   assert.equal(f.events(source), 1);
   assert.equal(f.remote.calls.some(call => /\/handoffs?$/u.test(call.path)), false);
-  assert.equal(Object.hasOwn(f.state('before'), 'handoff'), false);
+  assert.deepEqual(Object.keys(binding).sort(), ['authority', 'creation', 'kind']);
+  assert.deepEqual(f.state('before').binding, binding);
 });
 
-test('Crew successor binds the target Crew drew, checks it against the handoff record before /events and hides the carried transcript', async t => {
+test('Crew successor binds the target and carrying turn Crew drew, observes from that binding alone and hides the carried transcript', async t => {
   const f = await harness(t), { binding: earlier, source } = await predecessor(f), after = scope('after');
   const result = await f.create(after, before);
   assert.equal(result.kind, 'confirmed');
@@ -91,23 +92,24 @@ test('Crew successor binds the target Crew drew, checks it against the handoff r
   assert.deepEqual(f.posts().map(call => [call.path, call.input]), [[`/v1/conversations/${source}/handoffs`, { requestId: creation.intent.operationId, memberId }]]);
   assert.deepEqual(creation.intent.from, { scope: before, binding: earlier.authority.binding });
   assert.equal(result.binding.authority.binding.opaqueSessionId, target);
+  assert.equal(result.binding.carryingTurn, row.firstRequestId);
+  assert.deepEqual(creation.observation.binding, result.binding);
   assert.notEqual(target, creation.intent.operationId);
   assert.deepEqual(result.evidence, carried(row));
   assert.equal(f.host.observationStatus(after).kind, 'observing');
-  const index = path => f.remote.calls.findIndex(call => call.path === path);
-  assert.ok(index(`/v1/conversations/${target}/handoff`) >= 0);
-  assert.ok(index(`/v1/conversations/${target}/handoff`) < index(`/v1/conversations/${target}/events`));
+  assert.equal(f.events(target), 1);
+  assert.deepEqual(f.remote.calls.filter(call => call.method === 'GET' && /\/handoff$/u.test(call.path)), []);
   assert.deepEqual(f.host.inspect(after).snapshot.document.domain.messages.map(message => [message.messageId, message.role, message.text]),
     [[`${row.firstRequestId}/assistant`, 'assistant', acknowledgement]]);
   const state = f.state('after');
-  assert.deepEqual(state.handoff, { firstRequestId: row.firstRequestId });
+  assert.deepEqual(state.binding, result.binding);
   assert.deepEqual(state.messages.map(message => message.messageId), [row.firstRequestId, `${row.firstRequestId}/assistant`]);
   const { presentation } = await activated(f.remote);
   assert.deepEqual(presentation.continuation(result.evidence), { carriedTurns: 1, omittedTurns: 1, uncertainTurns: 0,
     carriedBytes: row.transcriptBytes, limitBytes: 65536 });
 });
 
-test('Crew rejects successor bindings whose target or predecessor was altered', async t => {
+test('Crew rejects successor bindings whose target, carrying turn or predecessor was altered', async t => {
   const f = await harness(t), { source } = await predecessor(f);
   const { binding } = await f.create(scope('after'), before);
   const { provider, instance } = await activated(f.remote);
@@ -124,47 +126,12 @@ test('Crew rejects successor bindings whose target or predecessor was altered', 
     lineage({ ...from, binding: { ...from.binding, installationId: 'other' } }),
     lineage({ ...from, binding: { ...from.binding, namespace: 'other' } }),
     { ...binding, creation: Object.fromEntries(Object.entries(binding.creation).filter(([key]) => key !== 'from')) },
+    Object.fromEntries(Object.entries(binding).filter(([key]) => key !== 'carryingTurn')),
   ]) assert.throws(observe(forged), /^Error: Foreign Crew (?:predecessor|conversation)$/u);
   assert.throws(observe(lineage({ ...from, binding: { ...from.binding, opaqueSessionId: 'not-a-uuid' } })));
   assert.throws(observe(lineage({ ...from, extra: true })));
+  assert.throws(observe({ ...binding, carryingTurn: 'not-a-uuid' }));
   assert.equal(f.posts().length, 1);
-});
-
-for (const [name, tamper] of [
-  ['another request', chain => chain?.incoming ? { ...chain, incoming: { ...chain.incoming, requestId: randomUUID() } } : chain],
-  ['another source', chain => chain?.incoming ? { ...chain, incoming: { ...chain.incoming, source: { ...chain.incoming.source, conversationId: randomUUID() } } } : chain],
-  ['another member', chain => chain?.incoming ? { ...chain, incoming: { ...chain.incoming, target: { ...chain.incoming.target, memberId: randomUUID() } } } : chain],
-  ['no incoming record', chain => chain?.incoming ? null : chain],
-]) test(`Crew successor whose handoff record has ${name} opens no /events until the record matches`, async t => {
-  const f = await harness(t), after = scope('after');
-  await predecessor(f);
-  f.remote.setHandoffRead(tamper);
-  assert.equal((await f.create(after, before)).kind, 'confirmed');
-  const target = f.remote.handoffs[0].target.conversationId;
-  assert.equal(f.host.observationStatus(after).kind, 'stopped');
-  assert.equal(f.reads(target), 1);
-  assert.equal(f.events(target), 0);
-  f.remote.setHandoffRead(null);
-  assert.equal((await f.host.retryObservation(after)).kind, 'observing');
-  assert.equal(f.reads(target), 2);
-  assert.equal(f.events(target), 1);
-});
-
-test('Crew successor whose saved target was altered is never observed', async t => {
-  const f = await harness(t), after = scope('after');
-  await predecessor(f);
-  f.remote.setHandoffRead(chain => chain?.incoming ? null : chain);
-  assert.equal((await f.create(after, before)).kind, 'confirmed');
-  f.remote.setHandoffRead(null);
-  await f.close();
-  const forged = randomUUID();
-  f.database(db => db.prepare("UPDATE provider_creations SET observation=json_set(observation,'$.binding.authority.binding.opaqueSessionId',?) WHERE conversation='after'").run(forged));
-  await f.open();
-  await f.host.observeProvider(after);
-  assert.equal(f.host.creation(after).observation.binding.authority.binding.opaqueSessionId, forged);
-  assert.equal(f.host.observationStatus(after).kind, 'stopped');
-  assert.equal(f.reads(forged), 1);
-  assert.equal(f.events(forged), 0);
 });
 
 test('Crew successor whose reply was lost confirms by lookup with exactly one POST', async t => {
