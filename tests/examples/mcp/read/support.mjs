@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { randomBytes } from 'node:crypto';
-import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdtempSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -48,9 +47,9 @@ export function cli(args, input = '') {
     child.once('exit', code => resolve({ code, stdout, stderr }));
   });
 }
-export async function connect(t, path) {
+export async function connect(t, origin) {
   const client = new Client({ name: 'agentui-read-test', version: '1' });
-  const transport = new StdioClientTransport({ command: process.execPath, args: [main, 'serve', path], stderr: 'pipe' });
+  const transport = new StdioClientTransport({ command: process.execPath, args: [main, 'serve', origin], stderr: 'pipe' });
   let stderr = '';
   transport.stderr.on('data', data => { stderr += data; });
   t.after(() => client.close());
@@ -61,11 +60,6 @@ export function data(result) {
   assert.equal(result.isError, undefined, JSON.stringify(result));
   assert.deepEqual(JSON.parse(result.content[0].text), result.structuredContent);
   return result.structuredContent;
-}
-export function writeProfile(directory, value, name = 'profile.json') {
-  const path = join(directory, name);
-  writeFileSync(path, JSON.stringify(value), { mode: 0o600 });
-  return path;
 }
 export async function fixture(t) {
   let releasePending, enteredPending, pendingSubmission;
@@ -119,10 +113,5 @@ export async function fixture(t) {
       return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
     } finally { db.close(); }
   };
-  const invitation = () => JSON.stringify({ ok: true, value: { hostId: access.hostId, code: 'A'.repeat(32) } });
-  const pair = async () => {
-    const record = { version: 1, origin, hostId: access.hostId, principalId: 'trusted-owner', secret: randomBytes(32).toString('base64url') };
-    return { path: writeProfile(directory, record, 'paired.json'), record };
-  };
-  return { directory, access, host, counts, feeds, operations, scope, origin, durable, invitation, pair };
+  return { directory, access, host, counts, feeds, operations, scope, origin, durable };
 }

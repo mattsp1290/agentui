@@ -1,17 +1,14 @@
 import assert from 'node:assert/strict';
-import { chmodSync, existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
 import test from 'node:test';
 import { SERVICE_MAX_RESPONSE_BYTES } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-import { parseAccess, loadAccess } from '../../../../examples/mcp-control/read/dist/access.js';
+import { parseOrigin } from '../../../../examples/mcp-control/read/dist/host.js';
 import { Reader } from '../../../../examples/mcp-control/read/dist/reader.js';
-import { cli, compatibility, connect, data, listen, privateDirectory, writeProfile } from './support.mjs';
+import { compatibility, connect, data, listen } from './support.mjs';
 
-const identity = { hostId: 'host-a', principalId: 'principal-a', secret: 's'.repeat(43) };
+const identity = { hostId: 'host-a', principalId: 'trusted-owner' };
 const metadata = { ...identity, compatibility, agents: [{ id: 'agent-a', label: 'Recorded', runtime: compatibility.nativeRuntime,
   frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } }], defaultAgentId: 'agent-a' };
-delete metadata.secret;
 const scope = { hostId: identity.hostId, conversationId: 'conversation-a' };
 const snapshot = () => ({ kind: 'page', page: 1, item: { kind: 'snapshot', snapshot: { scope,
   projectionVersion: transcriptProjection.version, cursor: 0, document: { domain: { messages: [], currentRun: null }, receipts: {}, decisions: {} } } } });
@@ -34,7 +31,7 @@ test('MCP refuses malformed, oversized, redirected, mismatched and non-snapshot 
   const redirect = await listen(t, (_, response) => { redirectHits++; response.end('{}'); });
   const origin = await listen(t, async (request, response) => {
     const input = await readRequest(request);
-    assert.equal(request.headers.authorization, `Bearer ${identity.secret}`);
+    assert.equal(request.headers.authorization, undefined);
     assert.equal(request.headers.origin, undefined);
     assert.equal(request.headers.cookie, undefined);
     if (input.op === 'metadata') {
@@ -58,8 +55,7 @@ test('MCP refuses malformed, oversized, redirected, mismatched and non-snapshot 
       }
     } else throw new Error(`Unexpected operation ${input.op}`);
   });
-  const path = writeProfile(privateDirectory(t), { version: 1, origin, ...identity });
-  const mcp = await connect(t, path);
+  const mcp = await connect(t, origin);
   assert.equal(data(await mcp.client.callTool({ name: 'agentui_inspect', arguments: { conversationId: scope.conversationId } })).currentRun, null);
   assert.equal(closes, 1);
   for (scenario of ['malformed', 'oversized', 'utf8', 'events', 'ended', 'scope', 'projection', 'state', 'metadata-host', 'redirect']) {
@@ -85,7 +81,7 @@ test('request deadlines, caller cancellation and admission limits retain an inde
     else if (input.op === 'pull') pulls++;
     else throw new Error('Unexpected operation');
   });
-  const reader = new Reader(parseAccess({ version: 1, origin, ...identity }));
+  const reader = await Reader.connect(origin, new AbortController().signal);
   const cancelled = new AbortController();
   t.after(() => cancelled.abort());
   const cancelledRead = assert.rejects(reader.inspect(scope.conversationId, cancelled.signal));
@@ -107,56 +103,10 @@ test('request deadlines, caller cancellation and admission limits retain an inde
   assert.equal(closes, 6);
 });
 
-test('pairing is a one-shot exchange with no output, no redirects, no overwrite and bounded invitation and host input', { timeout: 15_000 }, async t => {
-  const directory = privateDirectory(t), invitation = JSON.stringify({ ok: true, value: { hostId: identity.hostId, code: 'i'.repeat(32) } });
-  let scenario = 'valid', requests = 0, targetHits = 0;
-  const target = await listen(t, (_, response) => { targetHits++; response.end('{}'); });
-  const origin = await listen(t, async (request, response) => {
-    const input = await readRequest(request);
-    if (request.url === '/native/v1/pair') {
-      requests++;
-      assert.equal(request.headers.authorization, undefined);
-      assert.deepEqual(input, { version: 1, hostId: identity.hostId, code: 'i'.repeat(32) });
-      if (scenario === 'redirect') { response.writeHead(307, { location: target }); response.end(); }
-      else if (scenario === 'oversized') response.end('x'.repeat(4097));
-      else if (scenario === 'malformed') response.end('{');
-      else if (scenario === 'lost') response.destroy();
-      else reply(response, scenario === 'host' ? { ...identity, hostId: 'foreign' } : identity);
-    } else reply(response, scenario === 'metadata-host' ? { ...metadata, hostId: 'foreign' } : metadata);
-  });
-  for (scenario of ['valid', 'host', 'metadata-host', 'redirect', 'oversized', 'malformed', 'lost']) {
-    const path = join(directory, scenario), before = requests;
-    const result = await cli(['pair', origin, path], invitation);
-    assert.equal(result.code, scenario === 'valid' ? 0 : 1, scenario);
-    assert.equal(result.stdout, '');
-    assert.ok(!result.stderr.includes(identity.secret) && !result.stderr.includes('i'.repeat(32)));
-    assert.equal(requests, before + 1, scenario);
-    assert.equal(existsSync(path), scenario === 'valid');
-  }
-  assert.equal(targetHits, 0);
-  const stored = readFileSync(join(directory, 'valid'), 'utf8'), before = requests;
-  assert.equal((await cli(['pair', origin, join(directory, 'valid')], invitation)).code, 1);
-  assert.equal(readFileSync(join(directory, 'valid'), 'utf8'), stored);
-  for (const input of ['{', 'x'.repeat(4097), JSON.stringify({ hostId: 'a', code: 'b' })]) {
-    const path = join(directory, 'invalid');
-    assert.equal((await cli(['pair', origin, path], input)).code, 1);
-    assert.equal(existsSync(path), false);
-  }
-  assert.equal(requests, before);
-});
-
-test('private profiles reject noncanonical origins, oversized files, loose directories, symlink directories and checkout storage', async t => {
-  const directory = privateDirectory(t), record = { version: 1, origin: 'http://127.0.0.1:7140', ...identity };
+test('origins must be exactly a canonical loopback http origin', () => {
+  assert.equal(parseOrigin('http://127.0.0.1:7140'), 'http://127.0.0.1:7140');
   for (const origin of ['https://127.0.0.1:7140', 'http://localhost:7140', 'http://127.0.0.1:7140/',
     'http://user@127.0.0.1:7140', 'http://127.0.0.1:7140?secret=x', 'http://127.0.0.1:7140#x', 'http://127.0.0.1:0', 'http://127.0.0.1:99999']) {
-    assert.throws(() => parseAccess({ ...record, origin }));
+    assert.throws(() => parseOrigin(origin), origin);
   }
-  const large = join(directory, 'large'); writeFileSync(large, 'x'.repeat(4097), { mode: 0o600 });
-  await assert.rejects(loadAccess(large));
-  const loose = join(directory, 'loose'); mkdirSync(loose, { mode: 0o700 });
-  const path = writeProfile(loose, record);
-  chmodSync(loose, 0o755); await assert.rejects(loadAccess(path));
-  const link = join(directory, 'link'); symlinkSync(loose, link);
-  await assert.rejects(loadAccess(join(link, 'profile.json')));
-  await assert.rejects(loadAccess(new URL('../../../../examples/mcp-control/read/profile.json', import.meta.url).pathname));
 });
