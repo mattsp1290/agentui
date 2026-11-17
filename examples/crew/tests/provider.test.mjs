@@ -24,14 +24,14 @@ async function service(t, { approvalDetails, standingGrants, subagents } = {}) {
       observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'],
       ...(approvalDetails && { approvalDetails }), ...(standingGrants && { standingGrants }) });
     if (parts[2] === 'members' && parts[4] === 'grants') {
-      if (request.method === 'GET') return json(200, grantHandler ? grantHandler() : { apiVersion: '1', memberId,
+      if (request.method === 'GET') return json(200, grantHandler ? await grantHandler() : { apiVersion: '1', memberId,
         active: grants.filter(row => row.status === 'active'), inactive: grants.filter(row => row.status !== 'active').slice(-20) });
       const grant = grants.find(row => row.grantId === parts[5]);
       if (!grant) return json(404, { error: 'not_found' });
       if (lost === 'before-revoke') { response.destroy(); return; }
       Object.assign(grant, { status: 'revoked', revokedAt: new Date().toISOString(), revocationReason: 'owner' });
       if (lost) { response.destroy(); return; }
-      return json(200, { apiVersion: '1', grant: revokeHandler ? revokeHandler(grant) : grant });
+      return json(200, { apiVersion: '1', grant: revokeHandler ? await revokeHandler(grant) : grant });
     }
     if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test', ...(subagents && { subagents }) }], next: null });
     if (path === '/v1/conversations') {
@@ -1003,6 +1003,51 @@ test('browser keeps permissions after run end and confirms member revocation acr
   assert.equal(remote.calls.filter(call => call.path.endsWith('/revoke')).length, 2);
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
   assert.equal(requestId, receipt.requestId);
+});
+
+test('browser keeps an in-flight conversation revoke labelled until the next listing removes it', { timeout: 20_000 }, async t => {
+  const remote = await service(t, { standingGrants: standingCapability }), f = await fixture(t, [remote.extension()]), scope = await f.create();
+  await f.client.conversation(scope).submit(send(scope));
+  const [, receipt] = [...remote.receipts][0];
+  receipt.status = 'completed'; receipt.result = { text: 'Finished' }; remote.emit(receipt.conversationId);
+  await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'ended');
+  const narrow = activeGrant(receipt.conversationId), broad = activeGrant(null);
+  remote.grants.push(narrow, broad);
+  const browser = await chromium.launch(); t.after(() => browser.close());
+  const context = await browser.newContext();
+  const [name, value] = f.cookie.split('='); await context.addCookies([{ name, value, url: f.running.origin }]);
+  const page = await context.newPage(); page.setDefaultTimeout(5000); await page.goto(`${f.running.origin}/browser.html`);
+  await page.getByRole('button', { name: `A real provider reply · Open conversation ${scope.conversationId}`, exact: true }).click();
+  const permissions = page.getByRole('region', { name: 'Permissions', exact: true });
+  const revokeNarrow = permissions.getByRole('button', { name: 'Revoke for this conversation', exact: true });
+  await revokeNarrow.waitFor();
+  await page.evaluate(() => {
+    const panel = document.querySelector('[aria-label="Permissions"]'), seen = window.revokeLabels = [];
+    const record = () => {
+      const labels = [...panel.querySelectorAll('button')].map(button => button.textContent).filter(label => label.startsWith('Revoke'));
+      const next = labels.includes('Revoke for this conversation') ? 'present' : 'absent';
+      if (seen.at(-1) !== next) seen.push(next);
+      if (labels.includes('Revoke again') || panel.textContent.includes('acknowledgement is unknown')) window.revokeUnknown = true;
+    };
+    record(); new MutationObserver(record).observe(panel, { subtree: true, childList: true, characterData: true, attributes: true });
+  });
+  let releaseRevoke, releaseListing;
+  const revokeHeld = new Promise(resolve => { releaseRevoke = resolve; }), listingHeld = new Promise(resolve => { releaseListing = resolve; });
+  remote.setRevokeHandler(async grant => { await revokeHeld; return grant; });
+  await revokeNarrow.click();
+  await until(() => narrow.status === 'revoked');
+  remote.setGrantHandler(async () => { await listingHeld;
+    return { apiVersion: '1', memberId, active: remote.grants.filter(row => row.status === 'active'), inactive: [] }; });
+  const listings = () => remote.calls.filter(call => call.method === 'GET' && call.path.endsWith('/grants')).length, before = listings();
+  assert.equal(await revokeNarrow.isDisabled(), true);
+  releaseRevoke();
+  await until(() => listings() > before);
+  assert.equal(await revokeNarrow.isDisabled(), true);
+  releaseListing();
+  await revokeNarrow.waitFor({ state: 'detached' });
+  await permissions.getByRole('button', { name: 'Revoke for this member in all conversations', exact: true }).waitFor();
+  assert.equal(await revokeNarrow.count(), 0);
+  assert.deepEqual(await page.evaluate(() => [window.revokeLabels, window.revokeUnknown ?? false]), [['present', 'absent'], false]);
 });
 
 test('Crew fresh active reading permits a deliberate new revoke while original ACK remains unknown', async t => {
