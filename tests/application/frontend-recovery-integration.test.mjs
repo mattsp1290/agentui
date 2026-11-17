@@ -26,7 +26,7 @@ async function fixture(t) {
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: value => value,
       execute() { assert.fail('No execution'); } }); return { dispose() {} }; } });
   const token = {}; source.begin(token); source.publish(token, { kind: 'ready', generations: [generation] });
-  const frontend = createFrontendSends({ generations: source, rowsChanged() { counts.publications++; }, unauthorized() { assert.fail('Unexpected unauthorized'); } });
+  const frontend = createFrontendSends({ generations: source, rowsChanged() { counts.publications++; } });
   const connection = { async frontendBinding(request) { requests.push(request); return behavior.binding(request); } };
   let id = 0;
   const pool = createViewLeasePool({

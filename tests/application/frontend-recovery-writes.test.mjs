@@ -10,7 +10,7 @@ async function fixture(t) {
   const { generation } = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
     activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'A' }, decodeInput: value => value, execute() { assert.fail('No execution'); } }); return { dispose() {} }; } });
   const token = {}; source.begin(token); source.publish(token, { kind: 'ready', generations: [generation] });
-  const owner = createFrontendSends({ generations: source, rowsChanged() {}, unauthorized() {} });
+  const owner = createFrontendSends({ generations: source, rowsChanged() {} });
   const connection = { frontendBinding: async request => ({ kind: 'pending', id: request.id }) };
   await owner.session({ hostId: scope.hostId, principalId: 'A' }, connection);
   const port = fakePort();

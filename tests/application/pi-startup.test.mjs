@@ -44,7 +44,7 @@ test('Pi requires a host-only OpenCode Go key before creating data or publishing
 for (const [args, expected] of [
   [['pi'], /Provide --workspace/],
   [['pi', '--workspace', '/fixture', '--port', 'invalid'], /Invalid listener port/],
-  [['pi', '--workspace', '/fixture', '--id', 'invalid'], /--id is not valid for pi/],
+  [['pi', '--workspace', '/fixture', '--model', 'opus'], /--model is not valid for pi/],
   [['pi', '--workspace', '/fixture', 'extra'], /Use serve, codex, pi, browser-dev/],
 ]) {
   test(`Pi rejects invalid command arguments ${args.join(' ')}`, async t => {

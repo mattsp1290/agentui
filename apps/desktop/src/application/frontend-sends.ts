@@ -51,7 +51,6 @@ export type FrontendSends = ReturnType<typeof createFrontendSends>;
 export function createFrontendSends(deps: {
   readonly generations: Pick<GenerationSource, 'snapshot'>;
   rowsChanged(): void;
-  unauthorized(): void;
 }) {
   let closed = false;
   let authority: Authority = { session: null, lifetime: new AbortController() };
@@ -84,7 +83,7 @@ export function createFrontendSends(deps: {
   }
   function schedule(): void {
     clearTimeout(timer);
-    if (!closed && authority.session && [...entries.values()].some(entry => entry.row.status === 'waiting' && matches(entry.reference))) {
+    if (!closed && authority.session && !authority.lifetime.signal.aborted && [...entries.values()].some(entry => entry.row.status === 'waiting' && matches(entry.reference))) {
       timer = setTimeout(() => { void poll(); }, 2_000);
     }
   }
@@ -122,9 +121,7 @@ export function createFrontendSends(deps: {
       if (valid() && matches(reference) && reference.state === 'unavailable-pending') {
         remember(viewId, reference); syncRows();
       }
-    } catch (error) {
-      if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
-    }
+    } catch {}
   }
   async function read(entry: Entry): Promise<void> {
     const current = authority, session = current.session;
@@ -146,8 +143,7 @@ export function createFrontendSends(deps: {
         if (response.kind === 'unavailable') { await unavailable(entry); return; }
       }
       syncRows();
-    } catch (error) {
-      if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && valid()) deps.unauthorized();
+    } catch {
     } finally { entry.pending = false; }
   }
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
@@ -161,7 +157,10 @@ export function createFrontendSends(deps: {
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
       const session = authority.session;
       const same = metadata && session && metadata.hostId === session.hostId && metadata.principalId === session.principalId && session.connection === connection;
-      if (same) { schedule(); return; }
+      if (same) {
+        if (session && authority.lifetime.signal.aborted) become(session);
+        schedule(); return;
+      }
       const transition = become(null); recent.clear(); clearTimeout(timer); syncRows();
       for (const item of provisional.values()) item.retained.release();
       provisional.clear();
@@ -224,6 +223,7 @@ export function createFrontendSends(deps: {
         },
       };
     },
+    pause(): void { clearTimeout(timer); authority.lifetime.abort(); },
     async release(key: string): Promise<void> { const entry = entries.get(key); if (entry) await unavailable(entry); },
     storageFailed(viewId: string): void {
       failedViews.add(viewId);

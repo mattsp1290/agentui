@@ -73,19 +73,6 @@ async function fixture(t) {
       Object.assign(f, { origin: value.origin, hostId: value.hostId });
     } finally { clearTimeout(timer); lines.close(); }
   };
-  f.control = async (op, id) => {
-    const process = f.launch([op, '--data-dir', directory, ...(id ? ['--id', id] : [])]);
-    let stdout = '';
-    process.child.stdout.setEncoding('utf8').on('data', chunk => { stdout += chunk; });
-    const timer = setTimeout(() => process.child.kill('SIGKILL'), 5000);
-    try {
-      const result = await process.exited;
-      assert.equal(result.code, 0, process.stderr);
-      const response = JSON.parse(stdout);
-      assert.equal(response.ok, true);
-      return response.value;
-    } finally { clearTimeout(timer); }
-  };
   f.begin = (body, cookie = '', headers = {}) => {
     const sent = deferred();
     let request;
@@ -156,7 +143,6 @@ test('real host admits the owner directly and protects metadata, scope and expli
   assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }), scope);
   assert.deepEqual(await f.ok(catalog), [{ scope, preview: null }]);
   assert.deepEqual(await f.ok({ ...catalog, after: scope.conversationId }), []);
-  assert.deepEqual(await f.control('devices'), []);
 });
 
 test('real client applies a feed page before ACK and the host retains lost replies and rejects future ACKs', { timeout: 20_000 }, async t => {

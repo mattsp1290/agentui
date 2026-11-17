@@ -1,6 +1,6 @@
 # Run the local Codex app
 
-For automatic local or SSH setup without pairing, use [the desktop launcher](launcher.md). The instructions below run an independently managed host that the browser reaches directly.
+For automatic local or SSH setup, use [the desktop launcher](launcher.md). The instructions below run an independently managed host that the browser reaches directly.
 
 Install Codex CLI 0.167.2 and sign in with `codex login` before starting the host. Check the installed version with `codex --version`.
 
@@ -28,7 +28,7 @@ On macOS, open this host in the desktop app from another terminal. Keep the host
 
 The desktop window uses the local host's app screens. It grants the page no native commands. Native startup for this option still needs a macOS smoke test. You can also use [the local app](http://127.0.0.1:7140/browser.html) in a browser.
 
-There is no pairing step. The host admits every client that reaches it over loopback or your private overlay as its single owner, after checking the Host, Origin and content-type headers. It uses your existing Codex CLI login without copying its credentials.
+The host admits every client that reaches it over loopback or your private overlay as its single owner, after checking the Host, Origin and content-type headers. It uses your existing Codex CLI login without copying its credentials.
 
 Select **New conversation**, write a message, and select **Send**. The host runs Codex in the workspace you selected. It starts with a read-only sandbox and requests explicit approval for commands or file changes that require more access. Inspect each request, then select **Allow** or **Deny**. Replies stream into the conversation while approval controls remain available.
 

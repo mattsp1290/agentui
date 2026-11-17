@@ -83,13 +83,6 @@ if (args.length === 1 && args[0] === '--version') {
   ]);
   lines.close();
   assert.equal(ready.mode, 'codex');
-  const invite = async op => {
-    const cli = launch([op]);
-    assert.equal((await cli.exited).code, 0, cli.stderr);
-    const result = JSON.parse(cli.stdout);
-    assert.equal(result.ok, true);
-    return result.value;
-  };
   const call = (path, body, headers = {}) => new Promise((resolve, reject) => {
     const outgoing = request(`${ready.origin}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } }, incoming => {
       let text = '';
@@ -101,16 +94,9 @@ if (args.length === 1 && args[0] === '--version') {
     outgoing.setTimeout(5000, () => outgoing.destroy(new Error('Host request timed out')));
     outgoing.end(JSON.stringify(body));
   });
-  const browserInvite = await invite('invite');
-  const browser = await call('/api/v1', { op: 'pair', code: browserInvite.code }, { Origin: ready.origin });
-  assert.equal(browser.status, 200);
-  const cookie = browser.headers['set-cookie'][0].split(';')[0];
-  const nativeInvite = await invite('invite-native');
-  const native = await call('/native/v1/pair', { version: 1, hostId: ready.hostId, code: nativeInvite.code });
-  assert.equal(native.status, 200);
   const clients = [
-    { path: '/api/v1', headers: { Origin: ready.origin, Cookie: cookie }, conversationId: 'browser-codex' },
-    { path: '/native/v1', headers: { Authorization: `Bearer ${native.body.value.secret}` }, conversationId: 'native-codex' },
+    { path: '/api/v1', headers: { Origin: ready.origin }, conversationId: 'browser-codex' },
+    { path: '/native/v1', headers: {}, conversationId: 'native-codex' },
   ];
   for (const client of clients) {
     const metadata = await call(client.path, { op: 'metadata' }, client.headers);

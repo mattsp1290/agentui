@@ -83,22 +83,15 @@ for (const model of ['opus', 'sonnet']) {
     assert.equal(JSON.stringify(ready).includes('unused-claude-startup-key'), false);
     await access(join(f.directory, 'data', 'claude-sessions', model));
     await assert.rejects(access(join(f.directory, 'data', 'claude-sessions', model === 'opus' ? 'sonnet' : 'opus')), { code: 'ENOENT' });
-    const invitation = async op => {
-      const cli = f.launch([op]);
-      assert.equal(await cli.exited, 0, cli.stderr);
-      return JSON.parse(cli.stdout).value;
-    };
     const call = async (path, body, headers = {}) => {
       const response = await fetch(`${ready.origin}${path}`, { method: 'POST',
         headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
       assert.equal(response.status, 200);
       return { headers: response.headers, ...(await response.json()) };
     };
-    const browser = await call('/api/v1', { op: 'pair', code: (await invitation('invite')).code }, { Origin: ready.origin });
-    const native = await call('/native/v1/pair', { version: 1, hostId: ready.hostId, code: (await invitation('invite-native')).code });
     const clients = [
-      { path: '/api/v1', headers: { Origin: ready.origin, Cookie: browser.headers.get('set-cookie').split(';')[0] }, conversationId: 'sdk-browser' },
-      { path: '/native/v1', headers: { Authorization: `Bearer ${native.value.secret}` }, conversationId: 'sdk-native' },
+      { path: '/api/v1', headers: { Origin: ready.origin }, conversationId: 'sdk-browser' },
+      { path: '/native/v1', headers: {}, conversationId: 'sdk-native' },
     ];
     for (const client of clients) {
       const metadata = await call(client.path, { op: 'metadata' }, client.headers);

@@ -6,21 +6,21 @@ import test from 'node:test';
 import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { parseServiceResponse } from '@agentui/contracts/service';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
-import { Access } from '../../apps/host/build/tsc/access.js';
+import { ownerPrincipal } from '../../apps/host/build/tsc/principal.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../apps/host/build/tsc/feed-registry.js';
 
 test('saved history search scans past empty pages and searches only current transcript and labels', async t => {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-search-'));
-  const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
+  const access = openAccessDatabase(join(directory, 'host.sqlite'));
   const host = openRecordedHost({ path: join(directory, 'host.sqlite'), backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId, progressMs: 0 });
   const feeds = new FeedRegistry();
-  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); rmSync(directory, { recursive: true, force: true }); });
-  const api = createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, credentialClass: 'browser-development', isClosing: () => false,
+  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.database.close(); rmSync(directory, { recursive: true, force: true }); });
+  const api = createApi({ host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, isClosing: () => false,
     compatibility: { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } });
-  const principal = access.owner('browser-development');
+  const principal = ownerPrincipal(access.hostId);
   const scopes = Array.from({ length: 105 }, (_, index) => ({ hostId: access.hostId, conversationId: `chat-${String(index).padStart(3, '0')}` }));
   for (const scope of scopes) host.createConversation(scope, recordedInstallation);
   const append = (scope, messageId, text, revision = 1, complete = true, role = 'assistant') => host.append(scope, {

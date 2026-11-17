@@ -1,5 +1,4 @@
 import assert from 'node:assert/strict';
-import { createConnection } from 'node:net';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import test from 'node:test';
@@ -10,23 +9,10 @@ import { providerExtensionSource } from '../../../apps/host/build/tsc/provider-e
 import { createBrowserConnection } from '@agentui/client/service';
 import { entry, listenerLog, options, secret, service, startBrowserHost, turn } from './fixtures.mjs';
 
-async function paired(t, extensions) {
+async function connected(t, extensions) {
   const configured = options(t), host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: extensions.map(value => value.value) } });
   t.after(() => host.close());
-  let cookie;
-  const client = createBrowserConnection({ fetch: async (url, init) => {
-    const response = await fetch(`${host.origin}${url}`, { ...init,
-      headers: { ...init.headers, Origin: host.origin, ...(cookie ? { Cookie: cookie } : {}) } });
-    if (response.headers.get('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
-    return response;
-  } });
-  const invite = await new Promise((resolve, reject) => {
-    const socket = createConnection(join(configured.directory, 'control.sock')); let output = '';
-    socket.once('error', reject); socket.once('connect', () => socket.end(`${JSON.stringify({ op: 'invite' })}\n`));
-    socket.on('data', data => { output += data; });
-    socket.once('end', () => { const result = JSON.parse(output); if (result.ok) resolve(result.value); else reject(new Error(result.error)); });
-  });
-  await client.pair(invite.code);
+  const client = createBrowserConnection({ fetch: (url, init) => fetch(`${host.origin}${url}`, { ...init, headers: { ...init.headers, Origin: host.origin } }) });
   return { host, client, scope: conversationId => ({ hostId: host.hostId, conversationId }),
     inspect(action) { const db = new DatabaseSync(join(configured.directory, 'host.sqlite')); try { return action(db); } finally { db.close(); } } };
 }
@@ -37,13 +23,13 @@ const confirmed = (operation, fixture) => fixture.confirmed(operation);
 const uncertain = () => ({ kind: 'uncertain', reason: 'Reply lost', evidence: null });
 const originals = f => f.inspect(db => db.prepare('SELECT original FROM provider_creations ORDER BY conversation').all());
 
-test('entered credential-backed creation defers replacement and the same paired API follows replace, disable and failure', { timeout: 10000 }, async t => {
+test('entered credential-backed creation defers replacement and the same API follows replace, disable and failure', { timeout: 10000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers(), listeners = listenerLog();
   const old = entry(t, { label: 'old', listeners, async create(operation, fixture) {
     entered.resolve(); await finish.promise; return fixture.confirmed(operation);
   } });
   const next = entry(t, { label: 'next', listeners, create: confirmed });
-  const f = await paired(t, [old]), agent = await selected(f, 'old'), scope = f.scope('held');
+  const f = await connected(t, [old]), agent = await selected(f, 'old'), scope = f.scope('held');
   const creating = f.client.create(scope, agent.id);
   try {
     await entered.promise;
@@ -79,7 +65,7 @@ test('original uncertain lookup retains its operation and defers replacement; a 
     entered.resolve(); await finish.promise; return fixture.confirmed(operation);
   } });
   const next = entry(t, { label: 'next', create: confirmed, lookup: confirmed });
-  const f = await paired(t, [old]), agent = await selected(f, 'old'), scope = f.scope('recover');
+  const f = await connected(t, [old]), agent = await selected(f, 'old'), scope = f.scope('recover');
   await unavailable(f.client.create(scope, agent.id));
   await unavailable(f.client.create(f.scope('unresolved'), agent.id));
   const original = originals(f), recovering = f.client.create(scope, agent.id);
@@ -104,7 +90,7 @@ test('original uncertain lookup retains its operation and defers replacement; a 
 test('shutdown freezes credentials during entered creation and persists uncertainty before releasing ownership', { timeout: 10000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const old = entry(t, { create: async (operation, fixture) => { entered.resolve(); await finish.promise; return fixture.confirmed(operation); } });
-  const f = await paired(t, [old]), agent = await selected(f, 'entry');
+  const f = await connected(t, [old]), agent = await selected(f, 'entry');
   const creating = unavailable(f.client.create(f.scope('shutdown'), agent.id));
   await entered.promise;
   const original = originals(f), closing = f.host.close();
@@ -120,7 +106,7 @@ test('shutdown freezes credentials during entered creation and persists uncertai
 
 test('rediscovery failure retires only that provider connection, refuses its creation and permits replacement', { timeout: 10000 }, async t => {
   const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); } });
-  const f = await paired(t, [old]), agent = await selected(f, 'entry');
+  const f = await connected(t, [old]), agent = await selected(f, 'entry');
   const statuses = await f.host.discoverProviders();
   assert.deepEqual(statuses.map(item => item.cause), ['invalid-installation']);
   assert.doesNotMatch(JSON.stringify(statuses), new RegExp(secret));
@@ -177,7 +163,7 @@ test('accepted replacement hides the retired catalog during cleanup and after ca
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const old = entry(t, { async dispose() { entered.resolve(); await finish.promise; } });
   const bad = entry(t, { label: 'bad', activate() { throw new Error(secret); } });
-  const f = await paired(t, [old]), agent = await selected(f, 'entry');
+  const f = await connected(t, [old]), agent = await selected(f, 'entry');
   const replacing = f.host.replaceProviderExtensions([bad.value]);
   try {
     await entered.promise;

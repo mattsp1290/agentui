@@ -17,9 +17,8 @@ import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
-import { Access } from './access.js';
-import type { CredentialClass } from './access.js';
 import { openAccessDatabase } from './access-database.js';
+import type { AccessDatabase } from './access-database.js';
 import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
@@ -88,7 +87,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let owner: ReturnType<typeof ownDirectory>;
   try { owner = ownDirectory(options.directory); }
   catch (error) { await observability.close(); throw error; }
-  let access: Access | undefined;
+  let database: AccessDatabase;
+  try { database = openAccessDatabase(join(owner.directory, 'host.sqlite')); }
+  catch (error) { owner.close(); await observability.close(); throw error; }
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
   const drivers: Driver[] = [];
@@ -133,7 +134,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       } finally {
         clearTimeout(deadline);
       }
-      access?.close();
+      database.database.close();
       owner.close();
     })().finally(() => observability.close());
     return closePromise;
@@ -141,16 +142,14 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   try {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
-    const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    access = new Access(accessDatabase);
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
-      const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
+      const replacement = await providers.replace(providerExtensionSource(database, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
       const generation = replacement.generation;
       const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
       let after: string | null = null;
       while (current()) {
-        const page = readyHost.listConversations(accessDatabase.hostId, after, 100);
+        const page = readyHost.listConversations(database.hostId, after, 100);
         for (const scope of page) {
           if (!current()) return replacement;
           if ('kind' in readyHost.inspect(scope).installation) await readyHost.observeProvider(scope);
@@ -173,7 +172,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           const { artifactId: _artifactId, ...expected } = serverArtifactExpectation('');
           builder = await createInstalledRefreshBuilder({ entry: options.refreshBuilder, expected });
         }
-        const composed = await createRefreshController({ database: accessDatabase, artifactRoot: join(owner.directory, 'refresh-artifacts'),
+        const composed = await createRefreshController({ database, artifactRoot: join(owner.directory, 'refresh-artifacts'),
           builder, selection: { entries: extensions.entries,
           runtime: providers.status, isClosing: () => closing,
           replace: selected => {
@@ -189,7 +188,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         break;
       }
       case 'transient':
-        assertNoSelectionJournal(accessDatabase);
+        assertNoSelectionJournal(database);
         boot = async readyHost => {
           const replacement = await replaceExtensions(readyHost, { kind: 'entries', entries: extensions.entries });
           if (replacement.kind === 'failed') {
@@ -282,7 +281,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         }
       }
     }
-    const hostId = access.hostId;
+    const hostId = database.hostId;
     const readyHost = startup.kind === 'recorded'
       ? openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) })
@@ -293,13 +292,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
-      const page = host.listConversations(access.hostId, after, 100);
+      const page = host.listConversations(hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
         if ('kind' in installation) { after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
-          recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
+          recoverProviderConversations(host, hostId, installation, PROVIDER_RECOVERY[engine]);
           recovered.add(key);
         }
         after = scope.conversationId;
@@ -314,14 +313,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const agentSelection: Parameters<typeof createApi>[0]['agentSelection'] = startup.kind === 'extensions'
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
-    const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, providers, agentSelection,
-      isClosing: () => closing,
-    };
-    const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
-    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
-      files: browser.files, isClosing: apiOptions.isClosing, observability });
-    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing, observability });
+    const isClosing = () => closing;
+    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing });
+    const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
+    const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
     http.on('request', (request, response) => {
       if (request.url === '/setup/pi' && setupHandler) {
@@ -342,8 +337,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
-    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl, providers.discover, refresh);
-    return { origin, hostId: access.hostId, close, fatal, discoverProviders: providers.discover,
+    control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover, refresh);
+    return { origin, hostId, close, fatal, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);

@@ -121,7 +121,6 @@ test('retained payload budget is transactional and includes every stored byte', 
 
 test('version three migration preserves all preexisting tables and exact row values', t => {
   const f = fixture(t), access = openAccessDatabase(f.path), hostId = access.hostId;
-  access.database.prepare("INSERT INTO service_devices VALUES ('principal','digest',?,'native',9999999999999,'owner',0)").run(hostId);
   access.database.close();
   const store = new SqliteStore(f.path, projection, budgets());
   const savedScope = { hostId, conversationId: 'saved' }; store.create(savedScope, installed);
@@ -133,7 +132,7 @@ test('version three migration preserves all preexisting tables and exact row val
   for (const [table, rows] of before) assert.deepEqual(reopened.db.prepare(`SELECT * FROM ${table}`).all(), rows);
   assert.equal(reopened.db.prepare('PRAGMA user_version').get().user_version, 7);
   assert.ok(upload(reopened, png(), { scope: savedScope }));
-  assert.equal(reopened.db.prepare('SELECT version FROM service_schema').get().version, 1);
+  assert.equal(reopened.db.prepare('SELECT version FROM service_schema').get().version, 2);
 });
 
 test('invalid pre-image database is refused before image migration changes its bytes', t => {

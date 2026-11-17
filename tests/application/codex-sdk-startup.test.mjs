@@ -77,22 +77,15 @@ test('SDK bootstrap advertises its separate subscription runtime to browser and 
     host.exited.then(() => { throw new Error(host.stderr); }),
   ]);
   lines.close();
-  const invitation = async op => {
-    const cli = f.launch([op]);
-    assert.equal(await cli.exited, 0, cli.stderr);
-    return JSON.parse(cli.stdout).value;
-  };
   const call = async (path, body, headers = {}) => {
     const response = await fetch(`${ready.origin}${path}`, { method: 'POST',
       headers: { 'Content-Type': 'application/json', ...headers }, body: JSON.stringify(body) });
     assert.equal(response.status, 200);
     return { headers: response.headers, ...(await response.json()) };
   };
-  const browser = await call('/api/v1', { op: 'pair', code: (await invitation('invite')).code }, { Origin: ready.origin });
-  const native = await call('/native/v1/pair', { version: 1, hostId: ready.hostId, code: (await invitation('invite-native')).code });
   const clients = [
-    { path: '/api/v1', headers: { Origin: ready.origin, Cookie: browser.headers.get('set-cookie').split(';')[0] }, conversationId: 'sdk-browser' },
-    { path: '/native/v1', headers: { Authorization: `Bearer ${native.value.secret}` }, conversationId: 'sdk-native' },
+    { path: '/api/v1', headers: { Origin: ready.origin }, conversationId: 'sdk-browser' },
+    { path: '/native/v1', headers: { Authorization: 'Bearer stale-device-secret' }, conversationId: 'sdk-native' },
   ];
   for (const client of clients) {
     const metadata = await call(client.path, { op: 'metadata' }, client.headers);
@@ -138,17 +131,12 @@ test('configured agents probe and launch their exact binaries while missing opti
   const ready = await Promise.race([new Promise(resolve => lines.once('line', line => resolve(JSON.parse(line)))), host.exited.then(() => { throw new Error(host.stderr); })]);
   lines.close();
   assert.equal(ready.mode, 'serve');
-  const invitation = f.launch(['invite']);
-  assert.equal(await invitation.exited, 0, invitation.stderr);
-  let cookie = '';
   const call = async body => {
-    const response = await fetch(`${ready.origin}/api/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ready.origin, Cookie: cookie }, body: JSON.stringify(body) });
-    if (response.headers.has('set-cookie')) cookie = response.headers.get('set-cookie').split(';')[0];
+    const response = await fetch(`${ready.origin}/api/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: ready.origin }, body: JSON.stringify(body) });
     const result = await response.json();
     assert.equal(result.ok, true, JSON.stringify(result));
     return result.value;
   };
-  await call({ op: 'pair', code: JSON.parse(invitation.stdout).value.code });
   const metadata = await call({ op: 'metadata' });
   assert.deepEqual(metadata.agents.map(agent => agent.availability.kind), ['ready', 'ready', 'ready', 'unavailable', 'unavailable', 'unavailable']);
   assert.equal(metadata.defaultAgentId, metadata.agents[0].id);
@@ -175,7 +163,7 @@ test('configured agents probe and launch their exact binaries while missing opti
   const nextLines = createInterface({ input: unavailableDefault.child.stdout });
   const next = await Promise.race([new Promise(resolve => nextLines.once('line', line => resolve(JSON.parse(line)))), unavailableDefault.exited.then(() => { throw new Error(unavailableDefault.stderr); })]);
   nextLines.close();
-  const response = await fetch(`${next.origin}/api/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: next.origin, Cookie: cookie }, body: JSON.stringify({ op: 'metadata' }) });
+  const response = await fetch(`${next.origin}/api/v1`, { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: next.origin }, body: JSON.stringify({ op: 'metadata' }) });
   const reopened = (await response.json()).value;
   assert.equal(reopened.defaultAgentId, metadata.agents[3].id);
   assert.equal(reopened.agents[0].availability.kind, 'ready');

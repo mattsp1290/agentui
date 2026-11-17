@@ -111,34 +111,6 @@ test('old refresh publishes nothing after the replacement resets while its autho
   assert.equal(f.app.getSnapshot().host.kind, 'ready');
 });
 
-test('disposed session cannot send pairing after its authority-reset await', async t => {
-  const f = fixture();
-  t.after(() => f.app.dispose());
-  await f.app.start();
-  const pairedCodes = [];
-  f.behavior.pair = async code => { pairedCodes.push(code); };
-  await f.app.pair('active-code');
-  assert.deepEqual(pairedCodes, ['active-code']);
-  const pairing = f.app.pair('old-code'), closing = f.app.dispose();
-  await Promise.all([pairing, closing]);
-  assert.deepEqual(pairedCodes, ['active-code']);
-});
-
-test('public pairing cannot send after disposal while a captured journal save is held', async t => {
-  const f = await capturedFixture(t), save = holdNextSave(f);
-  const pairedCodes = [];
-  f.behavior.pair = async code => { pairedCodes.push(code); };
-  const pairing = f.app.pair('old-code');
-  await save.entered;
-  const closing = f.app.dispose(), restarted = f.app.start();
-  await flush();
-  assert.equal(f.leases.length, 1);
-  save.resolve();
-  await Promise.all([pairing, closing, restarted]);
-  assert.deepEqual(pairedCodes, []);
-  assert.equal(f.app.getSnapshot().host.kind, 'ready');
-});
-
 for (const updateSource of [false, true]) {
   test(`generation source survives restart ${updateSource ? 'with an update during the old save' : 'without republishing'}`, async t => {
     const f = await capturedFixture(t), save = holdNextSave(f);
