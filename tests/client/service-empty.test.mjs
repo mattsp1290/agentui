@@ -9,12 +9,12 @@ const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: 
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } };
 const metadata = { hostId: 'host', principalId: 'principal', compatibility, agents: [], defaultAgentId: null };
 const agent = { kind: 'provider', id: 'provider', label: 'Provider', namespace: 'example', protocolVersion: '1',
-  frontendOffers: 'unsupported', commands: [], availability: { kind: 'unavailable', reason: 'Creation unsupported' } };
+  imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'unavailable', reason: 'Creation unsupported' } };
 const parse = value => parseServiceResponse({ op: 'metadata' }, { ok: true, value });
 
 test('metadata represents empty and unavailable provider catalogs without synthetic native identity', () => {
   for (const value of [metadata, { ...metadata, agents: [agent] },
-    { ...metadata, agents: [{ id: 'native', label: 'Native', runtime: RECORDED_RUNTIME, frontendOffers: 'unsupported', commands: [], availability: agent.availability }], defaultAgentId: 'native' }]) {
+    { ...metadata, agents: [{ id: 'native', label: 'Native', runtime: RECORDED_RUNTIME, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: agent.availability }], defaultAgentId: 'native' }]) {
     assert.deepEqual(parse(value), { ok: true, value });
   }
   for (const change of [{ defaultAgentId: 'missing' }, { defaultAgentId: '' }, { defaultAgentId: undefined },
@@ -24,8 +24,8 @@ test('metadata represents empty and unavailable provider catalogs without synthe
   }
 });
 
-test('extension-only compatibility skips native runtime while retaining every other dimension and wire nine', () => {
-  assert.equal(SERVICE_WIRE_VERSION, 9);
+test('extension-only compatibility skips native runtime while retaining every other dimension and wire ten', () => {
+  assert.equal(SERVICE_WIRE_VERSION, 10);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, compatibility), { kind: 'compatible' });
   assert.deepEqual(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [6] }, compatibility).issues.map(issue => issue.dimension), ['wire']);
   const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, expectedArtifactId: 'expected' }, {

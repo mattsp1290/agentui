@@ -11,7 +11,9 @@ import { createMacConnection } from '@agentui/client/mac';
 import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES, IMAGE_BODY_TIMEOUT_MS } from '@agentui/contracts/image';
 import { SERVICE_MAX_REQUEST_BYTES } from '@agentui/contracts/service';
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
+import { recordedInstallation } from '@agentui/host/recorded';
+import { openLocalHost, createRecordedDriver } from '@agentui/host';
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../apps/host/build/tsc/api.js';
@@ -20,17 +22,22 @@ import { NO_OBSERVABILITY } from '../../apps/host/build/tsc/observability.js';
 import { serviceEndpoint } from '../../apps/host/build/tsc/service-endpoint.js';
 import { png, chunk, screenshotPng, screenshotJpeg } from '../host/image-fixtures.mjs';
 
-async function fixture(t) {
+async function fixture(t, { imageInput = true, model } = {}) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-images-')), path = join(directory, 'host.sqlite');
   const access = new Access(openAccessDatabase(path)), feeds = new FeedRegistry();
-  const host = openRecordedHost({ path, backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId });
+  const driver = { ...createRecordedDriver({ installation: recordedInstallation, backendPath: join(directory, 'recorded.jsonl'),
+    decodeEvent: transcriptProjection.decodeEvent, resolve: async command => ({ kind: 'completed', output: {
+      events: command.body.kind === 'send' ? [{ kind: 'message-updated', messageId: command.clientCommandId, revision: 1,
+        role: 'user', text: command.body.text, complete: true, ...(command.body.imageId ? { image: host.readImage(command.scope, command.body.imageId).attachment } : {}) }] : [],
+      runs: [], decisions: [] } }) }), imageInput };
+  const host = openLocalHost({ path, projection: transcriptProjection, driver, authorize: scope => scope.hostId === access.hostId });
   const scope = { hostId: access.hostId, conversationId: 'images' };
   host.createConversation(scope, recordedInstallation);
   const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
   const handlers = Object.fromEntries(['native', 'browser-development'].map(credentialClass => {
     const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => false,
-      agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] } });
+      agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, ...(model ? { model } : {}), availability: { kind: 'ready' } }] } });
     return [credentialClass, serviceEndpoint({ access, api, credentialClass, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })];
   }));
   const incoming = [], responses = [];
@@ -78,7 +85,7 @@ async function fixture(t) {
     outgoing.flushHeaders();
     return { outgoing, result };
   };
-  return { access, host, scope, clients, call, count, headers, incoming, start, responses };
+  return { access, host, scope, clients, call, count, headers, incoming, start, responses, driver };
 }
 const upload = (scope, bytes = png(), changes = {}) => ({ op: 'image-upload', scope, uploadId: randomUUID(), name: 'Screen.png',
   byteLength: bytes.length, base64: bytes.toString('base64'), ...changes });
@@ -216,4 +223,56 @@ test('chunked image bodies are bounded even without a declared length', async t 
   assert.ok(result instanceof Error || result.status === 400);
   assert.equal(f.count(), 0);
   assert.equal((await f.call('native', upload(f.scope))).status, 200);
+});
+
+for (const kind of ['browser-development', 'native']) test(`${kind} fresh image upload refuses a text-only driver`, async t => {
+  const f = await fixture(t, { imageInput: false });
+  const result = await f.call(kind, upload(f.scope));
+  assert.equal(result.status, 409);
+  assert.equal(result.body.error.kind, 'image-unsupported');
+  await assert.rejects(f.clients[kind].uploadImage({ scope: f.scope, uploadId: randomUUID(), name: 'Fresh.png', bytes: png() }), error => error.kind === 'image-unsupported');
+  assert.equal(f.count(), 0);
+});
+
+for (const imageInput of [false, true]) test(`public descriptors follow consuming driver support ${imageInput} independently of discovered model metadata`, async t => {
+  const f = await fixture(t, { imageInput, ...(imageInput ? {} : { model: { id: 'image-discovered', label: 'Image discovered', inputModalities: ['text', 'image'] } }) });
+  for (const client of Object.values(f.clients)) {
+    const metadata = await client.metadata();
+    const agent = await client.conversationAgent(f.scope);
+    assert.deepEqual(agent, metadata.agents[0]);
+    assert.deepEqual(agent.imageInput, imageInput ? { kind: 'supported', format: 'png-jpeg-v1' } : { kind: 'unsupported', reason: 'This model cannot read images.' });
+    assert.equal(Object.hasOwn(agent, 'model'), !imageInput);
+    if (!imageInput) assert.deepEqual(agent.model, { id: 'image-discovered', label: 'Image discovered' });
+  }
+});
+
+for (const kind of ['browser-development', 'native']) test(`${kind} capability loss preserves dropped-reply retry, conflict, history and old command receipt`, async t => {
+  const f = await fixture(t), client = f.clients[kind], body = upload(f.scope), original = f.host.uploadImage;
+  let committed;
+  f.host.uploadImage = (...args) => {
+    committed = original(...args);
+    f.driver.imageInput = false;
+    f.responses.at(-1).destroy();
+    f.host.uploadImage = original;
+    return committed;
+  };
+  const before = (await client.metadata()).agents[0];
+  await assert.rejects(f.call(kind, body));
+  const recovered = await client.uploadImage({ scope: f.scope, uploadId: body.uploadId, name: body.name, bytes: png() });
+  assert.deepEqual(recovered, committed);
+  assert.equal(f.count(), 1);
+  const after = await client.conversationAgent(f.scope);
+  assert.equal(after.id, before.id);
+  assert.equal(after.imageInput.kind, 'unsupported');
+  for (const peer of Object.values(f.clients)) assert.deepEqual(Buffer.from((await peer.readImage(f.scope, recovered.imageId)).bytes), png());
+  assert.equal((await f.call(kind, { ...body, name: 'Changed' })).body.error.kind, 'image-upload-conflict');
+  assert.equal((await f.call(kind, upload(f.scope))).body.error.kind, 'image-unsupported');
+  assert.equal((await f.call(kind, upload({ ...f.scope, conversationId: 'missing' }))).body.error.kind, 'image-scope');
+  f.driver.imageInput = true;
+  const command = { version: 1, scope: f.scope, clientCommandId: randomUUID(), body: { kind: 'send', text: '', imageId: recovered.imageId } };
+  const receipt = await client.conversation(f.scope).submit(command);
+  f.driver.imageInput = false;
+  assert.deepEqual(await client.conversation(f.scope).submit(command), receipt);
+  assert.deepEqual(await client.conversation(f.scope).submit({ ...command, clientCommandId: randomUUID() }), { kind: 'rejected', reason: after.imageInput.reason });
+  assert.equal(f.count(), 1);
 });

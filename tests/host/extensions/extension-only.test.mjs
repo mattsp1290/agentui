@@ -45,7 +45,7 @@ test('extension-only defaults use stable ready IDs across discovery order, label
   const restarted = await open(t, [b, a], f.configured);
   assert.equal(assertDefault(await restarted.client.metadata()), initialDefault);
   assert.equal(existsSync(join(f.configured.directory, 'recorded.jsonl')), false);
-  const recorded = describeAgent(recordedInstallation, { kind: 'ready' });
+  const recorded = describeAgent(recordedInstallation, { kind: 'ready' }, { kind: 'unsupported', reason: 'Recorded text-only fixture.' });
   await assert.rejects(restarted.client.create(restarted.scope('no-recorded'), recorded.id), error => error.kind === 'create-rejected');
 });
 

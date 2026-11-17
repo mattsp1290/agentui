@@ -21,25 +21,25 @@ const nativeAgents: readonly Pick<NativeAgentDescriptor, 'runtime' | 'label' | '
   { runtime: RECORDED_RUNTIME, label: 'Recorded assistant', commands: ['send', 'approve'] },
 ];
 
-export function describeAgent(installation: Installation, availability: AgentDescriptor['availability'], model?: NativeAgentDescriptor['model']): NativeAgentDescriptor {
+export function describeAgent(installation: Installation, availability: AgentDescriptor['availability'], imageInput: AgentDescriptor['imageInput'], model?: NativeAgentDescriptor['model']): NativeAgentDescriptor {
   const { binding } = installation;
   const runtime = { engine: binding.engine, version: binding.nativeVersion, format: binding.nativeFormat };
   const known = nativeAgents.find(agent => canonicalJson(agent.runtime) === canonicalJson(runtime));
   const modelId = codexInstallationModel(installation);
   const selectedModel = model ?? (modelId ? { id: modelId, label: modelId } : known?.model);
-  return { ...(selectedModel ? { model: selectedModel } : {}), id: `agent-v1-${createHash('sha256').update(canonicalJson(installation)).digest('hex')}`, runtime,
+  return { ...(selectedModel ? { model: { id: selectedModel.id, label: selectedModel.label } } : {}), imageInput, id: `agent-v1-${createHash('sha256').update(canonicalJson(installation)).digest('hex')}`, runtime,
     frontendOffers: 'unsupported', label: model?.label ?? modelId ?? known?.label ?? 'Unavailable agent', commands: known?.commands ?? [],
     availability: known ? availability : { kind: 'unavailable', reason: 'This agent runtime is unsupported.' } };
 }
 
-export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], commands: AgentDescriptor['commands'] = [], frontendOffers: AgentDescriptor['frontendOffers'] = 'unsupported'): AgentDescriptor {
+export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], imageInput: AgentDescriptor['imageInput'], commands: AgentDescriptor['commands'] = [], frontendOffers: AgentDescriptor['frontendOffers'] = 'unsupported'): AgentDescriptor {
   return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(providerInstallationKey(installation)).digest('hex')}`,
     label: installation.agent.name, namespace: installation.instance.namespace, protocolVersion: installation.instance.protocolVersion,
-    commands, availability, frontendOffers };
+    commands, availability, frontendOffers, imageInput };
 }
 
-export function describeUnavailableProvider(provider: UnavailableProvider): AgentDescriptor {
+export function describeUnavailableProvider(provider: UnavailableProvider, imageInput: AgentDescriptor['imageInput']): AgentDescriptor {
   return { kind: 'provider', id: `provider-installation-v1-${createHash('sha256').update(canonicalJson({ contributionId: provider.contributionId, instance: provider.instance })).digest('hex')}`,
     label: `${provider.instance.namespace} · ${provider.instance.installationId}`, namespace: provider.instance.namespace, protocolVersion: provider.instance.protocolVersion,
-    commands: [], frontendOffers: 'unsupported', availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
+    imageInput, commands: [], frontendOffers: 'unsupported', availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
 }

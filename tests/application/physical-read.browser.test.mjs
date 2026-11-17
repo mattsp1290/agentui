@@ -48,7 +48,7 @@ for (const scenario of ['obsolete-read-abort', 'obsolete-parse', 'current-read-a
         let id = 0, generationDisposals = 0;
         const imageRead = scenario.endsWith('image-read');
         const descriptor = { id: 'default', label: 'Default', kind: 'provider', namespace: 'fixture', protocolVersion: '1',
-          frontendOffers: 'ag-ui-capture-and-bind', commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } };
+          imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'ag-ui-capture-and-bind', commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } };
         const connection = {
           async uploadImage() { throw new Error('Interrupted upload'); },
           async metadata() { return { hostId: 'host', principalId: 'principal', agents: [descriptor], defaultAgentId: descriptor.id,
@@ -205,7 +205,7 @@ test('initial active acquisition reports a native readonly abort through readine
       return request;
     };
     const descriptor = { id: 'default', label: 'Default', runtime: RECORDED_RUNTIME,
-      frontendOffers: 'unsupported', commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } };
+      imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } };
     const connection = {
       async metadata() { return { hostId: 'host', principalId: 'principal', agents: [descriptor], defaultAgentId: 'default', compatibility: {
         wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
@@ -244,7 +244,7 @@ test('synchronous browser restart preserves the original view beyond the lock fa
     await original.saveView('host', { version: 2, route: scope, pendingCreation: null });
     await original.close(); sessionStorage.setItem('agentui.viewId', viewId);
     const descriptor = { id: 'default', label: 'Default', runtime: RECORDED_RUNTIME,
-      frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
+      imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
     const connection = {
       async metadata() { return { hostId: 'host', principalId: 'principal', agents: [descriptor], defaultAgentId: 'default', compatibility: {
         wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
