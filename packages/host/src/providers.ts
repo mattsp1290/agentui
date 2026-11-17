@@ -1,18 +1,20 @@
+import { copyOutputBytes, outputFailure, parseProviderOutputList, prepareOutputBinding } from './provider-outputs.js';
+import type { OriginalOutputBinding } from './provider-outputs.js';
 import type { ObservationMapper } from './provider-observations.js';
 import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, copyJson, parseConversationPermissions } from '@agentui/contracts';
+import { canonicalJson, copyJson, isOutputId, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility } from '@agentui/contracts';
+import type { ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
 import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
-  ProviderCommand, ProviderInstance, ProviderModel, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
+  ProviderCommand, ProviderInstance, ProviderModel, ProviderOutputs, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
 export { providerIdentity } from './provider-creation.js';
 export type { ProviderIdentity } from './provider-creation.js';
@@ -83,7 +85,13 @@ function capability(value: unknown): boolean {
   if (input.kind === 'unsupported') { record(value, ['kind', 'reason']); text(input.reason); return false; }
   throw new Error('Invalid provider capability');
 }
+const outputsUnavailable = Object.freeze({ kind: 'unavailable', reason: 'outputs-unavailable' } as const);
+const outputsInvalid = Object.freeze({ kind: 'invalid', reason: 'outputs-invalid' } as const);
+const outputsUnsupported = Object.freeze({ kind: 'unsupported', reason: 'outputs-unsupported' } as const);
+const outputMissing = Object.freeze({ kind: 'missing', reason: 'output-missing' } as const);
 interface BoundProvider {
+  outputs(original: StoredCreation): Promise<OutputListing>;
+  outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
   assertFrontendInput(target: ProviderTarget): void;
   discover(): Promise<ProviderStatus>;
   capture(scope: ConversationScope, selected: ProviderInstallation): ProviderCreation;
@@ -227,7 +235,56 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
     if (canonicalJson(presentation.decodeRequest(copyJson(operation.request))) !== canonicalJson(operation.request)) throw new Error('Provider request changed');
     assertFrontendTarget(target);
   }
+  function outputs(original: StoredCreation): Promise<OutputListing>;
+  function outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
+  async function outputs(original: StoredCreation, id?: OutputId): Promise<OutputListing | OutputRead> {
+    if (original.observation?.kind !== 'confirmed') return outputsUnavailable;
+    if (id !== undefined && !isOutputId(id)) return outputsInvalid;
+    let prepared: OriginalOutputBinding<I>;
+    try { prepared = prepareOutputBinding(original, instance); }
+    catch { return outputsInvalid; }
+    const authorize = () => {
+      const granted = validate(prepared.original.installation);
+      if (canonicalJson(prepared.original.credential) !== canonicalJson(granted.credential)) throw new Error('Original credentials unavailable');
+    };
+    let connected: ConnectedProvider<M, I>;
+    try { authorize(); connected = await acquire(); authorize(); }
+    catch { return outputsUnavailable; }
+    let owner: ProviderOutputs<I>;
+    try {
+      const capability = connected.outputs;
+      if (capability === undefined) return outputsUnsupported;
+      if (!capability || typeof capability.list !== 'function' || typeof capability.read !== 'function') return outputsInvalid;
+      owner = capability;
+    } catch { return outputsInvalid; }
+    let listing: unknown;
+    try { authorize(); listing = await owner.list(structuredClone(prepared.binding)); authorize(); }
+    catch { return outputsUnavailable; }
+    let entries;
+    try {
+      if (record(listing).kind !== 'complete') return outputFailure(listing);
+      entries = parseProviderOutputList(listing, prepared);
+    } catch { return outputsInvalid; }
+    try { authorize(); } catch { return outputsUnavailable; }
+    if (id === undefined) return { kind: 'available', outputs: entries.map(entry => entry.output) };
+    const entry = entries.find(entry => entry.output.outputId === id);
+    if (!entry) return outputMissing;
+    let result: unknown;
+    try { authorize(); result = await owner.read(structuredClone(entry.reference)); authorize(); }
+    catch { return outputsUnavailable; }
+    let bytes: Uint8Array;
+    try {
+      const input = record(result);
+      if (input.kind === 'missing') { record(input, ['kind']); return outputMissing; }
+      if (input.kind !== 'available') return outputFailure(input);
+      record(input, ['kind', 'bytes']);
+      bytes = copyOutputBytes(input.bytes, entry.output);
+    } catch { return outputsInvalid; }
+    try { authorize(); } catch { return outputsUnavailable; }
+    return { kind: 'available', output: entry.output, bytes };
+  }
   return {
+    outputs,
     assertFrontendInput,
     matches: selected => selected.contributionId === id && identityKey(selected.instance) === key,
     capture(scope, selected) {
@@ -413,6 +470,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
 export function createProviderRegistry(extensions: readonly ProviderExtension[]) {
   const bindings: BoundProvider[] = [], lifetimes: ExtensionLifetime[] = [];
   const pending = new Set<Promise<unknown>>();
+  let outputOperations = 0;
   const streams = new Set<ProviderStream>();
   let retiring: Set<ProviderStream> | undefined;
   let cleanupFailed = false;
@@ -433,6 +491,23 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     pending.add(task);
     void task.then(() => pending.delete(task), () => pending.delete(task));
     return task;
+  }
+  function outputOperation<T extends OutputListing | OutputRead>(original: StoredCreation,
+    read: (binding: BoundProvider, snapshot: StoredCreation) => Promise<T>): Promise<T | typeof outputsUnavailable | typeof outputsInvalid> {
+    if (phase !== 'active' || outputOperations >= 4) return Promise.resolve(outputsUnavailable);
+    outputOperations++;
+    let snapshot: StoredCreation;
+    try { snapshot = structuredClone(original); }
+    catch { outputOperations--; return Promise.resolve(outputsInvalid); }
+    return track(async () => {
+      try {
+        const binding = bindings.find(binding => binding.matches(snapshot.installation));
+        if (phase !== 'active' || !binding) return outputsUnavailable;
+        const result = await read(binding, snapshot);
+        return phase === 'active' ? result : outputsUnavailable;
+      } catch { return outputsUnavailable; }
+      finally { outputOperations--; }
+    });
   }
   async function refresh(): Promise<readonly ProviderStatus[]> {
     discoveredAt = Date.now();
@@ -560,6 +635,12 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
         !discovered.agents.some(agent => agent.opaqueId === selected.agent.opaqueId)) throw new Error('Provider command unavailable');
       return binding.captureCommand(original, action, operationId);
     },
+    conversationOutputs(original: StoredCreation): Promise<OutputListing> {
+      return outputOperation(original, (binding, snapshot) => binding.outputs(snapshot));
+    },
+    readOutput(original: StoredCreation, id: OutputId): Promise<OutputRead> {
+      return outputOperation(original, (binding, snapshot) => isOutputId(id) ? binding.outputs(snapshot, id) : Promise.resolve(outputsInvalid));
+    },
     readPermissions(original: StoredCreation): Promise<ConversationPermissions> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
@@ -602,4 +683,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 }
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
-export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput'>;
+export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>;

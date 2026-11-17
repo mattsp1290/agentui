@@ -1,5 +1,5 @@
 export { contractVersion } from '@agentui/contracts';
-export type { ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity } from '@agentui/contracts';
+export type { ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity, TextMetadata, TextOutput, OutputId, OutputFailure, OutputListing, OutputRead } from '@agentui/contracts';
 export type { SecretProvider } from './secrets.js';
 
 export { EXTENSION_SDK_VERSION, parseExtensionManifest, checkExtensionEntrypoint, validateExtensionLifetime } from './extensions.js';
@@ -14,6 +14,7 @@ export type {
   ProviderModel, ProviderInstance, ProviderRef, CredentialHandle, CreationIntent, ProviderConversation,
   ConversationRef, ConversationRefKind, ProviderCursor, ProviderCommand, ProviderOperation, ProviderUnsupported, ProviderCapability,
   ProviderFailure, ProviderOutcome, ProviderCommandEffect, ProviderSnapshot, ProviderItem, ProviderFeed,
+  ProviderTextOutput, ProviderOutputListing, ProviderOutputRead, ProviderOutputs,
   ConnectedProvider, BackendProvider, ProviderPermission, PermissionListing, RevokePermission, PermissionRevokeEffect, ProviderPermissions,
 } from './providers.js';
 

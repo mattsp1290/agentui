@@ -119,6 +119,8 @@ export function createServerExtensions() {
   };
   const captureCommand: ProviderConversationOperations['captureCommand'] = (...args) => current().captureCommand(...args);
   const executeCommand: ProviderConversationOperations['executeCommand'] = (...args) => current().executeCommand(...args);
+  const conversationOutputs: ProviderConversationOperations['conversationOutputs'] = (...args) => current().conversationOutputs(...args);
+  const readOutput: ProviderConversationOperations['readOutput'] = (...args) => current().readOutput(...args);
   const readPermissions: ProviderConversationOperations['readPermissions'] = (...args) => current().readPermissions(...args);
   const observe: ProviderConversationOperations['observe'] = (...args) => current().observe(...args);
   function close(): Promise<void> {
@@ -153,5 +155,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, readPermissions, observe, status, close };
+  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, status, close };
 }

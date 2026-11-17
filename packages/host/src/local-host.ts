@@ -7,7 +7,7 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import type { ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
+import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
@@ -37,6 +37,8 @@ export interface LocalHost<E, P> {
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
+  conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
+  readOutput(scope: ConversationScope, id: OutputId): Promise<OutputRead>;
   observeProvider(scope: ConversationScope): Promise<void>;
   observationStatus(scope: ConversationScope): ProviderObservationStatus;
   retryObservation(scope: ConversationScope): Promise<ProviderObservationStatus>;
@@ -92,6 +94,23 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (closed) throw new Error('Host is closed');
     if (!options.authorize(scope)) throw new Error('Unauthorized scope');
     return scope;
+  };
+  const outputOperation = <T extends OutputListing | OutputRead>(value: ConversationScope,
+    read: (providers: ProviderConversationOperations, original: StoredCreation) => Promise<T>): Promise<T | OutputFailure> => {
+    const scope = authorized(value), original = store.creation(scope);
+    if (!original) {
+      const installed = store.findInstallation(scope);
+      return Promise.resolve(installed && 'kind' in installed
+        ? { kind: 'unavailable', reason: 'outputs-unavailable' }
+        : { kind: 'unsupported', reason: 'outputs-unsupported' });
+    }
+    if (original.observation?.kind !== 'confirmed' || !options.providers) return Promise.resolve({ kind: 'unavailable', reason: 'outputs-unavailable' });
+    const providers = options.providers;
+    return inFlight(async () => {
+      const result = await read(providers, original);
+      authorized(scope);
+      return result;
+    });
   };
   const observationStatus = (scope: ConversationScope): ProviderObservationStatus => {
     authorized(scope);
@@ -193,6 +212,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     createConversation(scope: ConversationScope, target: Installation): void {
       store.create(authorized(scope), installation(target));
     },
+    conversationOutputs: scope => outputOperation(scope, (providers, original) => providers.conversationOutputs(original)),
+    readOutput: (scope, id) => outputOperation(scope, (providers, original) => providers.readOutput(original, id)),
     conversationPermissions(value) {
       const scope = authorized(value), original = store.creation(scope);
       if (!original) {

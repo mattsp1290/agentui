@@ -20,7 +20,7 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     const packs = JSON.parse(run('npm', ['pack', './packages/sdk', './packages/contracts', './packages/protocol', './node_modules/@cfworker/json-schema', './node_modules/@ag-ui/core', '--json', '--ignore-scripts', '--pack-destination', temporary], root));
     const sdk = join(temporary, 'node_modules', '@agentui/sdk');
     const protocol = join(sdk, 'node_modules', '@agentui/protocol');
-    const destinationFor = name => name === '@agentui/sdk' ? sdk : join(name === '@ag-ui/core' ? protocol : sdk, 'node_modules', name);
+    const destinationFor = name => name === '@agentui/sdk' ? sdk : name === '@agentui/contracts' ? join(temporary, 'node_modules', name) : join(name === '@ag-ui/core' ? protocol : sdk, 'node_modules', name);
     for (const pack of packs) {
       const destination = destinationFor(pack.name);
       await mkdir(destination, { recursive: true });
@@ -35,12 +35,25 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
     await writeFile(join(temporary, 'tsconfig.json'), JSON.stringify({ extends: join(root, 'tsconfig.base.json') }));
     const sources = await Promise.all(['crew.ts', 'local.ts'].map((name) => readFile(new URL(name, import.meta.url), 'utf8')));
     const prefix = sources.map((source, index) => index ? source.replace("import * as SDK from '@agentui/sdk';", '') : source).join('\n');
-    const agui = `type Agui = { request: SDK.AguiModel['request']; cursor: SDK.Json; state: SDK.Json; event: SDK.Json };
+    const agui = `declare const output: SDK.ConversationRef<'native-work', 'output'>;
+      const outputs: SDK.ProviderOutputs<'native-work'> = {
+        async list(binding) { return { kind: 'complete', outputs: [{ reference: { binding, ref: output.ref }, name: 'report.txt', mediaType: 'text/plain', byteLength: 0, sha256: 'a'.repeat(64) }] }; },
+        async read(reference) { void reference; return { kind: 'available', bytes: new Uint8Array() }; }
+      };
+      export const outputBackend: SDK.ConnectedProvider<LocalModel, 'native-work'> = { ...localBackend, outputs };
+      type Agui = { request: SDK.AguiModel['request']; cursor: SDK.Json; state: SDK.Json; event: SDK.Json };
       declare const aguiBackend: SDK.BackendProvider<Agui, 'actual'>;
       declare const aguiPresentation: SDK.ProviderPresentation<Agui, 'actual'>;
       declare const contributions: SDK.ProviderContributions;
     `;
     await assertCompileCases({ config: join(temporary, 'tsconfig.json'), prefix: prefix + agui, cases: [
+      ["export const legacy: SDK.ConnectedProvider<LocalModel, 'native-work'> = localBackend;", null],
+      ...['run', 'decision', 'choice', 'permission'].map(kind => ["const bad: SDK.ConversationRef<'native-work', '" + kind + "'> = output; void bad;", /not assignable/u]),
+      ["const bad: SDK.ConversationRef<'foreign', 'output'> = output; void bad;", /not assignable/u],
+      ["const bad: SDK.ProviderOutputListing<'native-work'> = { kind: 'missing' }; void bad;", /not assignable/u],
+      ["const bad: SDK.ProviderOutputRead = { kind: 'unavailable', reason: 7 }; void bad;", /not assignable/u],
+      ["const bad: SDK.OutputListing = { kind: 'missing', reason: 'output-missing' }; void bad;", /not assignable/u],
+      ["const bad: SDK.OutputId = 'output-' + 'a'.repeat(64); void bad;", /not assignable/u],
       ["contributions.addAgui('actual', aguiBackend, aguiPresentation);", null],
       ["contributions.addAgui('generic', crew, crewPresentation);", /not assignable/u],
       ["export const constructed: SDK.BackendProvider<CrewModel, 'native-work'> = createCrewFixture(localInstance).crew; export const dynamic: SDK.BackendProvider<CrewModel, string> = crewForRuntimeInstallation('runtime-assigned');", null],
@@ -62,6 +75,9 @@ test('packed SDK supports isolated platform-neutral provider authors through pub
       import assert from 'node:assert/strict';
       import { backendProviderContractVersion } from '@agentui/sdk';
       assert.equal(backendProviderContractVersion, 1);
+      const contract = await import('@agentui/contracts/output');
+      assert.equal(contract.parseOutputId('output-' + 'a'.repeat(64)), 'output-' + 'a'.repeat(64));
+      assert.equal(contract.OUTPUT_MAX_BYTES, 65536);
       await assert.rejects(import('@agentui/sdk/src/providers.js'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
       await assert.rejects(import('@agentui/sdk/providers'), { code: 'ERR_PACKAGE_PATH_NOT_EXPORTED' });
     `], temporary);
