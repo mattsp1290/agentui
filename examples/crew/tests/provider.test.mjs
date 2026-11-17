@@ -203,7 +203,7 @@ test('Crew discovery resolves a member that declares named subagents', async t =
   assert.equal(remote.calls.filter(call => call.path === '/v1/members').length, 1);
 });
 
-for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
+for (const trigger of ['host shutdown', 'retirement after a discovery failure']) test(`${trigger} drains a Crew baseline observer before observation admission`, { timeout: 5000 }, async t => {
   const remote = await service(t), extension = remote.extension();
   const activate = extension.value.entry.activate;
   const baseline = Promise.withResolvers(), release = Promise.withResolvers();
@@ -243,9 +243,12 @@ for (const trigger of ['host shutdown', 'discovery failure']) test(`${trigger} d
     await baseline.promise;
     assert.equal(remote.streams.size, 1);
     assert.equal(credentialUses, 1);
-    if (trigger === 'discovery failure') {
+    if (trigger !== 'host shutdown') {
       failDiscovery = true;
       assert.deepEqual((await f.running.discoverProviders()).map(item => item.cause), ['invalid-installation']);
+      await until(() => remote.streams.size === 0);
+      assert.equal(closed, false);
+      assert.equal(observations, 0);
     }
     const closing = f.running.close().then(() => { closed = true; });
     release.resolve();
@@ -1042,6 +1045,8 @@ test('Crew maps HTTP, transport and contract failures to typed provider failures
       observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'] });
     if (mode.status === 'protocol') return json(200, { apiVersion: '9' });
     if (mode.status === 'reset') { response.destroy(); return; }
+    if (mode.status === 'missing member') return json(200, { apiVersion: '1', members: [], next: null });
+    if (mode.status === 'pagination loop') return json(200, { apiVersion: '1', members: [], next: 'same-page' });
     return json(mode.status, { error: 'PRIVATE_CREW_FAILURE' });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
@@ -1056,7 +1061,8 @@ test('Crew maps HTTP, transport and contract failures to typed provider failures
   const provider = await activate((_request, action) => action('private-crew-test'));
   const credential = { kind: 'credential-handle', instance, hostId: 'test-host', opaqueHandle: 'test-handle' };
   const connect = (target = provider) => target.connect({ apiVersion: 1, instance, credential });
-  for (const [status, kind] of [[401, 'authentication-failed'], [403, 'unauthorized'], [404, 'version-unsupported'], [429, 'unavailable'],
+  for (const [status, kind] of [[401, 'authentication-failed'], [403, 'unauthorized'], [400, 'version-unsupported'], [404, 'version-unsupported'],
+    [422, 'version-unsupported'], [408, 'unavailable'], [429, 'unavailable'],
     [500, 'unavailable'], [503, 'unavailable'], ['reset', 'unavailable'], ['protocol', 'version-unsupported']]) {
     mode = { at: 'capabilities', status };
     const refused = await connect();
@@ -1068,7 +1074,27 @@ test('Crew maps HTTP, transport and contract failures to typed provider failures
     assert.equal(discovered.kind, kind, `members ${status}`); assert.doesNotMatch(discovered.reason, /PRIVATE/);
     await connection.backend.close();
   }
-  assert.equal((await provider.connect({ apiVersion: 1, instance, credential: null })).kind, 'authentication-failed');
-  const withoutSecret = await activate(async () => { throw new Error('Provider credential use refused'); });
-  assert.equal((await connect(withoutSecret)).kind, 'authentication-failed');
+  mode = { at: 'members', status: 'pagination loop' };
+  const paginated = await connect();
+  const looped = await paginated.backend.discover();
+  assert.equal(looped.kind, 'version-unsupported'); assert.doesNotMatch(looped.reason, /PRIVATE/);
+  await paginated.backend.close();
+  // The host classifies a thrown connect or discover as an invalid installation.
+  mode = { at: 'members', status: 'missing member' };
+  const missing = await connect();
+  await assert.rejects(missing.backend.discover(), /^Error: Configured Crew member is not available$/);
+  await missing.backend.close();
+  await assert.rejects(provider.connect({ apiVersion: 1, instance, credential: null }), /^Error: Crew installation is misconfigured$/);
+  const foreign = { ...instance, generation: 'other' };
+  await assert.rejects(provider.connect({ apiVersion: 1, instance: foreign, credential }), /^Error: Crew installation is misconfigured$/);
+  await assert.rejects(provider.connect({ apiVersion: 1, instance, credential: { ...credential, instance: foreign } }), /^Error: Crew installation is misconfigured$/);
+  const refusal = new Error('Provider credential use refused');
+  const withoutSecret = await activate(async () => { throw refusal; });
+  await assert.rejects(connect(withoutSecret), error => error === refusal);
+  let uses = 0;
+  const revokedLater = await activate((_request, action) => ++uses === 1 ? action('private-crew-test') : Promise.reject(refusal));
+  const connection = await connect(revokedLater);
+  assert.equal(connection.kind, 'connected');
+  await assert.rejects(connection.backend.discover(), error => error === refusal);
+  await connection.backend.close();
 });
