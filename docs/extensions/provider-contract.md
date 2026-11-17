@@ -136,7 +136,7 @@ What the suite proves:
 - An uncertain send does not block a new send (bean `agentui-u4n8`). The suite does not cover that gap.
 
 `boundaries.test.mjs` asserts that provider traffic carries no trace context or collector headers, that telemetry carries no prompt, reply or provider secret, and that no AgentUI agent span is synthesized for a remote run. A positive control proves the telemetry search finds a value that is exported.
-It also asserts that `apps`, `packages`, `scripts` and `templates` contain no Crew reference (a word-start match on `crew`, plus `birbcrew`), excluding the one adapter-tests fixture that names `example.crew`, and that the repository contains no OpenBot code or dependency.
+It also asserts that `apps`, `packages`, `scripts` and `templates` contain no case-insensitive `crew` substring, so camelCase or underscore names such as `isCrewProvider` are caught, excluding the one adapter-tests fixture that names `example.crew`, and that the repository contains no OpenBot code or dependency.
 The check is lexical. Crew-specific logic that never names Crew would pass. Vendored `.tgz` archives are out of scope; their declared dependencies appear in `package-lock.json`, which is searched.
 
 ## Generic consumers and clients
