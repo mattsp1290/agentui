@@ -1,30 +1,14 @@
 import assert from 'node:assert/strict';
-import { record } from '@agentui/contracts/decode';
-import { parseNativeCredential } from '../../../apps/host/build/tsc/native-wire.js';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-import { createServiceConnection, readServiceResponseBody } from '../../../packages/client/dist/service-engine.js';
+import { createServiceConnection } from '../../../packages/client/dist/service-engine.js';
 
 const input = await new Promise(resolve => process.once('message', resolve));
-async function enroll() {
-  const response = await fetch(`${input.origin}/native/v1/pair`, {
-    method: 'POST', signal: AbortSignal.timeout(20_000), redirect: 'error', headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ version: 1, hostId: input.hostId, code: input.code }),
-  });
-  const result = record(await readServiceResponseBody(response), ['ok', 'value']);
-  assert.equal(response.status, 200);
-  assert.equal(result.ok, true);
-  const credential = parseNativeCredential(result.value);
-  assert.equal(credential.hostId, input.hostId);
-  return credential;
-}
-const credential = input.credential ? parseNativeCredential(input.credential) : await enroll();
-if (!input.credential) process.send({ kind: 'paired', credential });
 const connection = createServiceConnection(async (body, { op, signal }) => {
   const response = await fetch(`${input.origin}/native/v1`, {
-    method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${credential.secret}` },
+    method: 'POST', signal, redirect: 'error', headers: { 'Content-Type': 'application/json' },
     body,
   });
-  if (!input.credential && op === 'submit') {
+  if (!input.recover && op === 'submit') {
     await response.body?.cancel();
     signal.throwIfAborted();
     await new Promise((_, reject) => signal.addEventListener('abort', () => reject(signal.reason), { once: true }));
@@ -33,7 +17,7 @@ const connection = createServiceConnection(async (body, { op, signal }) => {
 }, transcriptProjection);
 const metadata = await connection.metadata();
 assert.equal(metadata.hostId, input.hostId);
-assert.equal(metadata.principalId, credential.principalId);
+assert.equal(metadata.principalId, 'trusted-owner');
 const scope = { hostId: input.hostId, conversationId: 'native-process-lifetime' };
 await connection.create(scope, metadata.defaultAgentId);
 const port = connection.conversation(scope);
@@ -43,7 +27,7 @@ const snapshot = new Promise(resolve => {
 });
 const before = await snapshot;
 const command = { version: 1, scope, clientCommandId: 'same-original-id', body: { kind: 'send', text: 'A separate host owns this command.' } };
-if (input.credential) {
+if (input.recover) {
   const receipt = await connection.reconcile(scope, command.clientCommandId);
   assert.equal(receipt.state.kind, 'completed');
   assert.equal(Object.keys(before.document.decisions).length, 1);

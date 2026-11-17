@@ -91,11 +91,6 @@ test('Pi startup advertises one runtime to browser and native clients and labels
   lines.close();
   assert.equal(ready.mode, 'pi');
   assert.doesNotMatch(JSON.stringify(ready), new RegExp(token));
-  const invite = async command => {
-    const result = await launch([command, '--data-dir', data], env);
-    assert.equal(result.code, 0, result.stderr);
-    return JSON.parse(result.stdout).value;
-  };
   const call = (path, body, headers = {}) => new Promise((resolve, reject) => {
     const outgoing = request(`${ready.origin}${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json', ...headers } }, incoming => {
       let text = '';
@@ -108,14 +103,9 @@ test('Pi startup advertises one runtime to browser and native clients and labels
     outgoing.end(JSON.stringify(body));
   });
   const runtime = { engine: 'pi', version: '1.5.2', format: 'pi-sdk-chat-opencode-go-glm-5.3-v1' };
-  const browserPair = await call('/api/v1', { op: 'pair', code: (await invite('invite')).code }, { Origin: ready.origin });
-  assert.equal(browserPair.status, 200);
-  const cookie = browserPair.headers['set-cookie'][0].split(';')[0];
-  const nativePair = await call('/native/v1/pair', { version: 1, hostId: ready.hostId, code: (await invite('invite-native')).code });
-  assert.equal(nativePair.status, 200);
   for (const client of [
-    { path: '/api/v1', headers: { Origin: ready.origin, Cookie: cookie }, conversationId: 'browser-pi' },
-    { path: '/native/v1', headers: { Authorization: `Bearer ${nativePair.body.value.secret}` }, conversationId: 'native-pi' },
+    { path: '/api/v1', headers: { Origin: ready.origin }, conversationId: 'browser-pi' },
+    { path: '/native/v1', headers: {}, conversationId: 'native-pi' },
   ]) {
     const metadata = await call(client.path, { op: 'metadata' }, client.headers);
     assert.equal(metadata.status, 200);
@@ -141,8 +131,6 @@ test('Pi startup advertises one runtime to browser and native clients and labels
   const errors = [];
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${ready.origin}/browser.html`);
-  await page.getByLabel('Pairing code').fill((await invite('invite')).code);
-  await page.getByRole('button', { name: 'Pair host', exact: true }).click();
   await page.getByRole('button', { name: 'New conversation', exact: true }).click();
   await page.getByPlaceholder('Write to Pi…').waitFor();
   assert.match(await page.locator('.composer-footer').textContent(), /Pi · GLM 5.3 · OpenCode Go · Chat only · No tools/);

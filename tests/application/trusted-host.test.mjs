@@ -6,16 +6,16 @@ import { join } from 'node:path';
 import { createInterface } from 'node:readline';
 import { promisify } from 'node:util';
 import test from 'node:test';
+import { hostRequest } from './support/host-process.mjs';
 
 const root = new URL('../../', import.meta.url);
 
-async function fixture(t, trusted) {
+async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-trusted-'));
   const processes = [];
   const f = { directory, origin: '', hostId: '' };
   f.start = async () => {
-    const child = spawn(process.execPath, ['apps/host/dist/main.js', 'browser-dev', '--data-dir', directory, '--port', '0',
-      ...(trusted ? ['--trusted'] : [])], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn(process.execPath, ['apps/host/dist/main.js', 'browser-dev', '--data-dir', directory, '--port', '0'], { cwd: root, stdio: ['ignore', 'pipe', 'pipe'] });
     let stderr = '';
     child.stderr.setEncoding('utf8').on('data', chunk => { stderr += chunk; });
     const exited = new Promise(resolve => child.once('exit', (code, signal) => resolve({ code, signal })));
@@ -67,15 +67,40 @@ async function fixture(t, trusted) {
   return f;
 }
 
-test('ordinary host startup still requires pairing unless trusted access is selected', { timeout: 10_000 }, async t => {
-  const f = await fixture(t, false);
-  const response = await f.call({ op: 'metadata' });
-  assert.equal(response.status, 401);
-  assert.equal(response.body.error.kind, 'unauthorized');
+test('default host startup admits browser and native requests directly without pairing', { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const browser = await f.call({ op: 'metadata' });
+  assert.equal(browser.status, 200, JSON.stringify(browser.body));
+  assert.equal(browser.body.value.hostId, f.hostId);
+  assert.equal(browser.body.value.principalId, 'trusted-owner');
+  const native = await hostRequest(f.origin, '/native/v1', { op: 'metadata' });
+  assert.equal(native.status, 200, JSON.stringify(native.body));
+  assert.equal(native.body.value.principalId, 'trusted-owner');
+  assert.equal(native.headers['set-cookie'], undefined);
+  const staleBearer = await hostRequest(f.origin, '/native/v1', { op: 'metadata' }, { Authorization: 'Bearer stale-device-secret' });
+  assert.equal(staleBearer.status, 200, JSON.stringify(staleBearer.body));
 });
 
-test('trusted host creates and resumes a chat without an invitation, cookie or credential record', { timeout: 20_000 }, async t => {
-  const f = await fixture(t, true);
+test('direct access still rejects foreign Host, Origin, content type and native cookies', { timeout: 10_000 }, async t => {
+  const f = await fixture(t);
+  const port = new URL(f.origin).port;
+  const rejected = async (path, headers) => {
+    const response = await hostRequest(f.origin, path, { op: 'metadata' }, headers);
+    assert.equal(response.status, 400, `${path} ${JSON.stringify(headers)} ${JSON.stringify(response.body)}`);
+    assert.equal(response.body.ok, false);
+  };
+  await rejected('/api/v1', { Origin: 'http://evil.example' });
+  await rejected('/api/v1', {});
+  await rejected('/api/v1', { Origin: f.origin, Host: `localhost:${port}` });
+  await rejected('/api/v1', { Origin: f.origin, 'Content-Type': 'text/plain' });
+  await rejected('/native/v1', { Host: `evil.example:${port}` });
+  await rejected('/native/v1', { Origin: f.origin });
+  await rejected('/native/v1', { Cookie: 'agentui=1' });
+  await rejected('/native/v1', { 'Content-Type': 'text/plain' });
+});
+
+test('default host creates and resumes a chat without an invitation, cookie or credential record', { timeout: 20_000 }, async t => {
+  const f = await fixture(t);
   assert.equal((await fetch(`${f.origin}/browser.html`)).status, 200);
   const metadata = await f.ok({ op: 'metadata' });
   const staleCookie = await f.call({ op: 'metadata' }, { Cookie: `agentui_device_${metadata.hostId}=expired-pairing` });

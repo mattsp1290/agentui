@@ -24,7 +24,7 @@ test('Pi setup guidance activates without exposing the key to chat and survives 
   t.after(async () => { await browser.close(); await stop(); await rm(directory, { recursive: true, force: true }); });
   let logs = '';
   const start = async (port = 0) => {
-    child = spawn(process.execPath, ['apps/host/dist/main.js', 'desktop', '--preferred', 'pi', '--trusted',
+    child = spawn(process.execPath, ['apps/host/dist/main.js', 'desktop', '--preferred', 'pi',
       '--workspace', directory, '--data-dir', join(directory, 'data'), '--port', String(port)], { env, stdio: ['ignore', 'pipe', 'pipe'] });
     child.stderr.on('data', data => { logs += data; });
     return new Promise((resolve, reject) => {
