@@ -118,23 +118,23 @@ test('enabled tracing releases failed startup and memoizes successful host shutd
 
 test('response serialization failure exports a sanitized unavailable outcome after admission', { timeout: 15_000 }, async t => {
   const collector = await receiver(t);
-  const [{ Access }, { openAccessDatabase }, { serviceEndpoint }, { createHostObservability }, { SERVICE_MAX_RESPONSE_BYTES }] = await Promise.all([
-    import('../../apps/host/build/tsc/access.js'), import('../../apps/host/build/tsc/access-database.js'),
+  const [{ openAccessDatabase }, { serviceEndpoint }, { createHostObservability }, { SERVICE_MAX_RESPONSE_BYTES }] = await Promise.all([
+    import('../../apps/host/build/tsc/access-database.js'),
     import('../../apps/host/build/tsc/service-endpoint.js'), import('../../apps/host/build/tsc/observability.js'),
     import('@agentui/contracts/service'),
   ]);
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-framing-'));
-  const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
+  const access = openAccessDatabase(join(directory, 'host.sqlite'));
   const privateDiagnostic = 'private-serialization-diagnostic-e88e24';
   const observability = createHostObservability({ kind: 'otlp', endpoint: `${collector.endpoint}/v1/traces`, headers: {}, serviceName: 'agentui-host', datadogLlmObservability: false });
-  const handler = serviceEndpoint({ credentialClass: 'native', access, observability, isClosing: () => false,
+  const handler = serviceEndpoint({ client: 'native', hostId: access.hostId, observability, isClosing: () => false,
     api: async () => ({ diagnostic: privateDiagnostic.padEnd(SERVICE_MAX_RESPONSE_BYTES, 'x') }) });
   const server = createServer((incoming, outgoing) => { void handler(incoming, outgoing).catch(() => outgoing.destroy()); });
   t.after(async () => {
     server.closeAllConnections();
     await new Promise(resolve => server.close(resolve));
     await observability.close();
-    access.close();
+    access.database.close();
     rmSync(directory, { recursive: true, force: true });
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));

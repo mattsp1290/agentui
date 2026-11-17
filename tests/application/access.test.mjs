@@ -6,9 +6,8 @@ import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import test from 'node:test';
 import { DatabaseSync } from 'node:sqlite';
-import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
-const openAccess = path => new Access(openAccessDatabase(path));
+import { ownerPrincipal } from '../../apps/host/build/tsc/principal.js';
 import { ownDirectory } from '../../apps/host/build/tsc/ownership.js';
 
 function directory(t) {
@@ -16,12 +15,10 @@ function directory(t) {
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   return directory;
 }
-test('every credential class resolves to the fixed owner principal on this host only', t => {
-  const access = openAccess(join(directory(t), 'host.sqlite'));
-  t.after(() => access.close());
-  for (const credentialClass of ['browser-development', 'native']) {
-    assert.deepEqual(access.owner(credentialClass), { id: 'trusted-owner', hostId: access.hostId, credentialClass });
-  }
+test('every request resolves to the fixed owner principal on this host only', t => {
+  const access = openAccessDatabase(join(directory(t), 'host.sqlite'));
+  t.after(() => access.database.close());
+  assert.deepEqual(ownerPrincipal(access.hostId), { id: 'trusted-owner', hostId: access.hostId });
 });
 test('a pre-existing host database with paired devices opens, drops the device table and keeps its identity', t => {
   const path = join(directory(t), 'host.sqlite');

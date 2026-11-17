@@ -6,7 +6,7 @@ import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, ProviderStatus, DiscoveredProvider, ProviderCreationOperations, UnavailableProvider } from '@agentui/host';
-import type { Principal } from './access.js';
+import type { Principal } from './principal.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
 import { searchConversations } from './conversation-search.js';

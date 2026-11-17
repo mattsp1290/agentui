@@ -12,7 +12,6 @@ import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES, IMAGE_BODY_TIMEOUT_MS } from
 import { SERVICE_MAX_REQUEST_BYTES } from '@agentui/contracts/service';
 import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
-import { Access } from '../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../apps/host/build/tsc/feed-registry.js';
@@ -22,17 +21,16 @@ import { png, chunk, screenshotPng, screenshotJpeg } from '../host/image-fixture
 
 async function fixture(t) {
   const directory = mkdtempSync(join(tmpdir(), 'agentui-images-')), path = join(directory, 'host.sqlite');
-  const access = new Access(openAccessDatabase(path)), feeds = new FeedRegistry();
+  const access = openAccessDatabase(path), feeds = new FeedRegistry();
   const host = openRecordedHost({ path, backendPath: join(directory, 'recorded.jsonl'), hostId: access.hostId });
   const scope = { hostId: access.hostId, conversationId: 'images' };
   host.createConversation(scope, recordedInstallation);
   const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
-  const handlers = Object.fromEntries(['native', 'browser-development'].map(credentialClass => {
-    const api = createApi({ host, feeds, compatibility, isClosing: () => false,
-      agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] } });
-    return [credentialClass, serviceEndpoint({ access, api, credentialClass, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })];
-  }));
+  const api = createApi({ host, feeds, compatibility, isClosing: () => false,
+    agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] } });
+  const handlers = Object.fromEntries(['native', 'browser-development'].map(client =>
+    [client, serviceEndpoint({ hostId: access.hostId, api, client, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })]));
   const incoming = [], responses = [];
   const server = createServer((request, response) => {
     incoming.push(request); responses.push(response);
@@ -62,7 +60,7 @@ async function fixture(t) {
   const count = () => database.prepare('SELECT COUNT(*) AS count FROM images').get().count;
   t.after(async () => {
     await new Promise(resolve => { server.close(resolve); server.closeAllConnections(); });
-    feeds.dispose(); host.close(); await host.drained; database.close(); access.close(); rmSync(directory, { recursive: true, force: true });
+    feeds.dispose(); host.close(); await host.drained; database.close(); access.database.close(); rmSync(directory, { recursive: true, force: true });
   });
   const start = (kind, options = {}) => {
     const outgoing = httpRequest(origin + route(kind), { method: 'POST', headers: { ...headers(kind), ...options.headers } });

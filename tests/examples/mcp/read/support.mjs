@@ -12,7 +12,6 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { createRecordedDriver, openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { EXTENSION_SDK_VERSION, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import { Access } from '../../../../apps/host/build/tsc/access.js';
 import { openAccessDatabase } from '../../../../apps/host/build/tsc/access-database.js';
 import { createApi } from '../../../../apps/host/build/tsc/api.js';
 import { FeedRegistry } from '../../../../apps/host/build/tsc/feed-registry.js';
@@ -74,7 +73,7 @@ export async function fixture(t) {
   const pendingEntered = new Promise(resolve => { enteredPending = resolve; });
   t.after(async () => { releasePending(); await pendingSubmission; });
   const directory = privateDirectory(t), database = join(directory, 'host.sqlite'), backendPath = join(directory, 'recorded.jsonl');
-  const access = new Access(openAccessDatabase(database));
+  const access = openAccessDatabase(database);
   const scope = { hostId: access.hostId, conversationId: 'conversation-a' };
   const counts = { dispatch: 0, lookup: 0 };
   const recorded = createRecordedDriver({ installation: installed, backendPath, cancel: { kind: 'supported' }, decodeEvent: transcriptProjection.decodeEvent,
@@ -94,10 +93,10 @@ export async function fixture(t) {
     { installation: { ...installed, installationId: 'unavailable' }, availability: { kind: 'unavailable', reason: 'offline' } }] },
     isClosing: () => false });
   const operations = [];
-  const endpoint = serviceEndpoint({ access, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },
-    credentialClass: 'native', isClosing: () => false, observability: NO_OBSERVABILITY });
+  const endpoint = serviceEndpoint({ hostId: access.hostId, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },
+    client: 'native', isClosing: () => false, observability: NO_OBSERVABILITY });
   const origin = await listen(t, (request, response) => { void endpoint(request, response).catch(() => response.destroy()); });
-  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); });
+  t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.database.close(); });
   host.createConversation(scope, installed);
   host.createConversation({ ...scope, conversationId: 'conversation-b' }, installed);
   const nativeRun = run(scope);

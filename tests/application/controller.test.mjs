@@ -1476,7 +1476,7 @@ test('image previews and uploads share one host transfer slot, reusing concurren
   const active = f.app.getSnapshot().active;
   let busy = false, overlaps = 0;
   const reads = [], uploads = [];
-  // Mirrors the host: one transfer per access, overlaps refused as unavailable.
+  // Mirrors the host: one transfer per host, overlaps refused as unavailable.
   const transfer = async work => {
     if (busy) { overlaps++; throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.'); }
     busy = true;

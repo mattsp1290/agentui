@@ -17,8 +17,8 @@ import type { createPiDriver } from '@agentui/host/pi';
 import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
-import { Access } from './access.js';
 import { openAccessDatabase } from './access-database.js';
+import type { AccessDatabase } from './access-database.js';
 import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
@@ -82,7 +82,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let owner: ReturnType<typeof ownDirectory>;
   try { owner = ownDirectory(options.directory); }
   catch (error) { await observability.close(); throw error; }
-  let access: Access | undefined;
+  let openedAccess: AccessDatabase | undefined;
   let host: LocalHost<TranscriptEvent, Transcript> | undefined;
   type Driver = ReturnType<typeof createCodexDriver> | ReturnType<typeof createCodexSdkDriver> | ReturnType<typeof createClaudeSdkDriver> | Awaited<ReturnType<typeof createPiDriver>>;
   const drivers: Driver[] = [];
@@ -129,7 +129,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       } finally {
         clearTimeout(deadline);
       }
-      access?.close();
+      openedAccess?.database.close();
       owner.close();
     })().finally(() => observability.close());
     return closePromise;
@@ -138,7 +138,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     const accessDatabase = openAccessDatabase(join(owner.directory, 'host.sqlite'));
-    access = new Access(accessDatabase);
+    openedAccess = accessDatabase;
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
       const replacement = await providers.replace(providerExtensionSource(accessDatabase, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
@@ -270,7 +270,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
         }
       }
     }
-    const hostId = access.hostId;
+    const hostId = accessDatabase.hostId;
     const readyHost = startup.kind === 'recorded'
       ? openRecordedHost({ path: join(owner.directory, 'host.sqlite'), backendPath: join(owner.directory, 'recorded.jsonl'),
         hostId, providers, ...(options.progressMs === undefined ? {} : { progressMs: options.progressMs }) })
@@ -281,13 +281,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const recovered = new Set<string>();
     let after: string | null = null;
     for (;;) {
-      const page = host.listConversations(access.hostId, after, 100);
+      const page = host.listConversations(hostId, after, 100);
       for (const scope of page) {
         const installation = host.inspect(scope).installation, key = canonicalJson(installation);
         if ('kind' in installation) { after = scope.conversationId; continue; }
         const engine = installation.binding.engine;
         if (!recovered.has(key) && (engine === 'codex' || engine === 'codex-sdk' || engine === 'claude-sdk' || engine === 'pi')) {
-          recoverProviderConversations(host, access.hostId, installation, PROVIDER_RECOVERY[engine]);
+          recoverProviderConversations(host, hostId, installation, PROVIDER_RECOVERY[engine]);
           recovered.add(key);
         }
         after = scope.conversationId;
@@ -304,8 +304,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
     const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing });
-    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api, files: browser.files, isClosing, observability });
-    const native = serviceEndpoint({ credentialClass: 'native', access, api, isClosing, observability });
+    const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
+    const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
     http.on('request', (request, response) => {
       if (request.url === '/setup/pi' && setupHandler) {
@@ -327,7 +327,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover);
-    return { origin, hostId: access.hostId, close, fatal, discoverProviders: providers.discover,
+    return { origin, hostId, close, fatal, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);

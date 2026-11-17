@@ -2,32 +2,32 @@ import { IMAGE_BODY_TIMEOUT_MS, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contra
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import { parseServiceRequest, SERVICE_MAX_REQUEST_BYTES, ServiceError } from '@agentui/contracts/service';
 import type { ServiceFailureKind } from '@agentui/contracts/service';
-import type { Access } from './access.js';
 import type { createApi } from './api.js';
 import { FAILURE_STATUS } from './errors.js';
 import { json, readJson } from './framing.js';
+import { ownerPrincipal } from './principal.js';
 import { serveAsset } from './static-assets.js';
 import type { HostObservability, RequestObservation } from './observability.js';
 
 type Api = ReturnType<typeof createApi>;
 type EndpointOptions = {
-  readonly access: Access;
+  readonly hostId: string;
   readonly api: Api;
   readonly isClosing: () => boolean;
   readonly observability: HostObservability;
 } & (
-  | { readonly credentialClass: 'browser-development'; readonly files: ReadonlyMap<string, Buffer> }
-  | { readonly credentialClass: 'native' }
+  | { readonly client: 'browser-development'; readonly files: ReadonlyMap<string, Buffer> }
+  | { readonly client: 'native' }
 );
 type RequestResult = Pick<RequestObservation, 'operation' | 'outcome'>;
 
-const imageIngress = new WeakSet<Access>();
+const imageIngress = new WeakSet<Api>();
 
 export function serviceEndpoint(options: EndpointOptions) {
+  const principal = ownerPrincipal(options.hostId);
   async function imageRequest(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
-    const principal = options.access.owner(options.credentialClass);
-    if (imageIngress.has(options.access)) throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.');
-    imageIngress.add(options.access);
+    if (imageIngress.has(options.api)) throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.');
+    imageIngress.add(options.api);
     let operation: RequestResult['operation'] = 'admission';
     try {
       const message = parseServiceRequest(await readJson(request, IMAGE_TRANSFER_MAX_BYTES, IMAGE_BODY_TIMEOUT_MS));
@@ -37,10 +37,10 @@ export function serviceEndpoint(options: EndpointOptions) {
       return { operation, outcome: 'ok' };
     } catch (error) {
       return { operation, outcome: writeServiceFailure(response, error) };
-    } finally { imageIngress.delete(options.access); }
+    } finally { imageIngress.delete(options.api); }
   }
   async function handle(request: IncomingMessage, response: ServerResponse): Promise<RequestResult> {
-    if (options.credentialClass === 'browser-development') {
+    if (options.client === 'browser-development') {
       const origin = browserOrigin(request);
       if (request.method !== 'POST' || request.headers.origin !== origin || request.headers['content-type'] !== 'application/json') throw new Error('Origin or content type mismatch');
     } else {
@@ -51,10 +51,10 @@ export function serviceEndpoint(options: EndpointOptions) {
         headers.origin !== undefined || headers.cookie !== undefined) throw new Error('Invalid native request headers');
     }
     if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
-    if (request.url === (options.credentialClass === 'native' ? '/native/v1/images' : '/api/v1/images')) return imageRequest(request, response);
-    if (options.credentialClass === 'native' && request.url !== '/native/v1') throw new Error('Invalid native path');
+    if (request.url === (options.client === 'native' ? '/native/v1/images' : '/api/v1/images')) return imageRequest(request, response);
+    if (options.client === 'native' && request.url !== '/native/v1') throw new Error('Invalid native path');
     const message = await admit(request);
-    const operation = message.op, principal = options.access.owner(options.credentialClass);
+    const operation = message.op;
     try {
       await writeServiceResult(response, () => options.api(principal, message));
       return { operation, outcome: 'ok' };
@@ -63,13 +63,13 @@ export function serviceEndpoint(options: EndpointOptions) {
     }
   }
   return async (request: IncomingMessage, response: ServerResponse): Promise<void> => {
-    if (options.credentialClass === 'browser-development' && request.url !== '/api/v1' && request.url !== '/api/v1/images') {
+    if (options.client === 'browser-development' && request.url !== '/api/v1' && request.url !== '/api/v1/images') {
       serveBrowserAsset(options.files, request, response);
       return;
     }
     const startTime = performance.timeOrigin + performance.now();
     const result = await handle(request, response).catch((error: unknown): RequestResult => ({ operation: 'admission', outcome: writeServiceFailure(response, error) }));
-    options.observability.record({ ...result, credentialClass: options.credentialClass, startTime,
+    options.observability.record({ ...result, client: options.client, startTime,
       statusCode: response.headersSent ? response.statusCode : null });
   };
 }
