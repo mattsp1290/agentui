@@ -143,14 +143,12 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     </div>}
     {permissionState && <ConversationPermissions outbox={view.outbox} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationContent selection={contentLayout} conversationKey={conversationKey} modules={modules} nativeTranscript={nativeTranscript}
-      transcript={<>
-        <CustomizationTranscript selection={transcript} conversationKey={conversationKey}
-          context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
-          fallback={nativeTranscript} />
-        {transcript.kind === 'claimed' && sentImages.length > 0 && <section className="sent-images" aria-label="Sent images">
+      transcript={<CustomizationTranscript selection={transcript} conversationKey={conversationKey}
+        context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}
+        fallback={nativeTranscript}
+        appendix={sentImages.length > 0 && <section className="sent-images" aria-label="Sent images">
           <h2>Sent images</h2>{sentImages.map(sent => <ImageAttachmentCard key={sent.messageId} attachment={sent.image} read={actions.readImage} />)}
-        </section>}
-      </>} />
+        </section>} />} />
     {Object.values(view.document.decisions).map(decision => <section className="decision-card" key={decision.pendingId} aria-label="Approval required">
       <h2>Approval required</h2><p>{decision.prompt}</p><div className="action-row">
         {decision.choices.map(choice => <button key={choice} disabled={!connected || !active.agent.commands.includes('approve') || decision.reserved || approving.has(decision.pendingId)} onClick={() => approve(decision.pendingId, choice)}>{decision.choiceLabels?.[choice] ?? (agent === 'codex' && choice === 'accept' ? 'Allow' : agent === 'codex' && choice === 'decline' ? 'Deny' : choice)}</button>)}

@@ -133,8 +133,9 @@ export function useDesktopCustomizations({ customizations, enabled, sink }: {
   return { namespaces, transcript: selectSlot(namespaces, 'transcript'), contentLayout: selectSlot(namespaces, 'contentLayout'), generations: ready.map(owner => owner.generation) };
 }
 
-export function CustomizationTranscript({ selection, context, fallback, conversationKey }: {
+export function CustomizationTranscript({ selection, context, fallback, appendix, conversationKey }: {
   readonly selection: TranscriptSelection; readonly context: ConversationModuleProps; readonly fallback: ReactNode; readonly conversationKey: string;
+  readonly appendix: ReactNode;
 }) {
   if (selection.kind === 'default') return fallback;
   if (selection.kind === 'conflict') return <><p role="alert">Transcript override conflict. {selection.namespaces.join(', ')} claim the transcript. The default view remains active.</p>{fallback}</>;
@@ -142,6 +143,7 @@ export function CustomizationTranscript({ selection, context, fallback, conversa
   return <Suspense fallback={fallback}>
     <CustomizationBoundary key={`${selection.owner.lifetime}/${conversationKey}`} fail={selection.owner.fail} fallback={fallback}>
       <View {...context} />
+      {appendix}
     </CustomizationBoundary>
   </Suspense>;
 }

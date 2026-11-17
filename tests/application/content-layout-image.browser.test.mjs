@@ -18,7 +18,7 @@ async function decoded(preview) {
   assert.match(await preview.getAttribute('src'), /^blob:/);
 }
 
-test('committed layout keeps sent images inside its text-only transcript and protects the composer through loading, failure and restore', { timeout: 90_000 }, async t => {
+for (const suspendedTranscript of [false, true]) test(`committed layout keeps sent images inside its ${suspendedTranscript ? 'independently suspended' : 'text-only'} transcript and protects the composer through loading, failure and restore`, { timeout: 90_000 }, async t => {
   const custom = repository(), child = repository();
   const directory = mkdtempSync(join(tmpdir(), 'agentui-img-'));
   let host, browser;
@@ -31,7 +31,7 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   const childManifest = JSON.parse(readFileSync(join(child.repo, 'package.json'), 'utf8'));
   childManifest.agentui.extension.namespace = 'transcript';
   child.write('package.json', JSON.stringify(childManifest));
-  child.write('desktop/index.tsx', readFileSync(join(root, 'tests/application/fixtures/transcript-override.tsx'), 'utf8'));
+  child.write('desktop/index.tsx', readFileSync(join(root, `tests/application/fixtures/${suspendedTranscript ? 'suspending-image-transcript' : 'transcript-override'}.tsx`), 'utf8'));
   const manifest = JSON.parse(readFileSync(join(custom.repo, 'package.json'), 'utf8'));
   manifest.agentui.extensions = [{ repository: child.repo, commit: child.commit() }];
   custom.write('package.json', JSON.stringify(manifest));
@@ -39,7 +39,7 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   const commit = custom.commit();
   child.write('desktop/index.tsx', 'throw new Error("Dirty transcript source must not enter artifact");');
   custom.write('desktop/index.tsx', 'throw new Error("Dirty layout source must not enter artifact");');
-  buildCustom(custom, commit);
+  t.diagnostic(buildCustom(custom, commit).trim().split('\n').at(-1));
   const log = join(directory, 'codex.jsonl'), implementation = join(directory, 'fixture.mjs'), executable = join(directory, 'codex');
   const copiedFixture = readFileSync(join(root, 'tests/host/fixtures/codex-agent.mjs'), 'utf8')
     .replace("displayName: 'GPT-9.2-Sol', hidden: false, isDefault: false", "displayName: 'GPT-9.2-Sol', hidden: false, isDefault: true")
@@ -67,8 +67,11 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   await wait(() => page.getByRole('button', { name: 'New conversation', exact: true }).isEnabled(), 'paired fixture host');
   await page.getByRole('button', { name: 'New conversation', exact: true }).click(); await connected(page);
   const layoutTranscript = page.getByRole('main', { name: 'Layout transcript', exact: true });
-  await layoutTranscript.getByRole('region', { name: 'Committed transcript', exact: true }).waitFor();
-  assert.equal(await page.getByLabel('Messages', { exact: true }).count(), 0);
+  const transcriptRegion = layoutTranscript.getByRole('region', { name: 'Committed transcript', exact: true });
+  const nativeMessages = page.getByLabel('Messages', { exact: true });
+  await (suspendedTranscript ? layoutTranscript.getByLabel('Messages', { exact: true }) : transcriptRegion).waitFor();
+  assert.equal(await transcriptRegion.count(), suspendedTranscript ? 0 : 1);
+  assert.equal(await nativeMessages.count(), suspendedTranscript ? 1 : 0);
   const bytes = png();
   await page.getByLabel('Image file').setInputFiles({ name: 'canonical.png', mimeType: 'image/png', buffer: bytes });
   await page.getByLabel('Attached image').getByRole('status').filter({ hasText: 'Ready' }).waitFor();
@@ -76,9 +79,9 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   await page.getByRole('button', { name: 'Send', exact: true }).click();
   const sent = page.getByRole('region', { name: 'Sent images', exact: true });
   const arrangedPreview = layoutTranscript.getByRole('img', { name: 'canonical.png', exact: true });
-  await decoded(arrangedPreview);
-  assert.equal(await sent.getByRole('img', { name: 'canonical.png', exact: true }).count(), 1);
-  assert.equal(await page.locator('.message-user').count(), 0);
+  const uniqueImage = async () => {
+    assert.equal(await page.getByRole('img', { name: 'canonical.png', exact: true }).count(), 1, 'Each sent image must have exactly one visible preview');
+  };
   await draft(page, 'Protected image draft');
   const originalEditor = await editor(page).elementHandle();
   const originalStop = await page.getByRole('button', { name: 'Stop', exact: true }).elementHandle();
@@ -88,6 +91,32 @@ test('committed layout keeps sent images inside its text-only transcript and pro
     assert.equal(await page.getByRole('button', { name: 'Stop', exact: true }).evaluate((node, original) => node === original, originalStop), true);
   };
   const originalLayout = await layoutTranscript.elementHandle();
+  if (suspendedTranscript) {
+    await decoded(nativeMessages.getByRole('img', { name: 'canonical.png', exact: true }));
+    await uniqueImage();
+    assert.equal(await sent.count(), 0);
+    await page.evaluate(() => window.imageTranscript.resolve());
+    await transcriptRegion.waitFor();
+  }
+  await decoded(arrangedPreview);
+  await uniqueImage(); await stable();
+  assert.equal(await layoutTranscript.evaluate((node, original) => node === original, originalLayout), true);
+  assert.equal(await sent.getByRole('img', { name: 'canonical.png', exact: true }).count(), 1);
+  assert.equal(await page.locator('.message-user').count(), 0);
+  if (suspendedTranscript) {
+    const originalTranscript = await transcriptRegion.elementHandle();
+    await page.evaluate(() => window.imageTranscript.suspend());
+    await decoded(nativeMessages.getByRole('img', { name: 'canonical.png', exact: true }));
+    await uniqueImage(); await stable();
+    assert.equal(await sent.count(), 0);
+    assert.equal(await originalTranscript.evaluate(node => node.isConnected), true);
+    assert.equal(await layoutTranscript.evaluate((node, original) => node === original, originalLayout), true);
+    await page.evaluate(() => window.imageTranscript.resume());
+    await decoded(arrangedPreview);
+    await uniqueImage(); await stable();
+    assert.equal(await nativeMessages.count(), 0);
+    assert.equal(await transcriptRegion.evaluate((node, original) => node === original, originalTranscript), true);
+  }
   await page.getByRole('button', { name: 'Settings', exact: true }).click();
   await page.getByRole('button', { name: 'Reconnect', exact: true }).waitFor();
   assert.equal(await layoutTranscript.isVisible(), false);
@@ -100,18 +129,29 @@ test('committed layout keeps sent images inside its text-only transcript and pro
   await page.getByRole('button', { name: 'Suspend image layout', exact: true }).click();
   await page.getByRole('status').filter({ hasText: 'Content layout is loading' }).waitFor();
   await decoded(page.getByLabel('Messages', { exact: true }).getByRole('img', { name: 'canonical.png', exact: true }));
-  await stable();
+  await uniqueImage(); await stable();
   await page.evaluate(() => window.resumeImageLayout());
   await decoded(arrangedPreview); await stable();
   assert.equal(await page.getByLabel('Messages', { exact: true }).count(), 0);
+  if (suspendedTranscript) {
+    await page.evaluate(() => window.imageTranscript.fail());
+    await page.getByRole('alert').filter({ hasText: 'Committed image transcript failed' }).waitFor();
+    await decoded(nativeMessages.getByRole('img', { name: 'canonical.png', exact: true }));
+    await uniqueImage(); await stable();
+    assert.equal(await sent.count(), 0);
+    assert.equal(await transcriptRegion.count(), 0);
+    assert.equal(await layoutTranscript.evaluate((node, original) => node === original, originalLayout), true);
+  }
   await page.getByRole('button', { name: 'Fail image layout', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'Committed image layout failed' }).waitFor();
-  await page.getByRole('region', { name: 'Committed transcript', exact: true }).waitFor();
-  await decoded(sent.getByRole('img', { name: 'canonical.png', exact: true })); await stable();
+  if (!suspendedTranscript) await page.getByRole('region', { name: 'Committed transcript', exact: true }).waitFor();
+  await decoded((suspendedTranscript ? nativeMessages : sent).getByRole('img', { name: 'canonical.png', exact: true }));
+  await uniqueImage(); await stable();
   assert.equal(await layoutTranscript.count(), 0);
-  assert.equal(await page.getByLabel('Messages', { exact: true }).count(), 0);
+  assert.equal(await nativeMessages.count(), suspendedTranscript ? 1 : 0);
   await revealRecovery(page); await page.getByRole('button', { name: 'Restore default view', exact: true }).click();
   await decoded(page.getByLabel('Messages', { exact: true }).getByRole('img', { name: 'canonical.png', exact: true }));
+  await uniqueImage();
   assert.equal(await sent.count(), 0);
   assert.equal(await page.getByRole('region', { name: 'Committed transcript', exact: true }).count(), 0);
   await stable();
