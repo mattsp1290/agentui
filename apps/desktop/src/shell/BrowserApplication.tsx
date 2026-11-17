@@ -35,7 +35,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   }, [focusConnection, selectedView, suspended]);
   const nativeRecovery = connection.kind === 'native' && app.host.kind === 'unpaired';
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
-  const custom = useDesktopCustomizations({ customizations: customization, enabled: children === undefined && customizationEnabled });
+  const custom = useDesktopCustomizations({ customizations: customization, sink: controller.frontendGenerations, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
   const pendingScope = app.saved.pendingCreation?.scope;
   const pendingScopeKey = JSON.stringify([pendingScope?.hostId, pendingScope?.conversationId]);
@@ -70,6 +70,14 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       </section>;
   const controls = <div className="application-controls">
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : 'Settings'}</h2>
+    {app.capturedSends.length > 0 && <section aria-label="Captured tools"><h3>Captured tools</h3>
+      <p>Tools are retained for these sends. Execution is not enabled.</p>
+      {app.capturedSends.map(send => <div key={send.key} data-captured-command={send.command.clientCommandId}>
+        <p role="status">{send.status === 'waiting' ? 'Waiting for confirmed run' : send.status === 'bound' ? 'Bound to confirmed run' : 'Captured tools unavailable'} · {send.command.body.text}</p>
+        {send.binding && <p>Run {send.binding.run.runId}</p>}
+        {send.status !== 'unavailable' && <button type="button" onClick={() => void controller.releaseCapturedSend(send.key)}>Release captured tools</button>}
+      </div>)}
+    </section>}
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
     {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
     {nativeRecovery ? <div className="application-alert" role="alert">
@@ -131,7 +139,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
           <p>In a browser, reopen this host with the AgentUI Mac app to use protected setup. You can also supply OPENCODE_GO_API_KEY in the host environment.</p></>}
         <p>Pi supports text chat, saved conversations, and Stop. Tools and file access are unavailable in this integration.</p>
       </section>
-      <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p></section>
+      <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p><label><input type="checkbox" checked={customizationEnabled} onChange={event => setCustomizationEnabled(event.target.checked)} />Enable customizations</label></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>
     </section>;
   const rail = <nav className="view-rail" aria-label="Workspace views">

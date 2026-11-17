@@ -6,7 +6,7 @@ import type { ImageFailureKind } from '@agentui/contracts/image';
 import { applyDelivery, decodeReceipt, DeliveryError } from './delivery.js';
 import type { DeliveryState } from './delivery.js';
 import { copyCanonicalJson, immutable, restore } from './local-state.js';
-import type { ClientView, ComposerImage, ComposerImageRecord, ConnectionState, ConversationStore, DraftImageChange, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
+import type { FrontendJournal, FrontendRecoveryReference, ComposerImage, ComposerImageRecord, DraftImageChange, ClientView, ConnectionState, ConversationStore, LocalRecords, OutboxEntry, StoreOptions } from './types.js';
 
 type ReplayCause = { readonly kind: 'cold' | 'invalid' } | { readonly kind: 'mismatch'; readonly reason: string };
 type ReplayState<P> = { readonly delivery: DeliveryState<P> } &
@@ -58,6 +58,10 @@ function imageName(value: string): string {
   if (!name.trim()) throw new Error('The image needs a file name.');
   return parseImageName(name.trim());
 }
+export class FrontendImagesUnsupportedError extends Error {
+  readonly kind = 'frontend-images-unsupported';
+  constructor() { super('Images cannot be sent with captured frontend tools.'); this.name = 'FrontendImagesUnsupportedError'; }
+}
 export function createConversationStore<E, P>(options: StoreOptions<E, P>): ConversationStore<P> {
   const { port, projection, drafts, createCommandId } = options;
   const createImageId = options.createImageId ?? createCommandId;
@@ -73,7 +77,8 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   let view: ClientView<P> = makeView();
   const listeners = new Set<() => void>();
   let feed: Feed | null = null;
-  let generation = 0;
+  let generation = 0, closed = false;
+  let disposal: Promise<void> | null = null;
   function makeView(): ClientView<P> {
     const applied = replay.delivery;
     return Object.freeze({ document: applied.document, cursor: applied.cursor, draft: local.draft, outbox: local.outbox, connection: Object.freeze(connection), submitting: Object.freeze([...inFlight]), image: composerImage() });
@@ -99,10 +104,15 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
   }).catch(() => undefined);
   let saves: Promise<void> = ready;
   function enqueue<T>(operation: () => Promise<T>): Promise<T> {
-    const result = saves.then(operation);
+    if (closed) return Promise.reject(new Error('This conversation store has closed.'));
+    const result = saves.then(async () => {
+      await ready;
+      return operation();
+    });
     saves = result.then(() => undefined, () => undefined);
     return result;
   }
+  function requireOpen(): void { if (closed) throw new Error('This conversation store has closed.'); }
   async function persist(next: LocalRecords, put?: DraftImageChange['put']): Promise<void> {
     const previous = local.image?.selectionId;
     const remove = previous !== undefined && previous !== next.image?.selectionId ? [previous] : [];
@@ -115,6 +125,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     return immutable({ ...local, ...changes, draftRevision: local.draftRevision + 1 });
   }
   function upload(image: ComposerImageRecord, bytes: Uint8Array): Promise<void> {
+    requireOpen();
     if (uploading?.selectionId === image.selectionId && uploading.promise) return uploading.promise;
     const flight: { readonly selectionId: string; promise?: Promise<void> } = { selectionId: image.selectionId };
     uploading = flight;
@@ -122,6 +133,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     publish();
     flight.promise = (async () => {
       try {
+        requireOpen();
         if (!options.images) throw new Error('Image uploads are unavailable');
         const attachment = immutable(parseImageAttachment(copyCanonicalJson(await options.images.upload({ scope, uploadId: image.uploadId, name: image.name, bytes }))));
         if (attachment.name !== image.name || attachment.byteLength !== image.byteLength) throw new Error('Image upload response mismatch');
@@ -131,10 +143,10 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
           await persist(immutable({ ...local, image: { ...current, attachment } }));
         });
       } catch (error) {
-        if (local.image?.selectionId === image.selectionId) failure = { selectionId: image.selectionId, reason: uploadFailure(error) };
+        if (!closed && local.image?.selectionId === image.selectionId) failure = { selectionId: image.selectionId, reason: uploadFailure(error) };
       } finally {
         if (uploading === flight) uploading = null;
-        publish();
+        if (!closed) publish();
       }
     })();
     return flight.promise;
@@ -144,6 +156,17 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     if (!image) return { kind: 'send', text: local.draft };
     if (!image.attachment) throw new Error(uploading?.selectionId === image.selectionId ? 'Wait for the image to finish uploading.' : 'Retry or remove the image before sending.');
     return { kind: 'send', text: local.draft, imageId: image.attachment.imageId };
+  }
+  const journal: FrontendJournal = {
+    read: () => local.frontendSends,
+    unavailable: id => updateFrontend(id, 'unavailable-pending'),
+    acknowledged: id => updateFrontend(id, 'unavailable-confirmed'),
+  };
+  function updateFrontend(id: string, state: 'unavailable-pending' | 'unavailable-confirmed'): Promise<void> {
+    return enqueue(async () => {
+      await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id && entry.state !== 'unavailable-confirmed' ? { ...entry, state } : entry) }));
+      publish();
+    });
   }
   function requireWritableRetryStorage(): Promise<void> { return drafts.save(local); }
   function requireCompatible(): void {
@@ -162,18 +185,23 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     publish();
   }
   async function dispatch(entry: OutboxEntry, admission: 'known-absent' | 'unknown-or-observed'): Promise<SubmitResult> {
-    requireCompatible();
+    requireOpen(); requireCompatible();
     const id = entry.command.clientCommandId;
+    if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
     if (inFlight.has(id)) throw new Error('Command submission already in progress');
     inFlight.add(id);
     try {
       publish();
+      requireOpen();
+      if (entry.command.version === 2 && !options.frontend?.canRetry(entry.command)) throw new Error('Original captured tools are unavailable. Release or reconnect before continuing.');
       const result = await port.submit(entry.command);
+      requireOpen();
       if (result.kind === 'rejected') {
         if (admission === 'known-absent') await enqueue(async () => {
           await persist(immutable({ ...local, outbox: local.outbox.filter(value => value.command.clientCommandId !== id) }));
           publish();
         });
+        if (admission === 'known-absent' && entry.command.version === 2) await options.frontend?.rejected(id);
         return result;
       }
       if (result.kind !== 'receipt') throw new Error('Unsupported submit result');
@@ -190,17 +218,39 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     await ready;
     const entry = await enqueue(async () => {
       requireCompatible();
-      const command = immutable(parseCommand({ version: 1, scope, clientCommandId: createCommandId(), body: body ?? composerBody() }));
-      if (local.outbox.some(value => value.command.clientCommandId === command.clientCommandId) || Object.hasOwn(view.document.receipts, command.clientCommandId)) throw new Error('Command ID generator reused an existing ID');
-      const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
-      await persist(immutable({ ...local, outbox: [...local.outbox, created] }));
-      publish();
-      return created;
+      const id = createCommandId(), intent = body ?? composerBody();
+      if (local.outbox.some(value => value.command.clientCommandId === id) || local.frontendSends.some(value => value.command.clientCommandId === id) || Object.hasOwn(view.document.receipts, id)) throw new Error('Command ID generator reused an existing ID');
+      const capture = intent.kind === 'send' ? options.frontend?.capture(id) : null;
+      try {
+        if (capture && 'imageId' in intent) throw new FrontendImagesUnsupportedError();
+        const command = immutable(parseCommand(capture ? { version: 2, scope, clientCommandId: id, body: { ...intent, frontend: capture.offer } }
+          : { version: 1, scope, clientCommandId: id, body: intent }));
+        const created = immutable({ command, draftRevision: body === null ? local.draftRevision : null });
+        const offered = capture && command.version === 2 ? { capture, command } : null;
+        const reference: FrontendRecoveryReference[] = offered ? [{ command: offered.command, ownerId: offered.capture.ownerId, state: 'retained' }] : [];
+        await persist(immutable({ ...local, outbox: [...local.outbox, created], frontendSends: [...local.frontendSends, ...reference] }));
+        if (offered && !offered.capture.commit(offered.command, journal)) {
+          await persist(immutable({ ...local, frontendSends: local.frontendSends.map(entry => entry.command.clientCommandId === id ? { ...entry, state: 'unavailable-pending' } : entry) }));
+          throw new Error('The capture session changed before sending. Reconnect to recover.');
+        }
+        publish();
+        return created;
+      } catch (error) { capture?.release(); throw error; }
     });
     return dispatch(entry, 'known-absent');
   }
   return {
     ready,
+    frontendJournal: journal,
+    dispose() {
+      if (!disposal) {
+        closed = true;
+        disposal = saves.then(() => undefined, () => undefined);
+        try { stop(connection.kind === 'failed' ? connection : { kind: 'disconnected' }); }
+        catch (error) { disposal = disposal.then(() => { throw error; }); }
+      }
+      return disposal;
+    },
     getSnapshot: () => view,
     subscribe(listener) { listeners.add(listener); return () => { listeners.delete(listener); }; },
     async setDraft(text) {
@@ -227,10 +277,18 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     },
     async retryImage() {
       await ready;
+      requireOpen();
       const image = local.image;
       if (!image || image.attachment) return;
       if (uploading?.selectionId === image.selectionId && uploading.promise) return uploading.promise;
-      const bytes = await drafts.loadImage(scope, image.selectionId);
+      let bytes: Uint8Array | null;
+      try { bytes = await drafts.loadImage(scope, image.selectionId); }
+      catch (error) {
+        requireOpen();
+        if (local.image?.selectionId !== image.selectionId) return;
+        throw error;
+      }
+      requireOpen();
       if (local.image?.selectionId !== image.selectionId) return;
       if (bytes?.byteLength !== image.byteLength) {
         failure = { selectionId: image.selectionId, reason: 'This image is no longer saved on this device. Remove it and choose it again.' };
@@ -264,7 +322,9 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
     },
     async refreshReceipt(clientCommandId) {
       await ready;
+      requireOpen();
       const value = await port.receipt(clientCommandId);
+      requireOpen();
       if (value === null) return null;
       const receipt = immutable(decodeReceipt(copyCanonicalJson(value), scope));
       if (receipt.clientCommandId !== clientCommandId) throw new Error('Lookup receipt command ID mismatch');
@@ -275,6 +335,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       return receipt;
     },
     async connect() {
+      requireOpen();
       stop({ kind: 'connecting' });
       const current = generation;
       let receiving = false;

@@ -61,6 +61,7 @@ test('native initial view waits for the previous document and retains its exact 
     }),
     page.evaluate(async scope => {
       const owner = await globalThis.BrowserViewStorage.reopen('native-mac-default', () => {}, true);
+      owner.select();
       const result = { viewId: owner.viewId, sessionViewId: sessionStorage.getItem('agentui.viewId'),
         saved: await owner.readView('host'), draft: await owner.drafts(() => {}).load(scope) };
       await owner.close();
@@ -87,6 +88,33 @@ test('native initial view refuses a lock that stays held without inventing anoth
   assert.match(result.failure, /already open/);
   assert.equal(result.lockAvailable, false);
   assert.equal(result.sessionViewId, null);
+});
+
+test('acquiring a candidate view preserves selection until select succeeds', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const a = await globalThis.BrowserViewStorage.open(() => {}), selected = () => sessionStorage.getItem('agentui.viewId');
+    const b = await globalThis.BrowserViewStorage.reopen('candidate-b', () => {});
+    const acquired = selected();
+    let failed;
+    try { await globalThis.BrowserViewStorage.reopen('candidate-b', () => {}); } catch (error) { failed = error.message; }
+    const afterFailed = selected();
+    await b.close();
+    let rejected;
+    try { b.select(); } catch (error) { rejected = error.message; }
+    const afterRejected = selected();
+    const c = await globalThis.BrowserViewStorage.reopen('candidate-b', () => {});
+    c.select();
+    const committed = selected();
+    await Promise.all([a.close(), c.close()]);
+    return { a: a.viewId, acquired, rejected, afterRejected, committed, failed, afterFailed };
+  });
+  assert.equal(result.acquired, result.a);
+  assert.match(result.rejected, /no longer owns local storage/);
+  assert.equal(result.afterRejected, result.a);
+  assert.equal(result.committed, 'candidate-b');
+  assert.match(result.failed, /already open/);
+  assert.equal(result.afterFailed, result.a);
 });
 
 test('saved views reject noncanonical records without overwriting local data or deleting foreign records', async t => {
@@ -229,7 +257,7 @@ test('close holds the view lock until admitted writes and saved-view scans finis
     };
     const scope = { hostId: 'host', conversationId: 'draining' };
     const admitted = owner.drafts(() => {}).save({ scope, draft: 'Admitted before close' });
-    const listing = owner.savedViews('host');
+    const listing = owner.savedViews('host'), scopes = owner.draftScopes('host', null);
     const closing = owner.close();
     const samePromise = closing === owner.close();
     let settled = false;
@@ -240,7 +268,7 @@ test('close holds the view lock until admitted writes and saved-view scans finis
     try { await owner.readView('host'); } catch (error) { rejected = error.message; }
     holding = false;
     IDBDatabase.prototype.transaction = original;
-    await Promise.all([admitted, listing, closing]);
+    await Promise.all([admitted, listing, scopes, closing]);
     const successor = await globalThis.BrowserViewStorage.reopen(owner.viewId, () => {});
     const retained = await successor.drafts(() => {}).load(scope);
     await successor.close();
@@ -316,6 +344,32 @@ test('late whole-record settlement from an old store cannot overwrite successor 
   assert.equal(result.submitted.length, 1);
 });
 
+test('draft key discovery pages only the acquired view and host and drains scans before closing', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {});
+    const opening = indexedDB.open('agentui-browser-views', 1), db = await new Promise(resolve => { opening.onsuccess = () => resolve(opening.result); });
+    const transaction = db.transaction('records', 'readwrite'), rows = transaction.objectStore('records');
+    for (let index = 0; index < 105; index++) rows.put({ untouched: index }, ['draft', owner.viewId, 'host', `scope-${String(index).padStart(3, '0')}`]);
+    rows.put({ untouched: 'foreign host' }, ['draft', owner.viewId, 'elsewhere', 'scope']);
+    rows.put({ untouched: 'foreign view' }, ['draft', 'another-view', 'host', 'scope']);
+    await new Promise(resolve => { transaction.oncomplete = resolve; });
+    const first = await owner.draftScopes('host', null);
+    let malformed;
+    try { await owner.draftScopes('host', []); } catch (error) { malformed = error.message; }
+    const pending = owner.draftScopes('host', first.after), closing = owner.close();
+    const second = await pending; await closing;
+    const acquired = await navigator.locks.request(`agentui-view:${owner.viewId}`, { ifAvailable: true }, lock => Boolean(lock));
+    const read = db.transaction('records').objectStore('records').getAll(), retained = await new Promise(resolve => { read.onsuccess = () => resolve(read.result); });
+    db.close(); return { first, second, malformed, acquired, retained };
+  });
+  assert.equal(result.first.scopes.length, 100); assert.equal(result.first.after, 'scope-099');
+  assert.equal(result.second.scopes.length, 5); assert.equal(result.second.after, null);
+  assert.equal(result.second.scopes.at(-1).conversationId, 'scope-104'); assert.equal(result.acquired, true);
+  assert.ok(result.malformed); assert.equal(result.retained.length, 107);
+  assert.ok(result.retained.every(row => Object.hasOwn(row, 'untouched')));
+});
+
 test('draft image bytes change with their records in one transaction and stay outside saved views', async t => {
   const page = await fixture(t);
   const result = await page.evaluate(async () => {
@@ -375,4 +429,63 @@ test('a replaced draft port for the same conversation cannot overwrite its succe
   });
   assert.deepEqual(result, { refused: { name: 'SupersededDrafts', message: 'This conversation was reopened in a newer view.' },
     blocked: ['SupersededDrafts', 'SupersededDrafts'], submitted: 0, kept: ['Typed in the older view', 0], draft: 'new', image: 'second', bytes: [null, [2]], failures: 0 });
+});
+
+for (const shape of ['private-frontend-v2', 'mixed-v2', 'missing-v3-journal']) test(`${shape} refuses without changing raw records or image bytes`, async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async shape => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {}), failures = [], submitted = [];
+    const scope = { hostId: 'host', conversationId: 'refusal' };
+    const command = { version: 2, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Original', frontend: {
+      platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] } } };
+    const image = { selectionId: 'selection', uploadId: '22222222-2222-4222-8222-222222222222', name: 'pixel.png', byteLength: 2, attachment: null };
+    const original = { version: shape === 'missing-v3-journal' ? 3 : 2, scope, draft: 'Keep', draftRevision: 1, outbox: [{ command, draftRevision: 1 }],
+      ...(shape !== 'private-frontend-v2' ? { image } : {}),
+      ...(shape !== 'missing-v3-journal' ? { frontendSends: [{ command, ownerId: 'principal', state: 'retained' }] } : {}) };
+    const port = owner.drafts(error => failures.push(error.message));
+    await port.save(original, { put: { selectionId: image.selectionId, bytes: new Uint8Array([7, 8]) } });
+    const store = globalThis.createConversationStore({ scope, projection: globalThis.transcriptProjection, drafts: port, createCommandId: () => 'never',
+      port: { scope, async submit(command) { submitted.push(command); }, async receipt() { return null; }, watch() { return { ended: new Promise(() => {}), close() {} }; } } });
+    const errors = [];
+    for (const operation of [() => store.ready, () => store.setDraft('Erase'), () => store.removeImage(), () => store.retryImage(),
+      () => store.frontendJournal.unavailable('original'), () => store.frontendJournal.acknowledged('original'), () => store.send('Erase')]) {
+      await operation().then(() => errors.push(null), error => errors.push(error.message));
+    }
+    const saved = await port.load(scope), bytes = [...await port.loadImage(scope, image.selectionId)];
+    await store.dispose(); await owner.close();
+    return { original, saved, bytes, errors, submitted, failures };
+  }, shape);
+  assert.deepEqual(result.saved, result.original); assert.deepEqual(result.bytes, [7, 8]);
+  assert.ok(result.errors.every(Boolean)); assert.deepEqual(result.submitted, []); assert.deepEqual(result.failures, []);
+});
+
+test('an aborted combined image and journal save leaves the whole prior transaction intact', async t => {
+  const page = await fixture(t);
+  const result = await page.evaluate(async () => {
+    const owner = await globalThis.BrowserViewStorage.open(() => {}), failures = [];
+    const scope = { hostId: 'host', conversationId: 'atomic-journal' }, port = owner.drafts(error => failures.push(error.message));
+    const command = { version: 2, scope, clientCommandId: 'original', body: { kind: 'send', text: 'Original', frontend: {
+      platform: 'desktop', tools: [{ definition: { name: 'fixture__echo', description: 'Original' }, activationId: 'A' }] } } };
+    const image = { selectionId: 'first', uploadId: '22222222-2222-4222-8222-222222222222', name: 'pixel.png', byteLength: 2, attachment: null };
+    const original = { version: 3, scope, draft: 'Keep', draftRevision: 1, outbox: [{ command, draftRevision: 1 }], image,
+      frontendSends: [{ command, ownerId: 'principal', state: 'retained' }] };
+    await port.load(scope); await port.save(original, { put: { selectionId: 'first', bytes: new Uint8Array([7, 8]) } });
+    const put = IDBObjectStore.prototype.put;
+    IDBObjectStore.prototype.put = function(value, key) {
+      const request = put.call(this, value, key);
+      if (Array.isArray(key) && key[0] === 'draft') request.addEventListener('success', () => this.transaction.abort(), { once: true });
+      return request;
+    };
+    let error;
+    try { await port.save({ ...original, image: { ...image, selectionId: 'second' }, frontendSends: [{ ...original.frontendSends[0], state: 'unavailable-pending' }] },
+      { put: { selectionId: 'second', bytes: new Uint8Array([9, 10]) }, remove: ['first'] }); }
+    catch (failure) { error = failure.message; }
+    finally { IDBObjectStore.prototype.put = put; }
+    const saved = await port.load(scope), first = [...await port.loadImage(scope, 'first')], second = await port.loadImage(scope, 'second');
+    const scopes = await owner.draftScopes('host', null);
+    await owner.close(); return { original, saved, first, second, error, failures, scopes };
+  });
+  assert.deepEqual(result.saved, result.original); assert.deepEqual(result.first, [7, 8]); assert.equal(result.second, null);
+  assert.match(result.error, /transaction/); assert.equal(result.failures.length, 1);
+  assert.deepEqual(result.scopes, { scopes: [{ hostId: 'host', conversationId: 'atomic-journal' }], after: null });
 });

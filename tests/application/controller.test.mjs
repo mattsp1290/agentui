@@ -1,59 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createFrontendToolGeneration } from '@agentui/sdk/tools';
 import { ServiceError } from '@agentui/contracts/service';
-import { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
-import { createApplicationController, applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
-
-const scope = { hostId: 'host', conversationId: 'conversation' };
-const empty = () => ({ version: 2, route: null, pendingCreation: null });
-const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; }); return { promise, resolve, reject }; };
-function fixture() {
-  const selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
-  let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
-    permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
-    observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
-  function lease(viewId, failure) {
-    const owner = { viewId, failure, closed: false,
-      async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
-      async saveView(host, value) { if (owner.closed) throw new Error('Closed owner'); views.set(`${viewId}/${host}`, value); },
-      savedViews: (...args) => behavior.listing(...args),
-      drafts(onFailure) {
-        return { load: async selected => drafts.get(`${viewId}/${selected.hostId}/${selected.conversationId}`) ?? null,
-          async save(value) {
-            try { await behavior.write(); if (owner.closed) throw new Error('Closed owner'); drafts.set(`${viewId}/${value.scope.hostId}/${value.scope.conversationId}`, value); }
-            catch (error) { onFailure(error); throw error; }
-          } };
-      },
-      close() { owner.closed = true; return behavior.close(owner); } };
-    leases.push(owner);
-    return owner;
-  }
-  const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
-  const connection = {
-    pair: code => behavior.pair(code),
-    async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: 'principal', agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
-      nativeRuntime: behavior.runtime,
-      desiredGitRevision: 'revision', appliedArtifact: { gitRevision: 'revision', artifactId: 'artifact' } } }; },
-    async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
-    async create(value, agentId) { created.push(value); selected.push(agentId); captured.set(value.conversationId, descriptor(agentId)); await behavior.create(); return value; },
-    async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
-    conversationPermissions: input => behavior.permissions(input),
-    providerObservation: input => behavior.observation(input),
-    search: (...args) => behavior.search(...args),
-    async reconcile() { return null; },
-    uploadImage: input => behavior.uploadImage(input),
-    readImage: (selected, imageId) => behavior.readImage(selected, imageId),
-    conversation(selected) { return { scope: selected,
-      async submit(command) { submitted.push(command); return behavior.submit(command); },
-      async receipt() { return null; },
-      watch(request, receive) { const end = deferred(); const feed = { scope: selected, receive, ended: end.promise, finish: end.resolve, close() { feedCloses++; } }; feeds.push(feed); return feed; } }; },
-  };
-  const app = createApplicationController({ createConnection: options => { unauthorized.push(options.onUnauthorized); return connection; },
-    ownedViewStorage: { open: async failure => { await behavior.acquire(); return lease('original-view', failure); }, reopen: async (id, failure) => { await behavior.reopen(id); return lease(id, failure); } }, createId: () => behavior.uuids ? `00000000-0000-4000-8000-${String(++nextId).padStart(12, '0')}` : `id-${++nextId}` });
-  return { app, views, drafts, selected, captured, descriptor, leases, created, submitted, cursors, unauthorized, feeds, behavior,
-    host: value => { hostId = value; }, feedCloses: () => feedCloses, metadataCalls: () => metadataCalls };
-}
+import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
+import { applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
+import { scope, empty, deferred, fixture } from './controller-fixture.mjs';
 
 test('background search leaves active state usable and rejects stale, foreign and nonadvancing pages', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
@@ -140,6 +91,7 @@ test('late writes from a replaced storage owner cannot poison the reopened view'
   await failed;
   assert.equal(f.app.getSnapshot().storageFailure, '');
   assert.equal(f.app.getSnapshot().active.viewId, 'restored-view');
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.leases[0].closed, true);
   f.behavior.write = async () => {};
   await f.app.getSnapshot().active.store.setDraft('New edit');
@@ -157,6 +109,7 @@ test('disposal closes admission and feeds immediately, and restart waits for the
   f.behavior.close = () => { closes++; return drain.promise; };
   const closing = f.app.dispose();
   assert.equal(f.app.dispose(), closing);
+  await new Promise(resolve => setImmediate(resolve));
   assert.equal(closes, 1);
   assert.equal(f.leases[0].closed, true);
   assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
@@ -181,43 +134,33 @@ test('disposal closes admission and feeds immediately, and restart waits for the
   assert.deepEqual(f.submitted, []);
 });
 
-test('reopening the same view waits for the previous owner to drain before acquiring its lock', async t => {
+test('reopening an owned view reuses its original store and exclusive storage lease', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.views.set('original-view/host', { ...empty(), route: scope });
   await f.app.start();
-  const old = f.app.getSnapshot().active, drain = deferred();
-  let acquired = false;
-  f.behavior.close = () => drain.promise;
-  f.behavior.reopen = async id => { assert.equal(id, 'original-view'); acquired = true; };
-  const reopening = f.app.reopenView('original-view');
-  assert.equal(f.leases[0].closed, true);
-  assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
-  await Promise.resolve();
-  assert.equal(acquired, false);
-  f.leases[0].failure(new Error('Late closed-owner write failed during drain'));
-  assert.equal(f.app.getSnapshot().storageFailure, '');
-  drain.resolve();
-  await reopening;
-  assert.equal(acquired, true);
+  const old = f.app.getSnapshot().active;
+  f.behavior.reopen = async () => { throw new Error('Must reuse original lease'); };
+  await f.app.reopenView('original-view');
+  assert.equal(f.leases.length, 1);
+  assert.equal(f.leases[0].closed, false);
+  assert.equal(f.app.getSnapshot().active.store, old.store);
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
-  assert.equal(f.app.getSnapshot().active.viewId, 'original-view');
-  assert.deepEqual(f.submitted, []);
 });
 
-test('failed replacement acquisition leaves saved records intact and refuses mutations through the closed owner', async t => {
+test('failed replacement acquisition leaves the selected owner and saved records usable', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const saved = { ...empty(), route: scope };
   f.views.set('original-view/host', saved);
   await f.app.start();
+  const active = f.app.getSnapshot().active;
   f.behavior.reopen = async () => { throw new Error('Saved view is already open'); };
-  await f.app.reopenView('original-view');
-  assert.equal(f.app.getSnapshot().active, null);
-  assert.equal(f.app.getSnapshot().host.kind, 'unavailable');
-  assert.match(f.app.getSnapshot().storageFailure, /already open/);
-  assert.equal(f.leases[0].closed, true);
-  await f.app.create();
+  await f.app.reopenView('other-view');
+  assert.equal(f.app.getSnapshot().active, active);
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.match(f.app.getSnapshot().error, /already open/);
+  assert.equal(f.leases[0].closed, false);
   assert.deepEqual(f.views.get('original-view/host'), saved);
-  assert.deepEqual(f.created, []);
+  await active.store.setDraft('Still writable');
 });
 
 test('disposal during an existing same-view handover still awaits its admitted storage drain', async t => {
@@ -298,7 +241,6 @@ test('own corrupt view blocks commands; a new host clears the old active convers
   await f.app.create();
   assert.equal(f.created.length, 0);
 });
-
 
 test('a disposed startup releases its late storage lease and ignores old connection callbacks', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
@@ -382,7 +324,6 @@ test('a host change without an active conversation replaces the loaded recovery 
   assert.deepEqual(f.views.get('original-view/host'), original);
 });
 
-
 test('a storage acquisition failure stops the loading status and blocks commands', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.behavior.acquire = async () => { throw new Error('Storage cannot be owned'); };
@@ -439,7 +380,6 @@ test('a late saved-view read failure cannot change a replacement session', async
   assert.equal(replacement.storageFailure, '');
   assert.equal(replacement.error, '');
 });
-
 
 test('confirmed creation preserves expanded catalog pages and later paging does not duplicate it', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
@@ -712,7 +652,6 @@ test('UI recovery can retry a retained command while disconnected', async t => {
   assert.deepEqual(f.submitted, [entry.command, entry.command]);
   assert.deepEqual(f.target.store.getSnapshot().outbox, []);
 });
-
 
 test('SDK send refuses missing and non-string text without submitting the composer draft', async t => {
   const f = await openCommands(t);
@@ -1071,6 +1010,500 @@ test('permission reads from a disposed session cannot populate its replacement',
     { permissionId: 'old', scope: 'agent', actionLabel: 'Old', detail: 'Old session' }] });
   await assert.rejects(pending, /closed/);
   assert.deepEqual(f.app.getSnapshot().permissionState.listing.permissions, []);
+});
+
+test('original physical store and storage survive navigation and principal changes while old notification remains pending', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  f.views.set('other-view/host', empty());
+  const disposed = [], source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() { disposed.push('A'); } }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); const original = f.app.getSnapshot().active.store;
+  f.behavior.submit = async command => ({ kind: 'receipt', receipt: { scope, clientCommandId: command.clientCommandId, hostOperationId: 'operation', sequence: 1, state: { kind: 'completed' } } });
+  await original.send('A message');
+  assert.equal(original.getSnapshot().outbox.length, 0);
+  const retiring = source.generation.retire();
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false);
+  await f.app.reopenView('original-view');
+  assert.equal(f.app.getSnapshot().active.store, original); assert.equal(f.leases.filter(lease => lease.viewId === 'original-view').length, 1);
+  f.behavior.principalId = 'replacement';
+  await f.app.reconnect(); await retiring;
+  assert.equal(f.app.getSnapshot().active.store, original);
+  assert.deepEqual(disposed, ['A']);
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].ownerId, 'principal');
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  await original.setDraft('New principal draft');
+  assert.equal(f.drafts.get('original-view/host/conversation').draft, 'New principal draft');
+  await assert.rejects(original.retry(f.submitted[0].clientCommandId), /outbox|unavailable/);
+});
+
+test('a failed background storage close blocks commands and disposal joins the same close without retrying it', async () => {
+  const f = fixture(); let closes = 0;
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  f.behavior.close = owner => { if (owner.viewId === 'original-view') { closes++; throw new Error('Storage close failed'); } };
+  await f.app.reopenView('other-view'); await new Promise(resolve => setImmediate(resolve));
+  assert.match(f.app.getSnapshot().storageFailure, /Storage close failed/);
+  await f.app.create(); assert.deepEqual(f.created, []);
+  await assert.rejects(f.app.dispose(), /Storage close failed/); assert.equal(closes, 1);
+});
+
+test('a newly acquired view already owns its selected lease when another capture changes during selection', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start();
+  await assert.rejects(f.app.getSnapshot().active.store.send('Pending'), /Reply lost/);
+  const key = f.app.getSnapshot().capturedSends[0].key;
+  f.behavior.select = () => { void f.app.releaseCapturedSend(key); };
+  await f.app.reopenView('new-view'); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.leases.find(lease => lease.viewId === 'new-view').closed, false);
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+  await source.generation.retire();
+});
+
+const journalRecord = (selected, count = 1) => ({ version: 3, image: null, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [],
+  frontendSends: Array.from({ length: count }, (_, index) => ({ ownerId: 'principal', state: 'retained', command: { version: 2, scope: selected,
+    clientCommandId: `${selected.conversationId}-${index}`, body: { kind: 'send', text: 'Original', frontend: { platform: 'desktop', tools: [{ activationId: 'old', definition: { name: 'fixture__echo', description: 'Original' } }] } } } })) });
+const eventually = async predicate => { for (let attempt = 0; attempt < 500; attempt++) { if (predicate()) return; await new Promise(resolve => setTimeout(resolve, 5)); } assert.fail('Recovery did not reach its durable state'); };
+
+test('foreign pending history never republishes or replaces the current owner row on later passes', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const record = journalRecord(scope, 33), requests = [];
+  for (const reference of record.frontendSends.slice(0, 32)) reference.ownerId = 'foreign';
+  f.drafts.set('original-view/host/conversation', record);
+  f.behavior.binding = async request => { requests.push(request); throw new Error('Notification offline'); };
+  await f.app.start();
+  await eventually(() => requests.length === 1);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const saved = f.drafts.get('original-view/host/conversation');
+  assert.ok(saved.frontendSends.every(row => row.state === 'unavailable-pending'));
+  const rows = f.app.getSnapshot().capturedSends;
+  assert.deepEqual(rows.map(row => row.command.clientCommandId), ['conversation-32']);
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  await eventually(() => requests.length === 2);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(publications, 0);
+  assert.equal(f.app.getSnapshot().capturedSends, rows);
+  assert.equal(f.app.getSnapshot().capturedSends[0], rows[0]);
+  assert.ok(requests.every(request => request.id === 'conversation-32' && request.action === 'unavailable'));
+  assert.equal(f.drafts.get('original-view/host/conversation'), saved);
+  assert.deepEqual(saved.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })), record.frontendSends.map(({ command, ownerId }) => ({ command, ownerId })));
+});
+
+for (const count of [1, 40]) test(`${count} own pending notifications keep captured keys and row identities stable across two failed passes`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const record = journalRecord(scope, count), requests = [];
+  f.drafts.set('original-view/host/conversation', record);
+  f.behavior.binding = async request => { requests.push(request); throw new Error('Notification offline'); };
+  await f.app.start();
+  await eventually(() => requests.length === count);
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const rows = f.app.getSnapshot().capturedSends, keys = rows.map(row => row.key);
+  assert.deepEqual(rows.map(row => row.command.clientCommandId), Array.from({ length: Math.min(count, 32) }, (_, index) => `conversation-${index + Math.max(0, count - 32)}`));
+  const saved = f.drafts.get('original-view/host/conversation');
+  assert.ok(saved.frontendSends.every(row => row.state === 'unavailable-pending'));
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  for (const pass of [2, 3]) {
+    await eventually(() => requests.length === count * pass);
+    await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(publications, 0);
+    assert.equal(f.app.getSnapshot().capturedSends, rows);
+    assert.deepEqual(f.app.getSnapshot().capturedSends.map(row => row.key), keys);
+    for (let index = 0; index < rows.length; index++) assert.equal(f.app.getSnapshot().capturedSends[index], rows[index]);
+    assert.equal(f.drafts.get('original-view/host/conversation'), saved);
+  }
+  assert.ok(requests.every(request => request.action === 'unavailable'));
+  assert.deepEqual(saved.frontendSends.map(row => row.command), record.frontendSends.map(row => row.command));
+});
+
+test('settled history beyond 32 references keeps captured rows stable without another recovery pass', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.drafts.set('original-view/host/conversation', journalRecord(scope, 40));
+  const requests = [];
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start();
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends.every(row => row.state === 'unavailable-confirmed'));
+  await new Promise(resolve => setTimeout(resolve, 20));
+  const rows = f.app.getSnapshot().capturedSends, order = rows.map(row => row.command.clientCommandId);
+  assert.deepEqual(order, Array.from({ length: 32 }, (_, index) => `conversation-${index + 8}`));
+  assert.equal(requests.length, 40);
+  const loads = f.loads.length;
+  let publications = 0;
+  const unsubscribe = f.app.subscribe(() => { publications++; }); t.after(unsubscribe);
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  for (let index = 0; index < 3; index++) { t.mock.timers.tick(2_000); await new Promise(resolve => setImmediate(resolve)); }
+  assert.equal(f.loads.length, loads);
+  assert.equal(publications, 0);
+  assert.equal(f.app.getSnapshot().capturedSends, rows);
+  assert.deepEqual(f.app.getSnapshot().capturedSends.map(row => row.command.clientCommandId), order);
+  assert.equal(requests.length, 40);
+});
+
+for (const route of [null, scope]) test(`owned-view sweep reaches more than 100 scopes and 32 references with route ${route?.conversationId ?? 'null'}`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route });
+  for (let index = 0; index < 105; index++) {
+    const selected = { ...scope, conversationId: `a-${String(index).padStart(3, '0')}` };
+    f.drafts.set(`original-view/host/${selected.conversationId}`, { version: 1, scope: selected, draft: 'Preserved', draftRevision: 1, outbox: [] });
+  }
+  const last = { ...scope, conversationId: 'z-last' }, record = journalRecord(last, 70), requests = [], lookedUp = [];
+  for (let index = 0; index < 35; index++) record.frontendSends[index].ownerId = 'foreign';
+  record.frontendSends[35].state = 'unavailable-confirmed';
+  f.drafts.set('original-view/host/z-last', record);
+  f.behavior.agentLookup = selected => { lookedUp.push(selected); return selected.conversationId === scope.conversationId ? f.descriptor() : null; };
+  f.behavior.binding = async request => { requests.push(request); if (request.id === 'z-last-36') throw new Error('Lost reply'); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start();
+  await eventually(() => f.drafts.get('original-view/host/z-last').frontendSends[69].state === 'unavailable-confirmed');
+  assert.deepEqual(lookedUp, route ? [scope] : []);
+  assert.deepEqual(f.feeds.map(feed => feed.scope), route ? [scope] : []); assert.deepEqual(f.submitted, []);
+  assert.equal(f.drafts.get('original-view/host/z-last').frontendSends[36].state, 'unavailable-pending');
+  assert.ok(requests.every(request => request.action === 'unavailable' && Number(request.id.split('-').at(-1)) >= 36));
+  assert.equal(f.app.getSnapshot().capturedSends.length, 32);
+  assert.deepEqual(f.drafts.get('original-view/host/z-last').frontendSends.map(row => row.command), record.frontendSends.map(row => row.command));
+});
+
+test('recovery and visible install share one writer and gain eligibility from the actual conversation agent', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  const held = deferred(), entered = deferred();
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  const actual = { ...f.descriptor('actual'), frontendOffers: 'ag-ui-capture-and-bind' };
+  f.behavior.agents = [f.descriptor(), actual]; f.behavior.agentLookup = () => actual;
+  f.behavior.binding = async request => { entered.resolve(); await held.promise; return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'new', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'New' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  t.after(() => source.generation.retire());
+  await f.app.start(); await entered.promise;
+  await f.app.open(scope);
+  const store = f.app.getSnapshot().active.store;
+  const writing = deferred(), writingEntered = deferred();
+  f.behavior.write = async () => { writingEntered.resolve(); await writing.promise; };
+  const draft = store.setDraft('Concurrent draft'); await writingEntered.promise;
+  f.behavior.submit = async command => ({ kind: 'receipt', receipt: { scope, clientCommandId: command.clientCommandId, hostOperationId: 'operation', sequence: 1, state: { kind: 'completed' } } });
+  const sending = store.send('Explicit send'); held.resolve();
+  await Promise.resolve(); writing.resolve(); await Promise.all([draft, sending]);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(f.loads.filter(key => key === 'original-view/host/conversation').length, 1);
+  assert.equal(f.submitted[0].version, 2); assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Concurrent draft');
+  assert.equal(f.drafts.get('original-view/host/conversation').outbox.length, 0);
+});
+
+for (const failed of [false, true]) test(`inactive view release ${failed ? 'reports its pinned save failure' : 'drains then defers notification until reopening'}`, async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.views.set('original-view/host', { ...empty(), route: scope }); f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'A', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'A' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); await assert.rejects(f.app.getSnapshot().active.store.send('Original'), /Reply lost/);
+  const key = f.app.getSnapshot().capturedSends[0].key;
+  await f.app.reopenView('other-view'); assert.equal(f.leases[0].closed, false);
+  const entered = deferred(), write = deferred(), requests = [];
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  f.behavior.write = async () => { entered.resolve(); await write.promise; };
+  const release = f.app.releaseCapturedSend(key); await entered.promise;
+  assert.equal(f.leases[0].closed, false);
+  if (failed) write.reject(new Error('Inactive release save failed')); else write.resolve();
+  await release; await source.generation.retire();
+  await eventually(() => f.leases[0].closed);
+  if (failed) assert.match(f.app.getSnapshot().storageFailure, /Inactive release save failed/);
+  else {
+    assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending'); assert.deepEqual(requests, []);
+    f.behavior.write = async () => {};
+    await f.app.reopenView('original-view');
+    await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+    assert.equal(f.leases.filter(lease => lease.viewId === 'original-view').length, 2);
+    assert.equal(f.submitted.length, 1);
+  }
+});
+
+test('owned-view discovery preserves corrupt journal bytes and blocks admission without agent lookup', async t => {
+  const f = fixture(); t.after(() => f.app.dispose().catch(() => {}));
+  const corrupt = { ...journalRecord(scope), version: 99 }; f.drafts.set('original-view/host/conversation', corrupt);
+  f.behavior.agentLookup = () => { assert.fail('Recovery must not resolve an agent'); };
+  await f.app.start(); await eventually(() => Boolean(f.app.getSnapshot().storageFailure));
+  assert.match(f.app.getSnapshot().storageFailure, /Unsupported local storage version/);
+  assert.equal(f.drafts.get('original-view/host/conversation'), corrupt);
+  assert.deepEqual(f.submitted, []); assert.deepEqual(f.feeds, []);
+});
+
+test('navigating inactive scopes closes their handles while retaining the selected store', async t => {
+  const f = fixture(); t.after(() => f.app.dispose()); await f.app.start();
+  const stores = [];
+  for (let index = 0; index < 40; index++) {
+    await f.app.open({ ...scope, conversationId: `visited-${index}` }); stores.push(f.app.getSnapshot().active.store);
+  }
+  for (const old of stores.slice(0, -1)) await assert.rejects(old.setDraft('Stale handle'), /closed/);
+  await stores.at(-1).setDraft('Current draft');
+  assert.equal(f.drafts.get('original-view/host/visited-39').draft, 'Current draft');
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+});
+
+for (const replacement of ['view', 'same-principal reconnect']) test(`recovery cancellation starts ${replacement} work before the old notification replies`, async t => {
+  const f = fixture(), oldReply = deferred(), nextReply = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); nextReply.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    await (requests.length === 1 ? oldReply.promise : nextReply.promise);
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  if (replacement === 'view') await f.app.reopenView('other-view'); else await f.app.reconnect();
+  await eventually(() => requests.length === 2);
+  if (replacement === 'view') {
+    await eventually(() => f.leases[0].closed);
+    assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  }
+  const before = structuredClone([...f.drafts]);
+  oldReply.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+  nextReply.resolve();
+  const key = `${replacement === 'view' ? 'other-view' : 'original-view'}/host/conversation`;
+  await eventually(() => f.drafts.get(key).frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(requests.length, 2);
+});
+
+test('canceling a notification keeps live captures and drains their admitted release before closing the old view', async t => {
+  const f = fixture(), oldReply = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); await f.app.dispose(); });
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const lost = { ...scope, conversationId: 'a-lost' };
+  f.drafts.set('original-view/host/a-lost', journalRecord(lost));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (request.scope.conversationId === 'a-lost') await oldReply.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'live', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Live' }, decodeInput: x => x, async execute() { throw new Error('No execution'); } }); return { dispose() {} }; } });
+  t.after(() => source.generation.retire());
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start(); await eventually(() => requests.length === 1);
+  await assert.rejects(f.app.getSnapshot().active.store.send('Live original'), /Reply lost/);
+  const live = f.app.getSnapshot().capturedSends.find(row => row.status === 'waiting');
+  await f.app.reopenView('other-view');
+  await eventually(() => requests.length === 2);
+  assert.equal(f.leases[0].closed, false);
+  assert.equal(f.app.getSnapshot().capturedSends.find(row => row.key === live.key).status, 'waiting');
+  const entered = deferred(), write = deferred();
+  f.behavior.write = async () => { entered.resolve(); await write.promise; };
+  const release = f.app.releaseCapturedSend(live.key); await entered.promise;
+  assert.equal(f.leases[0].closed, false);
+  write.resolve(); await release;
+  await eventually(() => f.leases[0].closed);
+  const before = structuredClone([...f.drafts]);
+  oldReply.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+});
+
+test('canceling during the admitted unavailable save drains it before releasing the old lease', async t => {
+  const f = fixture(), entered = deferred(), write = deferred(), requests = [];
+  t.after(async () => { write.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.drafts.set('other-view/host/conversation', journalRecord(scope));
+  let first = true;
+  f.behavior.write = async () => { if (first) { first = false; entered.resolve(); await write.promise; } };
+  f.behavior.binding = async request => { requests.push(request); return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start(); await entered.promise;
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false); assert.deepEqual(requests, []);
+  write.resolve(); await eventually(() => f.leases[0].closed && requests.length === 1);
+  assert.equal(f.drafts.get('original-view/host/conversation').frontendSends[0].state, 'unavailable-pending');
+  assert.equal(f.app.getSnapshot().storageFailure, '');
+});
+
+for (const ending of ['storage failure', 'disposal']) test(`recovery cancellation handles ${ending} before a held reply`, async t => {
+  const f = fixture(), gate = deferred(), entered = deferred();
+  t.after(async () => { gate.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => { entered.resolve(); await gate.promise; return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' }; };
+  await f.app.start(); await entered.promise;
+  if (ending === 'storage failure') f.leases[0].failure(new Error('Injected storage failure'));
+  let disposed = false;
+  const closing = f.app.dispose().then(() => { disposed = true; });
+  await eventually(() => disposed); await closing;
+  assert.equal(f.leases[0].closed, true);
+  const before = structuredClone([...f.drafts]);
+  gate.resolve(); await new Promise(resolve => setImmediate(resolve));
+  assert.deepEqual([...f.drafts], before);
+  assert.equal(f.app.getSnapshot().storageFailure, ending === 'storage failure' ? 'Injected storage failure' : '');
+});
+
+
+for (const destination of ['other-view', 'original-view']) test(`a rejected ${destination} selection preserves the original loaded view and recovery pass`, async t => {
+  const f = fixture(), gate = deferred(), requests = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (requests.length === 1) await gate.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  f.behavior.select = () => { throw new Error('Selection failed'); };
+  await f.app.reopenView(destination);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 1);
+  if (destination === 'other-view') assert.equal(f.leases[1].closed, true);
+  else assert.equal(f.leases.length, 1);
+  gate.resolve();
+  assert.match(f.app.getSnapshot().error, /Selection failed/);
+  assert.equal(f.leases[0].closed, false);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+  assert.equal(requests.length, 1);
+});
+
+test('reconnect cancels the previous pass while metadata is held and starts only after refresh finishes', async t => {
+  const f = fixture(), oldReply = deferred(), metadata = deferred(), entered = deferred(), requests = [];
+  t.after(async () => { oldReply.resolve(); metadata.resolve(); await f.app.dispose(); });
+  f.drafts.set('original-view/host/conversation', journalRecord(scope));
+  f.behavior.binding = async request => {
+    requests.push(request);
+    if (requests.length === 1) await oldReply.promise;
+    return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+  };
+  await f.app.start(); await eventually(() => requests.length === 1);
+  f.behavior.metadata = async () => { entered.resolve(); await metadata.promise; };
+  const refreshing = f.app.reconnect(); await entered.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(f.app.getSnapshot().host.kind, 'loading'); assert.equal(requests.length, 1);
+  metadata.resolve(); await refreshing;
+  await eventually(() => requests.length === 2);
+  await eventually(() => f.drafts.get('original-view/host/conversation').frontendSends[0].state === 'unavailable-confirmed');
+});
+
+for (const ending of ['navigation', 'disposal']) test(`a corrupt pending load releases its physical lease after ${ending}`, async () => {
+  const f = fixture(), gate = deferred(), entered = deferred(), corrupt = { version: 99, scope };
+  f.drafts.set('original-view/host/conversation', corrupt);
+  f.behavior.load = async (_scope, id) => { if (id === 'original-view') { entered.resolve(); await gate.promise; } };
+  try {
+    await f.app.start(); await entered.promise;
+    if (ending === 'navigation') await f.app.reopenView('other-view');
+    const closing = ending === 'disposal' ? f.app.dispose() : null;
+    gate.reject(new Error('Corrupt draft load'));
+    if (closing) await closing;
+    await eventually(() => f.leases[0].closed);
+    assert.equal(f.app.getSnapshot().storageFailure, '');
+    assert.equal(f.drafts.get('original-view/host/conversation'), corrupt);
+    assert.deepEqual(f.submitted, []);
+  } finally { gate.resolve(); await f.app.dispose().catch(() => {}); }
+});
+
+test('disposal waits for every physical close before rejecting the first close failure', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred(), closes = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose().catch(() => {}); });
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  await f.app.start();
+  f.behavior.close = owner => {
+    closes.push(owner.viewId);
+    if (owner.viewId === 'original-view') throw new Error('First physical close failed');
+    entered.resolve(); return gate.promise;
+  };
+  await f.app.reopenView('other-view');
+  await eventually(() => Boolean(f.app.getSnapshot().storageFailure));
+  let settled = false;
+  const closing = f.app.dispose();
+  const rejected = assert.rejects(closing, /First physical close failed/).then(() => { settled = true; });
+  await entered.promise;
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  gate.resolve(); await rejected;
+  assert.deepEqual(closes, ['original-view', 'other-view']);
+  assert.equal(f.app.dispose(), closing);
+});
+
+test('an existing selection reserves its lease while a storage callback releases its last capture', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  f.behavior.frontendOffers = 'ag-ui-capture-and-bind';
+  f.views.set('original-view/host', { ...empty(), route: scope });
+  const source = await createFrontendToolGeneration({ namespace: 'fixture', generation: 'reserved', platform: 'desktop', capture: () => undefined,
+    activate({ frontendTools }) { frontendTools.add({ definition: { name: 'echo', description: 'Original' }, decodeInput: x => x, async execute() { throw new Error('No effects'); } }); return { dispose() {} }; } });
+  const token = {}; f.app.frontendGenerations.begin(token); f.app.frontendGenerations.publish(token, { kind: 'ready', generations: [source.generation] });
+  await f.app.start();
+  await assert.rejects(f.app.getSnapshot().active.store.send('Pending'), /Reply lost/);
+  await f.app.reopenView('other-view');
+  assert.equal(f.leases[0].closed, false);
+  f.behavior.select = () => {
+    f.leases[0].failure(new Error('Selection storage failed'));
+    assert.equal(f.leases[0].closed, false);
+  };
+  await f.app.reopenView('original-view');
+  assert.match(f.app.getSnapshot().storageFailure, /Selection storage failed/);
+  assert.equal(f.leases[0].closed, false);
+  await source.generation.retire();
+});
+
+for (const destination of ['original-view', 'fresh-view']) test(`disposal inside physical selection cannot install ${destination}`, async () => {
+  const f = fixture();
+  await f.app.start();
+  let closing;
+  f.behavior.select = () => { closing = f.app.dispose(); };
+  await f.app.reopenView(destination); await closing;
+  assert(f.leases.every(lease => lease.closed));
+  assert.equal(f.metadataCalls(), 1);
+});
+
+test('a fresh rejected selection retains its failed physical close for disposal and drains the selected lease', async t => {
+  const f = fixture(), gate = deferred(), entered = deferred(), closes = [];
+  t.after(async () => { gate.resolve(); await f.app.dispose().catch(() => {}); });
+  await f.app.start();
+  f.behavior.select = () => { throw new Error('Candidate selection failed'); };
+  f.behavior.close = owner => {
+    closes.push(owner.viewId);
+    if (owner.viewId === 'candidate-view') throw new Error('Candidate close failed');
+    entered.resolve(); return gate.promise;
+  };
+  await f.app.reopenView('candidate-view');
+  assert.match(f.app.getSnapshot().storageFailure, /Candidate close failed/);
+  assert.match(f.app.getSnapshot().error, /Candidate selection failed/);
+  assert.equal(f.leases[0].closed, false);
+  assert.deepEqual(closes, ['candidate-view']);
+  let settled = false;
+  const closing = f.app.dispose();
+  const rejected = assert.rejects(closing, /Candidate close failed/).then(() => { settled = true; });
+  await entered.promise; await new Promise(resolve => setImmediate(resolve));
+  assert.equal(settled, false);
+  gate.resolve(); await rejected;
+  assert.deepEqual(closes, ['candidate-view', 'original-view']);
+  assert.equal(f.app.dispose(), closing);
+});
+
+test('old capture disposal save failure does not poison a restarted owner', async t => {
+  const f=fixture(); f.behavior.frontendOffers='ag-ui-capture-and-bind';
+  f.views.set('original-view/host',{...empty(),route:scope});
+  const source=await createFrontendToolGeneration({namespace:'fixture',generation:'A',platform:'desktop',capture:()=>undefined,
+    activate({frontendTools}){frontendTools.add({definition:{name:'echo',description:'Original'},decodeInput:x=>x,async execute(){throw Error('No execution');}});return{dispose(){}};}});
+  const token={}; f.app.frontendGenerations.begin(token);f.app.frontendGenerations.publish(token,{kind:'ready',generations:[source.generation]});
+  const gate=deferred(),entered=deferred();
+  t.after(async()=>{gate.reject(new Error('Cleanup'));await f.app.dispose();await source.generation.retire();});
+  await f.app.start();
+  f.behavior.submit=async command=>({kind:'receipt',receipt:{scope,clientCommandId:command.clientCommandId,hostOperationId:'operation',sequence:1,state:{kind:'completed'}}});
+  await f.app.getSnapshot().active.store.send('Original');
+  const original=f.drafts.get('original-view/host/conversation').frontendSends[0];
+  let held=true;
+  f.behavior.write=async()=>{if(held){held=false;entered.resolve();await gate.promise;}};
+  const closing=f.app.dispose();await entered.promise;
+  const restarted=f.app.start();gate.reject(new Error('Only old capture save failed'));
+  await Promise.all([closing,restarted]);
+  const state=f.app.getSnapshot();
+  assert.equal(state.storageFailure,'');assert.equal(state.host.kind,'ready');
+  await state.active.store.setDraft('Healthy restarted draft');
+  const saved=f.drafts.get('original-view/host/conversation');
+  assert.equal(saved.draft,'Healthy restarted draft');assert.deepEqual(saved.frontendSends[0].command,original.command);assert.equal(saved.frontendSends[0].ownerId,original.ownerId);
 });
 
 test('image previews and uploads share one host transfer slot, reusing concurrent reads and retrying refused overlaps', async t => {
