@@ -4,7 +4,7 @@ import { record, identifier, count } from '@agentui/contracts/decode';
 import { parseServiceRequest, ServiceError } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest } from '@agentui/contracts/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-import { createServiceConnection } from './service-engine.js';
+import { createServiceConnection, ServiceConnectionLost } from './service-engine.js';
 import type { ServiceConnectionOptions } from './service-engine.js';
 
 export type MacAccess = { readonly observation: string; readonly hostId: string; readonly principalId: string };
@@ -17,8 +17,8 @@ function failure(cause: unknown): ServiceError {
   switch (cause) {
     case 'profile-in-use': reason = 'Close the other AgentUI instance before reconnecting.'; break;
     case 'invalid-input': reason = 'Invalid native request.'; break;
-    case 'stale': reason = 'The local host connection changed. Reconnect before continuing.'; break;
-    case 'host-changed': reason = 'A different AgentUI host is answering on this Mac. Reconnect to switch to it. Local work is retained.'; break;
+    case 'stale': return new ServiceConnectionLost('The local host connection changed. Reconnect before continuing.');
+    case 'host-changed': return new ServiceConnectionLost('A different AgentUI host is answering on this Mac. Reconnect to switch to it. Local work is retained.');
     case 'network-failed': reason = 'The local host request did not complete. Check that the host is running, then reconnect or inspect command recovery before retrying.'; break;
     case 'forbidden': reason = 'Native access was refused. Open the installed AgentUI app, then reconnect.'; break;
     case 'profile-unavailable': reason = 'The local profile is unavailable. Check that AgentUI can access its local profile, then restart AgentUI. Local work is retained.'; break;

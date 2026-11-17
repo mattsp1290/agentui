@@ -4,7 +4,7 @@ import { createServiceConnection } from './service-engine.js';
 
 export type { ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 export { ServiceError } from '@agentui/contracts/service';
-export { ServiceProtocolError } from './service-engine.js';
+export { ServiceConnectionLost, ServiceProtocolError } from './service-engine.js';
 export interface BrowserConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;

@@ -1,5 +1,6 @@
 import { checkCompatibility, createConversationStore } from '@agentui/client';
 import type { CompatibilityIssue, ConversationStore } from '@agentui/client';
+import { ServiceConnectionLost } from '@agentui/client/service';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
@@ -184,6 +185,7 @@ export function createApplicationController(deps: {
     } catch (cause) {
       if (session === owner && state.active === target && version === permissionRead) {
         stalePermissions(message(cause));
+        if (cause instanceof ServiceConnectionLost) fail(owner, cause);
       }
       throw cause;
     }
@@ -202,8 +204,10 @@ export function createApplicationController(deps: {
   }
   function fail(owner: Session, cause: unknown, phase: 'handshake' | 'operation' = 'operation'): void {
     if (session !== owner) return;
-    if (phase === 'handshake') publish({ host: { kind: 'unavailable' }, error: message(cause) });
-    else publish({ error: message(cause) });
+    if (phase === 'handshake' || cause instanceof ServiceConnectionLost) {
+      publish({ host: { kind: 'unavailable' }, error: message(cause) });
+      if (phase !== 'handshake') disconnectActive();
+    } else publish({ error: message(cause) });
   }
   async function current<T>(owner: Session, operation: Promise<T>): Promise<T> {
     const result = await operation;
@@ -273,8 +277,10 @@ export function createApplicationController(deps: {
         try {
           const status = await owner.connection.providerObservation({ scope: target.scope, action });
           if (current()) publish({ observation: { status, retrying } });
-        } catch {
-          if (current()) publish({ observation: { status: { kind: 'unknown' }, retrying } });
+        } catch (cause) {
+          if (!current()) return;
+          if (cause instanceof ServiceConnectionLost) fail(owner, cause);
+          else publish({ observation: { status: { kind: 'unknown' }, retrying } });
         }
       })();
       pending = task;
@@ -543,7 +549,10 @@ export function createApplicationController(deps: {
       const owner = session;
       if (!owner) throw new Error('This application has closed.');
       const { hostId, principalId } = requireHost(owner);
-      const page = await current(owner, owner.connection.search(query, after));
+      const page = await current(owner, owner.connection.search(query, after)).catch((cause: unknown) => {
+        if (!signal.aborted && cause instanceof ServiceConnectionLost) fail(owner, cause);
+        throw cause;
+      });
       const host = requireHost(owner);
       if (signal.aborted || host.hostId !== hostId || host.principalId !== principalId) throw new Error('Search connection changed.');
       if (page.items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Search belongs to another host.');

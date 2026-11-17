@@ -6,6 +6,9 @@ import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMa
 import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
 
 export class ServiceProtocolError extends Error {}
+export class ServiceConnectionLost extends ServiceError {
+  constructor(message: string) { super('unavailable', message); }
+}
 class ServiceRequestRejected extends Error {}
 export async function readServiceResponseBody(response: Response, limit = SERVICE_MAX_RESPONSE_BYTES): Promise<unknown> {
   const announced = response.headers.get('content-length');

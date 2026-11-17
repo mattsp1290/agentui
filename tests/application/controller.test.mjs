@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createFrontendToolGeneration } from '@agentui/sdk/tools';
 import { ServiceError } from '@agentui/contracts/service';
+import { ServiceConnectionLost } from '@agentui/client/service';
 import { CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import { applicationEnabled } from '../../apps/desktop/dist/application/application-controller.js';
 import { scope, empty, deferred, fixture } from './controller-fixture.mjs';
@@ -459,6 +460,22 @@ for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted'
     assert.equal(f.app.getSnapshot().busy, false);
   });
 }
+
+test('a lost native connection during a command disables the app until an explicit reconnect', async t => {
+  const f = await openCommands(t);
+  const failure = new ServiceConnectionLost('A different AgentUI host is answering on this Mac. Reconnect to switch to it.');
+  f.behavior.submit = async () => { throw failure; };
+  await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
+  const snapshot = f.app.getSnapshot();
+  assert.equal(snapshot.host.kind, 'unavailable');
+  assert.match(snapshot.error, /different AgentUI host/);
+  assert.equal(applicationEnabled(snapshot), false);
+  assert.equal(f.target.store.getSnapshot().connection.kind, 'disconnected');
+  assert.equal(f.target.store.getSnapshot().outbox.length, 1);
+  await f.app.reconnect();
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.equal(applicationEnabled(f.app.getSnapshot()), true);
+});
 
 test('SDK rejects transport failures while the UI submission stays caught', async t => {
   for (const sdk of [true, false]) {
