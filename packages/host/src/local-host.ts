@@ -375,10 +375,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     },
   };
   registerFrontendToolsHost(host, {
-    db: store.db,
-    transaction: (work, write) => store.transaction(work, write),
-    frontendSends: store.frontendSends,
-    findInstallation: scope => store.findInstallation(scope),
+    frontendTools: authorize => store.frontendTools(authorize),
     authorized,
   });
   return host;

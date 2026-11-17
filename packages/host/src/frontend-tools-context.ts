@@ -1,7 +1,7 @@
 import type { ConversationScope } from '@agentui/contracts';
 import type { SqliteStore } from './sqlite-store.js';
 
-type Context = Pick<SqliteStore<unknown, unknown>, 'db' | 'transaction' | 'findInstallation' | 'frontendSends'> & {
+type Context = Pick<SqliteStore<unknown, unknown>, 'frontendTools'> & {
   readonly authorized: (scope: ConversationScope) => ConversationScope;
 };
 const contexts = new WeakMap<object, Context>();
