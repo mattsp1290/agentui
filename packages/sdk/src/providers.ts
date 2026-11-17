@@ -1,4 +1,4 @@
-import type { ConversationPermission, PermissionScope, ConversationScope, Json, RunAuthority } from '@agentui/contracts';
+import type { ConversationPermission, PermissionScope, ConversationScope, Json, RunAuthority, TextMetadata } from '@agentui/contracts';
 
 export const backendProviderContractVersion = 1;
 
@@ -45,7 +45,7 @@ export interface ProviderConversation<I extends string> {
   readonly authority: RunAuthority & { readonly binding: { readonly installationId: I } };
 }
 
-export type ConversationRefKind = 'run' | 'decision' | 'choice' | 'permission';
+export type ConversationRefKind = 'run' | 'decision' | 'choice' | 'permission' | 'output';
 export interface ConversationRef<I extends string, K extends ConversationRefKind> {
   readonly binding: ProviderConversation<I>;
   readonly ref: ProviderRef<I, K>;
@@ -137,9 +137,27 @@ export interface ProviderPermissions<I extends string> {
   reconcileRevoke(operation: RevokePermission<I>): Promise<ProviderOutcome<PermissionRevokeEffect>>;
 }
 
+export interface ProviderTextOutput<I extends string> extends TextMetadata {
+  readonly reference: ConversationRef<I, 'output'>;
+}
+export type ProviderOutputListing<I extends string> =
+  | { readonly kind: 'complete'; readonly outputs: readonly ProviderTextOutput<I>[] }
+  | ProviderUnsupported | ProviderFailure;
+export type ProviderOutputRead =
+  | { readonly kind: 'available'; readonly bytes: Uint8Array }
+  | { readonly kind: 'missing' }
+  | ProviderUnsupported | ProviderFailure;
+export interface ProviderOutputs<I extends string> {
+  /** Return every retained descriptor in this confirmed conversation. Incomplete listings must fail. */
+  list(binding: ProviderConversation<I>): Promise<ProviderOutputListing<I>>;
+  /** Read existing bytes without generating output or changing retention. */
+  read(output: ConversationRef<I, 'output'>): Promise<ProviderOutputRead>;
+}
+
 export interface ConnectedProvider<M extends ProviderModel, I extends string> extends Invariant<M> {
   readonly instance: ProviderInstance<I>;
   readonly permissions?: ProviderPermissions<I>;
+  readonly outputs?: ProviderOutputs<I>;
   readonly capabilities: {
     readonly create: ProviderCapability;
     readonly send: ProviderCapability;
