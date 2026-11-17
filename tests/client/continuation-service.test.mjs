@@ -15,14 +15,16 @@ const views = [
   ...['pending', 'unconfirmed'].map(kind => ({ predecessor: earlier, carried, closure: 'failed', successor: { kind } })),
   ...['busy', 'limit', 'unavailable', 'continued-elsewhere'].map(refusal => ({ ...none, closure: 'exhausted', successor: { kind: 'refused', refusal } })),
   { predecessor: earlier, carried, closure: 'exhausted', successor: { kind: 'confirmed', scope: later } },
+  { predecessor: earlier, carried: null, closure: 'unknown', successor: { kind: 'confirmed', scope: later } },
 ];
 const malformed = [
-  null, {}, { ...none, extra: true }, { ...none, closure: 'paused' },
+  null, {}, { ...none, extra: true }, { ...none, closure: 'paused' }, { ...none, closure: 'Unknown' },
   { ...none, carried },
   { ...none, predecessor: scope },
   { ...none, predecessor: { hostId: 'other', conversationId: 'earlier' } },
   { ...none, predecessor: { ...earlier, generation: 'new' } },
   { ...none, successor: { kind: 'confirmed', scope } },
+  { ...none, predecessor: earlier, successor: { kind: 'confirmed', scope: earlier } },
   { ...none, successor: { kind: 'confirmed', scope: { hostId: 'other', conversationId: 'later' } } },
   { ...none, successor: { kind: 'confirmed' } },
   { ...none, successor: { kind: 'pending', scope: later } },
@@ -30,6 +32,7 @@ const malformed = [
   { ...none, successor: { kind: 'refused' } },
   { ...none, successor: { kind: 'resumed' } },
   { ...none, predecessor: earlier, carried: { ...carried, limitBytes: -1 } },
+  { ...none, predecessor: earlier, carried: { ...carried, carriedBytes: 65537 } },
   { ...none, predecessor: earlier, carried: { ...carried, carriedTurns: 1.5 } },
   { ...none, predecessor: earlier, carried: { ...carried, transcriptDigest: 'a' } },
 ];

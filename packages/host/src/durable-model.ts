@@ -100,17 +100,19 @@ export interface HostBudgets {
   readonly subscribers: number;
   readonly deliveryMs: number;
   readonly pollMs: number;
+  /** How long a continuation `check` or `start` waits before answering with the current view; well under the 20 s client deadline. */
+  readonly continuationReplyMs: number;
 }
 const DEFAULT_BUDGETS: HostBudgets = { maxCommandBytes: DEFAULT_MAX_COMMAND_BYTES, maxEventBytes: 64_000,
     pageEvents: HOST_DEFAULT_PAGE_EVENTS, pageBytes: HOST_DEFAULT_PAGE_BYTES,
     replayEvents: 1000, replayBytes: 2_000_000, snapshotBytes: HOST_DEFAULT_SNAPSHOT_BYTES,
-    subscribers: 100, deliveryMs: 30_000, pollMs: 100 };
+    subscribers: 100, deliveryMs: 30_000, pollMs: 100, continuationReplyMs: 10_000 };
 export function budgets(input: Partial<HostBudgets> = {}): HostBudgets {
   const result = { ...DEFAULT_BUDGETS, ...input };
   for (const name of Object.keys(input)) {
     if (!Object.hasOwn(DEFAULT_BUDGETS, name)) throw new Error('Unknown host budget');
   }
-  if (result.deliveryMs > 2_147_483_647 || result.pollMs > 2_147_483_647) throw new Error('Timer budget exceeds platform limit');
+  if (result.deliveryMs > 2_147_483_647 || result.pollMs > 2_147_483_647 || result.continuationReplyMs > 2_147_483_647) throw new Error('Timer budget exceeds platform limit');
   for (const value of Object.values(result)) {
     if (!Number.isSafeInteger(value) || value <= 0) throw new Error('Invalid host budget');
   }

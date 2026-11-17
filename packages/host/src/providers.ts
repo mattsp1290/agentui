@@ -715,4 +715,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
 export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>
-  & Partial<Pick<ReturnType<typeof createProviderRegistry>, 'closure' | 'continuation'>>;
+  & Partial<Pick<ReturnType<typeof createProviderRegistry>, 'closure' | 'continuation' | 'statusOf'>>;

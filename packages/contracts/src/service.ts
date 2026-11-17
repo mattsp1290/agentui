@@ -39,7 +39,8 @@ export type ContinuationAction = 'read' | 'check' | 'start';
 export interface ContinuationView {
   readonly predecessor: ConversationScope | null;
   readonly carried: ContinuationCarried | null;
-  readonly closure: ConversationClosure | null;
+  /** `unknown` while no loaded provider can read the conversation's saved closure; `null` means it is open. */
+  readonly closure: ConversationClosure | 'unknown' | null;
   readonly successor: null | { readonly kind: 'starting' | 'pending' | 'unconfirmed' }
     | { readonly kind: 'refused'; readonly refusal: ContinuationRefusal }
     | { readonly kind: 'confirmed'; readonly scope: ConversationScope };
@@ -313,7 +314,8 @@ function parseContinuationView(value: unknown, scope: ConversationScope): Contin
       default: throw new Error('Invalid continuation successor');
     }
   }
-  return { predecessor, carried, closure: input.closure === null ? null : parseConversationClosure(input.closure), successor };
+  if (predecessor && successor?.kind === 'confirmed' && sameScope(predecessor, successor.scope)) throw new Error('Cyclic continuation');
+  return { predecessor, carried, closure: input.closure === null || input.closure === 'unknown' ? input.closure : parseConversationClosure(input.closure), successor };
 }
 type ContextualOp = 'frontend-binding' | 'output-list' | 'output-read' | 'continuation';
 type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, ContextualOp> } | Extract<ServiceRequest, { readonly op: ContextualOp }>;

@@ -9,7 +9,8 @@ export const acknowledgement = 'I have read the earlier conversation.';
 /**
  * A controlled Crew service over real HTTP. `intercept` may answer a conversation-scoped request before the default
  * routes; it returns true when it wrote the response. Handoff routes mirror Crew's handoff row: `replyHandoffs` queues
- * per-POST outcomes, `failHandoffLookups` fails the next handoff reads, and `commitHandoff`/`admit` drive the row directly.
+ * per-POST outcomes, `holdHandoffs` holds POSTs until released, `failHandoffLookups` fails the next handoff reads, and
+ * `commitHandoff`/`admit` drive the row directly.
  */
 export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
@@ -17,7 +18,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
   const grants = [];
   let lost = false, observationMode = 'stream', conflict = null, decisionReply = {}, receiptHold = null, receiptFailure = false;
   const handoffs = [], transcripts = new Map(), handoffReplies = [];
-  let handoffLookupFailures = 0;
+  let handoffLookupFailures = 0, handoffHold = null;
   // Mirrors Crew's handoff row: committing seals the source and opens the target; admission adds the reserved first turn.
   function commitHandoff(source, requestId) {
     const prior = handoffs.find(row => row.requestId === requestId);
@@ -74,6 +75,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
     const conversation = conversations.get(conversationId);
     if (!conversation) return json(404, { error: 'not_found' });
     if (request.method === 'POST' && parts[4] === 'handoffs') {
+      await handoffHold;
       const reply = handoffReplies.shift() ?? 'admitted';
       if (typeof reply === 'object') return json(reply.status, { error: reply.code });
       if (reply === 'dropped') { response.destroy(); return; }
@@ -191,6 +193,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
       kind: 'secret', revision: 'one', resolve: async () => token } }] } });
   return { origin, token, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants, handoffs, commitHandoff, admit,
     replyHandoffs(...replies) { handoffReplies.push(...replies); }, failHandoffLookups(count = 1) { handoffLookupFailures = count; },
+    holdHandoffs() { const hold = Promise.withResolvers(); handoffHold = hold.promise; return () => { handoffHold = null; hold.resolve(); }; },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },
     holdReceipts() { const hold = Promise.withResolvers(); receiptHold = hold.promise; return () => { receiptHold = null; hold.resolve(); }; },

@@ -23,7 +23,7 @@ import { Journal } from './journal.js';
 import { registerFrontendToolsHost } from './frontend-tools-context.js';
 
 /** Only a confirmed, concluded provider conversation without frontend observations can be continued. */
-export class ContinuationUnavailable extends Error {}
+export class ContinuationRefused extends Error {}
 export interface LocalHostOptions<E, P> {
   readonly path: string;
   readonly projection: Projection<E, P>;
@@ -42,7 +42,8 @@ export interface LocalHost<E, P> {
   createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations,
     predecessor?: ConversationScope): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
-  /** `read` touches only the store, `check` only looks up unsettled successor attempts, and `start` posts at most one new attempt per predecessor at a time. */
+  /** `read` touches only the store, `check` only looks up unsettled successor attempts, and `start` posts at most one new attempt per predecessor at a time.
+   * `check` and `start` answer within `continuationReplyMs`; work still in flight then continues, and a held lease reads as `starting`. */
   continuation(scope: ConversationScope, action: ContinuationAction, providers?: ProviderCreationOperations): Promise<ContinuationView>;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
@@ -123,6 +124,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   };
   const closure = (original: StoredCreation | null): ConversationClosure | null =>
     original?.observation?.kind === 'confirmed' ? options.providers?.closure?.(original, store) ?? null : null;
+  // Without a loaded provider for its installation, a conversation's saved closure cannot be read, which does not make it open.
+  const unserved = (original: StoredCreation | null): boolean => original?.observation?.kind === 'confirmed' &&
+    (!options.providers || (options.providers.statusOf !== undefined && options.providers.statusOf(original.installation) === undefined));
   const observationStatus = (scope: ConversationScope): ProviderObservationStatus => {
     authorized(scope);
     const target = store.findInstallation(scope), original = store.creation(scope);
@@ -224,15 +228,20 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     const outcome = original?.intent.from && original.observation?.kind === 'confirmed' ? options.providers?.continuation?.(original) : null;
     const confirmed = attempts.find(creation => creation.observation?.kind === 'confirmed');
     const refused = attempts.findLast(creation => creation.observation?.kind === 'rejected' || creation.observation?.kind === 'not-dispatched');
+    // A provider refusal of the newest attempt outranks older unsettled attempts: the provider had not sealed the predecessor
+    // for them. `continued-elsewhere`, an unreadable refusal and a refusal by this host prove no such thing.
+    const newest = unrecorded ? null : attempts.at(-1);
+    const answered = newest?.observation?.kind === 'rejected' ? options.providers?.continuation?.(newest) : null;
     let successor: ContinuationView['successor'] = null;
     if (confirmed) successor = { kind: 'confirmed', scope: confirmed.intent.scope };
     else if (continuing.has(canonicalJson(scope))) successor = { kind: 'starting' };
     else if (attempts.some(creation => creation.observation?.kind === 'pending')) successor = { kind: 'pending' };
+    else if (answered && 'refused' in answered && answered.refused !== 'continued-elsewhere') successor = { kind: 'refused', refusal: answered.refused };
     else if (attempts.some(unsettled)) successor = { kind: 'unconfirmed' };
     else if (unrecorded) successor = { kind: 'refused', refusal: 'unavailable' };
     else if (refused) successor = { kind: 'refused', refusal: refusal(refused) };
     return { predecessor: original?.intent.from?.scope ?? null, carried: outcome && !('refused' in outcome) ? outcome : null,
-      closure: closure(original), successor };
+      closure: unserved(original) ? 'unknown' : closure(original), successor };
   };
   // Lookups only: an attempt that already left the host is never posted again.
   const checkSuccessors = async (scope: ConversationScope, providers: ProviderCreationOperations): Promise<void> => {
@@ -242,9 +251,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const continuable = (scope: ConversationScope): StoredCreation => {
     const predecessor = store.creation(scope);
     if (predecessor?.observation?.kind !== 'confirmed' || !closure(predecessor) || store.hasFrontendObservations(scope)) {
-      throw new ContinuationUnavailable('Conversation cannot be continued');
+      throw new ContinuationRefused('Conversation cannot be continued');
     }
     return predecessor;
+  };
+  /** Settles with `work`, or with `undefined` once the reply budget passes; `work` keeps running and its rejection stays handled. */
+  const replyWithin = async <T>(work: Promise<T>): Promise<T | undefined> => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try { return await Promise.race([work, new Promise<undefined>(resolve => { timer = setTimeout(() => resolve(undefined), store.limits.continuationReplyMs); })]); }
+    finally { clearTimeout(timer); }
   };
   /** Resolves true when the host refused the new attempt before recording it. */
   const startSuccessor = async (scope: ConversationScope, predecessor: StoredCreation, providers: ProviderCreationOperations): Promise<boolean> => {
@@ -296,9 +311,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     async continuation(value, action, providers) {
       const scope = authorized(value);
       if (action === 'read') return continuationView(scope);
-      if (!providers) throw new Error('Provider unavailable');
+      if (!providers || unserved(store.creation(scope))) throw new Error('Provider unavailable');
       if (action === 'check') {
-        await inFlight(() => checkSuccessors(scope, providers));
+        await replyWithin(inFlight(() => checkSuccessors(scope, providers)));
         return continuationView(authorized(scope));
       }
       const predecessor = continuable(scope), key = canonicalJson(scope);
@@ -307,8 +322,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         lease = inFlight(() => startSuccessor(scope, predecessor, providers)).finally(() => continuing.delete(key));
         continuing.set(key, lease);
       }
-      const unrecorded = await lease;
-      return continuationView(authorized(scope), unrecorded);
+      const unrecorded = await replyWithin(lease);
+      return continuationView(authorized(scope), unrecorded === true);
     },
     async createProviderConversation(scope, target, providers, predecessor) {
       authorized(scope);

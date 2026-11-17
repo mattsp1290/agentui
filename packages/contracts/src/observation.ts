@@ -33,8 +33,10 @@ export function parseContinuationRefusal(value: unknown): ContinuationRefusal {
 }
 export function parseContinuationCarried(value: unknown): ContinuationCarried {
   const input = record(value, ['carriedTurns', 'omittedTurns', 'uncertainTurns', 'carriedBytes', 'limitBytes']);
-  return { carriedTurns: count(input.carriedTurns), omittedTurns: count(input.omittedTurns), uncertainTurns: count(input.uncertainTurns),
+  const carried = { carriedTurns: count(input.carriedTurns), omittedTurns: count(input.omittedTurns), uncertainTurns: count(input.uncertainTurns),
     carriedBytes: count(input.carriedBytes), limitBytes: count(input.limitBytes) };
+  if (carried.carriedBytes > carried.limitBytes) throw new Error('Carried bytes exceed limit');
+  return carried;
 }
 export function parseProviderObservationStatus(value: unknown): ProviderObservationStatus {
   const input = record(value);

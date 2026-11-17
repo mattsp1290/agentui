@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
-import { ContinuationUnavailable, createProviderRegistry, openLocalHost } from '@agentui/host';
+import { ContinuationRefused, createProviderRegistry, openLocalHost } from '@agentui/host';
 import { transcriptProjection } from '@agentui/contracts/conversation';
 import { SqliteStore } from '../../../packages/host/dist/sqlite-store.js';
 import { budgets } from '../../../packages/host/dist/durable-model.js';
@@ -25,7 +25,7 @@ const none = { predecessor: null, carried: null, closure: null, successor: null 
 const carried = row => ({ carriedTurns: row.carriedTurns, omittedTurns: row.omittedTurns, uncertainTurns: row.uncertainTurns,
   carriedBytes: row.transcriptBytes, limitBytes: 65536 });
 
-async function harness(t) {
+async function harness(t, budgets) {
   const remote = await service(t), directory = mkdtempSync(join(tmpdir(), 'agentui-crew-continuation-')), path = join(directory, 'host.sqlite');
   let current;
   async function open() {
@@ -37,7 +37,7 @@ async function harness(t) {
     await registry.activate();
     const [discovered] = await registry.discover();
     assert.equal(discovered.kind, 'available');
-    current = { registry, host: openLocalHost({ path, projection: transcriptProjection, driver: [], authorize: () => true, providers: registry }),
+    current = { registry, host: openLocalHost({ path, projection: transcriptProjection, driver: [], authorize: () => true, providers: registry, ...(budgets && { budgets }) }),
       target: { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance, agent: discovered.agents[0],
         presentationVersion: 1, expectedAuthority: discovered.expectedAuthority } };
   }
@@ -123,6 +123,36 @@ test('an uncertain start, a failed check and Try again settle on the first attem
   assert.equal(f.posts().length, 2);
 });
 
+test('a newer handed_off refusal never hides an older attempt that lookups have not settled', async t => {
+  const f = await harness(t);
+  await concluded(f);
+  f.remote.replyHandoffs('lost');
+  assert.deepEqual((await f.continuation(before, 'start')).successor, { kind: 'unconfirmed' });
+  f.remote.failHandoffLookups(2);
+  const view = await f.continuation(before, 'start');
+  const [first, second] = f.attempts();
+  assert.equal(first.observation.kind, 'uncertain');
+  assert.deepEqual(second.observation.evidence, { refused: 'continued-elsewhere', code: 'handed_off' });
+  assert.deepEqual(view, { ...none, closure: 'cancelled', successor: { kind: 'unconfirmed' } });
+  assert.deepEqual(await f.continuation(before, 'read'), view);
+  assert.deepEqual((await f.continuation(before, 'check')).successor, { kind: 'confirmed', scope: first.scope });
+  assert.equal(f.posts().length, 2);
+});
+
+test('a provider refusal of the newest attempt outranks an older attempt that never reached Crew', async t => {
+  const f = await harness(t);
+  await concluded(f);
+  f.remote.replyHandoffs('dropped', { status: 409, code: 'handoff_too_large' });
+  assert.deepEqual((await f.continuation(before, 'start')).successor, { kind: 'unconfirmed' });
+  const view = await f.continuation(before, 'start');
+  assert.deepEqual(view, { ...none, closure: 'cancelled', successor: { kind: 'refused', refusal: 'unavailable' } });
+  assert.deepEqual(await f.continuation(before, 'read'), view);
+  assert.deepEqual(await f.continuation(before, 'check'), view);
+  assert.deepEqual(f.attempts().map(attempt => attempt.observation.kind), ['uncertain', 'rejected']);
+  assert.equal(f.posts().length, 2);
+  assert.equal(f.reads(), 2);
+});
+
 test('each Crew refusal shows as the newest refusal, and a host refusal before recording shows only once', async t => {
   const f = await harness(t);
   await concluded(f);
@@ -161,20 +191,66 @@ test('an unadmitted handoff stays pending without another POST until a lookup se
   assert.equal(f.reads(), 3);
 });
 
-test('start is refused for an open, unknown or native conversation and one with frontend observations; read stays inert', async t => {
+test('start is refused for an open or unknown conversation; read stays inert', async t => {
   const f = await harness(t);
   assert.equal((await f.host.createProviderConversation(before, f.target, f.registry)).kind, 'confirmed');
-  await assert.rejects(f.continuation(before, 'start'), ContinuationUnavailable);
+  await assert.rejects(f.continuation(before, 'start'), ContinuationRefused);
   assert.deepEqual(await f.continuation(before, 'read'), none);
-  await assert.rejects(f.continuation(scope('unknown'), 'start'), ContinuationUnavailable);
+  await assert.rejects(f.continuation(scope('unknown'), 'start'), ContinuationRefused);
   assert.deepEqual(await f.continuation(scope('unknown'), 'read'), none);
-  await concluded(f);
-  f.database(db => db.prepare("INSERT INTO commands(host, conversation, id, operation, intent, target, observation, receipt) VALUES (?, ?, 'offer', ?, '{}', ?, NULL, '{}')")
-    .run(hostId, before.conversationId, randomUUID(), JSON.stringify({ kind: 'provider', operation: { observationProtocol: 'ag-ui-v1' } })));
-  await assert.rejects(f.continuation(before, 'start'), ContinuationUnavailable);
   await assert.rejects(f.host.continuation(before, 'check'), /^Error: Provider unavailable$/u);
   assert.equal(f.posts().length, 0);
   assert.deepEqual(f.attempts(), []);
+});
+
+test('a chat with a real, finished send is continued', async t => {
+  const f = await harness(t);
+  assert.equal((await f.host.createProviderConversation(before, f.target, f.registry)).kind, 'confirmed');
+  const session = f.host.creation(before).observation.binding.authority.binding.opaqueSessionId;
+  const sent = await f.host.conversation(before).submit({ version: 1, scope: before, clientCommandId: 'hello', body: { kind: 'send', text: 'Hello' } });
+  assert.equal(sent.receipt.state.kind, 'accepted');
+  f.remote.reply(session, 'Hi');
+  await until(() => f.host.inspect(before).snapshot.document.domain.messages.at(-1)?.text === 'Hi');
+  await concluded(f);
+  assert.equal(f.database(db => JSON.parse(db.prepare("SELECT target FROM commands WHERE id='hello'").get().target)).operation.kind, 'send');
+  const view = await f.continuation(before, 'start');
+  assert.deepEqual(view, { ...none, closure: 'cancelled', successor: { kind: 'confirmed', scope: f.attempts()[0].scope } });
+  assert.equal(f.posts().length, 1);
+});
+
+test('a start held past the reply budget answers starting, and a later check converges without another POST', async t => {
+  const f = await harness(t, { continuationReplyMs: 50 });
+  await concluded(f);
+  const release = f.remote.holdHandoffs();
+  const starting = { ...none, closure: 'cancelled', successor: { kind: 'starting' } };
+  assert.deepEqual(await f.continuation(before, 'start'), starting);
+  await until(() => f.posts().length === 1);
+  assert.deepEqual(await f.continuation(before, 'check'), starting);
+  assert.deepEqual(await f.continuation(before, 'start'), starting);
+  release();
+  const view = await eventually(() => f.continuation(before, 'check'), value => value.successor?.kind === 'confirmed');
+  assert.deepEqual(view, { ...none, closure: 'cancelled', successor: { kind: 'confirmed', scope: f.attempts()[0].scope } });
+  assert.deepEqual(await f.continuation(before, 'read'), view);
+  assert.equal(f.posts().length, 1);
+  assert.equal(f.reads(), 0);
+});
+
+test('while no loaded provider serves the chat, check and start are unavailable and read reports closure as unknown', async t => {
+  const f = await harness(t);
+  await concluded(f);
+  const after = (await f.continuation(before, 'start')).successor.scope, loaded = await f.continuation(after, 'read');
+  await f.close();
+  const inactive = createProviderRegistry([]);
+  const host = openLocalHost({ path: f.path, projection: transcriptProjection, driver: [], authorize: () => true, providers: inactive });
+  try {
+    assert.deepEqual(await host.continuation(before, 'read'), { ...none, closure: 'unknown', successor: { kind: 'confirmed', scope: after } });
+    assert.deepEqual(await host.continuation(after, 'read'), { ...loaded, carried: null, closure: 'unknown' });
+    for (const action of ['check', 'start']) await assert.rejects(host.continuation(before, action, inactive), /^Error: Provider unavailable$/u);
+  } finally { host.close(); await host.drained; }
+  await f.open();
+  assert.deepEqual(await f.continuation(before, 'read'), { ...none, closure: 'cancelled', successor: { kind: 'confirmed', scope: after } });
+  assert.equal(f.posts().length, 1);
+  assert.equal(f.reads(), 0);
 });
 
 for (const status of ['reserved', 'attempted']) test(`a start ${status} before a restart is read as unconfirmed and settled by lookup only`, async t => {
@@ -229,5 +305,13 @@ test('the continuation operation round-trips over the service wire and the catal
   assert.deepEqual(await f.client.continuation({ scope: chat, action: 'check' }), started);
   assert.deepEqual((await f.client.catalog()).map(entry => entry.scope), [next]);
   assert.deepEqual(await f.client.continuation({ scope: next, action: 'read' }), { predecessor: chat, carried: carried(row), closure: null, successor: null });
+  assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/handoffs')).length, 1);
+  await f.restart([]);
+  assert.deepEqual(await f.client.continuation({ scope: chat, action: 'read' }), { ...started, closure: 'unknown' });
+  for (const action of ['check', 'start']) {
+    await assert.rejects(f.client.continuation({ scope: chat, action }), error => error.kind === 'unavailable' && error.message === 'The original provider is unavailable.');
+  }
+  await f.restart([remote.extension()]);
+  assert.deepEqual(await f.client.continuation({ scope: chat, action: 'start' }), started);
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/handoffs')).length, 1);
 });

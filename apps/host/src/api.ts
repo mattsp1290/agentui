@@ -1,5 +1,5 @@
 import { frontendToolsFor } from '@agentui/host/frontend-tools';
-import { ContinuationUnavailable, imageFailure, providerUnavailableReasons } from '@agentui/host';
+import { ContinuationRefused, imageFailure, providerUnavailableReasons } from '@agentui/host';
 import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
@@ -98,10 +98,16 @@ export function createApi(options: {
       case 'conversation-permissions': return host.conversationPermissions(request.scope);
       case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);
       case 'continuation': {
-        if (request.action !== 'read' && !options.providers) throw new ServiceError('unavailable', 'The original provider is unavailable.');
+        if (request.action !== 'read') {
+          // A provider that is not loaded cannot read the saved closure. That is transient, never a refusal.
+          const original = host.creation(request.scope);
+          if (!options.providers || (original?.observation?.kind === 'confirmed' && options.providers.statusOf(original.installation) === undefined)) {
+            throw new ServiceError('unavailable', 'The original provider is unavailable.');
+          }
+        }
         try { return await host.continuation(request.scope, request.action, options.providers); }
         catch (error) {
-          if (error instanceof ContinuationUnavailable) throw new ServiceError('invalid', 'Only a concluded provider conversation without frontend tool activity can be continued.');
+          if (error instanceof ContinuationRefused) throw new ServiceError('invalid', 'Only a concluded provider conversation without frontend tool activity can be continued.');
           throw error;
         }
       }
