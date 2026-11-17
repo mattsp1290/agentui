@@ -188,7 +188,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const blocker = store.blockingSend(scope);
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
-    if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
+    if (!isOffered(blocker) && blocker.receipt.state.kind === 'pending') return false;
     const assertRequester = () => {
       store.frontendSends.authorize('settle', blocker, actor);
       authorized(scope);

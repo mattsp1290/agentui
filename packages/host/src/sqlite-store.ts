@@ -28,7 +28,7 @@ import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
-import { scopeKey as key } from './durable-model.js';
+import { scopeKey as key, SEND_BLOCKING_STATES } from './durable-model.js';
 
 type StoreTransaction = { readonly write: boolean };
 
@@ -331,7 +331,9 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       observation: row.observation === null ? null : observation(json(row.observation), target) };
   }
   blockingSend(scope: ConversationScope): StoredCommand | null {
-    const row = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted') LIMIT 1").get(...key(scope));
+    const installed = this.findInstallation(scope);
+    const states = SEND_BLOCKING_STATES[installed && 'kind' in installed ? 'provider' : 'native'];
+    const row = this.db.prepare(`SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN (${states.map(() => '?').join(',')}) LIMIT 1`).get(...key(scope), ...states);
     return row ? this.command(scope, nonempty(row.id)) : null;
   }
   private snapshotOverheadBytes(scope: ConversationScope): number {

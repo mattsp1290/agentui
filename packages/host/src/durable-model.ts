@@ -4,6 +4,15 @@ import type { MatchedProviderCommand, ProviderObservation, V1Command } from './p
 import type { DispatchIdentity, NativeDispatchObservation, SessionBinding, SessionReference } from '@mattsp1290/switchboard';
 
 export function scopeKey(scope: ConversationScope): [string, string] { return [scope.hostId, scope.conversationId]; }
+/**
+ * Receipt states of an earlier send that refuse a new send in the same conversation with `send-awaiting-confirmation`.
+ * A native driver records an unknown outcome without freezing the conversation; a provider may still be running an
+ * uncertain send, so it blocks until reconciliation settles it.
+ */
+export const SEND_BLOCKING_STATES = {
+  native: ['pending', 'accepted'],
+  provider: ['pending', 'accepted', 'uncertain'],
+} as const satisfies Record<'native' | 'provider', readonly ReceiptState['kind'][]>;
 export function commandKey(scope: ConversationScope, id: string): string { return canonicalJson([...scopeKey(scope), id]); }
 
 export interface Installation {

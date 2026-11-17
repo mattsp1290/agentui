@@ -86,10 +86,10 @@ A missing record is not proof of nonacceptance. Return `uncertain` instead.
 A thrown error is recorded as uncertainty, never as rejection.
 `not-dispatched`, `unsupported` and failures from a fresh call mean the provider knows the invocation was not accepted.
 An uncertain send stays uncertain until a client `reconcile` request settles it through `reconcileCommand`.
-Before admitting a new send, the host looks up a previous send whose receipt is `pending` or `accepted`.
-For a provider conversation it first tries to settle an `accepted` blocker through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
-Otherwise it refuses with `send-awaiting-confirmation`. While the provider is offline the blocker cannot be settled, so the refusal is `send-awaiting-confirmation`, not `provider-command-unavailable`.
-An `uncertain` send does not block a new send. The provider must refuse a send it cannot accept alongside unresolved work.
+Before admitting a new send to a provider conversation, the host looks up a previous send whose receipt is `pending`, `accepted` or `uncertain`.
+It first tries to settle an `accepted` or `uncertain` blocker once through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
+Otherwise it refuses with `send-awaiting-confirmation` and the new send reaches no provider. While the provider is offline the blocker cannot be settled, so the refusal is `send-awaiting-confirmation`, not `provider-command-unavailable`.
+A lost send reply therefore blocks the conversation until reconciliation settles the earlier send. A native agent conversation records an unknown outcome without blocking later sends.
 
 ## Observation
 
@@ -123,7 +123,7 @@ Transient entries skip module import and manifest resolution. `examples/crew/tes
 | Ledger fake without controls | Same as ledger | Same as ledger | Same as ledger | none |
 
 `providers.mjs` defines the row type. A row's `supports` set is its only capability source. For each control the suite generates either the supported test or the capability-gated test, never both.
-Each row runs create, send and stream, restart with resume, a dropped stream recovered by an observation retry, lost-reply reconciliation, cancel, approve and deny, disable and reload, and outage.
+Each row runs create, send and stream, restart with resume, a dropped stream recovered by an observation retry, lost-reply reconciliation, a send blocked behind an uncertain send, cancel, approve and deny, disable and reload, and outage.
 Every case runs beside the other provider. Every case except outage asserts the peer has no effects; outage asserts the peer still creates a conversation.
 
 What the suite proves:
@@ -133,7 +133,7 @@ What the suite proves:
 - A restart with a saved checkpoint resumes from that cursor and calls `snapshot` zero times. An observation retry after a dropped stream calls `snapshot` exactly once and leaves one subscription.
 - A send to a disabled provider, and a send in a fresh conversation during an outage, are refused with `{ kind: 'rejected', reason: 'provider-command-unavailable' }`. A send behind an unsettled earlier send during an outage is refused with `send-awaiting-confirmation`.
 - An outage is reported by discovery, metadata and the conversation. It does not close streams that were already open: they keep delivering. The suite's outage refuses new requests at a proxy, so it does not model a stream that the network cuts.
-- An uncertain send does not block a new send (bean `agentui-u4n8`). The suite does not cover that gap.
+- A send behind an uncertain earlier send is refused with `send-awaiting-confirmation` and reaches no provider. Once reconciliation settles the earlier send, the next send is admitted.
 
 `boundaries.test.mjs` asserts that provider traffic carries no trace context or collector headers, that telemetry carries no prompt, reply or provider secret, and that no AgentUI agent span is synthesized for a remote run. A positive control proves the telemetry search finds a value that is exported.
 It also asserts that `apps`, `packages`, `scripts` and `templates` contain no case-insensitive `crew` substring, so camelCase or underscore names such as `isCrewProvider` are caught, excluding the one adapter-tests fixture that names `example.crew`, and that the repository contains no OpenBot code or dependency.
