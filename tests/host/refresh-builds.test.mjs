@@ -4,7 +4,7 @@ import { once } from 'node:events';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
-import { createRefreshController } from '../../apps/host/build/tsc/refresh-jobs.js';
+import { createRefreshController, parseRefreshReceipt } from '../../apps/host/build/tsc/refresh-jobs.js';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import fs from 'node:fs/promises';
@@ -24,11 +24,14 @@ test('two distinct committed builds retain their own outputs and latest source w
   await Promise.race([barrier.entered, old.then(value => { barrier.release(); throw new Error(JSON.stringify(value)); })]);
   const during = await owner.inspect('old');
   assert.equal(during.job.promotion.kind, 'unconfirmed');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(during))), during);
   assert.equal(during.selectionStatus.desiredRevision, 0);
   const next = owner.request(request('new', f.second));
   await secondStarted.promise;
   assert.equal((await owner.inspect('old')).latestRequestId, 'new');
-  assert.equal((await owner.inspect('new')).job.build.kind, 'building');
+  const building = await owner.inspect('new');
+  assert.equal(building.job.build.kind, 'building');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(building))), building);
   barrier.release();
   const stale = await old;
   assert.equal(stale.job.promotion.kind, 'refused');
@@ -41,6 +44,7 @@ test('two distinct committed builds retain their own outputs and latest source w
   assert.notEqual(stale.job.build.pin.artifactId, selected.job.build.pin.artifactId);
   assert.notEqual(stale.job.build.pin.directory, selected.job.build.pin.directory);
   for (const [receipt, reference] of [[stale, f.first], [selected, f.second]]) {
+    assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(receipt))), receipt);
     assert.equal(receipt.job.build.pin.directory, receipt.job.build.command.directory);
     assert.deepEqual(receipt.job.promotion.command.selection.artifacts, [receipt.job.build.pin]);
     const manifest = JSON.parse(await fs.readFile(receipt.job.build.pin.directory + '/customization.json', 'utf8'));
@@ -109,6 +113,7 @@ test('lost selection acknowledgement reconciles exact historical receipt after n
   const historical = await reopened.inspect('first');
   assertSelected(historical, 'first');
   assert.equal(historical.job.promotion.operation.outcome.kind, 'superseded');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(historical))), historical);
   assert.equal(historical.selectionStatus.desired.id, next.job.promotion.command.id);
   assert.equal(historical.job.promotion.operation.receiptDigest, first.job.promotion.operation.receiptDigest);
   await reopened.promote('first');
@@ -116,6 +121,14 @@ test('lost selection acknowledgement reconciles exact historical receipt after n
   assert.equal(reopened.selection.status().desiredRevision, 2);
   assert.deepEqual(rows(f.database), before);
   assert.equal(f.commands.length, 2);
+  await reopened.selection.activate();
+  const applied = await reopened.inspect('second');
+  assert.equal(applied.job.promotion.operation.outcome.kind, 'applied-empty');
+  assert.equal(typeof applied.job.promotion.operation.attemptId, 'string');
+  assert.equal(applied.selectionStatus.runtime.kind, 'applied-empty');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(applied))), applied);
+  const afterApplication = await reopened.inspect('first');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(afterApplication))), afterApplication);
 });
 
 test('explicit promotion reuses saved pins and identity, preserves external selection CAS and never rebuilds', async t => {
@@ -127,6 +140,7 @@ test('explicit promotion reuses saved pins and identity, preserves external sele
   owner = await f.open();
   const built = await owner.inspect('retry');
   assert.equal(built.job.promotion.kind, 'unconfirmed');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(built))), built);
   const command = built.job.promotion.command;
   const promoted = await owner.promote('retry');
   assertSelected(promoted, 'retry');
@@ -140,6 +154,7 @@ test('explicit promotion reuses saved pins and identity, preserves external sele
   const refused = await owner.promote('external-cas');
   assert.equal(refused.job.promotion.kind, 'refused');
   assert.equal(refused.job.promotion.reason, 'revision-conflict');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(refused))), refused);
   assert.deepEqual(refused.job.promotion.command, later.job.promotion.command);
   assert.equal(owner.selection.status().desired.id, 'external-manual');
   assert.equal(f.commands.length, 2);
@@ -159,6 +174,7 @@ for (const mismatch of ['commit', 'directory', 'builder', 'esbuild', 'asset']) t
   const owner = await f.open(), result = await owner.request(request('mismatch', f.second));
   assert.equal(result.job.build.kind, 'failed');
   assert.equal(result.job.build.failure, 'qualification');
+  assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(result))), result);
   assert.equal(result.job.promotion.kind, 'not-built');
   assert.equal(owner.selection.status().desiredRevision, 0);
   assert.equal(f.stops(), 0);
@@ -229,6 +245,7 @@ test('process termination after real build leaves an interrupted attempt without
   try {
     const receipt = await owner.inspect('crashed');
     assert.equal(receipt.job.build.kind, 'interrupted');
+    assert.deepEqual(parseRefreshReceipt(JSON.parse(JSON.stringify(receipt))), receipt);
     assert.equal(receipt.job.build.command.directory, output.directory);
     assert.equal((await owner.request(request('crashed', f.first))).job.build.kind, 'interrupted');
     assert.equal(f.commands.length, 0);
