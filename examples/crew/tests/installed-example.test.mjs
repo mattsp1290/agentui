@@ -57,12 +57,16 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     import { fileIntents } from '@agentui/example-crew/file-intents';
     import { crewProvider } from '@agentui/example-crew/provider';
     import { CrewClient } from '@birbcrew/client';
+    import { handoffsCapabilityV1Schema } from '@birbcrew/client/contract';
     assert.equal(typeof connectCrewConversation, 'function');
     assert.equal(typeof fileIntents, 'function');
     assert.equal(typeof crewProvider, 'function');
     assert.equal(typeof CrewClient, 'function');
     assert.equal(typeof CrewClient.prototype.listGrants, 'function');
     assert.equal(typeof CrewClient.prototype.revokeGrant, 'function');
+    assert.equal(typeof CrewClient.prototype.createHandoff, 'function');
+    assert.equal(typeof CrewClient.prototype.handoff, 'function');
+    assert.equal(typeof handoffsCapabilityV1Schema.parse, 'function');
     const consumerRequire = createRequire(join(process.cwd(), 'package.json'));
     const exampleRequire = createRequire(consumerRequire.resolve('@agentui/example-crew'));
     const crewRequire = createRequire(exampleRequire.resolve('@birbcrew/client'));
