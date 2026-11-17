@@ -21,7 +21,7 @@ export function observation(binding: ProviderConversation<string>, memberId: str
   let cursor: CrewCursor = { epoch: randomUUID(), sequence: 0, requests: previous?.requests ?? [] };
   let state: CrewState = { binding: stateSchema.shape.binding.parse(binding), messages: [], run: null };
   let remote: z.infer<typeof remoteSchema> | undefined;
-  let sawMessages = false, closed = false, ending = false;
+  let sawMessages = false, closed = false;
   let endKind: 'closed' | 'disconnected' = 'disconnected';
   const tools = new Map<string, { name: string; arguments: string }>();
   let admitted: ProviderSnapshot<CrewModel, string>['cursor'] | null = null;
@@ -72,15 +72,16 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     tail = task.catch(() => { closed = true; stop?.(); gate.resolve(); });
     return task;
   };
-  async function refresh(client: CrewClient) {
+  async function refresh(client: CrewClient): Promise<boolean> {
     const requestId = cursor.requests.at(-1);
-    if (!requestId) return;
+    if (!requestId) return true;
     try {
       const receipt = await client.requestStatus({ conversationId: binding.authority.binding.opaqueSessionId, requestId },
         { signal: AbortSignal.timeout(10000) });
       state = { ...state, run: { requestId, status: receipt.status,
         cancellation: receipt.cancellation ?? null } };
-    } catch { /* Missing or unavailable status is not proof of completion. */ }
+      return true;
+    } catch { /* Missing or unavailable status is not proof of completion. */ return false; }
   }
   async function publish(snapshot: ProviderSnapshot<CrewModel, string>) {
     if (closed || !receiver) return;
@@ -114,9 +115,10 @@ export function observation(binding: ProviderConversation<string>, memberId: str
         throw new Error('Crew observation identity mismatch');
       }
       remote = next;
+      const read = await refresh(client);
+      // A closure ends observation for good, so it must not freeze a run whose receipt could not be read.
       const cause = closureCause(next.phase);
-      if (cause && !state.closure) state = { ...state, closure: { cause } };
-      await refresh(client);
+      if (cause && read && !state.closure) state = { ...state, closure: { cause } };
     } else if (event.type === 'TOOL_CALL_START' || event.type === 'TOOL_CALL_ARGS') {
       const tool = z.object({ toolCallId: z.string(), toolCallName: z.string().optional(), delta: z.string().optional() }).parse(event);
       const current = tools.get(tool.toolCallId);
@@ -135,8 +137,6 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     const replacement = await snapshot(client);
     if (closed) return;
     ready.resolve(replacement);
-    // An ended stream cannot wait for a receiver; the baseline reader already holds this snapshot.
-    if (ending && !receiver) return;
     await gate.promise;
     await publish(replacement);
   }
@@ -167,21 +167,15 @@ export function observation(binding: ProviderConversation<string>, memberId: str
     const subscription = observer.subscribe({ onEvent: ({ event }) => enqueue(() => reduce(event, client)) });
     const run = observer.runAgent();
     const poll = async () => {
-      if (closed || ending) return;
+      if (closed) return;
       try { await enqueue(async () => {
         if (state.run && !['completed', 'cancelled', 'failed'].includes(state.run.status)) { await refresh(client); await publish(await snapshot(client)); }
       }); } catch { return; }
-      if (!closed && !ending) timer = setTimeout(() => { void poll(); }, 750);
+      if (!closed) timer = setTimeout(() => { void poll(); }, 750);
     };
     timer = setTimeout(() => { void poll(); }, 750);
     try { await run; }
     finally {
-      if (!closed) {
-        // Crew ends the stream right after its terminal snapshot, which may still be awaiting its receipt read.
-        ending = true; clearTimeout(timer);
-        let settled: Promise<void>;
-        do { settled = tail; await settled; } while (settled !== tail);
-      }
       closed = true; gate.resolve(); clearTimeout(timer);
       stop(); await detaching?.catch(() => {}); await run.catch(() => {});
       await tail; subscription.unsubscribe();

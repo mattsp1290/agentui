@@ -3,12 +3,13 @@ import { useConversation } from '@agentui/client/react';
 import type { ConversationModule, ConversationModuleProps, ModuleAction } from '@agentui/sdk/react';
 import type { SubmitResult } from '@agentui/contracts';
 import { Button } from '@agentui/ui-primitives/desktop';
+import { refusalMessage } from './application-controller.js';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
 import { conversationResponding } from './responding.js';
 import { CustomizationBoundary, customizationMessage as message, type NamespaceActivation } from './DesktopCustomizations.js';
 
 function actionOutcome(result: SubmitResult): string {
-  if (result.kind === 'rejected') return `Submission rejected. ${result.reason}`;
+  if (result.kind === 'rejected') return `Submission rejected. ${refusalMessage(result.reason)}`;
   const state = result.receipt.state;
   switch (state.kind) {
     case 'pending': return 'Submission pending. Follow its progress in the conversation.';

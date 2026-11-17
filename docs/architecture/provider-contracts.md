@@ -387,7 +387,10 @@ host configuration path; retry cannot retarget a conversation.
 
 The application polls only the selected conversation, serially at two-second
 intervals after each completed read. A native conversation's first `not-applicable`
-response ends that poll. Selection, session changes and disposal suppress stale
+response ends that poll, and so does any `concluded` response. The application
+then keeps `concluded` for that conversation until it reloads, so a later failed
+read or `stopped` status, such as one during an extension refresh, does not
+replace it. Selection, session changes and disposal suppress stale
 results. The notice and retry progress live outside the canonical document and
 `OpenConversation` identity. A transport error reports unknown observation status;
 only an authenticated stopped status produces the paused notice. Unauthorized
@@ -450,7 +453,7 @@ A send to a concluded conversation is rejected with `conversation-closed` after 
 
 The Crew provider records closure from the `STATE_SNAPSHOT` phase: `cancelled`, `failed`, and `complete` as `exhausted`. It never clears a recorded closure.
 `RUN_ERROR` with code `MEMBER_FAILED` after a failed snapshot ends the feed without an observation fault. Every other `RUN_ERROR` is still a fault.
-When Crew ends the stream, the observer finishes queued work, including a pending receipt read, before it closes, so the terminal snapshot is committed. A stream that ends without a terminal phase stays `stopped` with `provider-disconnected`.
+The AG-UI client finishes handling each event, including the terminal snapshot's receipt read, before its run settles, so the observer commits the terminal snapshot before it closes. Closure is recorded only when that receipt read succeeds or the conversation has no request. After a failed read the conversation stays `stopped` with `provider-disconnected`, and a retry records the closure. A stream that ends without a terminal phase stays `stopped` with `provider-disconnected`.
 Crew submit answers `409 handed_off` and `409 handoff_pending` are refusals before admission and settle as rejected. Other 409 answers stay uncertain.
 Checkpoints saved before this change have no closure and decode unchanged.
 

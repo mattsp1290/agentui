@@ -53,6 +53,7 @@ test('module actions report admission, receipt and thrown outcomes without autom
   await draft(page, 'Outcome draft');
   const variants = [
     [{ kind: 'rejected', reason: 'Exact admission reason' }, 'Submission rejected. Exact admission reason'],
+    [{ kind: 'rejected', reason: 'conversation-closed' }, 'Submission rejected. This conversation ended. Start a new chat to keep going.'],
     [outcome('rejected'), 'Submission rejected. Exact receipt reason'],
     [outcome('not-dispatched'), 'Not dispatched. Exact receipt reason'],
     [outcome('uncertain'), 'Submission uncertain. Exact receipt reason Use the conversation recovery controls before trying again.'],
