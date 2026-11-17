@@ -230,14 +230,14 @@ export function createFrontendCoordinator(store: Pick<SqliteStore<unknown, unkno
             const run = prepareFrontendRegistration(scope, input);
             store.transaction(transaction => {
               check(scope);
-              store.frontendWriter(transaction, scope).register(run);
+              store.frontendWriter(transaction, scope, createFrontendCoordinator).register(run);
             });
           },
           observe(key, cursor, input) {
             const observation = prepareFrontendObservation(cursor, input);
             return store.transaction(transaction => {
               check(scope);
-              return store.frontendWriter(transaction, scope).observe(key, observation);
+              return store.frontendWriter(transaction, scope, createFrontendCoordinator).observe(key, observation);
             });
           },
           decide(key, callId, decision, activationId, argumentsDigest) {

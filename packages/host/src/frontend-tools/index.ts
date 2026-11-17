@@ -1,6 +1,7 @@
 import type { ConversationScope, Json, RunIdentity } from '@agentui/contracts';
 import type { FrontendPlatform, FrontendTool, FrontendToolOutcome } from '@agentui/sdk/tools';
 import type { LocalHost } from '../local-host.js';
+import { createFrontendCoordinator } from './coordinator.js';
 import { frontendToolsContext } from '../frontend-tools-context.js';
 
 type Binding = { readonly name: string; readonly activationId: string; readonly definition: FrontendTool };
@@ -32,5 +33,5 @@ export interface FrontendTools {
 /** Requires the exact handle returned by openLocalHost or openRecordedHost. Copied or wrapped handles are not registered. */
 export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
   const store = frontendToolsContext(host);
-  return store.frontendTools(store.authorized);
+  return store.frontendTools(createFrontendCoordinator, store.authorized);
 }
