@@ -61,7 +61,7 @@ test('actual MCP stdio and copied installed CLI build committed source, preserve
 });
 
 for (const mode of ['disconnect', 'timeout', 'cancel']) test(`actual host work survives MCP ${mode} and original-ID inspection`, { timeout: 40000 }, async t => {
-  const f = await setup(t, mode === 'timeout' ? 200 : 10000), entered = deferred(), release = deferred();
+  const f = await setup(t, mode === 'timeout' ? 5000 : 10000), entered = deferred(), release = deferred();
   f.setRun(async command => { entered.resolve(); await release.promise; return f.actual(command); });
   t.after(() => release.resolve());
   const abort = new AbortController();
