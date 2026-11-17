@@ -1,12 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { execFileSync } from 'node:child_process';
 import { appendFile, readFile, access, readdir, mkdir, writeFile, rm, symlink } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { createInstalledRefreshBuilder } from '../../apps/host/build/tsc/installed-refresh-builder.js';
 import { qualifyServerCustomizationToolchain, buildServerCustomization } from '../../scripts/server-customization.mjs';
 import { databaseFixture, request, rows } from './refresh-support.mjs';
-import { setup } from '../customization/build/server-support.mjs';
+import { setup, extension, validSource, write } from '../customization/build/server-support.mjs';
 import { fixture, expected, waitFor, alive } from './installed-refresh-builder-support.mjs';
 
 const entry = fileURLToPath(new URL('../../scripts/build-server-customization.mjs', import.meta.url));
@@ -32,6 +33,54 @@ test('canonical qualification is source independent and two source commits build
   assert.equal(rows(f.database).length,2);
   assert.deepEqual((await readdir(f.artifactRoot)).filter(name=>name.startsWith('.agentui-server-')),[]);
   const closed = owner.close(); assert.equal(owner.close(),closed); await closed;
+});
+
+test('captured invocation directory preserves relative descendants and canonical staged artifact pins', async t => {
+  const source = await setup(t), invocation = join(source.root, 'invocation with spaces');
+  await mkdir(invocation);
+  assert.notEqual(invocation, dirname(entry));
+  const child = await source.repository('invocation with spaces/relative child');
+  await write(child.directory, 'package.json', { type: 'module', agentui: extension('relative-child') });
+  await write(child.directory, 'index.ts', validSource);
+  const childCommit = child.commit();
+  await write(source.repo.directory, 'package.json', { type: 'module', agentui: extension('fixture', {
+    extensions: [{ repository: './relative child', commit: childCommit }],
+  }) });
+  const reference = source.repo.reference(source.repo.commit()), manualDirectory = join(source.root, 'manual artifact');
+  const manualPin = JSON.parse(execFileSync(process.execPath, [entry, '--repository', reference.repository,
+    '--commit', reference.commit, '--out', manualDirectory], { cwd: invocation, encoding: 'utf8' }));
+  const manual = JSON.parse(await readFile(join(manualPin.directory, 'customization.json'), 'utf8'));
+  assert.equal(manual.packages.length, 2);
+  assert.equal(manual.packages.find(pkg => pkg.identity === manual.root).extensions[0].commit, childCommit);
+  t.diagnostic('Canonical manual artifact ' + manualPin.artifactId + ' includes relative child ' + childCommit);
+  const qualified = await qualifyServerCustomizationToolchain();
+  globalThis.AGENTUI_SERVER_CUSTOMIZATION_ABI = qualified.compatibility.abiIdentity;
+  const original = process.cwd();
+  t.after(() => process.chdir(original));
+  let pending;
+  try {
+    process.chdir(invocation);
+    pending = createInstalledRefreshBuilder({ entry, expected: qualified.compatibility });
+  } finally { process.chdir(original); }
+  const builder = await pending;
+  assert.equal(builder.kind, 'ready');
+  t.after(() => builder.close());
+  const f = databaseFixture(t, builder), owner = await f.open();
+  const receipt = await owner.request(request('relative-descendant', reference));
+  assert.equal(receipt.job.build.kind, 'built', JSON.stringify(receipt));
+  assert.equal(receipt.job.build.pin.artifactId, manualPin.artifactId);
+  const installed = JSON.parse(await readFile(join(receipt.job.build.pin.directory, 'customization.json'), 'utf8'));
+  assert.deepEqual(installed, manual);
+  assert.equal(receipt.job.promotion.kind, 'selected');
+  assert.equal(receipt.selectionStatus.runtime.kind, 'withheld');
+  assert.equal(f.replacements(), 0);
+  assert.equal(f.stops(), 0);
+  assert.equal(rows(f.database).length, 1);
+  assert.deepEqual(await owner.inspect('relative-descendant'), receipt);
+  assert.deepEqual((await readdir(f.artifactRoot)).filter(name => name.startsWith('.agentui-server-')), []);
+  await owner.close();
+  t.diagnostic(JSON.stringify({ proof: 'relative-descendant-parity', sourceRoot: source.root, artifactRoot: f.artifactRoot,
+    invocation, currentDirectory: process.cwd(), artifactId: manualPin.artifactId, staged: true, liveReplacements: f.replacements() }));
 });
 
 test('canonical expected qualification rejects before reserving output or accessing a source', async t => {

@@ -50,6 +50,7 @@ function signal(pid: number, value: NodeJS.Signals | 0): boolean {
 
 export async function createInstalledRefreshBuilder(input: { readonly entry?: string; readonly expected: Compatibility }): Promise<RefreshBuilder> {
   if (!input.entry || process.platform === 'win32') return { kind: 'unavailable' };
+  const invocationDirectory = process.cwd();
   const configuredEntry = input.entry;
   let entry: string, lockfile: string;
   try {
@@ -69,7 +70,7 @@ export async function createInstalledRefreshBuilder(input: { readonly entry?: st
   }
   function launch(expected?: Qualification, command?: RefreshBuildCommand): Promise<Qualification | RefreshBuildResult> {
     const child = spawn(process.execPath, ['--max-old-space-size=512', entry, '--refresh-ipc'], {
-      detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: builderEnvironment(), cwd: dirname(entry),
+      detached: true, stdio: ['ignore', 'pipe', 'pipe', 'ipc'], env: builderEnvironment(), cwd: invocationDirectory,
     });
     let settled = false, phase: 'qualifying' | 'authorizing' | 'building' | 'finished' = 'qualifying';
     let diagnostics = 0, drainPromise: Promise<void> | undefined;
