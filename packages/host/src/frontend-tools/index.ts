@@ -88,7 +88,7 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
     if (!row || typeof row.data !== 'string') throw new Error('Missing frontend receipt');
     return receiptSchema.parse(JSON.parse(row.data));
   };
-  const load = (scope: ConversationScope, key: FrontendRunKey): Run => {
+  const load = (scope: ConversationScope, key: FrontendRunKey) => {
     const row = store.db.prepare('SELECT data FROM frontend_runs WHERE host=? AND conversation=? AND thread=? AND run=?').get(...keyParts(scope, key));
     if (!row || typeof row.data !== 'string') throw new Error('Unknown frontend run');
     const run: Run = runSchema.parse(JSON.parse(row.data));
@@ -104,25 +104,36 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
       if (call.state.kind === 'resolved' && ((call.state.permitId === null) !== (call.state.actorId === null))) throw new Error('Corrupt frontend receipt');
     }
     if (run.pending.some(id => !run.calls.some(call => call.id === id))) throw new Error('Corrupt frontend pending set');
-    return run;
+    const unavailable = store.frontendSends.runState(scope, key) === 'unavailable';
+    if (unavailable && (run.status === 'collecting' || run.status === 'ready')) run.status = 'blocked';
+    return { run, unavailable };
   };
   const save = (scope: ConversationScope, run: Run) => {
-    if (Buffer.byteLength(canonicalJson(run)) > 1000000) throw new Error('Frontend run capacity exceeded');
+    const encoded = canonicalJson(run);
+    if (Buffer.byteLength(encoded) > (run.status === 'blocked' ? 1000002 : 1000000)) throw new Error('Frontend run capacity exceeded');
     store.db.prepare('UPDATE frontend_runs SET data=? WHERE host=? AND conversation=? AND thread=? AND run=?')
-      .run(canonicalJson(run), ...keyParts(scope, { threadId: run.threadId, runId: run.identity.runId }));
+      .run(encoded, ...keyParts(scope, { threadId: run.threadId, runId: run.identity.runId }));
   };
   const check = (scope: ConversationScope) => { authorized(scope); if (!store.findInstallation(scope)) throw new Error('Unknown conversation'); };
-  const mutate = <T>(scope: ConversationScope, key: FrontendRunKey, fn: (run: Run) => T): T => store.transaction(() => {
-    check(scope); const run = load(scope, key); const result = fn(run); save(scope, run); return result;
+  const mutate = <T>(scope: ConversationScope, key: FrontendRunKey, fn: (run: Run) => T, authorize?: () => void): T => store.transaction(() => {
+    check(scope); authorize?.();
+    const { run, unavailable } = load(scope, key);
+    const result = fn(run);
+    if (unavailable && (run.status === 'collecting' || run.status === 'ready')) run.status = 'blocked';
+    save(scope, run); return result;
   });
+  const read = <T>(scope: ConversationScope, key: FrontendRunKey, fn: (run: Run) => T): T => {
+    check(scope);
+    return store.transaction(() => { check(scope); return fn(load(scope, key).run); }, false);
+  };
   const frontendView = (run: Run): FrontendRunView => ({ status: run.status, calls: run.calls.map(call => ({ id: call.id, name: call.name,
-    status: call.state.kind === 'ready' ? (call.state.decision === 'allow' ? 'claimable' : 'pending') : call.state.kind === 'permitted' ? 'uncertain' : call.state.kind,
+    status: call.state.kind === 'ready' ? (run.status === 'ready' && call.state.decision === 'allow' ? 'claimable' : 'pending') : call.state.kind === 'permitted' ? 'uncertain' : call.state.kind,
     activationId: run.bindings.find(binding => binding.name === call.name)?.activationId ?? null,
     argumentsDigest: call.state.kind === 'ready' ? call.state.digest : null })) });
   return {
     producer(value) {
       const scope = authorized(value); check(scope);
-      const inspect = (key: FrontendRunKey): FrontendRunView => { check(scope); return frontendView(load(scope, key)); };
+      const inspect = (key: FrontendRunKey): FrontendRunView => read(scope, key, frontendView);
       return {
         inspect,
         register(input) {
@@ -143,20 +154,30 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
             const parts = keyParts(scope, { threadId, runId: identity.runId });
             const row = store.db.prepare('SELECT data FROM frontend_runs WHERE host=? AND conversation=? AND thread=? AND run=?').get(...parts);
             if (row) {
-              const old = load(scope, { threadId, runId: identity.runId });
+              const old = load(scope, { threadId, runId: identity.runId }).run;
               if (canonicalJson([old.identity, old.threadId, old.platform, old.bindings]) !== canonicalJson([identity, threadId, selectedPlatform, bindings])) throw new Error('Conflicting frontend registration');
-            } else store.db.prepare('INSERT INTO frontend_runs(host, conversation, thread, run, data) VALUES (?, ?, ?, ?, ?)').run(...parts, canonicalJson(run));
+            } else {
+              if (store.frontendSends.runState(scope, { threadId, runId: identity.runId }) === 'unavailable') run.status = 'blocked';
+              store.db.prepare('INSERT INTO frontend_runs(host, conversation, thread, run, data) VALUES (?, ?, ?, ?, ?)').run(...parts, canonicalJson(run));
+            }
           });
         },
         observe(key, cursor, input) {
           if (!Number.isSafeInteger(cursor) || cursor < 1) throw new Error('Invalid cursor');
           let encoded: string;
           try { encoded = canonicalJson(input); if (Buffer.byteLength(encoded) > 64000) throw new Error('Event too large'); }
-          catch { return mutate(scope, key, run => { run.status = 'faulted'; return 'faulted'; }); }
+          catch {
+            return store.transaction(() => {
+              check(scope); const { run, unavailable } = load(scope, key);
+              if (!unavailable) { run.status = 'faulted'; save(scope, run); }
+              return 'faulted';
+            });
+          }
           return store.transaction(() => {
-            check(scope); const run = load(scope, key); const parts = keyParts(scope, key);
+            check(scope); const { run, unavailable } = load(scope, key); const parts = keyParts(scope, key);
             const previous = store.db.prepare('SELECT data FROM frontend_events WHERE host=? AND conversation=? AND thread=? AND run=? AND cursor=?').get(...parts, cursor);
             if (previous && previous.data === encoded) return 'duplicate';
+            if (unavailable) return 'faulted';
             if (previous || cursor !== run.cursor + 1 || run.status !== 'collecting' || cursor > 4096) { run.status = 'faulted'; save(scope, run); return 'faulted'; }
             const original = copy(run);
             const receipts: { callId: string; result: Result }[] = [];
@@ -236,14 +257,15 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
         },
         cancel(key) { mutate(scope, key, run => { run.status = 'blocked'; }); },
         results(key) {
-          check(scope); const run = load(scope, key);
-          if (run.status !== 'ready') return { kind: 'blocked' };
-          const calls = run.pending.map(id => run.calls.find(call => call.id === id));
-          if (calls.some(call => !call || call.state.kind !== 'resolved')) return { kind: 'waiting' };
-          return { kind: 'ready', identity: copy(run.identity), threadId: run.threadId, batch: calls.map(call => {
-            if (!call || call.state.kind !== 'resolved') throw new Error('Invalid call state');
-            return { toolCallId: call.id, result: readReceipt(scope, key, call.id) };
-          }) };
+          return read(scope, key, run => {
+            if (run.status !== 'ready') return { kind: 'blocked' };
+            const calls = run.pending.map(id => run.calls.find(call => call.id === id));
+            if (calls.some(call => !call || call.state.kind !== 'resolved')) return { kind: 'waiting' };
+            return { kind: 'ready', identity: copy(run.identity), threadId: run.threadId, batch: calls.map(call => {
+              if (!call || call.state.kind !== 'resolved') throw new Error('Invalid call state');
+              return { toolCallId: call.id, result: readReceipt(scope, key, call.id) };
+            }) };
+          });
         },
       };
     },
@@ -254,11 +276,10 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
         check(scope); if (!auth.call(binding, { scope, key, action, callId, activationId })) throw new Error('Unauthorized actor');
       };
       return {
-        inspect(key) { checkActor(key, 'inspect', null, null); return frontendView(load(scope, key)); },
+        inspect(key) { checkActor(key, 'inspect', null, null); return read(scope, key, frontendView); },
         claim(key, callId, activationId) {
           checkActor(key, 'claim', callId, activationId);
           return mutate(scope, key, run => {
-            checkActor(key, 'claim', callId, activationId);
             const call = run.calls.find(call => call.id === callId), tool = run.bindings.find(item => item.name === call?.name);
             if (!call || !tool || tool.activationId !== activationId || run.platform !== actorPlatform) return { kind: 'unavailable' };
             if (call.state.kind === 'permitted' || (call.state.kind === 'resolved' && call.state.permitId)) return { kind: 'uncertain' };
@@ -266,22 +287,30 @@ export function frontendToolsFor<E, P>(host: LocalHost<E, P>): FrontendTools {
             const args = call.state.args, permitId = randomUUID();
             call.state = { kind: 'permitted', args, permitId, actorId, activationId };
             return { kind: 'permit', permitId, name: call.name, arguments: copy(args) };
-          });
+          }, () => checkActor(key, 'claim', callId, activationId));
         },
         receipt(key, permitId, input) {
           check(scope); const result = validResult(input);
-          return mutate(scope, key, run => {
+          return store.transaction(() => {
+            check(scope);
+            const initial = load(scope, key).run;
+            const target = initial.calls.find(call => (call.state.kind === 'permitted' || call.state.kind === 'resolved') && call.state.permitId === permitId);
+            if (!target || (target.state.kind !== 'permitted' && target.state.kind !== 'resolved') || target.state.actorId !== actorId) throw new Error('Invalid permit');
+            const activationId = initial.bindings.find(item => item.name === target.name)?.activationId ?? null;
+            checkActor(key, 'receipt', target.id, activationId);
+            const { run } = load(scope, key);
             const call = run.calls.find(call => (call.state.kind === 'permitted' || call.state.kind === 'resolved') && call.state.permitId === permitId);
             if (!call || (call.state.kind !== 'permitted' && call.state.kind !== 'resolved') || call.state.actorId !== actorId) throw new Error('Invalid permit');
-            const activationId = run.bindings.find(item => item.name === call.name)?.activationId ?? null;
-            checkActor(key, 'receipt', call.id, activationId);
+            if (call.id !== target.id || call.name !== target.name ||
+              (run.bindings.find(item => item.name === call.name)?.activationId ?? null) !== activationId) throw new Error('Invalid permit');
             if (call.state.kind === 'resolved') {
               if (result.kind === 'uncertain' || canonicalJson(result) !== canonicalJson(readReceipt(scope, key, call.id))) throw new Error('Conflicting receipt');
               return 'duplicate';
             }
             if (result.kind === 'uncertain') return 'uncertain';
             writeReceipt(scope, key, call.id, result);
-            call.state = { kind: 'resolved', permitId, actorId }; return 'recorded';
+            call.state = { kind: 'resolved', permitId, actorId };
+            save(scope, run); return 'recorded';
           });
         },
       };

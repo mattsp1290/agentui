@@ -64,7 +64,7 @@ test('public response parsing requires binding context while preserving generic 
   ],
 }));
 
-test('host binding requires the lazy scoped register and cancel capability', () => assertCompileCases({
+test('host binding requires the lazy scoped register capability', () => assertCompileCases({
   config: new URL('../../packages/host/tsconfig.json', import.meta.url).pathname,
   prefix: `import type { LocalHost, FrontendSendActor } from '@agentui/host';
     export declare const host: LocalHost<unknown, unknown>;
@@ -75,7 +75,8 @@ test('host binding requires the lazy scoped register and cancel capability', () 
     ['host.frontendBinding(request, actor, producerFor);', null],
     ['host.frontendBinding(request, actor);', /Expected 3 arguments/u],
     ['host.frontendBinding(request, actor, producerFor(request.scope));', /not assignable/u],
-    ['host.frontendBinding(request, actor, () => ({ register() {} }));', /cancel/u],
+    ['host.frontendBinding(request, actor, () => ({ register() {} }));', null],
+    ['host.frontendBinding(request, actor, () => ({ cancel() {} }));', /register/u],
   ],
 }));
 
