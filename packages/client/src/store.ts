@@ -198,7 +198,7 @@ export function createConversationStore<E, P>(options: StoreOptions<E, P>): Conv
       // Reserved before the outbox publish so observers never see a new command as an unresolved retained one.
       reserve(command.clientCommandId);
       try { await persist(immutable({ ...local, outbox: [...local.outbox, created] })); }
-      catch (error) { inFlight.delete(command.clientCommandId); throw error; }
+      catch (error) { inFlight.delete(command.clientCommandId); publish(); throw error; }
       publish();
       return created;
     });

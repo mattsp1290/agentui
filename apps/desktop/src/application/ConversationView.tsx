@@ -126,7 +126,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
           onClick={() => void actions.retryObservation()}>{observation?.retrying ? 'Checking for updates…' : 'Check for updates'}</button>
       </>}
     </div>}
-    {permissionState && <ConversationPermissions outbox={recoveryModel(view).retained} state={permissionState} actions={actions} enabled={connected} />}
+    {permissionState && <ConversationPermissions retained={recoveryModel(view).retained} state={permissionState} actions={actions} enabled={connected} />}
     <CustomizationTranscript selection={transcript}
       conversationKey={`${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`}
       context={{ conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions }}

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { connected, deferred, receipt } from './support.mjs';
+import { connected, deferred, events, receipt } from './support.mjs';
 
 test('submission snapshots identify concurrent commands and clear each independently on success or failure', async () => {
   const { store, port } = await connected();
@@ -33,6 +33,21 @@ test('submission snapshots identify concurrent commands and clear each independe
   assert.deepEqual(store.getSnapshot().outbox.map(entry => entry.command), [commands[1]]);
   assert.ok(published.some(ids => ids.length === 2));
   assert.deepEqual(published.at(-1), []);
+});
+
+test('a failed command save clears the submitting snapshot even after another update published it', async () => {
+  const { store, drafts, port } = await connected();
+  const saving = deferred(), held = deferred();
+  drafts.save = async () => { saving.resolve(); await held.promise; };
+  const cancel = store.cancel('run');
+  await saving.promise;
+  await port.watches.at(-1).receive(events([1, 'progress']));
+  const failed = assert.rejects(cancel, /disk full/);
+  held.reject(new Error('disk full'));
+  await failed;
+  assert.deepEqual(store.getSnapshot().submitting, []);
+  assert.deepEqual(store.getSnapshot().outbox, []);
+  assert.equal(port.submitted.length, 0);
 });
 
 test('a new command is never published as retained before its submission starts', async () => {
