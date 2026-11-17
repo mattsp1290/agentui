@@ -12,22 +12,22 @@ import { parseControlRequest, formatControlResponse, requestControl } from './co
 import type { ControlRequest } from './control.js';
 import { readObservabilityConfiguration } from './observability.js';
 
-const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred'], serve: ['port', 'assets', 'config', 'extensions', 'refresh-builder'], 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets', 'executable'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], 'providers-refresh': [], devices: ['after'], revoke: ['id'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
-function selectionFile(path: string | undefined): unknown {
+const COMMANDS: Readonly<Record<string, readonly string[]>> = { desktop: ['port', 'workspace', 'assets', 'executable', 'preferred'], serve: ['port', 'assets', 'config', 'extensions', 'refresh-builder'], 'browser-dev': ['port', 'assets'], codex: ['port', 'workspace', 'assets', 'executable'], 'codex-sdk': ['port', 'workspace', 'assets', 'executable'], 'claude-sdk': ['port', 'workspace', 'assets', 'model', 'executable'], pi: ['port', 'workspace', 'assets'], invite: [], 'invite-native': [], 'providers-refresh': [], devices: ['after'], revoke: ['id'], 'extensions-refresh-request': ['request', 'source', 'expected-revision'], 'extensions-refresh-status': ['request'], 'extensions-refresh-promote': ['request'], 'extensions-select': ['operation', 'expected-revision', 'selection'], 'extensions-apply': ['operation', 'expected-revision', 'request'], 'extensions-retry': ['operation', 'expected-revision', 'request', 'after-attempt'], 'extensions-status': ['operation', 'attempt', 'receipt'] };
+function selectionFile(path: string | undefined, description = 'artifact selection'): unknown {
   try { return JSON.parse(readFileSync(path ?? '', 'utf8')); }
-  catch { throw new Error('Invalid artifact selection file'); }
+  catch { throw new Error(`Invalid ${description} file`); }
 }
 async function main(): Promise<void> {
   const { values, positionals } = parseArgs({ allowPositionals: true, options: {
     'data-dir': { type: 'string' }, port: { type: 'string' }, id: { type: 'string' }, after: { type: 'string' },
     'refresh-builder': { type: 'string' }, config: { type: 'string' }, extensions: { type: 'string' }, executable: { type: 'string' }, model: { type: 'string' }, workspace: { type: 'string' }, assets: { type: 'string' },
-    request: { type: 'string' }, attempt: { type: 'string' }, 'after-attempt': { type: 'string' }, operation: { type: 'string' }, 'expected-revision': { type: 'string' }, selection: { type: 'string' }, receipt: { type: 'string' },
+    source: { type: 'string' }, request: { type: 'string' }, attempt: { type: 'string' }, 'after-attempt': { type: 'string' }, operation: { type: 'string' }, 'expected-revision': { type: 'string' }, selection: { type: 'string' }, receipt: { type: 'string' },
     preferred: { type: 'string' },
   } });
   if (!values['data-dir']) throw new Error('Provide --data-dir pointing to a private host directory');
   const [command, ...extra] = positionals;
   const allowed = command && Object.hasOwn(COMMANDS, command) ? COMMANDS[command] : undefined;
-  if (extra.length || !command || !allowed) throw new Error('Use serve, codex, pi, browser-dev, invite, invite-native, devices, revoke, codex-sdk, claude-sdk, extensions-select, extensions-apply, extensions-retry, extensions-status or providers-refresh');
+  if (extra.length || !command || !allowed) throw new Error('Use serve, codex, pi, browser-dev, invite, invite-native, devices, revoke, codex-sdk, claude-sdk, extensions-select, extensions-apply, extensions-retry, extensions-status, extensions-refresh-request, extensions-refresh-status, extensions-refresh-promote or providers-refresh');
   for (const flag of Object.keys(values)) {
     if (flag !== 'data-dir' && !allowed.includes(flag)) throw new Error(`--${flag} is not valid for ${command}`);
   }
@@ -74,6 +74,12 @@ async function main(): Promise<void> {
   const expectedRevision = values['expected-revision'] === undefined ? undefined : Number(values['expected-revision']);
   let request: ControlRequest;
   switch (command) {
+    case 'extensions-refresh-request':
+      request = parseControlRequest({ op: command, request: { id: values.request, reference: selectionFile(values.source, 'refresh source'), expectedSelectionRevision: expectedRevision } });
+      break;
+    case 'extensions-refresh-status': case 'extensions-refresh-promote':
+      request = parseControlRequest({ op: command, id: values.request });
+      break;
     case 'extensions-select':
       request = parseControlRequest({ op: command, command: { id: values.operation, expectedRevision, selection: selectionFile(values.selection) } });
       break;
@@ -92,6 +98,9 @@ async function main(): Promise<void> {
       request = parseControlRequest({ op: command, ...(values.id ? { id: values.id } : {}), ...(values.after ? { after: values.after } : {}) });
   }
   const response = await requestControl(join(directory, 'control.sock'), request).catch(error => {
+    if (request.op === 'extensions-refresh-request' || request.op === 'extensions-refresh-status' || request.op === 'extensions-refresh-promote') {
+      throw new Error('Refresh reply unavailable; use extensions-refresh-status --request ID or replay the identical extensions-refresh-request');
+    }
     if (request.op === 'extensions-live') throw new Error('Selection reply unavailable; inspect --attempt or resend the identical --request');
     throw error;
   });
@@ -112,7 +121,8 @@ async function main(): Promise<void> {
     if (createHash('sha256').update(bytes).digest('hex') !== operation.receiptDigest) throw new Error('Selection receipt digest mismatch');
     writeFileSync(values.receipt, bytes, { mode: 0o600 });
   }
-  process.stdout.write(formatControlResponse(response));
+  process.stdout.write(request.op === 'extensions-refresh-request' || request.op === 'extensions-refresh-status' || request.op === 'extensions-refresh-promote'
+    ? `${JSON.stringify(response)}\n` : formatControlResponse(response));
 }
 void main().catch(error => {
   process.stderr.write(`${error instanceof Error ? error.message : 'Host operation failed'}\n`);

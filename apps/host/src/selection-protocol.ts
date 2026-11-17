@@ -100,6 +100,13 @@ export function parseSelectionStatus(value: unknown): SelectionStatus {
     operation: parseOperationSummary(input.operation), lastApplied: input.lastApplied === null ? null : parseOperationSummary(input.lastApplied), runtime: parsed };
 }
 export type ReceiptChunk = { readonly digest: string; readonly offset: number; readonly next: number; readonly total: number; readonly base64: string };
+export function chunkReceipt(bytes: Buffer, digest: string, offset: number): ReceiptChunk {
+  if (!Number.isSafeInteger(offset) || offset < 0 || offset >= bytes.length) throw new SelectionRefusal('invalid-offset');
+  if (bytes.length > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
+  const next = Math.min(bytes.length, offset + 8192);
+  return { digest, offset, next, total: bytes.length, base64: bytes.subarray(offset, next).toString('base64') };
+}
+
 export function parseReceiptChunk(value: unknown): ReceiptChunk {
   const input = record(value, ['digest', 'offset', 'next', 'total', 'base64']);
   const offset = count(input.offset), next = count(input.next), total = count(input.total);
