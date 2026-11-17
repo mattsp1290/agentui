@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "6f80e6e6e4186c2d0d0731792fff984a21048c3d",
-  "sourceTree": "4cb13f275f746b4dab04267981ebfbefa059bbea",
-  "artifact": "switchboard-6f80e6e6e4186c2d0d0731792fff984a21048c3d.tgz",
-  "sha256": "00a50bb2f0302196d2a6cb3e12c83a96460d219f1924a22e98d3b686972a933e",
+  "sourceRevision": "c9179737ec340dbbde284af4b11bcf2608756938",
+  "sourceTree": "6f77b5518b1f2b8631a1778b5dc3c4a58123a48b",
+  "artifact": "switchboard-c9179737ec340dbbde284af4b11bcf2608756938.tgz",
+  "sha256": "3cc032bf87a80114e8f5bec1ffba8742ea0592d7cc5084976a216791358902dd",
   "license": "MIT",
   "historicalRecord": "historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json",
   "toolchain": {
@@ -74,7 +74,7 @@
           "pack",
           "--json",
           "--pack-destination",
-          "/private/tmp/claude-501/-Users-punk1290--claude-spares-spare-IXwf25/3779003f-5ca8-4797-ab2c-320427332275/scratchpad/sb-pack"
+          "/tmp"
         ],
         "exitCode": 0,
         "context": "clean-source-archive"
@@ -82,35 +82,35 @@
     ],
     "logs": {
       "npm-ci": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/npm-ci.log.gz",
-        "uncompressedSha256": "b677ed33084055f310084fe5fa9affad1688af34404001dcb291df7895a1a1d4"
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/npm-ci.log.gz",
+        "uncompressedSha256": "1e41ba43fac9dae13a2ebcd375b273d941c51c520d6bb04b6512a3bd4902781b"
       },
       "build": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/build.log.gz",
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/build.log.gz",
         "uncompressedSha256": "f4ce765048c5215b42130876fdd5b62baead8f9e909cf3e36bf93a09aa0c8a26"
       },
       "lint": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/lint.log.gz",
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/lint.log.gz",
         "uncompressedSha256": "3b4de50643085dce3a43371f5ab83e5eec6e270d7530eccbcee664013605e8e6"
       },
       "check": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/check.log.gz",
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/check.log.gz",
         "uncompressedSha256": "db410f76a409a6e9efa2a0f57ae7c606455dd82f14ccf52b79568a478a2e6614"
       },
       "test": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/test.log.gz",
-        "uncompressedSha256": "e9ee22489898a35714cecbe2b1c0e2bd6966209e9d03b6fe5a13549966d8923c"
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/test.log.gz",
+        "uncompressedSha256": "f16bda2533de0115bbeb60690cd49cb3d2d4016427bf037ff382460167301209"
       },
       "verify-package": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/verify-package.log.gz",
-        "uncompressedSha256": "cbd65ac6f3ef209fb1f7ba2bf420e84d0e35fca8963984f05e97ced43f3da866"
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/verify-package.log.gz",
+        "uncompressedSha256": "6f2f83bc894b365950110fa51443ebde015084b0672356536508a69298f40cdb"
       },
       "pack": {
-        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/pack.log.gz",
-        "uncompressedSha256": "66221610f60de0bfa3309ea39cf7c58af929145e557e56646bd9b7d55e1209ab"
+        "path": "qualification/c9179737ec340dbbde284af4b11bcf2608756938/pack.log.gz",
+        "uncompressedSha256": "b7f49b950d2a72750e109b60353b588efec111cbc0e4dae10a1e7e66812dcf4f"
       }
     },
-    "testsPassed": 238,
+    "testsPassed": 249,
     "limits": "Current package and controlled fixture checks only. Historical native and Apple measurements do not qualify this revision. No live native agent, Datadog backend or Apple application execution was performed for this update."
   }
 }

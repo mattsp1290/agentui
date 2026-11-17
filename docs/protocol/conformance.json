@@ -73,9 +73,9 @@
   },
   "switchboard": {
     "repository": "https://github.com/mattsp1290/switchboard",
-    "sourceRevision": "6f80e6e6e4186c2d0d0731792fff984a21048c3d",
-    "artifact": "switchboard-6f80e6e6e4186c2d0d0731792fff984a21048c3d.tgz",
-    "sha256": "00a50bb2f0302196d2a6cb3e12c83a96460d219f1924a22e98d3b686972a933e",
+    "sourceRevision": "c9179737ec340dbbde284af4b11bcf2608756938",
+    "artifact": "switchboard-c9179737ec340dbbde284af4b11bcf2608756938.tgz",
+    "sha256": "3cc032bf87a80114e8f5bec1ffba8742ea0592d7cc5084976a216791358902dd",
     "descriptor": {
       "version": "1.0",
       "sourceCommit": "0fc064bb2647fc0bce4fc795af33b5551ac03f88",
