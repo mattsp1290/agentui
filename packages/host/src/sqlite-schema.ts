@@ -1,17 +1,19 @@
 import { DatabaseSync } from 'node:sqlite';
 
 const WAL_SWITCH_TIMEOUT_MS = 5000;
+const SQLITE_BUSY = 5;
 const sleeper = new Int32Array(new SharedArrayBuffer(4));
 
 // Entering WAL rewrites the header from inside a read transaction, so SQLite
 // refuses the read-to-write upgrade with SQLITE_BUSY instead of calling the
 // busy handler. Concurrent first opens therefore need their own bounded retry;
 // repeating the pragma is a no-op once any opener has switched the file.
-function switchToWal(db: DatabaseSync): unknown {
+function requireWal(db: DatabaseSync): void {
   const deadline = Date.now() + WAL_SWITCH_TIMEOUT_MS;
   for (let delay = 1; ; delay = Math.min(delay * 2, 50)) {
     try {
-      return db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode;
+      if (db.prepare('PRAGMA journal_mode=WAL').get()?.journal_mode !== 'wal') throw new Error('Database requires WAL mode');
+      return;
     } catch (error) {
       if (!isBusy(error) || Date.now() >= deadline) throw error;
       Atomics.wait(sleeper, 0, 0, delay);
@@ -20,7 +22,7 @@ function switchToWal(db: DatabaseSync): unknown {
 }
 
 function isBusy(error: unknown): boolean {
-  return error instanceof Error && 'errcode' in error && typeof error.errcode === 'number' && (error.errcode & 0xff) === 5;
+  return error instanceof Error && 'errcode' in error && typeof error.errcode === 'number' && (error.errcode & 0xff) === SQLITE_BUSY;
 }
 
 export function openDatabase(path: string): DatabaseSync {
@@ -96,8 +98,7 @@ export function openDatabase(path: string): DatabaseSync {
     if (allTables.has('provider_checkpoints') && db.prepare('SELECT 1 FROM provider_checkpoints WHERE NOT json_valid(original) OR NOT json_valid(data) OR floor<1 LIMIT 1').get()) {
       throw new Error('Corrupt provider checkpoint');
     }
-    const mode = switchToWal(db);
-    if (mode !== 'wal') throw new Error('Database requires WAL mode');
+    requireWal(db);
     db.exec('PRAGMA synchronous=FULL;');
     return db;
   } catch (error) {
