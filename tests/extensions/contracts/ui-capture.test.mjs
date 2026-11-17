@@ -150,7 +150,7 @@ for (const callable of [false, true]) test(`presentation-only parser never inspe
   const source = callable ? Object.setPrototypeOf(function contribution() {}, fields) : Object.create(fields);
   Object.defineProperty(source, 'dispose', { get() { reads.dispose = (reads.dispose ?? 0) + 1; throw new Error('Unexpected disposal lookup'); } });
   const presentation = parseUiExtensionPresentation(source);
-  assert.deepEqual(Object.keys(presentation).sort(), ['contentLayout', 'modules', 'transcript']);
+  assert.deepEqual(Object.keys(presentation).sort(), ['activity', 'contentLayout', 'modules', 'transcript']);
   assert.equal(presentation.modules[0].component, View); assert.equal(presentation.transcript, View);
   assert.deepEqual(reads, {});
 });

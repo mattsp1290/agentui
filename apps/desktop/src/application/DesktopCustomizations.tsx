@@ -1,6 +1,6 @@
 import { Component, Suspense, useEffect, useRef, useState, type ReactNode } from 'react';
 import { checkExtensionEntrypoint, type ExtensionManifest } from '@agentui/sdk';
-import type { ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
+import type { ConversationActivityProps, ConversationModuleProps, UiExtensionPresentation, UiExtensionEntry } from '@agentui/sdk/react';
 import { createUiExtensionGeneration } from '@agentui/sdk/react-tools';
 import type { GenerationSink } from './frontend-sends.js';
 import type { FrontendToolGeneration } from '@agentui/sdk/tools';
@@ -15,7 +15,7 @@ export type NamespaceActivation = { readonly namespace: string } & (
   | { readonly kind: 'ready'; readonly lifetime: number; readonly generation: FrontendToolGeneration; readonly presentation: UiExtensionPresentation; readonly fail: (error: unknown) => void }
 );
 type ReadyActivation = Extract<NamespaceActivation, { readonly kind: 'ready' }>;
-type Slot = 'transcript' | 'contentLayout';
+type Slot = 'transcript' | 'activity' | 'contentLayout';
 type SlotOwner<S extends Slot> = ReadyActivation & {
   readonly presentation: UiExtensionPresentation & { readonly [K in S]: NonNullable<UiExtensionPresentation[K]> };
 };
@@ -24,6 +24,7 @@ type SlotSelection<S extends Slot> =
   | { readonly kind: 'conflict'; readonly namespaces: readonly string[] }
   | { readonly kind: 'claimed'; readonly owner: SlotOwner<S> };
 export type TranscriptSelection = SlotSelection<'transcript'>;
+export type ActivitySelection = SlotSelection<'activity'>;
 export type ContentLayoutSelection = SlotSelection<'contentLayout'>;
 const DEFAULT_SLOT: { readonly kind: 'default' } = { kind: 'default' };
 function selectSlot<S extends Slot>(owners: readonly NamespaceActivation[], slot: S): SlotSelection<S> {
@@ -103,7 +104,7 @@ function activateNamespace(customization: DesktopCustomization, lifetime: number
 
 export function useDesktopCustomizations({ customizations, enabled, sink }: {
   readonly customizations: readonly DesktopCustomization[]; readonly enabled: boolean; readonly sink?: GenerationSink;
-}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly contentLayout: ContentLayoutSelection; readonly generations: readonly FrontendToolGeneration[] } {
+}): { readonly namespaces: readonly NamespaceActivation[]; readonly transcript: TranscriptSelection; readonly activity: ActivitySelection; readonly contentLayout: ContentLayoutSelection; readonly generations: readonly FrontendToolGeneration[] } {
   const [request, setRequest] = useState({ customizations, enabled });
   const [snapshot, setSnapshot] = useState<{ readonly request: typeof request; readonly namespaces: readonly NamespaceActivation[] }>(() => ({ request, namespaces: [] }));
   const nextLifetime = useRef(0);
@@ -130,7 +131,20 @@ export function useDesktopCustomizations({ customizations, enabled, sink }: {
   }, [request, sink]);
   const namespaces = current && enabled && snapshot.request === request ? snapshot.namespaces : [];
   const ready = namespaces.filter((owner): owner is ReadyActivation => owner.kind === 'ready');
-  return { namespaces, transcript: selectSlot(namespaces, 'transcript'), contentLayout: selectSlot(namespaces, 'contentLayout'), generations: ready.map(owner => owner.generation) };
+  return { namespaces, transcript: selectSlot(namespaces, 'transcript'), activity: selectSlot(namespaces, 'activity'), contentLayout: selectSlot(namespaces, 'contentLayout'), generations: ready.map(owner => owner.generation) };
+}
+
+export function CustomizationActivity({ selection, context, fallback, conversationKey }: {
+  readonly selection: ActivitySelection; readonly context: ConversationActivityProps; readonly fallback: ReactNode; readonly conversationKey: string;
+}) {
+  if (selection.kind === 'default') return fallback;
+  if (selection.kind === 'conflict') return <><p role="alert">Activity override conflict. {selection.namespaces.join(', ')} claim the activity. The default view remains active.</p>{fallback}</>;
+  const View = selection.owner.presentation.activity;
+  return <Suspense fallback={fallback}>
+    <CustomizationBoundary key={`${selection.owner.lifetime}/${conversationKey}`} fail={selection.owner.fail} fallback={fallback}>
+      <View {...context} />
+    </CustomizationBoundary>
+  </Suspense>;
 }
 
 export function CustomizationTranscript({ selection, context, fallback, appendix, conversationKey }: {
