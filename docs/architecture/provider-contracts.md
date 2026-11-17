@@ -170,7 +170,7 @@ The host can privately settle a pending, accepted or uncertain offered-send bloc
 It never looks up an initial dispatch still running locally, resubmits the old operation, or gives its binding to the new sender.
 Released closures or a revoked original actor do not prevent this host settlement. Revoked provider credentials and inconclusive lookup evidence keep the blocker.
 The blocker can remain indefinitely until conclusive authoritative evidence arrives. Restoring credentials alone does not clear it.
-There is no manual abandon action for an unresolved offered send.
+There is no manual abandon action for an unresolved offered send. The same holds for every provider send: see the provider contract's reconciliation section, and bean `agentui-b9oy` for a stop-waiting action.
 Public reconciliation and binding recovery also retain the latest persisted offered receipt and observation on an inconclusive lookup, including pending admission with no observation.
 An authorized original owner can still reconcile its receipt after releasing closures.
 A terminal rejection without a retained run returns `unavailable` with `provider-rejected`; not-dispatched returns `not-dispatched`.

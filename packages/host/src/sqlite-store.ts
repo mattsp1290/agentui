@@ -27,8 +27,8 @@ import { migrateFrontendSends, taggedKeySql, taggedHistorySql } from './sqlite-f
 import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
-import type { HostBudgets, HostOutput, Installation, StoredCommand } from './durable-model.js';
-import { scopeKey as key, SEND_BLOCKING_STATES } from './durable-model.js';
+import type { HostBudgets, HostOutput, Installation, InstallationKind, SendBlock, StoredCommand } from './durable-model.js';
+import { scopeKey as key, sendBlock } from './durable-model.js';
 
 type StoreTransaction = { readonly write: boolean };
 
@@ -330,11 +330,14 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     return { command, target, receipt: parsedReceipt,
       observation: row.observation === null ? null : observation(json(row.observation), target) };
   }
-  blockingSend(scope: ConversationScope): StoredCommand | null {
-    const installed = this.findInstallation(scope);
-    const states = SEND_BLOCKING_STATES[installed && 'kind' in installed ? 'provider' : 'native'];
-    const row = this.db.prepare(`SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN (${states.map(() => '?').join(',')}) LIMIT 1`).get(...key(scope), ...states);
-    return row ? this.command(scope, nonempty(row.id)) : null;
+  blockingSend(scope: ConversationScope, kind: InstallationKind): { readonly stored: StoredCommand; readonly block: Exclude<SendBlock, 'none'> } | null {
+    const rows = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind') IN ('pending','accepted','uncertain') ORDER BY rowid").all(...key(scope));
+    for (const row of rows) {
+      const stored = this.command(scope, nonempty(row.id));
+      const block = stored ? sendBlock(kind, stored) : 'none';
+      if (stored && block !== 'none') return { stored, block };
+    }
+    return null;
   }
   private snapshotOverheadBytes(scope: ConversationScope): number {
     return Buffer.byteLength(canonicalJson({ scope, projectionVersion: this.projection.version,
@@ -418,7 +421,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
         if (!row) return { kind: 'rejected', reason: 'unknown-run' };
         run = nativeRun(json(row.data), installed, scope);
       } else if (command.body.kind === 'send') {
-        if (this.blockingSend(scope)) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
+        if (this.blockingSend(scope, admissionTarget.kind)) return { kind: 'rejected', reason: 'send-awaiting-confirmation' };
         const row = this.db.prepare('SELECT data FROM runs WHERE host=? AND conversation=? ORDER BY rowid DESC LIMIT 1').get(...key(scope));
         if (row && !('kind' in installed)) run = nativeRun(json(row.data), installed, scope);
       }

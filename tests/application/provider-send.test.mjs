@@ -73,6 +73,30 @@ test('follow-up retains refusal for unresolved, failed and mismatched original l
   }
 });
 
+test('a send the provider reported finished but the host could not project does not block a follow-up', async t => {
+  const a = extension({ submit: (operation, { effect }) => effect(operation, 'completed') });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  f.inspect(db => db.prepare('INSERT INTO runs(host, conversation, id, data) VALUES (?, ?, ?, ?)').run(scope.hostId, scope.conversationId, 'same-run', '{}'));
+  assert.deepEqual((await port.submit(send(scope))).receipt.state, { kind: 'uncertain', reason: 'output-rejected' });
+  assert.equal(JSON.parse(stored(f, 'chat').observation).kind, 'conclusive');
+  const next = await port.submit(send(scope, 'next'));
+  assert.equal(next.kind, 'receipt', JSON.stringify(next));
+  assert.equal(a.calls.reconciles.length, 0);
+  assert.equal(a.calls.submits.length, 2);
+});
+
+test('an accepted send quarantined for capacity still blocks a follow-up after one lookup', async t => {
+  const a = extension({ reconcile: () => ({ kind: 'uncertain', evidence: null }) });
+  const f = await fixture(t, [a]), scope = await create(f), port = f.client.conversation(scope);
+  assert.equal((await port.submit(send(scope))).receipt.state.kind, 'accepted');
+  f.inspect(db => db.prepare("UPDATE commands SET receipt=json_set(receipt, '$.state', json('{\"kind\":\"uncertain\",\"reason\":\"capacity-exhausted\"}')) WHERE id='send'").run());
+  assert.equal(JSON.parse(stored(f, 'chat').observation).kind, 'accepted');
+  assert.deepEqual(await port.submit(send(scope, 'next')), { kind: 'rejected', reason: 'send-awaiting-confirmation' });
+  assert.deepEqual((await port.receipt('send')).state, { kind: 'uncertain', reason: 'capacity-exhausted' });
+  assert.equal(a.calls.reconciles.length, 1);
+  assert.equal(a.calls.submits.length, 1);
+});
+
 test('pending send blocks follow-up without lookup, while confirmed rejection admits it', async t => {
   const a = extension({ submit: () => ({ kind: 'pending', evidence: { queued: true } }),
     reconcile: () => ({ kind: 'rejected', reason: 'Declined', evidence: { rejected: true } }) });

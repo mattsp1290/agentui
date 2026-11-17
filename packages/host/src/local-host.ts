@@ -186,9 +186,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     return store.settle(scope, id, observed, observations);
   });
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
-    const blocker = store.blockingSend(scope);
-    if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
-    if (!isOffered(blocker) && blocker.receipt.state.kind === 'pending') return false;
+    const found = store.blockingSend(scope, 'provider');
+    if (found?.block !== 'blocked-reconcilable' || dispatching.has(commandKey(scope, found.stored.command.clientCommandId))) return false;
+    const blocker = found.stored;
     const assertRequester = () => {
       store.frontendSends.authorize('settle', blocker, actor);
       authorized(scope);

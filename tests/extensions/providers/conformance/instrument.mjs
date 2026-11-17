@@ -1,14 +1,15 @@
 /**
  * Counts what the host does to a provider extension through the public contract alone: activation, connection,
- * snapshots, feed subscriptions per conversation and cleanup. It forwards every call unchanged and wraps both
+ * snapshots, command lookups, feed subscriptions per conversation and cleanup. It forwards every call unchanged and wraps both
  * registration modes (`add` and `addAgui`).
  */
 export function instrument(extension) {
-  const counts = { activations: 0, disposes: 0, connects: 0, closes: 0, snapshots: 0, feeds: 0, maxFeedsPerConversation: 0, observes: [] };
+  const counts = { activations: 0, disposes: 0, connects: 0, closes: 0, snapshots: 0, lookups: 0, feeds: 0, maxFeedsPerConversation: 0, observes: [] };
   const open = new Map();
   const { entry } = extension.value;
   const wrapBackend = backend => ({ ...backend,
     async snapshot(binding) { counts.snapshots++; return backend.snapshot(binding); },
+    async reconcileCommand(operation) { counts.lookups++; return backend.reconcileCommand(operation); },
     observe(request, receive) {
       const key = request.binding.creation.operationId;
       counts.observes.push({ key, after: request.after });

@@ -86,10 +86,14 @@ A missing record is not proof of nonacceptance. Return `uncertain` instead.
 A thrown error is recorded as uncertainty, never as rejection.
 `not-dispatched`, `unsupported` and failures from a fresh call mean the provider knows the invocation was not accepted.
 An uncertain send stays uncertain until a client `reconcile` request settles it through `reconcileCommand`.
-Before admitting a new send to a provider conversation, the host looks up a previous send whose receipt is `pending`, `accepted` or `uncertain`.
-It first tries to settle an `accepted` or `uncertain` blocker once through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
+Before admitting a new send to a provider conversation, the host looks for the oldest previous send whose receipt is `pending`, `accepted` or `uncertain`.
+An `uncertain` send whose saved observation is conclusive does not block: the provider reported it finished and only the host's projection of the result failed (`output-rejected`). An `uncertain` send quarantined for `capacity-exhausted` still blocks, because the provider may still be running it.
+The host first tries to settle an `accepted` or `uncertain` blocker once through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
 Otherwise it refuses with `send-awaiting-confirmation` and the new send reaches no provider. While the provider is offline the blocker cannot be settled, so the refusal is `send-awaiting-confirmation`, not `provider-command-unavailable`.
-A lost send reply therefore blocks the conversation until reconciliation settles the earlier send. A native agent conversation records an unknown outcome without blocking later sends.
+A lost send reply therefore blocks the conversation until reconciliation settles the earlier send. A conversation with a built-in agent driver (Codex, Claude SDK, Pi) records an unknown outcome without blocking later sends.
+
+The block can be permanent. When a send never reached the provider, its lookup finds no record and stays `uncertain`, so Reconcile cannot settle it, and cancel is refused with `unknown-run` because no run exists. Start a new chat to keep going. An action to stop waiting on such a send is tracked as bean `agentui-b9oy`.
+After upgrading to a host with this rule, a provider conversation that already holds an `uncertain` send starts refusing new sends the same way, until Reconcile settles that send or the user starts a new chat.
 
 ## Observation
 
@@ -129,11 +133,12 @@ Every case runs beside the other provider. Every case except outage asserts the 
 What the suite proves:
 
 - Effects are counted on the wire at each service: every request to an effect route, duplicates and refusals included. A redispatched operation, such as a `reconcileCommand` that submits again, fails the effect assertions on every row. The suite proves one effect for each operation it drives, not for every possible sequence.
-- `instrument.mjs` counts host calls through the public contract: activations, connects, snapshots, closes, disposes and open feeds per conversation. It wraps both `add` and `addAgui`.
+- `instrument.mjs` counts host calls through the public contract: activations, connects, snapshots, command lookups, closes, disposes and open feeds per conversation. It wraps both `add` and `addAgui`.
 - A restart with a saved checkpoint resumes from that cursor and calls `snapshot` zero times. An observation retry after a dropped stream calls `snapshot` exactly once and leaves one subscription.
 - A send to a disabled provider, and a send in a fresh conversation during an outage, are refused with `{ kind: 'rejected', reason: 'provider-command-unavailable' }`. A send behind an unsettled earlier send during an outage is refused with `send-awaiting-confirmation`.
 - An outage is reported by discovery, metadata and the conversation. It does not close streams that were already open: they keep delivering. The suite's outage refuses new requests at a proxy, so it does not model a stream that the network cuts.
-- A send behind an uncertain earlier send is refused with `send-awaiting-confirmation` and reaches no provider. Once reconciliation settles the earlier send, the next send is admitted.
+- A send behind an uncertain earlier send is refused with `send-awaiting-confirmation` after exactly one `reconcileCommand` lookup and reaches no provider. Once reconciliation settles the earlier send, the next send is admitted.
+- A send cut at the proxy before it reaches the service stays `uncertain` after an explicit Reconcile, keeps refusing later sends in its conversation, and leaves a new conversation free to send.
 
 `boundaries.test.mjs` asserts that provider traffic carries no trace context or collector headers, that telemetry carries no prompt, reply or provider secret, and that no AgentUI agent span is synthesized for a remote run. A positive control proves the telemetry search finds a value that is exported.
 It also asserts that `apps`, `packages`, `scripts` and `templates` contain no case-insensitive `crew` substring, so camelCase or underscore names such as `isCrewProvider` are caught, excluding the one adapter-tests fixture that names `example.crew`, and that the repository contains no OpenBot code or dependency.
