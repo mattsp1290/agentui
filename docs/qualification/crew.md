@@ -1,111 +1,85 @@
-# Crew public provider qualification
+# Crew provider extension qualification
 
-Assessment date is 2026-11-14. `agentui-4wpa` has controlled HTTP evidence and explicit live-service blockers. This assessment does not qualify a deployed Crew service or an AgentUI provider extension.
+Assessment date is 2026-11-17. This assessment covers `agentui-osyo`, the Crew example provider extension. It qualifies creation, streaming, host restart and resume against a real Crew service. It lists the capability gaps that remain.
 
-The retained client supports a remote provider integration without importing Crew's database, Temporal, or native engine code. Crew remains the execution, approval, cancellation, and recovery authority. AgentUI's existing example preserves request identity across local recreation. It attaches an existing Crew conversation and does not establish AgentUI-created conversation provenance.
+The extension is `crewProvider` from `@agentui/example-crew/provider`. It is a registered public provider contribution. It discovers one configured existing Crew member and creates fresh AgentUI-owned conversations against it. It never imports existing Crew conversation history. Crew remains the execution, approval, cancellation and recovery authority. The [example README](../../examples/crew/README.md) describes configuration and behavior.
+
+The deployment model is the one in [AGENTS.md](../../AGENTS.md). One owner runs AgentUI and Crew on a private overlay network. There is no device pairing or service attestation.
 
 ## Exact inputs
 
 | Input | Identity |
 | --- | --- |
-| AgentUI source | `85ad5e423d231c628cb60e9a11908ccec3bb2239` |
-| Crew client | `@birbcrew/client@0.1.0` |
-| Crew SDK and service source inspected | `37c596577b4998fba67b09451ddb16ac0695c08d` |
-| Crew source tree | `304b892eccc22d1f6a7d4e3a70a30e840bc1d856` |
-| Crew client source package tree | `7968b05bf317f9036ca2cb6d7a998d2856025099` |
-| Retained package SHA256 | `00a7060f3441e4a77adef3da34e480e1fc3c86035de3e40438bbcbccee255c2b` |
-| Retained client source archive SHA256 | `18c2f6d2a826f528831b35d044703c809a95f1252146e4581a8896541df2114f` |
-| Runtime for this assessment | Node `24.22.3`, npm `11.19.1`, Linux |
-| Client dependency | Zod `4.4.3` |
-| Optional observation peers declared by Crew | `@ag-ui/client@1.0.4`, `@ag-ui/core@1.0.4` |
+| AgentUI source for the real run | `main` at `8be32fc` |
+| Crew service | `f3327346d979270a18c9f46b9cfe6a075b1cb157` |
+| Crew image | `agentui-crew-mvp:main-f332734` |
+| Crew database schema | 37 |
+| Crew profile admission | `BIRBCREW_LIVE_PROFILES`, no attestation |
+| Crew member | `961f93a5-68d4-4f79-a1c2-eb94f3a2ecaf`, engine `codex`, profile `chatgpt-gpt-6.1-sol.approval.v1` |
+| Crew client | `@birbcrew/client@0.1.0` built from the same Crew revision, [retained manifest](../../vendor/crew-client/f3327346d979270a18c9f46b9cfe6a075b1cb157/manifest.json) |
+| Runtime | Node `24.22.3` |
 
-The [retained manifest](../../vendor/crew-client/37c596577b4998fba67b09451ddb16ac0695c08d/manifest.json) records npm integrity and acquisition. The source archive contains `packages/client`, not the full service. Service claims below come from the local Crew Git objects at the exact revision, not its current checkout or a deployed server. The [qualification receipt](../../spikes/crew/qualification.json) records commands and limits. No retained package bytes or lockfiles changed.
+## Real Crew run
 
-The inspected public sources are [client methods](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/index.ts), [shared contract](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/contract.ts), [observer](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/agui.ts), [integration API](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/docs/integration-api-v1.md), [gateway](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts), [service receipts](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/integration-api.ts), [member client](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/client.ts), [conversation store](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/store.ts), [approval store](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/approvals.ts), and [observation ledger](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts).
+The run used the private spark deployment on 2026-11-17. The host ran `node examples/crew/run.mjs <config>` from AgentUI `main` at `8be32fc`. A browser drove the ordinary provider chooser, composer and transcript.
 
-## Public capabilities and proof limits
+1. AgentUI created owned conversation `e700aae6-44d5-4e1a-b9f5-692e726bbbb4` against the existing member.
+2. Send request `0fdd9a97-8400-46a0-9aa9-afb520c5e30f` streamed a 40-line reply.
+3. The host was stopped and restarted after the run. One conversation was listed. The prompt and reply each appeared once. No other Crew conversations were imported.
+4. Second send `fdfe707d-8597-47c9-9f28-66a26a8c737b` on the same conversation streamed. The host was killed at 26 of 60 lines and restarted. The fresh baseline showed all 60 unique lines once. The earlier turn stayed intact.
+5. Both send receipts stayed `accepted` until **Check pending command** settled them. That gap is tracked as `agentui-ulb5`.
 
-Live-service status is **NOT RUN** for every requirement in this table. A controlled HTTP pass proves the packed SDK's behavior against a local fixture. It does not prove server admission, durable effects, native execution, or service ownership enforcement.
+The run did not exercise protected approvals, Stop, cancellation races, owner-detail cards, permissions or a Crew worker replacement.
 
-| Requirement | Public method and route | Source contract and controlled proof |
-| --- | --- | --- |
-| Assess compatibility | `CrewClient.capabilities()`, `GET /v1/capabilities` | The [capabilities schema](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/contract.ts#L230-L238) requires API `1`, request contract `sql-admission-temporal-queue-v1`, AG-UI snapshot-and-bounded-tail mode, and an `initiatorKinds` array of nonempty strings. Upstream client suite verifies one authenticated call. Deployment identity and advertised capability accuracy remain unqualified. |
-| Assess dependencies | `health()`, `GET /v1/health` | Returns structured readiness on HTTP `200` and `503`. Upstream suite covers `not_ready` and malformed replies. Service source probes PostgreSQL and Temporal frontend only. Ready does not prove a namespace exists, workers poll, a member profile works, or model access exists. |
-| Discover existing agents | `listMembers({limit, after})`, `GET /v1/members` | Returns authenticated owner's members and opaque `next`. Source specifies keyset pages, default 50, maximum 100. Upstream suite proves query encoding and result parsing, not complete multi-page service traversal. Register these existing members in AgentUI under namespace, installation, and opaque member ID. An installation identifies one Crew endpoint plus one owner credential authority. |
-| Create members | `createMember()`, `POST /v1/members` | Public method exists and its wire shape passes the upstream fixture. AgentUI's existing-agent scope excludes invoking it. |
-| Create an AgentUI-owned conversation | `openConversation({conversationId, memberId})`, `POST /v1/conversations` | Caller supplies UUID and existing member. Upstream fixture proves request and matching snapshot validation. The [store open path](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/store.ts#L224-L250) inserts only if the conversation UUID is absent, returns the existing owner-scoped conversation, and rejects another member binding. The SDK treats a [mismatched conversation or member reply](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/index.ts#L246-L261) as a protocol error, which its [command error handling](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/index.ts#L185-L215) surfaces as `CrewUnknownOutcomeError`. The caller must preserve the original conversation UUID rather than infer definitive refusal. No AgentUI creation or uncertain-creation recovery path exists in the example. |
-| Read a bound conversation | `conversation({conversationId})`, `GET /v1/conversations/{conversationId}` | Example verifies member identity through GET and rejects foreign local bindings before HTTP. Upstream suite checks the SDK's [projected snapshot](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/index.ts#L115-L117). Neither suite proves native history provenance. |
-| Submit and recover | `submit()`, `POST /v1/conversations/{conversationId}/requests`; `requestStatus()`, corresponding GET | Example tests prove save-before-send, lost-response recreation, original-ID retry, exact body reuse, GET-only reconciliation, and blocking uncertainty. Upstream suite independently proves one attempt per call and unknown-outcome errors. |
-| Observe and reconnect | `createCrewObserver()` from `/agui`, `POST /v1/conversations/{conversationId}/events` | Source inspected only. Observer clears messages, tools, context, state, forwarded properties, and resume input. It exposes no `after`, so SDK reconnect obtains a fresh snapshot. Gateway sends the current snapshot, then contiguous events without a per-connection count cap. Raw cursor rejection, in-stream errors, and tail retention differ as described below. No observation executable or live stream was run here. |
-| Answer a remote approval | `decide()`, `POST /v1/conversations/{conversationId}/human` | Requires conversation, member, request, invocation, approval, version, and permitted choice. Upstream fixture proves one authenticated decision request and receipt parsing. The service's [public state](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L46-L47) carries `pendingApprovals` and `pendingQuestions` with the [decision tuple and choices](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L222-L231). `decide()` also answers those questions with `inspect` or `test`. The [raw GET snapshot route](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L383) returns that state. The SDK parses it through `snapshotWireSchema`, whose stripping [state schema](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/contract.ts#L204-L229) removes the card fields before `project()` returns cursor and core state. `requestStatus()` omits the cards. Within the current public SDK and observer boundary, the observer supplies the tuple, so answering remains gated on observation qualification. An SDK projection change could provide a cheaper read route without observation. The intended extension leaves the raw route unused. Real pending-card validation, duplicate decisions, expiry, and native continuation remain unqualified. |
-| Request cancellation | `cancel()`, `POST /v1/conversations/{conversationId}/requests/{requestId}/cancel` | Upstream fixture proves original target and empty body. Source defines durable deduplicated intent. Receipt delivery, native termination, and effects remain distinct. No real cancellation or stop was run. |
-| Supply frontend tools | No supported public client method | Strict submit accepts request UUID, text, and optional approval deadline. Gateway rejects tool or result injection through observation. Operator-configured trusted context is not a public client registry. Blocked upstream. |
+## Controlled tests
 
-The [gateway observation loop](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L120-L184) streams until a terminal phase, disconnect, cursor gap, or failure. A gap emits `RUN_ERROR` with code `CURSOR_EXPIRED`. Other observation failures emit `RUN_ERROR` with code `OBSERVATION_FAILED`. The [terminal mapping](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L134-L141) emits `RUN_ERROR` code `MEMBER_FAILED` for `failed`, `RUN_FINISHED` with `outcome.type: "cancelled"` for `cancelled`, and `RUN_FINISHED` without an outcome for `complete`. These terminal phases describe the conversation. The [reply reducer](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L323-L345) sets `complete` at the turn limit and otherwise leaves an ordinary non-final reply in `idle`. The gateway emits no terminal frame for `idle` and keeps polling. Per-request completion needs correlated request evidence, not one `RUN_FINISHED` per request. `MEMBER_FAILED` is terminal. `CURSOR_EXPIRED` and `OBSERVATION_FAILED` indicate observation recovery, not a terminal member outcome. Before streaming, the [raw events route](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L407-L414) rejects mismatched threads or nonempty inputs. Any raw `after` value other than the current snapshot cursor returns HTTP `410 CURSOR_EXPIRED`. The [SDK observer](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/packages/client/src/agui.ts#L4-L14) exposes no `after` cursor. Recreating it therefore requests the current snapshot rather than replay from a saved cursor.
+The controlled tests drive the extension through its public HTTP and SSE boundary against a local fixture. They do not start Crew PostgreSQL, Temporal, workers or native engines.
 
-The integration API documents a 256-event retention tail. The [ledger constant](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L10) and [publication pruning](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L407-L425) implement that threshold. Text, tool-preview, and tool-value publications return before pruning, so 256 is not a hard bound on instantaneous retention. Event reads use batches of 32. Neither number caps the total events one connection can receive.
+[`examples/crew/tests/provider.test.mjs`](../../examples/crew/tests/provider.test.mjs) covers the Crew extension:
 
-## Ownership, authentication, and versions
+- Creation, streaming, approval, Stop and SQLite reopen: `Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen`.
+- No external history: `Crew discovery, creation and host restart touch only the member, owned conversation and its observation, never a listing`. It records every request path. Connection, discovery and creation call exactly `GET /v1/capabilities`, `GET /v1/members`, `POST /v1/conversations` and `POST /v1/conversations/{owned}/events`. After a host restart the calls are exactly `GET /v1/capabilities`, `GET /v1/members` and `POST /v1/conversations/{owned}/events`. The fixture serves the excluded listing route `GET /v1/conversations` with a foreign conversation in it, so a listing call or any foreign conversation path fails the assertion.
+- Follow-up sends: `Crew follow-up confirms the original completed request before admitting its own send once`.
+- Lost replies and uncertainty: `Crew lost submit remains original-only GET recovery and does not turn missing lookup into rejection`, `Crew missing original GET remains uncertain and foreign binding refuses before HTTP` and `Crew conflicting admission remains uncertain without retry or replacement identity`.
+- Observation integrity: `Crew same-source handoff awaits admitted callbacks and close drains without remote cancellation` and `Crew invalid remote content drains and retains only the last acknowledged cursor`.
+- Decisions: `Crew lost decision remains uncertain after card omission and original-only GET on SQLite reopen`, the owner-detail tests and `browser retries owner detail failures and renders a full escaped note before one exact approval`.
+- Permissions: `Crew lists every applicable active scope and refuses foreign or changed-scope revocation before POST`, `Crew lost revoke ACK stays uncertain after list absence and host restart without another POST` and the browser permission tests.
+- Failure mapping: `Crew maps HTTP, transport and contract failures to typed provider failures without leaking details`.
 
-Crew's operator configures a bearer-token hash mapping to one owner. Every `/v1` route, including health and capabilities, requires authentication. Gateway source authenticates before URL parsing, body parsing, or dependency access. Other owners receive `404`. The fixture proves SDK header delivery, not actual token validity or cross-owner isolation. No credential was read.
+The generic provider host tests in `tests/application/provider-*.test.mjs` cover the contract the extension relies on:
 
-The public service advertises API `1`, request contract `sql-admission-temporal-queue-v1`, cancellation `durable-intent-v1`, and observation version `1`. The stream declares [`PROTOCOL_VERSION`](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L143) from the service's resolved [`@ag-ui/core`](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/gateway.ts#L9). This assessment did not execute a deployed stream or establish its resolved value. Capabilities accept additive fields. The SDK validates its required API and request fields but does not validate every advertised service capability, including the cancellation identifier. A provider must assess the capabilities it uses explicitly.
+- [`provider-creation.test.mjs`](../../tests/application/provider-creation.test.mjs): `lost response and restart reconcile only the original immutable operation; concurrent recovery shares its lease` and `reserved restart never dispatches create, original credentials cannot be rebound, and revocation discards late confirmation`.
+- [`provider-send.test.mjs`](../../tests/application/provider-send.test.mjs): `authenticated send commits exact target before HTTP effect, persists accepted runs for distinct typed models, and emits receipts only` and `lost response and restart retry never translate or submit; explicit lookup receives original bytes and rejects a changed run`.
+- [`provider-stream.test.mjs`](../../tests/application/provider-stream.test.mjs): `real browser selection and send render a growing reply, completion, and persisted history after host/client reopen`.
+- [`provider-stream-lifecycle.test.mjs`](../../tests/application/provider-stream-lifecycle.test.mjs): `live replacement resumes one saved observation and an existing HTTP watch without repeating effects`.
+- [`provider-resync.test.mjs`](../../tests/application/provider-resync.test.mjs): `provider resync drains admitted callbacks, fetches a fresh snapshot and rejects the retired feed`.
+- [`provider-controls.test.mjs`](../../tests/application/provider-controls.test.mjs): `lost approval reply recovers only the saved choice after omission, map replacement, translator changes and restart` and `Stop with a lost reply retains the captured scoped run across restart and completes only its receipt`.
 
-Client exports are root, `/contract`, `/agui`, and `/openapi.json`. The root client requires no AG-UI runtime. The exported OpenAPI document covers core integration routes and lists excluded service extensions. It is not a complete Crew API specification. AgentUI's retained AG-UI fork remains unchanged, and compatibility between that fork and Crew observation is unqualified here.
+## Capability gaps
 
-## Identities and reconciliation
+- **No exact-choice decision lookup.** Crew exposes no GET receipt for an exact decision choice. A lost or mismatched decision reply stays uncertain.
+- **Cold worker replacement is unqualified.** No run replaced the Crew gateway or worker during a request.
+- **Frontend tools are unavailable.** Crew accepts no client tool definitions or results. They need Switchboard adapter delivery, tracked as `agentui-9xfk` and `switchboard-5py2`. Switchboard's app-chosen restore contract is [frontend tool restore](https://github.com/mattsp1290/switchboard/blob/main/docs/architecture/frontend-restore.md), merged in Switchboard PR 60.
+- **Observation is capped at 8 MiB per connection.** Reaching the cap ends observation. Restart the host for a fresh baseline.
+- **There is no remote replay cursor.** The public observer exposes no `after` cursor. Each reopen takes a fresh Crew snapshot as its baseline. The saved cursor is local.
+- **Member-wide grants are deferred.** The extension offers only the conversation standing choice. It filters member-wide grant creation.
+- **Crew handoffs are unused.** The vendored client exposes `createHandoff`, `handoff` and the `HandoffsCapability` metadata. The extension never calls them.
+- **Subagent child transcripts are hidden.** The observation drops messages that carry a `subagentRunId`. Discovery accepts members that declare subagents.
+- **Receipts are not settled automatically.** A send receipt stays `accepted` until a follow-up send or **Check pending command** reads the original request status. This is `agentui-ulb5`.
 
-Crew deduplicates by authenticated owner, conversation UUID, and request UUID. UUIDs normalize to lowercase. Text equivalence is exact UTF-8 equality, including whitespace and Unicode form. Whether `approvalDeadlineSeconds` is present, and its value, are part of the payload. A retry must repeat it exactly, or omit it if the original did. A changed payload under the same identity conflicts. A new conversation creates a different identity and can execute twice.
+## Verification
 
-The [example](../../examples/crew/README.md) persists the local host and conversation scope, Crew installation, remote conversation, member, original request UUID, exact body, and unresolved or observed outcome before dispatch. Credentials stay in the client. It requires one owner per journal file. This is a usage precondition. The journal does not record owner or credential identity, and the installation label is caller-supplied. Crew's owner-scoped verifying GET remains responsible for rejecting a foreign owner. Tests reject changed installations, foreign scopes, and mismatched receipts.
-
-After a lost reply, the original identifiers and body remain authoritative. `requestStatus()` performs GET and does not dispatch inference. Server source can reconcile existing admissions against workflow evidence and update receipts, so read-only reconciliation means no new work or cancellation delivery, not that the server never writes a reconciliation record. A missing lookup preserves uncertainty. A later retry refusal cannot disprove an earlier ambiguous submission. The fixture verifies both cases after recreation.
-
-Crew's `uncertain` receipt is a remote reconciliation result. It differs from a client `CrewUnknownOutcomeError`, which means the HTTP command's outcome is unknown. Neither permits replacing the UUID and replaying effects. The example blocks new sends until authoritative status resolves the pending request. Retained receipts and results have no automatic TTL under the source contract, but database deletion or restoration is a separate operator concern.
-
-Conversation creation needs its own durable provenance. Before `openConversation`, AgentUI must persist its newly allocated conversation UUID and selected existing member. A lost response must preserve that UUID. The service's same-UUID open and GET snapshot provide public mechanisms, but their use for AgentUI-owned creation remains unimplemented and unqualified here. Discovery must not import existing native conversation history. The service also exposes an [owner-scoped conversation listing](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/integration-api.ts#L212-L223) at `GET /v1/conversations`, but the SDK has no method for that listing. The intended extension leaves this raw route unused.
-
-## Approval and cancellation are separate operations
-
-`decide()` answers an existing remote approval. It is neither a frontend tool result nor cancellation. Crew owns the card and permitted choice. Service source resolves its native call identity internally. Clients do not supply native receipt authority. The [member decision path](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/client.ts#L111-L127) checks the [approval ledger](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/approvals.ts#L289-L309) before the workflow update and again if the update throws. A recorded matching choice can resolve an ambiguous update reply. This is inspected source evidence, not an executed decision-recovery result. A future integration must reconcile the original approval tuple and observed state, retaining uncertainty where no authoritative decision evidence exists. The SDK has no dedicated decision-status method. [Card removal](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L267-L304) occurs on `liveClosed`, `answered`, `cancelled`, and `expired`. The [`stopped` and `failed` paths](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/src/service/observation.ts#L347-L367) also clear every pending approval and question. A missing card or departure from `waiting` therefore does not establish that a specific choice was accepted. Authoritative reconciliation must correlate the original tuple and choice.
-
-`cancel()` records request-scoped intent. The service returns a stable cancellation receipt. `delivery: delivered` does not prove native termination. `nativeTermination: confirmed` does not assess prior effects. `effects` remains `not_assessed`. A committed reply can win a cancellation race. Closing or aborting observation only disconnects the observer. It does not cancel work.
-
-## Exact extension boundary
-
-The intended Crew extension uses only the public packed HTTP client and the public AG-UI observer. AgentUI's provider contract and host routing own registration, authorization, credential handles, existing-agent discovery, durable local admission, and AgentUI-created provenance. Crew owns SQL and Temporal admission, remote approval state, native execution, cancellation delivery, and authoritative recovery.
-
-The current example is not a registered provider contribution. The host's current recorded `ProviderDriver` is not a remote Crew driver. Production delivery remains with `agentui-k4zj` for the public provider contract, `agentui-7s6y` for generic registration and routing, `agentui-s96x` for existing-agent registration, `agentui-ksx0` for lifecycle, and `agentui-osyo` for the Crew extension. This qualification adds no implementation to those owners' paths and copies no native adapter internals.
-
-## Live and upstream blockers
-
-The remaining qualification blockers are explicit:
-
-- No deployed endpoint, installed service revision, owner token, or authorized member/profile was assessed. This lane neither reads credentials nor contacts a live service.
-- PostgreSQL migration readiness, Temporal namespace and worker readiness, and actual model/provider access lack service evidence. A capabilities response or healthy frontend alone cannot establish them.
-- Existing-agent pagination, two-installation identity isolation, real owner authorization, and secret redaction require installed-consumer and service evidence beyond these fixtures.
-- AgentUI-created conversation admission, original-UUID recovery after a lost creation reply, and refusal to attach external history lack an implemented provider path.
-- Snapshot plus live observation, reconnect after cursor expiry, disposal without cancellation, and AgentUI's pinned AG-UI compatibility were not executed.
-- The example records every fresh-submit 4xx as a rejection and permits a new UUID in the same conversation. This fixture-qualified policy conflicts with the pinned [409 guidance](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/docs/integration-api-v1.md#L277-L285), which requires reconciling the original identity and forbids silent UUID replacement. A [previously accepted request can remain discoverable through GET despite `409 request_rejected`](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/docs/integration-api-v1.md#L254-L256). The guidance distinguishes `usage_limit`, which permits the same request after budget recovery, from `usage_limit_closed`, which requires a new conversation. The Crew extension must not inherit the blanket 4xx policy. This is a known contract gap, not a live-qualified result. The [lost admission acknowledgement recovery](https://github.com/mattsp1290/crew/blob/37c596577b4998fba67b09451ddb16ac0695c08d/docs/integration-api-v1.md#L291-L299) needs live qualification.
-- Real protected approvals, ambiguous decision reconciliation, cancellation races, native termination, and gateway/worker/client replacement recovery remain unqualified. Approval card discovery through observation or the raw snapshot was not exercised. The SDK's `conversation()` projection strips the cards that the raw snapshot carries, and `requestStatus()` omits them. An SDK projection change is an integration option, not a qualified path. Existing Crew service tests are source evidence, not a run receipt for this assessment.
-- Frontend tool definitions and correlated tool results remain blocked by `switchboard-r-3rkv` and then `crew-r-xndc`. Both request records were observed open in local hub state through `bn request show --no-fetch` during this dated assessment. That observation is not current delivery proof. AgentUI gates are `agentui-9xfk` and `agentui-b3aj`. Creating a request is not owner acceptance or delivery.
-
-The frontend dependency order is Switchboard interfaces and native adapters, then Crew durability and owner authorization, then AgentUI client handlers and lifecycle. Required delivery includes a usable pin and original-toolCallId continuation after replacement of the relevant processes. A warm control does not qualify cold recovery. Stored IDs, regenerated calls, or receipt text in a prompt do not prove native continuation. No reverse dependency on AgentUI or Crew is needed for standalone Switchboard fixtures.
-
-## Executed verification
-
-The existing artifact, example, and upstream client tests supply repeatable controlled evidence. No tests were added for prose. Commands ran from this AgentUI worktree with the pinned Node directory first in `PATH`:
+Commands ran from the AgentUI worktree with Node `24.22.3` first in `PATH`:
 
 ```sh
 npm ci
-npm run build --workspace=@agentui/contracts --workspace=@agentui/example-crew
-npm run check --workspace=@agentui/example-crew
-node --test examples/crew/tests/*.test.mjs
-git -C /home/punk1290/git/crew show 37c596577b4998fba67b09451ddb16ac0695c08d:tests/client/client.test.mts > .audit/mvp/crew/upstream-client.test.mts
-node --test .audit/mvp/crew/upstream-client.test.mts
-npm run verify
+npm run build
+npm run check
+npm run lint
+node --test examples/crew/tests/provider.test.mjs
+npm test
 ```
 
-Build and type checks passed. The existing example suite passed 20 tests, including retained archive verification and a separately installed packed example. The unchanged upstream client suite passed 21 tests against AgentUI's installed retained SDK. Its extracted file SHA256 is `174360e7eec9b54de89b880198307cc5bfd93abb5c4b794471a21c0c8e627b24` and matches the exact Git source. Both suites use controlled local HTTP fixtures. Neither starts Crew PostgreSQL, Temporal, workers, or native engines.
+`node --test examples/crew/tests/provider.test.mjs` passed 94 of 94 tests. `npm test` passed 3225 of 3230 tests, with 5 skipped and none failed.
 
-The full `npm run verify` passed build, type checks, lint, and all 327 tests. Its local, untracked log is `.audit/mvp/verify.log`. Focused logs, extracted source files, and review evidence are local under `.audit/mvp/`. The `.audit/` directory is gitignored and is not retained by this branch. The committed receipt records the test counts and input digests, but it does not preserve these local logs. Dependency installation reported two high-severity audit findings and an uncovered esbuild install script. No dependency or lockfile changes were made to resolve them. Node 22, Apple clients, observation, and live Crew were not run. The bounded acceptance result is explicit blockers with controlled contract evidence.
+The real run above is the live evidence. It is recorded in the `agentui-osyo` log. No logs from it are committed.
