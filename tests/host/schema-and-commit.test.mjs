@@ -91,7 +91,7 @@ test('corrupt existing provider metadata refuses before migrating a legacy trans
   assert.deepEqual(readFileSync(f.path), before);
 });
 
-test('version two upgrades preserve pending decisions and uncertain commands and the older opener refuses format five', async t => {
+test('version two upgrades preserve pending decisions and uncertain commands and the older opener refuses format six', async t => {
   const f = fixture(t, { async afterAcceptance() { throw new Error('Reply lost'); } }), host = f.open();
   host.createConversation(scope, installed);
   host.append(scope, { ...note('saved'), runs: [run()], decisions: [question()] });
@@ -105,7 +105,7 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   db.close();
   const reopened = f.open();
   const reader = new DatabaseSync(f.path);
-  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 5);
+  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 6);
   for (const [table, rows] of saved) assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), rows);
   reader.close(); reopened.close(); await reopened.drained;
   const bytes = readFileSync(f.path);
