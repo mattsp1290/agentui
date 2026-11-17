@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
-import { PairForm } from './PairForm.js';
 import { HostStatusLabel } from './HostStatusLabel.js';
 import { applicationEnabled } from '../application/application-controller.js';
 import { useApplication } from '../application/use-application.js';
@@ -90,7 +89,6 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
-    {app.host.kind === 'unpaired' && connection.kind === 'browser' && <PairForm disabled={app.busy || Boolean(app.storageFailure)} pair={code => controller.pair(code)} />}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
         <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>

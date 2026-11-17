@@ -49,7 +49,6 @@ export type ServiceExecutor = (body: string, context: {
 export function createServiceConnection<E, P>(execute: ServiceExecutor,
   projection: Pick<Projection<E, P>, 'version' | 'decodeState' | 'decodeEvent'>,
   options: ServiceConnectionOptions = {}): ServiceConnection<E, P> {
-  let credentialGeneration = 0;
   const requestTimeoutMs = options.requestTimeoutMs ?? 20_000;
   if (!Number.isSafeInteger(requestTimeoutMs) || requestTimeoutMs < 1 || requestTimeoutMs > 60_000) throw new Error('Invalid service deadline');
   async function request<K extends keyof ServiceValueMap>(value: ServiceRequest & { readonly op: K }, signal?: AbortSignal,
@@ -62,7 +61,6 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     } catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
     if (signal?.aborted) throw new ServiceError('unavailable', 'Service request interrupted');
     const controller = new AbortController();
-    const requestedGeneration = credentialGeneration;
     let timer: ReturnType<typeof setTimeout> | undefined;
     let abort = (): void => {};
     const interrupted = new Promise<never>((_resolve, reject) => {
@@ -89,8 +87,8 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     };
     try { return await Promise.race([perform(), interrupted]); }
     catch (error) {
-      if (error instanceof ServiceError && error.kind === 'unauthorized' && value.op !== 'pair' &&
-        requestedGeneration === credentialGeneration && !controller.signal.aborted) options.onUnauthorized?.();
+      if (error instanceof ServiceError && error.kind === 'unauthorized' &&
+        !controller.signal.aborted) options.onUnauthorized?.();
       throw error;
     } finally {
       clearTimeout(timer);
@@ -170,7 +168,6 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       if (!sameScope(result.scope, scope) || result.attachment.imageId !== imageId) throw new ServiceProtocolError('Image read response mismatch');
       return { attachment: result.attachment, bytes: Uint8Array.from(atob(result.base64), character => character.charCodeAt(0)) };
     },
-    async pair(code) { await request({ op: 'pair', code }); credentialGeneration++; },
     metadata: () => request({ op: 'metadata' }),
     catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
     search: (query, after = null) => request({ op: 'search', query, after }),

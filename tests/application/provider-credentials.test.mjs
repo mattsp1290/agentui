@@ -19,10 +19,8 @@ function database(t) {
   return { path, state: openAccessDatabase(path) };
 }
 
-test('opaque provider grants persist with complete bindings and preserve device credentials', async t => {
+test('opaque provider grants persist with complete bindings', async t => {
   const { path, state } = database(t), access = new Access(state);
-  const paired = access.pair(access.invite('native'), 'native');
-  const devices = state.database.prepare('SELECT * FROM service_devices').all();
   let authority = createProviderAuthority(state, instance.namespace, [installation]);
   const { credential } = authority.issue('service', instance);
   assert.equal(await authority.credentials.use({ credential, service }, async value => value === secret), true);
@@ -37,8 +35,6 @@ test('opaque provider grants persist with complete bindings and preserve device 
   authority = createProviderAuthority(reopened, instance.namespace, [installation]);
   t.after(() => authority.close());
   assert.equal(authority.issue('service', instance).credential.opaqueHandle, credential.opaqueHandle);
-  assert.deepEqual(reopened.database.prepare('SELECT * FROM service_devices').all(), devices);
-  assert.ok(paired.principal);
   const revised = createProviderAuthority(reopened, instance.namespace, [{ ...installation, authentication: { ...installation.authentication, revision: 'revision-2' } }]);
   await assert.rejects(revised.credentials.use({ credential, service }, async () => assert.fail('stale revision reached action')), /^Error: Provider credential use refused$/);
   await revised.close();

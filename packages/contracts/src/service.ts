@@ -33,7 +33,6 @@ export class ServiceError extends Error {
 }
 export type ServiceRequest =
   | ({ readonly op: 'frontend-binding' } & FrontendBindingRequest)
-  | { readonly op: 'pair'; readonly code: string }
   | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
   | { readonly op: 'image-read'; readonly scope: ConversationScope; readonly imageId: ImageId }
   | { readonly op: 'metadata' }
@@ -89,7 +88,6 @@ export interface ServiceValueMap {
   readonly 'frontend-binding': FrontendBinding;
   readonly 'image-upload': { readonly scope: ConversationScope; readonly attachment: ImageAttachment };
   readonly 'image-read': { readonly scope: ConversationScope; readonly attachment: ImageAttachment; readonly base64: string };
-  readonly pair: null;
   readonly metadata: ServiceMetadata;
   readonly catalog: readonly ConversationCatalogEntry[];
   readonly search: ConversationSearchPage;
@@ -114,7 +112,6 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   frontendBinding(input: FrontendBindingRequest): Promise<FrontendBinding>;
   uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
   readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
-  pair(code: string): Promise<void>;
   metadata(): Promise<ServiceMetadata>;
   catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
@@ -145,7 +142,6 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
         byteLength, base64: parseImageBase64(input.base64, byteLength) };
     }
     case 'image-read': exact(input, ['op', 'scope', 'imageId']); return { op: 'image-read', scope: parseScope(input.scope), imageId: parseImageId(input.imageId) };
-    case 'pair': exact(input, ['op', 'code']); return { op: 'pair', code: identifier(input.code) };
     case 'metadata': exact(input, ['op']); return { op: 'metadata' };
     case 'search': {
       exact(input, ['op', 'query', 'after']);
@@ -289,7 +285,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
     const input = record(value, ['scope', 'attachment', 'base64']), attachment = parseImageAttachment(input.attachment);
     return { scope: parseScope(input.scope), attachment, base64: parseImageBase64(input.base64, attachment.byteLength) };
   },
-  pair: nil, close: nil,
+  close: nil,
   metadata(value) {
     const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
     if (!Array.isArray(input.agents)) throw new Error('Invalid agents');

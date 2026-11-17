@@ -106,8 +106,9 @@ test('default host creates and resumes a chat without an invitation, cookie or c
   const staleCookie = await f.call({ op: 'metadata' }, { Cookie: `agentui_device_${metadata.hostId}=expired-pairing` });
   assert.equal(staleCookie.status, 200);
   assert.equal(staleCookie.body.value.principalId, metadata.principalId);
-  const { stdout } = await promisify(execFile)(process.execPath, ['apps/host/dist/main.js', 'devices', '--data-dir', f.directory], { cwd: root });
-  assert.deepEqual(JSON.parse(stdout).value, []);
+  for (const command of ['invite', 'invite-native', 'devices', 'revoke']) {
+    await assert.rejects(promisify(execFile)(process.execPath, ['apps/host/dist/main.js', command, '--data-dir', f.directory], { cwd: root }), /Use serve/);
+  }
   const scope = { hostId: metadata.hostId, conversationId: 'trusted-conversation' };
   const catalog = { op: 'catalog', after: null, limit: 100 };
   assert.equal(metadata.hostId, f.hostId);

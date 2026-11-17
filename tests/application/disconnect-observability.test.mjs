@@ -21,8 +21,6 @@ async function fixture(t, credentialClass, api) {
   const exports = collector.received;
   const directory = mkdtempSync(join(tmpdir(), 'agentui-observability-disconnect-'));
   const access = new Access(openAccessDatabase(join(directory, 'host.sqlite')));
-  const invitation = access.invite(credentialClass);
-  const paired = access.pair(invitation, credentialClass);
   const observability = createHostObservability({ kind: 'otlp',
     endpoint: `${collector.endpoint}/v1/traces`, headers: {},
     serviceName: 'agentui-host', datadogLlmObservability: false });
@@ -49,12 +47,10 @@ async function fixture(t, credentialClass, api) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const headers = { 'Content-Type': 'application/json',
-    ...(credentialClass === 'native' ? { Authorization: `Bearer ${paired.secret}` }
-      : { Origin: origin, Cookie: `agentui_device_${access.hostId}=${paired.secret}` }) };
+  const headers = { 'Content-Type': 'application/json', ...(credentialClass === 'native' ? {} : { Origin: origin }) };
   const endpoint = `${origin}${credentialClass === 'native' ? '/native/v1' : '/api/v1'}`;
   return { exports, receipts, received: received.promise, headers, endpoint,
-    privateValues: [invitation, paired.secret, paired.principal.id, access.hostId],
+    privateValues: [access.hostId],
     flush: async () => {
       await Promise.all(receipts.map(receipt => receipt.handled));
       await observability.close();
@@ -76,14 +72,14 @@ function checkSpan(span, expected, privateValues, exports) {
 test('a browser body disconnect exports invalid admission without inventing an HTTP response status', { timeout: 15_000 }, async t => {
   let apiCalls = 0;
   const f = await fixture(t, 'browser-development', async () => { apiCalls += 1; return null; });
-  const privateBody = 'private-partial-pair-body-8f16f0';
+  const privateBody = 'private-partial-body-8f16f0';
   const privateHeader = 'private-disconnect-header-a70ac5';
   let responseCount = 0;
   const client = request(f.endpoint, { method: 'POST', headers: { ...f.headers,
     'Content-Length': '1000', 'X-Private': privateHeader } }, () => { responseCount += 1; });
   client.on('error', () => {});
   t.after(() => client.destroy());
-  client.write(`{"op":"pair","code":"${privateBody}`);
+  client.write(`{"op":"search","query":"${privateBody}`);
   const receipt = await f.received;
   await receipt.bodyStarted;
   client.destroy();

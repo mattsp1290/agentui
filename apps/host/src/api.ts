@@ -6,7 +6,7 @@ import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
 import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, ProviderStatus, DiscoveredProvider, ProviderCreationOperations, UnavailableProvider } from '@agentui/host';
-import type { Access, CredentialClass, Principal } from './access.js';
+import type { Principal } from './access.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
 import { searchConversations } from './conversation-search.js';
@@ -14,18 +14,17 @@ import { describeAgent, describeProviderAgent, describeUnavailableProvider } fro
 import type { InstalledAgent } from './agents.js';
 import { canonicalJson } from '@agentui/contracts';
 
-type Request = Exclude<ServiceRequest, { op: 'pair' }>;
 type ApiAgentSelection =
   | { readonly kind: 'native'; readonly agents: readonly InstalledAgent[]; readonly defaultInstallation: Installation }
   | { readonly kind: 'extensions' };
 export function createApi(options: {
-  readonly access: Access; readonly host: LocalHost<TranscriptEvent, Transcript>;
+  readonly host: LocalHost<TranscriptEvent, Transcript>;
   readonly compatibility: HostCompatibility; readonly feeds: FeedRegistry;
   readonly agentSelection: ApiAgentSelection;
   readonly providers?: ProviderCreationOperations & { catalog(): readonly ProviderStatus[]; statusOf(installation: ProviderInstallation): ProviderStatus | undefined };
-  readonly credentialClass: CredentialClass; readonly isClosing: () => boolean;
+  readonly isClosing: () => boolean;
 }) {
-  const { access, host, feeds } = options;
+  const { host, feeds } = options;
   const selection = options.agentSelection;
   const configured = selection.kind === 'native' ? selection.agents : [];
   const agents = () => new Map(configured.map(entry => {
@@ -35,7 +34,7 @@ export function createApi(options: {
   const selectable = new Set(configured.filter(entry => entry.selectable !== false).map(entry => describeAgent(entry.installation, entry.availability).id));
   const nativeDefault = selection.kind === 'native' ? describeAgent(selection.defaultInstallation, { kind: 'ready' }).id : null;
   if (agents().size !== configured.length || (nativeDefault !== null && !selectable.has(nativeDefault))) throw new Error('Invalid configured agents');
-  function requestScope(request: Request): ConversationScope | null {
+  function requestScope(request: ServiceRequest): ConversationScope | null {
     switch (request.op) {
       case 'submit': return request.command.scope;
       case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'watch': return request.scope;
@@ -70,9 +69,9 @@ export function createApi(options: {
     return agents().get(canonicalJson(installation)) ?? describeAgent(installation,
       { kind: 'unavailable', reason: 'This conversation’s agent is no longer configured.' });
   }
-  async function apply(principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> {
+  async function apply(principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> {
     const actor = { id: principal.id, platform: 'desktop' as const,
-      authorized: () => access.authorized(principal, options.credentialClass) && !options.isClosing() };
+      authorized: () => !options.isClosing() };
     switch (request.op) {
       case 'frontend-binding': return host.frontendBinding(request, actor, scope => frontendToolsFor(host).producer(scope));
       case 'image-upload': return { scope: request.scope, attachment: host.uploadImage(request.scope, principal.id, request.uploadId, request.name, Buffer.from(request.base64, 'base64')) };
@@ -134,15 +133,12 @@ export function createApi(options: {
       case 'close': feeds.close(principal.id, request.feedId); return null satisfies ServiceValueMap['close'];
     }
   }
-  return async (principal: Principal, request: Request): Promise<ServiceValueMap[Request['op']]> => {
+  return async (principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> => {
     try {
       if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
-      if (!access.authorized(principal, options.credentialClass)) throw new ServiceError('unauthorized', 'Device access was revoked');
       const scope = requestScope(request);
       if (scope !== null && scope.hostId !== principal.hostId) throw new ServiceError('forbidden', 'Conversation belongs to another host');
-      const value = await apply(principal, request);
-      if (!access.authorized(principal, options.credentialClass)) throw new ServiceError('unauthorized', 'Device access was revoked');
-      return value;
+      return await apply(principal, request);
     } catch (error) {
       if (error instanceof ServiceError) throw error;
       const imageError = imageFailure(error);

@@ -31,26 +31,6 @@ test('shared engine bounds an executor that ignores abort and ignores its late u
   assert.equal(notifications, 0);
 });
 
-test('shared engine fences old unauthorized envelopes and adapter errors across pairing', async () => {
-  for (const adapterError of [false, true]) {
-    const pending = Promise.withResolvers();
-    let notifications = 0, calls = 0;
-    const connection = createServiceConnection(async encoded => {
-      const request = JSON.parse(encoded);
-      if (request.op === 'pair') return reply(null);
-      return ++calls === 1 ? pending.promise : unauthorized();
-    }, transcriptProjection, { onUnauthorized: () => notifications++ });
-    const old = connection.metadata();
-    await connection.pair('replacement');
-    if (adapterError) pending.reject(new ServiceError('unauthorized', 'Expired'));
-    else pending.resolve(unauthorized());
-    await assert.rejects(old, error => error.kind === 'unauthorized');
-    assert.equal(notifications, 0);
-    await assert.rejects(connection.metadata(), error => error.kind === 'unauthorized');
-    assert.equal(notifications, 1);
-  }
-});
-
 test('shared engine validates before execution and never retries a failed command', async () => {
   let calls = 0, sent;
   const connection = createServiceConnection(async (body, context) => { sent = { body, op: context.op }; calls++; throw new Error('Lost reply'); }, transcriptProjection);

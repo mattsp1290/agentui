@@ -29,7 +29,7 @@ async function fixture(t) {
   const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
     desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
   const handlers = Object.fromEntries(['native', 'browser-development'].map(credentialClass => {
-    const api = createApi({ access, host, feeds, compatibility, credentialClass, isClosing: () => false,
+    const api = createApi({ host, feeds, compatibility, isClosing: () => false,
       agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] } });
     return [credentialClass, serviceEndpoint({ access, api, credentialClass, isClosing: () => false, files: new Map(), observability: NO_OBSERVABILITY })];
   }));

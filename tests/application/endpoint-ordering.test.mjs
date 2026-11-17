@@ -24,7 +24,7 @@ async function fixture(t, credentialClass) {
   let closing = false;
   let observeGate = () => {};
   const isClosing = () => { observeGate(); return closing; };
-  const api = createApi({ access, host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, credentialClass, isClosing });
+  const api = createApi({ host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, isClosing });
   const handler = serviceEndpoint(credentialClass === 'native' ? { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing }
     : { observability: NO_OBSERVABILITY, access, api, credentialClass, isClosing, files: new Map([['browser.html', Buffer.from('test asset')]]) });
   const server = createServer((req, res) => { void handler(req, res).catch(() => res.destroy()); });
@@ -55,14 +55,13 @@ for (const credentialClass of ['browser-development', 'native']) {
     assert.equal(response.status, 400);
   });
 
-  test(`${credentialClass} shutdown during pairing body read leaves invitation usable`, { timeout: 3000 }, async t => {
+  test(`${credentialClass} shutdown during body read refuses the request without running it`, { timeout: 3000 }, async t => {
     const f = await fixture(t, credentialClass);
-    const code = f.access.invite(credentialClass);
-    const body = JSON.stringify(credentialClass === 'native' ? { version: 1, hostId: f.access.hostId, code } : { op: 'pair', code });
+    const body = JSON.stringify({ op: 'metadata' });
     const admittedHeaders = f.nextGate();
     let outgoing;
     const reply = new Promise((resolve, reject) => {
-      outgoing = request(`${f.origin}${credentialClass === 'native' ? '/native/v1/pair' : f.path}`, {
+      outgoing = request(`${f.origin}${f.path}`, {
         method: 'POST', headers: { ...f.headers, 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
       }, incoming => {
         let text = '';
@@ -77,9 +76,14 @@ for (const credentialClass of ['browser-development', 'native']) {
     outgoing.end(body.slice(1));
     assert.deepEqual(await reply, { status: 503, body: { ok: false, error: { kind: 'unavailable', message: 'Host is shutting down' } } });
     f.reopenGate();
-    const path = credentialClass === 'native' ? '/native/v1/pair' : f.path;
-    assert.equal((await f.send(body, {}, path)).status, 200);
-    assert.equal((await f.send(body, {}, path)).status, 401);
+    assert.equal((await f.send(body)).status, 200);
+  });
+
+  test(`${credentialClass} pairing requests are refused as invalid`, async t => {
+    const f = await fixture(t, credentialClass);
+    const code = 'A'.repeat(32);
+    assert.equal((await f.send({ op: 'pair', code })).status, 400);
+    if (credentialClass === 'native') assert.equal((await f.send({ version: 1, hostId: f.access.hostId, code }, {}, '/native/v1/pair')).status, 400);
   });
 
 }
@@ -97,13 +101,4 @@ test('browser static assets preserve headers and bypass closing and authenticati
   const head = await fetch(f.origin, { method: 'HEAD' });
   assert.equal(head.status, 200);
   assert.equal(await head.text(), '');
-});
-
-test('native pairing uses its own 4096 byte bound and keeps the invitation on refusal', async t => {
-  const f = await fixture(t, 'native');
-  const code = f.access.invite('native');
-  const pairing = JSON.stringify({ version: 1, hostId: f.access.hostId, code });
-  const response = await f.send(pairing.padEnd(4097, ' '), {}, '/native/v1/pair');
-  assert.equal(response.status, 400);
-  assert.equal((await f.send(pairing, {}, '/native/v1/pair')).status, 200);
 });

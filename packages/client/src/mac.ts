@@ -49,7 +49,7 @@ export async function macAccess(command: AccessCommand, nativeInvoke: MacNativeI
   return { kind: input.kind, observation };
 }
 export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeInvoke, options: ServiceConnectionOptions = {}): ServiceConnection {
-  const connection = createServiceConnection(async (body, { op }) => {
+  return createServiceConnection(async (body, { op }) => {
     if (access.kind !== 'ready') throw new ServiceError('unauthorized', 'Pair this Mac with the local host.');
     let value: unknown;
     try { value = await nativeInvoke({ kind: 'execute', observation: access.observation, request: parseServiceRequest(JSON.parse(body)) }); }
@@ -58,5 +58,4 @@ export function createMacConnection(access: MacAccess, nativeInvoke: MacNativeIn
     if (status < 200 || status > 599 || typeof reply.body !== 'string' || utf8Bytes(reply.body) > (op === 'image-upload' || op === 'image-read' ? IMAGE_TRANSFER_MAX_BYTES : 4_100_000)) throw new Error(invalidResponse);
     return new Response(reply.body, { status, headers: { 'Content-Type': 'application/json' } });
   }, transcriptProjection, options);
-  return { ...connection, pair: async () => { throw new Error('Use native pairing controls to enroll this Mac.'); } };
 }

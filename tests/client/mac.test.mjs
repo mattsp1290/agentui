@@ -90,8 +90,6 @@ test('Mac adapter uses immutable native observations through the real shared eng
   await assert.rejects(pending, error => error.kind === 'unauthorized');
   assert.equal(oldNotifications, 1); assert.equal(newNotifications, 0);
   assert.deepEqual(await next.metadata(), metadata);
-  await assert.rejects(next.pair('invitation'), /native pairing controls/);
-  assert.equal(calls.some(command => command.kind === 'execute' && command.request.op === 'pair'), false);
   assert.deepEqual(new Set(calls.filter(command => command.kind === 'execute').map(command => command.observation)), new Set(['old', 'new']));
   const disconnected = createMacConnection({ kind: 'absent', observation: 'absent' }, nativeInvoke);
   const before = calls.length;

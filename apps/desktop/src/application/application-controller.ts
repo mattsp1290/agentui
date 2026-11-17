@@ -68,7 +68,6 @@ export interface ApplicationController {
   subscribe(listener: () => void): () => void;
   start(): Promise<void>;
   dispose(): Promise<void>;
-  pair(code: string): Promise<void>;
   reconnect(): Promise<void>;
   reopenView(viewId: string): Promise<void>;
   moreConversations(): Promise<void>;
@@ -542,13 +541,6 @@ export function createApplicationController(deps: {
       }
       return closing;
     },
-    pair: code => run(async owner => {
-      local(owner);
-      await current(owner, owner.frontend.session(null, owner.connection));
-      try { await current(owner, owner.connection.pair(code)); }
-      catch (cause) { fail(owner, { kind: 'operation-failed', error: message(cause) }); return; }
-      await refresh(owner);
-    }),
     reconnect: () => run(refresh),
     reopenView: viewId => run(async owner => {
       requireHost(owner);

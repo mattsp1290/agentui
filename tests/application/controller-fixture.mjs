@@ -7,7 +7,7 @@ export const deferred = () => { let resolve, reject; const promise = new Promise
 export function fixture() {
   const images = new Map(), loads = [], selected = [], captured = new Map(), views = new Map(), drafts = new Map(), leases = [], created = [], submitted = [], cursors = [], unauthorized = [], feeds = [];
   let nextId = 0, hostId = 'host', feedCloses = 0, metadataCalls = 0;
-  const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, pair: async () => {}, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
+  const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
     observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
@@ -36,7 +36,6 @@ export function fixture() {
   }
   const descriptor = (id = behavior.defaultId, runtime = behavior.runtime) => ({ id, label: id, runtime, frontendOffers: behavior.frontendOffers, commands: ['send', 'cancel', 'approve'], availability: { kind: 'ready' } });
   const connection = {
-    pair: code => behavior.pair(code),
     frontendBinding: request => behavior.binding(request),
     async metadata() { metadataCalls++; await behavior.metadata(); return { hostId, principalId: behavior.principalId, agents: behavior.agents ?? [descriptor(), descriptor('other', CODEX_SDK_RUNTIME)], defaultAgentId: behavior.defaultId, compatibility: { wireVersion: behavior.wireVersion ?? SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION,
       nativeRuntime: behavior.runtime,

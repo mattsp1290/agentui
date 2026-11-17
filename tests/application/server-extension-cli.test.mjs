@@ -253,7 +253,7 @@ test('bundled CLI requires a serving configuration, rejects empty selection opti
   const missingNative = f.launch(['serve']);
   assert.equal(await missingNative.exited, 1); assert.match(missingNative.stderr, /Provide --config or --extensions/);
   const blank = f.start(['--extensions=']); assert.equal(await blank.exited, 1); assert.match(blank.stderr, /Invalid server extension configuration/);
-  for (const command of ['browser-dev', 'codex', 'codex-sdk', 'claude-sdk', 'pi', 'invite', 'invite-native', 'devices', 'revoke']) {
+  for (const command of ['browser-dev', 'codex', 'codex-sdk', 'claude-sdk', 'pi', 'providers-refresh']) {
     const failed = f.launch([command, '--extensions', f.selection]);
     assert.equal(await failed.exited, 1); assert.match(failed.stderr, new RegExp(`--extensions is not valid for ${command}`));
     assert.equal(failed.stdout, ''); privateDiagnostics(failed);

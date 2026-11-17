@@ -37,7 +37,7 @@ test('authorized agent API and browser route two recorded agents and retain unav
   let host = openLocalHost({ path, projection: transcriptProjection, driver: [driver(a, 'codex'), driver(b, 'sonnet'), driver(d, 'other-codex')], authorize: scope => scope.hostId === access.hostId });
   t.after(async () => { feeds.dispose(); host.close(); await host.drained; access.close(); rmSync(directory, { recursive: true, force: true }); });
   const principal = access.owner('browser-development');
-  const options = { access, feeds, credentialClass: 'browser-development', isClosing: () => false,
+  const options = { feeds, isClosing: () => false,
     compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } } };
   const configuredAgents = [

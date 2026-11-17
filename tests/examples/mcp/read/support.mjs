@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { randomBytes } from 'node:crypto';
+import { chmodSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -89,9 +90,9 @@ export async function fixture(t) {
   };
   const host = openLocalHost({ path: database, projection: transcriptProjection, driver, authorize: () => true });
   const feeds = new FeedRegistry();
-  const api = createApi({ access, host, feeds, compatibility, agentSelection: { kind: 'native', defaultInstallation: installed, agents: [{ installation: installed, availability: { kind: 'ready' } },
+  const api = createApi({ host, feeds, compatibility, agentSelection: { kind: 'native', defaultInstallation: installed, agents: [{ installation: installed, availability: { kind: 'ready' } },
     { installation: { ...installed, installationId: 'unavailable' }, availability: { kind: 'unavailable', reason: 'offline' } }] },
-    credentialClass: 'native', isClosing: () => false });
+    isClosing: () => false });
   const operations = [];
   const endpoint = serviceEndpoint({ access, api: async (principal, request) => { operations.push(request.op); return api(principal, request); },
     credentialClass: 'native', isClosing: () => false, observability: NO_OBSERVABILITY });
@@ -119,12 +120,10 @@ export async function fixture(t) {
       return Object.fromEntries(tables.map(({ name }) => [name, db.prepare(`SELECT * FROM "${name}" ORDER BY rowid`).all()]));
     } finally { db.close(); }
   };
-  const invitation = () => JSON.stringify({ ok: true, value: { hostId: access.hostId, code: access.invite('native') } });
+  const invitation = () => JSON.stringify({ ok: true, value: { hostId: access.hostId, code: 'A'.repeat(32) } });
   const pair = async () => {
-    const path = join(directory, 'paired.json');
-    const result = await cli(['pair', origin, path], invitation());
-    assert.deepEqual(result, { code: 0, stdout: '', stderr: '' });
-    return { path, record: JSON.parse(readFileSync(path, 'utf8')) };
+    const record = { version: 1, origin, hostId: access.hostId, principalId: 'trusted-owner', secret: randomBytes(32).toString('base64url') };
+    return { path: writeProfile(directory, record, 'paired.json'), record };
   };
   return { directory, access, host, counts, feeds, operations, scope, origin, durable, invitation, pair };
 }

@@ -18,7 +18,6 @@ import type { createClaudeSdkDriver } from '@agentui/host/claude-sdk';
 import type { createCodexSdkDriver } from '@agentui/host/codex-sdk';
 import { openRecordedHost, recordedInstallation } from '@agentui/host/recorded';
 import { Access } from './access.js';
-import type { CredentialClass } from './access.js';
 import { openAccessDatabase } from './access-database.js';
 import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
@@ -303,14 +302,10 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const agentSelection: Parameters<typeof createApi>[0]['agentSelection'] = startup.kind === 'extensions'
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
-    const apiOptions: Omit<Parameters<typeof createApi>[0], 'credentialClass'> = {
-      access, host, compatibility, feeds: registry, providers, agentSelection,
-      isClosing: () => closing,
-    };
-    const apiFor = (credentialClass: CredentialClass) => createApi({ ...apiOptions, credentialClass });
-    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api: apiFor('browser-development'),
-      files: browser.files, isClosing: apiOptions.isClosing, observability });
-    const native = serviceEndpoint({ credentialClass: 'native', access, api: apiFor('native'), isClosing: apiOptions.isClosing, observability });
+    const isClosing = () => closing;
+    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing });
+    const handler = serviceEndpoint({ credentialClass: 'browser-development', access, api, files: browser.files, isClosing, observability });
+    const native = serviceEndpoint({ credentialClass: 'native', access, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
     http.on('request', (request, response) => {
       if (request.url === '/setup/pi' && setupHandler) {
@@ -331,7 +326,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
-    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl, providers.discover);
+    control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover);
     return { origin, hostId: access.hostId, close, fatal, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {

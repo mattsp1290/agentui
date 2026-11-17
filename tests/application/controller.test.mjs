@@ -348,7 +348,7 @@ test('a startup catalog failure keeps the ready host enabled and reconnect clear
   assert.equal(f.app.getSnapshot().catalog.items.length, 100);
 });
 
-for (const entry of ['start', 'reconnect', 'pair', 'reopenView']) {
+for (const entry of ['start', 'reconnect', 'reopenView']) {
   test(`a saved-view read failure during ${entry} ends loading and blocks commands`, async t => {
     const f = fixture(); t.after(() => f.app.dispose());
     if (entry !== 'start') await f.app.start();
@@ -426,43 +426,6 @@ for (const operation of ['metadata', 'catalog', 'create']) {
     assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
   });
 }
-
-for (const reason of ['Invalid pairing code', 'Pairing code expired']) {
-  test(`a rejected pairing shows ${reason} and can be retried`, async t => {
-    const f = fixture(); t.after(() => f.app.dispose());
-    f.behavior.metadata = async () => {
-      f.unauthorized[0]();
-      throw new ServiceError('unauthorized', 'Pair this device with the host');
-    };
-    await f.app.start();
-    assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-    const calls = f.metadataCalls();
-    f.behavior.pair = async () => { throw new ServiceError('unauthorized', reason); };
-    await f.app.pair('expired-or-invalid');
-    assert.equal(f.app.getSnapshot().error, reason);
-    assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-    assert.equal(f.app.getSnapshot().busy, false);
-    assert.equal(f.metadataCalls(), calls);
-    f.behavior.pair = async () => {};
-    f.behavior.metadata = async () => {};
-    await f.app.pair('valid');
-    assert.equal(applicationEnabled(f.app.getSnapshot()), true);
-    assert.equal(f.app.getSnapshot().error, '');
-  });
-}
-
-test('a successful pairing followed by revoked metadata uses the revocation explanation', async t => {
-  const f = fixture(); t.after(() => f.app.dispose());
-  await f.app.start();
-  f.behavior.metadata = async () => {
-    f.unauthorized[0]();
-    throw new ServiceError('unauthorized', 'Pair this device with the host');
-  };
-  await f.app.pair('valid');
-  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-  assert.match(f.app.getSnapshot().error, /previous access may have been revoked/);
-  assert.equal(applicationEnabled(f.app.getSnapshot()), false);
-});
 
 test('an initial metadata failure ends loading without enabling commands', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
