@@ -20,7 +20,7 @@ export type CapturedSend = CapturedState & {
   readonly command: OfferedCommand;
   readonly viewId: string;
 };
-type Entry = { readonly key: string; readonly viewId: string; readonly reference: FrontendRecoveryReference; readonly journal: FrontendJournal;
+type Entry = { readonly key: string; readonly viewId: string; readonly reference: FrontendRecoveryReference; readonly journal: FrontendJournal; readonly recoveryNeeded: () => void;
   readonly retained: RetainedFrontendTools; readonly borrow: CaptureBorrow; row: CapturedSend & { readonly status: 'waiting' | 'bound' }; pending: boolean };
 type ScopeHold = { readonly viewId: string; readonly scope: ConversationScope };
 type Session = { readonly hostId: string; readonly principalId: string; readonly connection: ServiceConnection };
@@ -94,7 +94,7 @@ export function createFrontendSends(deps: {
     entry.retained.release();
     remember(entry.viewId, entry.reference);
     syncRows();
-    return task.catch(error => { entry.borrow.failed(error); throw error; }).finally(() => {
+    return task.then(() => entry.recoveryNeeded()).catch(error => { entry.borrow.failed(error); throw error; }).finally(() => {
       entry.borrow.release(); schedule();
     });
   }
@@ -153,6 +153,10 @@ export function createFrontendSends(deps: {
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }
   return {
     recover,
+    needsRecovery(viewId: string, journal: FrontendJournal): boolean {
+      return !closed && !failedViews.has(viewId) && journal.read().some(reference => !entries.has(keyFor(viewId, reference.command))
+        && (reference.state === 'retained' || (reference.state === 'unavailable-pending' && matches(reference))));
+    },
     snapshot: () => rows,
     async session(metadata: Pick<ServiceMetadata, 'hostId' | 'principalId'> | null, connection: ServiceConnection): Promise<void> {
       const session = authority.session;
@@ -166,7 +170,7 @@ export function createFrontendSends(deps: {
       become(metadata ? { ...metadata, connection } : null);
       syncRows(); schedule();
     },
-    forStore({ viewId, scope, eligibility, capture }: { readonly viewId: string; readonly scope: ConversationScope; readonly capture: CaptureStore; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
+    forStore({ viewId, scope, eligibility, capture, recoveryNeeded }: { readonly recoveryNeeded: () => void; readonly viewId: string; readonly scope: ConversationScope; readonly capture: CaptureStore; readonly eligibility: () => FrontendEligibility }): FrontendAdmission {
       return {
         capture() {
           const current = authority, session = current.session;
@@ -203,10 +207,10 @@ export function createFrontendSends(deps: {
                 const reference: FrontendRecoveryReference = { command, ownerId, state: 'retained' };
                 const key = keyFor(viewId, command);
                 ownership = 'transferred';
-                entries.set(key, { key, viewId, reference, journal, retained, borrow, row: Object.freeze({ key, viewId, command, status: 'waiting', binding: null }), pending: false });
+                entries.set(key, { key, viewId, reference, journal, retained, borrow, recoveryNeeded, row: Object.freeze({ key, viewId, command, status: 'waiting', binding: null }), pending: false });
                 syncRows(); schedule(); return true;
               },
-              release() { if (ownership !== 'provisional') return; ownership = 'released'; provisional.delete(captureToken); retained.release(); borrow.release(); },
+              release() { if (ownership !== 'provisional') return; ownership = 'released'; provisional.delete(captureToken); retained.release(); borrow.release(); recoveryNeeded(); },
             };
           } catch (error) { provisional.delete(captureToken); retained.release(); borrow.release(); throw error; }
         },

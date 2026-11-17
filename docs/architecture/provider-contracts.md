@@ -204,7 +204,7 @@ On reload, the desktop scans draft keys for the physical view whose exclusive lo
 Each page contains at most 100 keys. One worker borrows the conversation's canonical store and examines at most 32 journal references per slice.
 Lost closures become unavailable locally. Only the original matching principal can send their unavailable notifications.
 The worker never submits a saved command, binds replacement tools, or opens another tab's view.
-It advances past foreign owners and failed requests, then retries completed passes every two seconds.
+It advances past foreign owners and failed requests, then retries passes with actionable pending work every two seconds and wakes after durable capture release.
 
 Live captures retain their original store and view lock through navigation.
 Bound captures keep that lock until explicit release, a change of principal, storage failure, or reload.

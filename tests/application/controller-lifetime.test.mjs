@@ -187,7 +187,7 @@ test('disposal clears published active state and disconnects the captured old ta
 });
 
 for (const failure of ['view read', 'missing conversation', 'catalog', 'connect']) {
-  test(`principal refresh ${failure} failure releases only an unfinished active handover`, async t => {
+  test(`principal refresh ${failure} failure releases only the refresh-local borrow`, async t => {
     const f = fixture();
     t.after(() => f.app.dispose());
     f.views.set('original-view/host', { ...empty(), route: scope });

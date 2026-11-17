@@ -36,7 +36,7 @@ async function fixture(t, { drafts = storage(), reply, images } = {}) {
   const a = await generation('A'), token = {};
   source.begin(token); source.publish(token, { kind: 'ready', generations: [a] });
   const port = fakePort(); let id = 0;
-  const frontend = owner.forStore({ viewId: 'view', scope, capture: captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' });
+  const frontend = owner.forStore({ recoveryNeeded() {}, viewId: 'view', scope, capture: captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' });
   const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => String(++id), createImageId: () => `00000000-0000-4000-8000-${String(++id).padStart(12, '0')}`, frontend, images });
   t.after(async () => { await Promise.all(owners.map(item => item.dispose())); await a.retire(); });
   const recover = async () => { for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference }); };
@@ -67,7 +67,7 @@ test('a disposed registry cannot revive old admission or authority when a new re
   await f.owner.session({ hostId: scope.hostId, principalId: 'C' }, f.connection);
   assert.throws(() => f.frontend.capture(), /Reconnect/);
   assert.deepEqual(f.owner.snapshot(), []);
-  const admission = second.forStore({ viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' });
+  const admission = second.forStore({ recoveryNeeded() {}, viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' });
   const captured = admission.capture();
   assert.equal(captured.ownerId, 'C');
   assert.equal(captured.offer.tools[0].definition.description, 'B');
@@ -178,7 +178,7 @@ test('reload has no original closure and preserves original bytes while notifyin
   const second = f.createOwner(); t.after(() => second.dispose());
   await second.session({ hostId: scope.hostId, principalId: 'A' }, f.connection);
   const drafts = storage(saved), port = fakePort();
-  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' }) });
+  const store = createConversationStore({ scope, projection, drafts, port, createCommandId: () => 'new', frontend: second.forStore({ recoveryNeeded() {}, viewId: 'view', scope, capture: f.captureFor(second), eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready;
   await assert.rejects(store.retry('1'), /Original captured tools/);
   for (const reference of store.frontendJournal.read()) await second.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
@@ -240,7 +240,7 @@ test('more than 32 restored references occupy only bounded presentation rows and
   const original = f.drafts.value.frontendSends[0]; await f.owner.dispose();
   const saved = { ...f.drafts.value, outbox: [], frontendSends: Array.from({ length: 70 }, (_, index) => ({ ...original, command: { ...original.command, clientCommandId: `old-${index}` } })) };
   const owner = f.createOwner(); await owner.session({ hostId: scope.hostId, principalId: 'B' }, f.connection);
-  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: owner.forStore({ viewId: 'view', scope, capture: f.captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' }) });
+  const drafts = storage(saved), store = createConversationStore({ scope, projection, drafts, port: fakePort(), createCommandId: () => 'B', frontend: owner.forStore({ recoveryNeeded() {}, viewId: 'view', scope, capture: f.captureFor(owner), eligibility: () => 'ag-ui-capture-and-bind' }) });
   await store.ready;
   for (const reference of store.frontendJournal.read()) await owner.recover({ ...recoveryPass(), viewId: 'view', journal: store.frontendJournal, reference });
   assert.equal(f.held(owner), false); assert.deepEqual(owner.snapshot(), []); assert.deepEqual(f.requests, []);
