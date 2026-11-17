@@ -1,5 +1,5 @@
 import { createProviderRegistry } from '../providers.js';
-import type { DiscoveredProvider, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
+import type { ProviderStatus, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
 export { loadServerArtifact } from './server-artifact.js';
 export { loadServerExtension } from './loader.js';
@@ -104,7 +104,7 @@ export function createServerExtensions() {
     state = change;
     return change.settled.then(result => ({ ...result }));
   }
-  function discover(): Promise<readonly DiscoveredProvider[]> {
+  function discover(): Promise<readonly ProviderStatus[]> {
     if (state.kind === 'empty') return Promise.resolve([]);
     if (state.kind !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
     const generation = state.generation;
@@ -119,7 +119,7 @@ export function createServerExtensions() {
       throw new Error('Provider discovery failed');
     });
   }
-  function catalog(): readonly DiscoveredProvider[] {
+  function catalog(): readonly ProviderStatus[] {
     return current().catalog();
   }
   function current() { return state.kind === 'active' ? state.generation.registry : inactive; }

@@ -65,7 +65,7 @@ test('entered credential-backed creation defers replacement and the same paired 
     assert.equal((await f.client.metadata()).agents.filter(value => value.kind === 'provider').length, 0);
     await rejected(f.client.create(f.scope('disabled'), replacement.id));
     assert.equal(next.calls.creates.length, 1);
-    const bad = entry(t, { label: 'bad', discover() { throw new Error(secret); } });
+    const bad = entry(t, { label: 'bad', activate() { throw new Error(secret); } });
     assert.equal((await f.host.replaceProviderExtensions([bad.value])).kind, 'failed');
     assert.equal((await f.client.metadata()).agents.filter(value => value.kind === 'provider').length, 0);
     await rejected(f.client.create(f.scope('failed'), replacement.id));
@@ -118,22 +118,20 @@ test('shutdown freezes credentials during entered creation and persists uncertai
   assert.equal(old.calls.close, 1); assert.equal(old.calls.dispose, 1);
 });
 
-test('discovery failure reports changing and defers replacement before owner failure handling while cleanup drains', { timeout: 10000 }, async t => {
-  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
-  const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); },
-    async close() { entered.resolve(); await finish.promise; } });
+test('rediscovery failure retires only that provider connection, refuses its creation and permits replacement', { timeout: 10000 }, async t => {
+  const old = entry(t, { discover(fixture) { if (fixture.calls.discover > 1) throw new Error(secret); } });
   const f = await paired(t, [old]), agent = await selected(f, 'entry');
-  const discovering = assert.rejects(f.host.discoverProviders(), /Provider discovery failed/);
-  try {
-    await entered.promise;
-    assert.deepEqual(f.host.extensionStatus(), { kind: 'changing', generation: 1 });
-    const next = entry(t, { label: 'next' });
-    assert.deepEqual(await f.host.replaceProviderExtensions([next.value]), { kind: 'deferred', reason: 'changing' });
-    assert.equal(next.calls.import, 0);
-    assert.equal((await f.client.metadata()).agents.filter(value => value.kind === 'provider').length, 0);
-    await rejected(f.client.create(f.scope('stale'), agent.id));
-    assert.equal(old.calls.commands, 0);
-  } finally { finish.resolve(); await discovering; }
+  const statuses = await f.host.discoverProviders();
+  assert.deepEqual(statuses.map(item => item.cause), ['invalid-installation']);
+  assert.doesNotMatch(JSON.stringify(statuses), new RegExp(secret));
+  assert.deepEqual(f.host.extensionStatus(), { kind: 'active', generation: 1, pending: 0 });
+  assert.equal(old.calls.close, 1); assert.equal(old.calls.dispose, 0);
+  assert.deepEqual((await f.client.metadata()).agents.filter(value => value.kind === 'provider').map(value => value.availability.kind), ['unavailable']);
+  await rejected(f.client.create(f.scope('stale'), agent.id));
+  assert.equal(old.calls.commands, 0);
+  const next = entry(t, { label: 'next' });
+  assert.deepEqual(await f.host.replaceProviderExtensions([next.value]), { kind: 'replaced', generation: 2 });
+  assert.equal(old.calls.dispose, 1);
 });
 
 
@@ -178,7 +176,7 @@ test('owner catalog copies cannot alter creation choices and inactive operations
 test('accepted replacement hides the retired catalog during cleanup and after candidate failure', { timeout: 10000 }, async t => {
   const entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const old = entry(t, { async dispose() { entered.resolve(); await finish.promise; } });
-  const bad = entry(t, { label: 'bad', discover() { throw new Error(secret); } });
+  const bad = entry(t, { label: 'bad', activate() { throw new Error(secret); } });
   const f = await paired(t, [old]), agent = await selected(f, 'entry');
   const replacing = f.host.replaceProviderExtensions([bad.value]);
   try {

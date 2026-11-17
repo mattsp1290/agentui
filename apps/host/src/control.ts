@@ -7,18 +7,36 @@ import type { SelectionControl, SelectionCommand, LiveRequest, SelectionQuery, O
 import type { Access } from './access.js';
 import type { FeedRegistry } from './feed-registry.js';
 import { parseInvitationCode } from './native-wire.js';
+import { providerUnavailableReasons } from '@agentui/host';
+import type { ProviderStatus, ProviderUnavailableCause } from '@agentui/host';
+
+export type ProviderRefreshEntry = { readonly contributionId: string; readonly namespace: string } &
+  ({ readonly kind: 'available' } | { readonly kind: 'unavailable'; readonly cause: ProviderUnavailableCause; readonly reason: string });
+function refreshEntry(provider: ProviderStatus): ProviderRefreshEntry {
+  const common = { contributionId: provider.contributionId, namespace: provider.instance.namespace };
+  return provider.kind === 'available' ? { ...common, kind: 'available' }
+    : { ...common, kind: 'unavailable', cause: provider.cause, reason: providerUnavailableReasons[provider.cause] };
+}
+function parseRefreshEntry(value: unknown): ProviderRefreshEntry {
+  const input = record(value), common = { contributionId: identifier(input.contributionId), namespace: identifier(input.namespace) };
+  if (input.kind === 'available') { record(input, ['contributionId', 'namespace', 'kind']); return { ...common, kind: 'available' }; }
+  record(input, ['contributionId', 'namespace', 'kind', 'cause', 'reason']);
+  const cause = Object.keys(providerUnavailableReasons).find(key => key === input.cause) as ProviderUnavailableCause | undefined;
+  if (input.kind !== 'unavailable' || !cause || input.reason !== providerUnavailableReasons[cause]) throw new Error('Invalid provider status');
+  return { ...common, kind: 'unavailable', cause, reason: providerUnavailableReasons[cause] };
+}
 
 export type ControlRequest = { readonly op: 'extensions-select'; readonly command: SelectionCommand }
   | { readonly op: 'extensions-live'; readonly request: LiveRequest }
   | { readonly op: 'extensions-status'; readonly query: SelectionQuery | null }
   | { readonly op: 'extensions-receipt'; readonly digest: string; readonly offset: number }
-  | { readonly op: 'invite' | 'invite-native' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
-type ControlValue = OperationSummary | SelectionStatus | ReceiptChunk | { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
+  | { readonly op: 'invite' | 'invite-native' | 'providers-refresh' } | { readonly op: 'devices'; readonly after: string } | { readonly op: 'revoke'; readonly id: string };
+type ControlValue = readonly ProviderRefreshEntry[] | OperationSummary | SelectionStatus | ReceiptChunk | { readonly code: string } | { readonly hostId: string; readonly code: string } | ReturnType<Access['devices']> | null;
 type ControlResponse = { readonly ok: true; readonly value: ControlValue } | { readonly ok: false; readonly error: string };
 export function parseControlRequest(value: unknown): ControlRequest {
   const input = record(value);
   switch (input.op) {
-    case 'invite': case 'invite-native': record(input, ['op']); return { op: input.op };
+    case 'invite': case 'invite-native': case 'providers-refresh': record(input, ['op']); return { op: input.op };
     case 'devices': {
       record(input, input.after === undefined ? ['op'] : ['op', 'after']);
       return { op: 'devices', after: input.after === undefined || input.after === '' ? '' : identifier(input.after) };
@@ -49,6 +67,9 @@ function parseControlResponse(request: ControlRequest, value: unknown): ControlR
       return { ok: true, value: { hostId: identifier(invitation.hostId), code: parseInvitationCode(invitation.code) } };
     }
     case 'revoke': if (input.value !== null) throw new Error('Invalid revocation result'); return { ok: true, value: null };
+    case 'providers-refresh':
+      if (!Array.isArray(input.value) || input.value.length > 100) throw new Error('Invalid provider status');
+      return { ok: true, value: input.value.map(parseRefreshEntry) };
     case 'devices': {
       if (!Array.isArray(input.value) || input.value.length > 100) throw new Error('Invalid device list');
       return { ok: true, value: input.value.map(value => {
@@ -89,7 +110,7 @@ export async function requestControl(path: string, request: ControlRequest): Pro
   const socket = createConnection(path);
   const response = readLine(socket, 16_000);
   socket.once('connect', () => {
-    if (request.op === 'extensions-live' || request.op === 'extensions-select') socket.setTimeout(0);
+    if (request.op === 'extensions-live' || request.op === 'extensions-select' || request.op === 'providers-refresh') socket.setTimeout(0);
     socket.write(line);
   });
   try { return parseControlResponse(request, await response); }
@@ -98,7 +119,8 @@ export async function requestControl(path: string, request: ControlRequest): Pro
 const refuseSelection = (): never => { throw new SelectionRefusal('ownership'); };
 export const unavailableSelectionControl: SelectionControl = { select: refuseSelection, live: refuseSelection, status: refuseSelection, receipt: refuseSelection };
 
-export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl) {
+export async function startControl(path: string, access: Access, feeds: FeedRegistry, isClosing: () => boolean, selection: SelectionControl,
+  refreshProviders: () => Promise<readonly ProviderStatus[]>) {
   if (existsSync(path)) unlinkSync(path);
   const server = createServer(socket => {
     void (async () => {
@@ -115,6 +137,7 @@ export async function startControl(path: string, access: Access, feeds: FeedRegi
           case 'invite-native': value = { hostId: access.hostId, code: access.invite('native') }; break;
           case 'devices': value = access.devices(request.after); break;
           case 'revoke': access.revoke(request.id); feeds.closePrincipal(request.id); value = null; break;
+          case 'providers-refresh': value = (await refreshProviders()).map(refreshEntry); break;
         }
         socket.end(formatControlResponse({ ok: true, value }));
       } catch (error) { if (!socket.destroyed) socket.end(formatControlResponse({ ok: false, error: error instanceof SelectionRefusal ? error.message : 'Control operation refused' })); }
