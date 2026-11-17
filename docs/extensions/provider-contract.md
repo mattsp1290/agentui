@@ -21,7 +21,7 @@ The type reference and the design history live in [provider-contracts.md](../arc
 ## Lifecycle
 
 1. The host imports a server entry and calls `activate(context)` once per generation.
-2. The entry registers each provider with `context.providers.add(id, provider, presentation)` during activation. Registration after activation throws.
+2. The entry registers each provider during activation with `context.providers.add(id, provider, presentation)`, or with `context.providers.addAgui(id, provider, presentation, observations)` for an AG-UI provider. Registration after activation throws.
 3. `activate` returns a lifetime with `dispose()`. Any other value fails activation.
 4. The host calls `provider.connect({ apiVersion, instance, credential })`. The provider returns `connected` with a backend, or a failure.
 5. The host calls `backend.discover()` and lists each discovered agent in metadata.
@@ -31,8 +31,11 @@ The type reference and the design history live in [provider-contracts.md](../arc
 
 A restart resumes each saved conversation with `observe({ binding, after })`, where `after` is the last committed cursor.
 The host takes a fresh snapshot only when no checkpoint exists or the feed ends with `resync`.
+One exception: an explicit retry of a stopped observation (`provider-observation` with `action: 'retry'`) always takes one fresh snapshot before it observes again, even when a checkpoint exists.
+A feed that ends with `closed`, `disconnected` or `unavailable` leaves the conversation `stopped` with `provider-disconnected`. The host does not resubscribe by itself; a client retry does.
 
 `replaceProviderExtensions(entries)` swaps the whole generation.
+It exists only on the in-process handle of a host started with transient extensions. A host with durable extension artifacts refuses it, and production disable and reload go through the extension selection commands instead. Both paths end in the same generation swap.
 An empty selection disables every provider. It sends no remote command.
 A replacement returns `replaced`, `deferred` (`active-work` or `changing`), `failed` or `unavailable`.
 An open observation feed is not active work. Admitted creation, command, lookup and discovery calls are.
@@ -83,7 +86,9 @@ A missing record is not proof of nonacceptance. Return `uncertain` instead.
 A thrown error is recorded as uncertainty, never as rejection.
 `not-dispatched`, `unsupported` and failures from a fresh call mean the provider knows the invocation was not accepted.
 An uncertain send stays uncertain until a client `reconcile` request settles it through `reconcileCommand`.
-Before admitting a new send, the host looks up a previous send whose receipt is `pending` or `accepted`. It refuses with `send-awaiting-confirmation` while that receipt stays `pending` or `accepted`.
+Before admitting a new send, the host looks up a previous send whose receipt is `pending` or `accepted`.
+For a provider conversation it first tries to settle an `accepted` blocker through `reconcileCommand`. If the blocker is now `completed` or `rejected`, the new send is admitted.
+Otherwise it refuses with `send-awaiting-confirmation`. While the provider is offline the blocker cannot be settled, so the refusal is `send-awaiting-confirmation`, not `provider-command-unavailable`.
 An `uncertain` send does not block a new send. The provider must refuse a send it cannot accept alongside unresolved work.
 
 ## Observation
@@ -108,20 +113,31 @@ An expired or unbridgeable cursor ends the feed with `resync`.
 
 ## Conformance suite
 
-The suite drives each row only through its public extension entry, the real host from `apps/host/build/tsc/server.js` and the desktop client.
+The suite runs the real host in process through `startBrowserHost`, the same entry `examples/crew/run.mjs` uses, with transient extension entries. Each row is driven only through its public extension entry, and clients reach the host through the desktop client store.
+Transient entries skip module import and manifest resolution. `examples/crew/tests/installed-example.test.mjs` covers loading an installed extension.
 
-| Row | Request ids | Cursor | Event encoding | Controls |
+| Row | Request ids | Cursor | Event encoding | Supports |
 | --- | --- | --- | --- | --- |
 | Crew example (`examples/crew`, shared controlled Crew service) | AgentUI operation UUIDs | `{ epoch, sequence, requests }` | SSE AG-UI, folded into authoritative snapshots | cancel, decide |
 | Ledger fake (`ledger.mjs`) | Service-assigned `room-n` and `ticket-n` | `[epoch, offset]` | NDJSON log entries folded by `apply` | cancel, decide |
 | Ledger fake without controls | Same as ledger | Same as ledger | Same as ledger | none |
 
-Each row runs create, send and stream, restart with resume, lost-reply reconciliation, cancel, approve and deny, disable and reload, and outage.
+`providers.mjs` defines the row type. A row's `supports` set is its only capability source. For each control the suite generates either the supported test or the capability-gated test, never both.
+Each row runs create, send and stream, restart with resume, a dropped stream recovered by an observation retry, lost-reply reconciliation, cancel, approve and deny, disable and reload, and outage.
 Every case runs beside the other provider. Every case except outage asserts the peer has no effects; outage asserts the peer still creates a conversation.
-`instrument.mjs` counts host calls through the public contract: activations, connects, closes, disposes and open feeds per conversation.
-Service counters assert one backend effect per operation and one subscription per conversation.
-`boundaries.test.mjs` asserts that provider traffic carries no trace context or collector headers, that telemetry carries no prompt, reply or provider secret, and that no AgentUI agent span is synthesized for a remote run.
-It also asserts that `apps` and `packages` source contains no Crew reference and that the repository contains no OpenBot code or dependency.
+
+What the suite proves:
+
+- Effects are counted on the wire at each service: every request to an effect route, duplicates and refusals included. A redispatched operation, such as a `reconcileCommand` that submits again, fails the effect assertions on every row. The suite proves one effect for each operation it drives, not for every possible sequence.
+- `instrument.mjs` counts host calls through the public contract: activations, connects, snapshots, closes, disposes and open feeds per conversation. It wraps both `add` and `addAgui`.
+- A restart with a saved checkpoint resumes from that cursor and calls `snapshot` zero times. An observation retry after a dropped stream calls `snapshot` exactly once and leaves one subscription.
+- A send to a disabled provider, and a send in a fresh conversation during an outage, are refused with `{ kind: 'rejected', reason: 'provider-command-unavailable' }`. A send behind an unsettled earlier send during an outage is refused with `send-awaiting-confirmation`.
+- An outage is reported by discovery, metadata and the conversation. It does not close streams that were already open: they keep delivering. The suite's outage refuses new requests at a proxy, so it does not model a stream that the network cuts.
+- An uncertain send does not block a new send (bean `agentui-u4n8`). The suite does not cover that gap.
+
+`boundaries.test.mjs` asserts that provider traffic carries no trace context or collector headers, that telemetry carries no prompt, reply or provider secret, and that no AgentUI agent span is synthesized for a remote run. A positive control proves the telemetry search finds a value that is exported.
+It also asserts that `apps`, `packages`, `scripts` and `templates` contain no Crew reference (a word-start match on `crew`, plus `birbcrew`), excluding the one adapter-tests fixture that names `example.crew`, and that the repository contains no OpenBot code or dependency.
+The check is lexical. Crew-specific logic that never names Crew would pass. Vendored `.tgz` archives are out of scope; their declared dependencies appear in `package-lock.json`, which is searched.
 
 ## Generic consumers and clients
 

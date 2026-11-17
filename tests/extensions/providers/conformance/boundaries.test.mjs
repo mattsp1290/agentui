@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import test from 'node:test';
-import { receiver } from '../../../application/support/observability.mjs';
+import { assertPrivateValuesAbsent, receiver } from '../../../application/support/observability.mjs';
 import { connect, data } from '../../../examples/mcp/read/support.mjs';
 import { assistantTexts, host, runOf, until } from './harness.mjs';
 import { providers } from './providers.mjs';
@@ -13,8 +13,12 @@ const grep = (...args) => {
   catch (error) { if (error.status === 1) return ''; throw error; }
 };
 
-test('core apps and packages carry no Crew branch and the repository carries no OpenBot code or dependency', () => {
-  assert.equal(grep('crew', '--', 'apps', 'packages', ':(exclude)packages/adapter-tests/tests'), '');
+// Lexical: a Crew-shaped branch that never names Crew passes. Vendored `.tgz` archives are opaque to git grep and out
+// of scope; their declared dependencies are still covered through package-lock.json.
+test('core apps, packages, scripts and templates carry no Crew reference and the repository carries no OpenBot code or dependency', () => {
+  assert.equal(grep('-e', '\\<crew', '-e', 'birbcrew', '--', 'apps', 'packages', 'scripts', 'templates',
+    ':(exclude)packages/adapter-tests/tests/types.test.mjs'), '');
+  assert.match(grep('-e', '\\<crew', '--', 'packages/adapter-tests/tests/types.test.mjs'), /example\.crew/, 'the search finds the one excluded fixture');
   assert.equal(grep('openbot', '--', '.', ':(exclude)docs/extensions/provider-contract.md',
     ':(exclude)tests/extensions/providers/conformance/boundaries.test.mjs'), '');
 });
@@ -52,8 +56,10 @@ for (const row of providers) test(`${row.name}: provider traffic carries no coll
   assert.ok(spans.length > 0);
   assert.deepEqual([...new Set(spans.map(span => span.name))], ['agentui.host.request'], 'no AgentUI agent span is synthesized for a remote run');
   assert.ok(spans.every(span => !span.parentSpanId && span.traceId !== traceId), 'incoming trace context is not adopted');
-  const exported = JSON.stringify(collector.received.map(request => request.body));
-  for (const canary of [prompt, reply, collectorToken, ...subject.secrets]) assert.equal(exported.includes(canary), false, `exported ${canary}`);
+  const exported = collector.received.map(request => request.body);
+  assert.throws(() => assertPrivateValuesAbsent(exported, ['agentui-provider-conformance']), /Private value leaked/,
+    'the canary search finds a value that is exported');
+  assertPrivateValuesAbsent(exported, [prompt, reply, collectorToken, ...subject.secrets]);
 });
 
 test('the generic MCP read example inspects both providers through the host contract without provider effects', { timeout: 30_000 }, async t => {

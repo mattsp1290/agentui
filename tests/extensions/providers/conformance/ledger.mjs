@@ -9,9 +9,11 @@ import { EXTENSION_SDK_VERSION, backendProviderContractVersion } from '@agentui/
  * cursor, and streams NDJSON log entries that the presentation folds event by event.
  */
 export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {}) {
-  const rooms = new Map(), opened = new Map(), tails = new Set(), tailRequests = [];
+  const rooms = new Map(), opened = new Map(), tails = new Set();
   const effects = { creates: 0, sends: 0, cancels: 0, decisions: 0 };
-  let tickets = 0, cards = 0, down = false, loseNext = null;
+  // Counted on arrival, before the idempotency check, so a redispatched operation shows up as a second effect.
+  const effectRoutes = { '/open': 'creates', '/post': 'sends', '/halt': 'cancels', '/answer': 'decisions' };
+  let tickets = 0, cards = 0, lostRoute = null;
   const append = (room, entry) => {
     room.log.push(entry);
     const offset = room.log.length;
@@ -20,11 +22,11 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
   const server = createServer(async (request, response) => {
     let text = ''; for await (const chunk of request) text += chunk;
     const json = (status, body) => {
-      if (loseNext === request.url && status < 300) { loseNext = null; response.destroy(); return; }
+      if (lostRoute === request.url && status < 300) { response.destroy(); return; }
       response.writeHead(status, { 'content-type': 'application/json' }); response.end(JSON.stringify(body));
     };
-    if (down) return json(503, { error: 'down' });
     if (request.headers['x-ledger-key'] !== key) return json(401, { error: 'key' });
+    if (effectRoutes[request.url]) effects[effectRoutes[request.url]]++;
     const input = text ? JSON.parse(text) : {}, room = rooms.get(input.room);
     switch (request.url) {
       case '/hello': return json(200, { version: 'ledger-2' });
@@ -34,7 +36,7 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
           if (request.url === '/open-lookup') return json(404, { error: 'unknown' });
           const id = `room-${opened.size + 1}`;
           rooms.set(id, { id, epoch: 1, log: [], keys: new Map(), cards: new Map(), open: null });
-          opened.set(input.key, id); effects.creates++;
+          opened.set(input.key, id);
         }
         return json(200, { room: opened.get(input.key) });
       }
@@ -42,7 +44,6 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
         cards: [...room.cards.values()].filter(card => !card.answer) }) : json(404, { error: 'room' });
       case '/tail': {
         if (!room) return json(404, { error: 'room' });
-        tailRequests.push({ room: room.id, from: input.from });
         response.writeHead(200, { 'content-type': 'application/x-ndjson' }); response.flushHeaders();
         const tail = { room, response }; tails.add(tail);
         response.on('close', () => tails.delete(tail));
@@ -61,7 +62,7 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
         if (!room.keys.has(input.key)) {
           if (room.open) return json(409, { error: 'busy' });
           const ticket = `ticket-${++tickets}`;
-          room.keys.set(input.key, { ticket }); room.open = ticket; effects.sends++;
+          room.keys.set(input.key, { ticket }); room.open = ticket;
           append(room, { op: 'user', ticket, text: input.input.map(item => item.content).join('\n') });
         }
         return json(202, room.keys.get(input.key));
@@ -69,7 +70,7 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
       case '/halt': {
         if (!room || room.open !== input.ticket) return json(409, { error: 'not-running' });
         if (!room.keys.has(input.key)) {
-          room.keys.set(input.key, { halted: input.ticket }); effects.cancels++;
+          room.keys.set(input.key, { halted: input.ticket });
           room.open = null; append(room, { op: 'done', ticket: input.ticket, outcome: 'interrupted' });
         }
         return json(200, room.keys.get(input.key));
@@ -79,7 +80,7 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
         if (!card || !card.options.includes(input.option)) return json(404, { error: 'card' });
         if (!room.keys.has(input.key)) {
           if (card.answer) return json(409, { error: 'answered' });
-          card.answer = input.option; room.keys.set(input.key, { answered: card.id, option: input.option }); effects.decisions++;
+          card.answer = input.option; room.keys.set(input.key, { answered: card.id, option: input.option });
           append(room, { op: 'card', card: card.id });
         }
         return json(200, room.keys.get(input.key));
@@ -91,8 +92,9 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
   t.after(() => { server.closeAllConnections(); server.close(); });
   const origin = `http://127.0.0.1:${server.address().port}`;
   const latest = () => [...rooms.values()].at(-1);
-  return { origin, key, effects, rooms, tails, tailRequests,
-    setDown(value) { down = value; }, loseReplyTo(path) { loseNext = path; },
+  return { origin, key, effects, rooms, tails,
+    loseRepliesTo(path) { lostRoute = path; },
+    dropTails() { for (const tail of tails) tail.response.end(); },
     reply(text) {
       const room = latest(), ticket = room.open;
       for (const part of [text.slice(0, 3), text.slice(3)]) append(room, { op: 'say', ticket, text: part });
@@ -105,6 +107,14 @@ export async function ledgerService(t, { key = 'ledger-private-key-5e1a' } = {})
     },
     answers() { return [...latest().cards.values()].map(card => card.answer); },
   };
+}
+
+async function* lines(body) {
+  let buffered = '';
+  for await (const bytes of body) {
+    buffered += Buffer.from(bytes).toString();
+    for (let newline; (newline = buffered.indexOf('\n')) >= 0; buffered = buffered.slice(newline + 1)) yield JSON.parse(buffered.slice(0, newline));
+  }
 }
 
 const instance = { namespace: 'ledger', installationId: 'books', generation: 'g1', protocolVersion: 'ledger-2' };
@@ -152,8 +162,8 @@ export const ledgerPresentation = {
   apply: (previous, event, refs) => fold(previous, event, refs),
 };
 
-/** The ledger extension through the public entry contract. `controls: false` withholds cancel and decide. */
-export function ledgerExtension({ service, key, controls = true }) {
+/** The ledger extension through the public entry contract. `supports` says which of cancel and decide it offers. */
+export function ledgerExtension({ service, key, supports }) {
   const entry = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
     context.providers.add('books', { apiVersion: backendProviderContractVersion, async connect(request) {
       const credential = request.credential, feeds = new Set();
@@ -185,18 +195,20 @@ export function ledgerExtension({ service, key, controls = true }) {
           return status === 200 ? { kind: 'confirmed', value: binding(operation, body.room), evidence: { room: body.room } } : uncertain;
         } catch { return uncertain; }
       };
+      const routes = {
+        send: (id, operation) => post('/post', { room: id, key: operation.operationId, input: operation.request.input }),
+        cancel: (id, operation) => post('/halt', { room: id, key: operation.operationId, ticket: operation.run.ref.opaqueId }),
+        decide: (id, operation) => {
+          const [card, option] = operation.choice.ref.opaqueId.split('/');
+          return post('/answer', { room: id, key: operation.operationId, card, option });
+        },
+      };
+      const foreignChoice = operation => operation.kind === 'decide' && operation.choice.ref.opaqueId.split('/')[0] !== operation.decision.ref.opaqueId;
       const command = async (operation, fresh) => {
         const id = room(operation.binding);
+        if (fresh && foreignChoice(operation)) return { kind: 'rejected', reason: 'Foreign ledger choice.', evidence: null };
         try {
-          let result;
-          if (!fresh) result = await post('/lookup', { room: id, key: operation.operationId });
-          else if (operation.kind === 'send') result = await post('/post', { room: id, key: operation.operationId, input: operation.request.input });
-          else if (operation.kind === 'cancel') result = await post('/halt', { room: id, key: operation.operationId, ticket: operation.run.ref.opaqueId });
-          else {
-            const [card, option] = operation.choice.ref.opaqueId.split('/');
-            if (card !== operation.decision.ref.opaqueId) return { kind: 'rejected', reason: 'Foreign ledger choice.', evidence: null };
-            result = await post('/answer', { room: id, key: operation.operationId, card, option });
-          }
+          const result = fresh ? await routes[operation.kind](id, operation) : await post('/lookup', { room: id, key: operation.operationId });
           if (result.status === 409 && fresh) return { kind: 'rejected', reason: 'Ledger refused this operation.', evidence: result.body };
           if (result.status >= 300) return uncertain;
           const value = operation.kind === 'send'
@@ -208,7 +220,7 @@ export function ledgerExtension({ service, key, controls = true }) {
       const unsupported = { kind: 'unsupported', reason: 'This ledger desk has no controls.' };
       return { kind: 'connected', backend: { instance,
         capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' },
-          cancel: controls ? { kind: 'supported' } : unsupported, decide: controls ? { kind: 'supported' } : unsupported },
+          cancel: supports.cancel ? { kind: 'supported' } : unsupported, decide: supports.decide ? { kind: 'supported' } : unsupported },
         async discover() {
           const result = await post('/desks', {}).catch(() => ({ status: 503 }));
           if (result.status !== 200) return failure(result.status);
@@ -218,6 +230,15 @@ export function ledgerExtension({ service, key, controls = true }) {
         submit: operation => command(operation, true), reconcileCommand: operation => command(operation, false),
         snapshot: binding => state(binding).catch(() => failure(503)),
         observe({ binding, after }, receive) {
+          // A card changes the decision set, which reaches the host only through a fresh snapshot.
+          const deliver = async line => {
+            if (line.entry.op !== 'card') {
+              const cursor = { kind: 'provider-cursor', binding, opaque: line.at };
+              return { kind: 'event', eventId: `ledger-${line.at[0]}-${line.at[1]}`, cursor, event: line.entry };
+            }
+            const current = await state(binding);
+            return current.kind === 'available' ? { kind: 'snapshot', snapshot: current.snapshot, cursor: current.snapshot.cursor } : current;
+          };
           if (after && canonicalJson(after.binding) !== canonicalJson(binding)) throw new Error('Foreign ledger cursor');
           const controller = new AbortController(), ended = Promise.withResolvers();
           let stopped = false, acknowledged = after;
@@ -229,26 +250,14 @@ export function ledgerExtension({ service, key, controls = true }) {
             try {
               const response = await call('/tail', { room: room(binding), from: at }, controller.signal);
               if (response.status !== 200) return finish(failure(response.status));
-              let buffered = '';
-              for await (const bytes of response.body) {
-                buffered += Buffer.from(bytes).toString();
-                for (let newline; (newline = buffered.indexOf('\n')) >= 0;) {
-                  const line = JSON.parse(buffered.slice(0, newline)); buffered = buffered.slice(newline + 1);
-                  if (line.resync) return finish({ kind: 'resync', reason: 'Ledger epoch changed.' });
-                  if (line.at[1] <= at[1]) continue;
-                  if (line.entry.op === 'card') {
-                    const current = await state(binding);
-                    if (current.kind !== 'available') return finish(current);
-                    at = current.snapshot.cursor.opaque;
-                    await receive({ kind: 'snapshot', snapshot: current.snapshot });
-                    if (!stopped) acknowledged = current.snapshot.cursor;
-                  } else {
-                    at = line.at;
-                    const cursor = { kind: 'provider-cursor', binding, opaque: at };
-                    await receive({ kind: 'event', eventId: `ledger-${at[0]}-${at[1]}`, cursor, event: line.entry });
-                    if (!stopped) acknowledged = cursor;
-                  }
-                }
+              for await (const line of lines(response.body)) {
+                if (line.resync) return finish({ kind: 'resync', reason: 'Ledger epoch changed.' });
+                if (line.at[1] <= at[1]) continue;
+                const item = await deliver(line);
+                if (item.kind !== 'snapshot' && item.kind !== 'event') return finish(item);
+                at = item.cursor.opaque;
+                await receive(item.kind === 'snapshot' ? { kind: 'snapshot', snapshot: item.snapshot } : item);
+                if (!stopped) acknowledged = item.cursor;
               }
               finish({ kind: 'disconnected', reason: 'Ledger tail ended.' });
             } catch { finish({ kind: 'disconnected', reason: 'Ledger tail failed.' }); }

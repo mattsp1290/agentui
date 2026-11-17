@@ -1,25 +1,12 @@
 import { randomUUID } from 'node:crypto';
 import { mkdtempSync, rmSync } from 'node:fs';
-import { registerHooks } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createConversationStore } from '@agentui/client';
 import { createBrowserConnection } from '@agentui/client/service';
 import { transcriptProjection } from '@agentui/contracts/conversation';
-
-const artifact = new URL('../../../../apps/host/build/tsc/artifact.js', import.meta.url).href;
-// The source entry lives in build/tsc; installed artifact bytes live beside dist/main.js.
-registerHooks({ resolve(specifier, context, next) {
-  if (specifier === './artifact.js' && context.parentURL?.endsWith('/server.js')) {
-    const source = `export * from ${JSON.stringify(artifact)};
-      import { readInstalledArtifact as read } from ${JSON.stringify(artifact)};
-      export function readInstalledArtifact() { return read(${JSON.stringify(fileURLToPath(new URL('../../../../apps/host/dist/', import.meta.url)))}); }`;
-    return { url: `data:text/javascript,${encodeURIComponent(source)}`, shortCircuit: true };
-  }
-  return next(specifier, context);
-} });
-const { startBrowserHost } = await import('../../../../apps/host/build/tsc/server.js');
+import { startBrowserHost } from '../../../host/extensions/fixtures.mjs';
 
 export async function until(predicate, message = 'Condition timed out', ms = 5000) {
   const deadline = Date.now() + ms;
@@ -30,7 +17,8 @@ export async function until(predicate, message = 'Condition timed out', ms = 500
 }
 
 /**
- * The real browser host with transient provider extensions, reached through the same `createBrowserConnection` and
+ * The real browser host, run in process through the same `startBrowserHost` entry `examples/crew/run.mjs` uses, with
+ * transient provider extensions. Clients reach it through the same `createBrowserConnection` and
  * `createConversationStore` the desktop application builds in `apps/desktop/src/application`.
  */
 export async function host(t, extensions, { observability, headers = {} } = {}) {
