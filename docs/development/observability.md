@@ -10,7 +10,7 @@ OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 node apps/host/dist/main.js browser-dev --data-dir /path/to/private-host --port 7140
 ```
 
-The receiver must accept OTLP `http/json`. The host appends `/v1/traces` to the base endpoint. Pair a browser or native client and make a service request. Look for the `agentui-host` service and `agentui.host.request` spans in your tracing backend. Static asset requests do not produce spans.
+The receiver must accept OTLP `http/json`. The host appends `/v1/traces` to the base endpoint. Open a browser or native client against the host and make a service request. Look for the `agentui-host` service and `agentui.host.request` spans in your tracing backend. Static asset requests do not produce spans.
 
 ## Send traces through a Datadog Agent
 
