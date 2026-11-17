@@ -94,7 +94,7 @@ test('a complete version one database upgrades without losing conversations', t 
   const f = fixture(t), host = f.open(); host.createConversation(scope, installed); host.close();
   const db = new DatabaseSync(f.path); db.exec('DROP INDEX commands_tagged_send_key; DROP TABLE frontend_send_owners; DROP TABLE frontend_send_tombstones; DROP TABLE command_images; DROP TABLE images; DROP TABLE frontend_receipts; DROP TABLE frontend_observation_events; DROP TABLE frontend_observation_runs; DROP TABLE frontend_events; DROP TABLE frontend_runs; PRAGMA user_version=1;'); db.close();
   const upgraded = f.open(); assert.deepEqual(upgraded.installation(scope), installed);
-  const verify = new DatabaseSync(f.path); assert.equal(verify.prepare('PRAGMA user_version').get().user_version, 7); verify.close();
+  const verify = new DatabaseSync(f.path); assert.equal(verify.prepare('PRAGMA user_version').get().user_version, 8); verify.close();
 });
 
 test('terminal validation rejects incomplete, mismatched, cancelled, and subagent calls', async t => {

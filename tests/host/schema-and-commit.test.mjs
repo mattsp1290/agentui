@@ -84,7 +84,7 @@ for (const [failure, mutate, options, message] of [
 test('corrupt existing provider metadata refuses before migrating a legacy transcript', t => {
   const f = fixture(t), host = f.open({ projection: transcriptProjection }); host.createConversation(scope, installed); host.close();
   const db = new DatabaseSync(f.path);
-  db.exec("UPDATE conversations SET version=1; INSERT INTO provider_creations VALUES ('host-a','bad','invalid json','reserved',NULL)");
+  db.exec("DROP INDEX provider_creations_from; PRAGMA user_version=7; UPDATE conversations SET version=1; INSERT INTO provider_creations VALUES ('host-a','bad','invalid json','reserved',NULL)");
   db.close();
   const before = readFileSync(f.path);
   assert.throws(() => f.open({ projection: transcriptProjection }), /Corrupt creation metadata/);
@@ -105,7 +105,7 @@ test('version two upgrades preserve pending decisions and uncertain commands and
   db.close();
   const reopened = f.open();
   const reader = new DatabaseSync(f.path);
-  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 7);
+  assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 8);
   for (const [table, rows] of saved) assert.deepEqual(reader.prepare(`SELECT * FROM ${table}`).all(), rows);
   reader.close(); reopened.close(); await reopened.drained;
   const bytes = readFileSync(f.path);

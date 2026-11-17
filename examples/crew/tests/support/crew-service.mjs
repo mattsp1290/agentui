@@ -1,17 +1,47 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { crewProvider } from '../../dist/provider.js';
+
+/** The reply Crew's admitted handoff turn records for the successor's reserved first request. */
+export const acknowledgement = 'I have read the earlier conversation.';
 
 /**
  * A controlled Crew service over real HTTP. `intercept` may answer a conversation-scoped request before the default
- * routes; it returns true when it wrote the response.
+ * routes; it returns true when it wrote the response. Handoff routes mirror Crew's handoff row: `replyHandoffs` queues
+ * per-POST outcomes and `commitHandoff`/`admit` drive the row directly.
  */
 export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept } = {}) {
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
   const grants = [];
   let lost = false, observationMode = 'stream', conflict = null, decisionReply = {}, receiptHold = null, receiptFailure = false;
+  const handoffs = [], transcripts = new Map(), handoffReplies = [];
+  // Mirrors Crew's handoff row: committing seals the source and opens the target; admission adds the reserved first turn.
+  function commitHandoff(source, requestId) {
+    const prior = handoffs.find(row => row.requestId === requestId);
+    if (prior) return prior;
+    const target = randomUUID(), firstRequestId = randomUUID();
+    const transcript = `BirbCrew conversation handoff v1. The owner moved an earlier conversation with another coworker to you.\n${JSON.stringify({
+      sourceEngine: 'codex', omittedTurns: 1, uncertainTurns: 0, turns: [{ ownerPrompt: 'Earlier owner prompt', modelReply: 'Earlier model reply' }] })}`;
+    const row = { handoffId: randomUUID(), requestId, source: { conversationId: source, memberId, engine: 'codex' },
+      target: { conversationId: target, memberId, engine: 'codex' }, firstRequestId, firstRequestAdmitted: false,
+      carriedTurns: 1, omittedTurns: 1, uncertainTurns: 0, transcriptBytes: Buffer.byteLength(transcript),
+      transcriptDigest: createHash('sha256').update(transcript).digest('hex'), createdAt: new Date().toISOString() };
+    handoffs.push(row); transcripts.set(firstRequestId, transcript);
+    conversations.set(target, { state: { conversationId: target, memberId, engine: 'codex', profile: 'test', phase: 'idle', openStep: null,
+      pendingApprovals: [] }, messages: [], cursor: 0, openTools: {}, openText: null, childText: {} });
+    return row;
+  }
+  function admit(target) {
+    const row = handoffs.find(row => row.target.conversationId === target);
+    if (row.firstRequestAdmitted) return;
+    row.firstRequestAdmitted = true;
+    conversations.get(target).messages.push({ id: row.firstRequestId, role: 'user', content: transcripts.get(row.firstRequestId) },
+      { id: `${row.firstRequestId}/assistant`, role: 'assistant', content: acknowledgement });
+    receipts.set(row.firstRequestId, { apiVersion: '1', conversationId: target, requestId: row.firstRequestId,
+      acceptance: { boundary: 'sql_admission_and_temporal_queue' }, status: 'accepted' });
+  }
   const server = createServer(async (request, response) => {
     assert.equal(request.headers.authorization, `Bearer ${token}`);
     let text = ''; for await (const chunk of request) text += chunk;
@@ -42,6 +72,25 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
     }
     const conversation = conversations.get(conversationId);
     if (!conversation) return json(404, { error: 'not_found' });
+    if (request.method === 'POST' && parts[4] === 'handoffs') {
+      const reply = handoffReplies.shift() ?? 'admitted';
+      if (typeof reply === 'object') return json(reply.status, { error: reply.code });
+      if (reply === 'dropped') { response.destroy(); return; }
+      const prior = handoffs.find(row => row.requestId === input.requestId);
+      if (prior && (prior.source.conversationId !== conversationId || prior.target.memberId !== input.memberId)) return json(409, { error: 'conflict' });
+      if (!prior && handoffs.some(row => row.source.conversationId === conversationId)) return json(409, { error: 'handed_off' });
+      const row = commitHandoff(conversationId, input.requestId);
+      if (reply === 'admitted' || reply === 'lost') admit(row.target.conversationId);
+      if (reply === 'lost') { response.destroy(); return; }
+      if (reply === 'update_rejected') return json(409, { error: 'update_rejected' });
+      if (reply === 'unavailable') return json(503, { error: 'retry_same_request' });
+      return json(201, { apiVersion: '1', ...structuredClone(row) });
+    }
+    if (request.method === 'GET' && parts[4] === 'handoff') {
+      const incoming = handoffs.find(row => row.target.conversationId === conversationId) ?? null;
+      const outgoing = handoffs.find(row => row.source.conversationId === conversationId) ?? null;
+      return incoming || outgoing ? json(200, { apiVersion: '1', conversationId, incoming, outgoing }) : json(404, { error: 'not_found' });
+    }
     if (parts.length === 4) return json(200, { apiVersion: '1', ...conversation });
     if (parts[4] === 'events') {
       if (observationMode === 'redirect') { response.writeHead(302, { location: '/v1/capabilities' }); response.end(); return; }
@@ -138,7 +187,8 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
   const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => token } }] } });
-  return { origin, token, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants,
+  return { origin, token, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants, handoffs, commitHandoff, admit,
+    replyHandoffs(...replies) { handoffReplies.push(...replies); },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
     setCapability(value) { approvalDetails = value; }, setDetailHandler(value) { detailHandler = value; }, setDecisionReply(value) { decisionReply = value; }, setLost(value) { lost = value; }, setObservation(value) { observationMode = value; }, setConflict(code = 'request_conflict') { conflict = code; },
     holdReceipts() { const hold = Promise.withResolvers(); receiptHold = hold.promise; return () => { receiptHold = null; hold.resolve(); }; },

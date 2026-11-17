@@ -1,4 +1,4 @@
-import { canonicalJson, copyJson, parseRunAuthority, parseScope, sameScope } from '@agentui/contracts';
+import { canonicalJson, copyJson, parseProviderBinding, parseRunAuthority, parseScope, sameScope } from '@agentui/contracts';
 import type { ConversationScope, Json, RunAuthority } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { CreationIntent, CredentialHandle, ProviderConversation, ProviderInstance } from '@agentui/sdk';
@@ -18,6 +18,7 @@ export function providerInstallationKey(value: ProviderInstallation): string {
   return canonicalJson({ ...value, agent: { opaqueId: value.agent.opaqueId } });
 }
 export type ConversationInstallation = Installation | ProviderInstallation;
+export type CreationPredecessor = NonNullable<CreationIntent<string>['from']>;
 export interface ProviderCreation {
   readonly installation: ProviderInstallation;
   readonly intent: CreationIntent<string>;
@@ -49,21 +50,33 @@ export function conversationInstallation(value: unknown): ConversationInstallati
   return record(value).kind === 'provider' ? providerInstallation(value) : installation(value);
 }
 export function creationIntent<I extends string>(value: unknown, selected: ProviderInstallation, instance: ProviderInstance<I>): CreationIntent<I> {
-  const input = record(value, ['kind', 'operationId', 'scope', 'agent']), agent = record(input.agent, ['instance', 'kind', 'opaqueId']);
+  const continues = Object.hasOwn(record(value), 'from');
+  const input = record(value, ['kind', 'operationId', 'scope', 'agent', ...(continues ? ['from'] : [])]), agent = record(input.agent, ['instance', 'kind', 'opaqueId']);
   const operationId = identifier(input.operationId);
   if (input.kind !== 'create' || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/u.test(operationId) ||
     agent.kind !== 'agent' || agent.opaqueId !== selected.agent.opaqueId || canonicalJson(providerIdentity(agent.instance)) !== canonicalJson(instance) ||
     canonicalJson(selected.instance) !== canonicalJson(instance)) throw new Error('Foreign creation intent');
-  return { kind: 'create', operationId, scope: parseScope(input.scope), agent: { kind: 'agent', instance, opaqueId: selected.agent.opaqueId } };
+  const scope = parseScope(input.scope);
+  return { kind: 'create', operationId, scope, agent: { kind: 'agent', instance, opaqueId: selected.agent.opaqueId },
+    ...(continues ? { from: creationPredecessor(input.from, scope, instance) } : {}) };
+}
+function creationPredecessor<I extends string>(value: unknown, scope: ConversationScope, instance: ProviderInstance<I>): NonNullable<CreationIntent<I>['from']> {
+  const input = record(value, ['scope', 'binding']), source = parseScope(input.scope), binding = parseProviderBinding(input.binding);
+  if (source.hostId !== scope.hostId || sameScope(source, scope) || binding.namespace !== instance.namespace ||
+    binding.installationId !== instance.installationId) throw new Error('Foreign creation predecessor');
+  return { scope: source, binding: { namespace: binding.namespace, installationId: instance.installationId, opaqueSessionId: binding.opaqueSessionId } };
 }
 export function creationBinding<I extends string>(value: unknown, creation: CreationIntent<I>, selected: ProviderInstallation): ProviderConversation<I> {
-  const input = record(value, ['kind', 'creation', 'authority']);
+  const carrying = Object.hasOwn(record(value), 'carryingTurn');
+  const input = record(value, ['kind', 'creation', 'authority', ...(carrying ? ['carryingTurn'] : [])]);
   const original = creationIntent(input.creation, selected, creation.agent.instance), authority = parseRunAuthority(input.authority);
   if (input.kind !== 'agentui-created' || canonicalJson(original) !== canonicalJson(creation) || authority.kind !== selected.expectedAuthority ||
     authority.binding.namespace !== selected.instance.namespace || authority.binding.installationId !== selected.instance.installationId ||
-    (authority.kind === 'agentui-host' && authority.hostId !== creation.scope.hostId)) throw new Error('Foreign creation binding');
+    (authority.kind === 'agentui-host' && authority.hostId !== creation.scope.hostId) ||
+    authority.binding.opaqueSessionId === creation.from?.binding.opaqueSessionId || (carrying && !creation.from)) throw new Error('Foreign creation binding');
   return { kind: 'agentui-created', creation, authority: { ...authority,
-    binding: { ...authority.binding, installationId: creation.agent.instance.installationId } } };
+    binding: { ...authority.binding, installationId: creation.agent.instance.installationId } },
+    ...(carrying ? { carryingTurn: identifier(input.carryingTurn) } : {}) };
 }
 export function providerCreation(value: unknown, scope: ConversationScope): ProviderCreation {
   const input = record(value, ['installation', 'intent', 'credential']), selected = providerInstallation(input.installation);

@@ -14,7 +14,7 @@ import { installation, dispatchNative, reconcileNative } from './native-executio
 import { isQuarantined } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, ProviderDriver, StoredCommand, OfferedStoredCommand } from './durable-model.js';
 import { providerInstallationKey } from './provider-creation.js';
-import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
+import type { ConversationInstallation, CreationPredecessor, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
 import type { ProviderConversationOperations, ProviderCreationOperations } from './providers.js';
 import { SqliteStore } from './sqlite-store.js';
 import { Journal } from './journal.js';
@@ -34,7 +34,9 @@ export interface LocalHost<E, P> {
   readImage(scope: ConversationScope, imageId: ImageId): { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
   readonly drained: Promise<void>;
   createConversation(scope: ConversationScope, target: Installation): void;
-  createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations): Promise<CreationObservation>;
+  /** The host copies a predecessor's provider binding from its own confirmed record, never from the caller. */
+  createProviderConversation(scope: ConversationScope, target: ProviderInstallation, providers: ProviderCreationOperations,
+    predecessor?: ConversationScope): Promise<CreationObservation>;
   creation(scope: ConversationScope): StoredCreation | null;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   conversationOutputs(scope: ConversationScope): Promise<OutputListing>;
@@ -214,6 +216,13 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     assertRequester();
     return store.blockingSend(scope, 'provider') === null;
   };
+  const continued = (value: ConversationScope, target: ProviderInstallation): { readonly from: CreationPredecessor; readonly credential: string } => {
+    const source = store.creation(authorized(value));
+    if (source?.observation?.kind !== 'confirmed' || providerInstallationKey(source.installation) !== providerInstallationKey(target)) {
+      throw new Error('Creation predecessor unavailable');
+    }
+    return { from: { scope: source.intent.scope, binding: source.observation.binding.authority.binding }, credential: canonicalJson(source.credential) };
+  };
   const host: LocalHost<E, P> = {
     imageInput,
     uploadImage: (scope, uploader, uploadId, name, bytes) => {
@@ -249,11 +258,12 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       });
     },
     creation(scope) { return store.creation(authorized(scope)); },
-    async createProviderConversation(scope, target, providers) {
+    async createProviderConversation(scope, target, providers, predecessor) {
       authorized(scope);
       const prior = store.creation(scope);
       if (!prior && store.findInstallation(scope)) throw new Error('Conversation already exists without provider creation provenance');
       if (prior && providerInstallationKey(prior.installation) !== providerInstallationKey(target)) throw new Error('Creation agent is immutable');
+      if (prior && predecessor && !(prior.intent.from && sameScope(prior.intent.from.scope, predecessor))) throw new Error('Creation predecessor is immutable');
       const key = canonicalJson(scope), leased = creating.get(key);
       if (leased) return leased;
       if (prior?.observation && ['confirmed', 'rejected', 'not-dispatched'].includes(prior.observation.kind)) {
@@ -263,8 +273,12 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       let original: ProviderCreation;
       if (prior) original = { installation: prior.installation, intent: prior.intent, credential: prior.credential };
       else {
-        try { original = providers.capture(scope, target); }
+        const source = predecessor ? continued(predecessor, target) : undefined;
+        try { original = providers.capture(scope, target, source?.from); }
         catch { return { kind: 'not-dispatched', source: 'host', evidence: null }; }
+        // The caller supplies capture, so the captured intent must carry exactly the predecessor the host built, or none.
+        if (canonicalJson(original.intent.from ?? null) !== canonicalJson(source?.from ?? null) ||
+          (source && canonicalJson(original.credential) !== source.credential)) return { kind: 'not-dispatched', source: 'host', evidence: null };
       }
       if (!prior) store.reserveCreation(original);
       const task = inFlight(async () => {

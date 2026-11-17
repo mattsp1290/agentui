@@ -1,4 +1,4 @@
-import type { ConversationPermission, PermissionScope, ConversationScope, Json, RunAuthority, TextMetadata } from '@agentui/contracts';
+import type { ConversationPermission, PermissionScope, ConversationScope, Json, ProviderBinding, RunAuthority, TextMetadata } from '@agentui/contracts';
 
 export const backendProviderContractVersion = 1;
 
@@ -37,12 +37,19 @@ export interface CreationIntent<I extends string> {
   readonly operationId: string;
   readonly scope: ConversationScope;
   readonly agent: ProviderRef<I, 'agent'>;
+  /** The confirmed conversation this one continues. The host copies it from its own record of that conversation. */
+  readonly from?: {
+    readonly scope: ConversationScope;
+    readonly binding: ProviderBinding & { readonly installationId: I };
+  };
 }
 
 export interface ProviderConversation<I extends string> {
   readonly kind: 'agentui-created';
   readonly creation: CreationIntent<I>;
   readonly authority: RunAuthority & { readonly binding: { readonly installationId: I } };
+  /** The provider's ID for the turn that carried `creation.from` into this conversation. Only a `from` creation may name one. */
+  readonly carryingTurn?: string;
 }
 
 export type ConversationRefKind = 'run' | 'decision' | 'choice' | 'permission' | 'output';
