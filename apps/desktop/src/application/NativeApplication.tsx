@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { invoke } from '@tauri-apps/api/core';
-import { macAccess, createMacConnection } from '@agentui/client/mac';
+import { macConnect, createMacConnection } from '@agentui/client/mac';
 import type { MacAccess, MacNativeInvoke } from '@agentui/client/mac';
 import { ThemeScope, Surface } from '@agentui/ui-primitives/desktop';
 import { BrowserApplication } from '../shell/BrowserApplication.js';
 import { createApplicationController } from './application-controller.js';
 import type { ApplicationController } from './application-controller.js';
 import { BrowserViewStorage } from './browser-storage.js';
-import { record } from '@agentui/contracts/decode';
 
 type Session = { readonly id: string; readonly access: MacAccess; readonly controller: ApplicationController };
 const nativeInvoke: MacNativeInvoke = command => invoke('native_access', { command });
@@ -18,20 +17,14 @@ export function NativeApplication() {
   const alive = useRef(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const [invitation, setInvitation] = useState('');
-  const [forgetSessionId, setForgetSessionId] = useState<Session['id'] | null>(null);
-  const forgetButton = useRef<HTMLButtonElement>(null);
-  async function replace(command: Parameters<typeof macAccess>[0]): Promise<void> {
+  async function connect(): Promise<void> {
     if (pending.current) return;
-    setForgetSessionId(null);
     pending.current = true; setBusy(true); setError('');
     try {
-      const action = command.kind === 'pair' || command.kind === 'forget'
-        ? { ...command, observation: (await macAccess({ kind: 'status' }, nativeInvoke)).observation } : command;
-      const access = await macAccess(action, nativeInvoke);
+      const access = await macConnect(nativeInvoke);
       await current.current?.controller.dispose();
       if (!alive.current) return;
-      const controller = createApplicationController({ createConnection: options => createMacConnection(access, nativeInvoke, options), createId: () => crypto.randomUUID(),
+      const controller = createApplicationController({ createConnection: () => createMacConnection(access, nativeInvoke), createId: () => crypto.randomUUID(),
         ownedViewStorage: { open: failure => BrowserViewStorage.reopen('native-mac-default', failure, true), reopen: BrowserViewStorage.reopen } });
       current.current = { id: crypto.randomUUID(), access, controller };
       setSession(current.current);
@@ -39,40 +32,18 @@ export function NativeApplication() {
     finally { pending.current = false; if (alive.current) setBusy(false); }
   }
   useEffect(() => {
-    void replace({ kind: 'status' });
+    void connect();
     return () => { alive.current = false; void current.current?.controller.dispose(); };
   }, []);
   const controls = <section aria-label="Mac connection">
-    <p>Protected pairing on this Mac. New native access lasts 30 days unless revoked. Re-pair explicitly after expiry.</p>
+    <p>This Mac connects directly to the AgentUI host on this computer. Your chats, drafts, and unresolved commands stay saved. No command is replayed on reconnect.</p>
     {error && <p role="alert">{error}</p>}
-    <form onSubmit={event => {
-      event.preventDefault(); const text = invitation; setInvitation('');
-      try {
-        const value = record(JSON.parse(text));
-        if (session) void replace({ kind: 'pair', observation: session.access.observation, invitation: { version: 1, ...value } });
-      } catch { setError('Paste the native invitation JSON from invite-native.'); }
-    }}>
-      <label htmlFor="native-invitation">Native pairing invitation</label>
-      <p>Paste the invitation value object from the host's invite-native command.</p>
-      <input id="native-invitation" value={invitation} onChange={event => setInvitation(event.target.value)} autoComplete="off" maxLength={4096} disabled={busy} />
-      <button disabled={busy || !session || session.access.kind === 'unreadable' || !invitation.trim()}>Pair this Mac</button>
-    </form>
-    {session && <>
-      <button ref={forgetButton} type="button" disabled={busy} onClick={() => setForgetSessionId(session.id)}>Forget local pairing</button>
-      {forgetSessionId === session.id && <div role="group" aria-labelledby="forget-local-pairing-question">
-        <p id="forget-local-pairing-question">Forget local pairing?</p>
-        <p>Drafts and unresolved commands stay saved. Remote device access is not revoked.</p>
-        <button type="button" autoFocus disabled={busy} onClick={() => { setForgetSessionId(null); forgetButton.current?.focus(); }}>Cancel</button>
-        <button type="button" disabled={busy} onClick={() => void replace({ kind: 'forget', observation: session.access.observation })}>Forget pairing</button>
-      </div>}
-    </>}
-    <p>Forgetting is local. Use the host device revoke command to revoke server access. No command is replayed on reconnect.</p>
-    {busy && <p role="status">Updating native connection…</p>}
+    {busy && <p role="status">Connecting to the local host…</p>}
   </section>;
-  return session?.access.kind === 'ready'
-    ? <BrowserApplication key={session.id} controller={session.controller} connection={{ kind: 'native', controls, reconnect: () => void replace({ kind: 'restore' }) }} suspended={busy} />
+  return session
+    ? <BrowserApplication key={session.id} controller={session.controller} connection={{ kind: 'native', controls, reconnect: () => void connect() }} suspended={busy} />
     : <ThemeScope className="desktop-shell"><Surface className="landing"><h1>Connect this Mac</h1>
-        {session?.access.kind === 'unreadable' && <p role="alert">The protected record is unreadable. Update AgentUI, or explicitly discard this local pairing. Local work is retained.</p>}
-        {controls}<button disabled={busy} onClick={() => void replace({ kind: 'restore' })}>Reconnect</button>
+        <p>Start the AgentUI host on this Mac, then reconnect.</p>
+        {controls}<button disabled={busy} onClick={() => void connect()}>Reconnect</button>
       </Surface></ThemeScope>;
 }

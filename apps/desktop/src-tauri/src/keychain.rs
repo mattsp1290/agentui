@@ -67,3 +67,80 @@ impl Keychain {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use core_foundation::base::TCFType;
+    use security_framework::os::macos::keychain::CreateOptions;
+    use std::time::Duration;
+    use uuid::Uuid;
+    #[link(name = "Security", kind = "framework")]
+    unsafe extern "C" {
+        fn SecKeychainDelete(keychain: *mut std::ffi::c_void) -> i32;
+    }
+
+    #[test]
+    fn all_keychain_operations_wait_for_the_process_interaction_lock() {
+        let directory =
+            std::env::temp_dir().join(format!("agentui-keychain-test-{}", Uuid::new_v4()));
+        std::fs::create_dir(&directory).unwrap();
+        let handle = CreateOptions::new()
+            .password(&Uuid::new_v4().to_string())
+            .create(directory.join("test.keychain"))
+            .unwrap();
+        let service = format!("agentui-test-{}", Uuid::new_v4());
+        let bytes = Some(b"value".to_vec());
+        Keychain {
+            handle: handle.clone(),
+            service: service.clone(),
+        }
+        .write(&None, &bytes)
+        .unwrap();
+        for operation in ["quiet", "restore", "write"] {
+            let store = Keychain {
+                handle: handle.clone(),
+                service: service.clone(),
+            };
+            let bytes = bytes.clone();
+            let lock = INTERACTION.lock().unwrap();
+            let interaction = SecKeychain::disable_user_interaction().unwrap();
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            let (started, starting) = std::sync::mpsc::channel();
+            let (finished, finishing) = std::sync::mpsc::channel();
+            let worker = std::thread::spawn(move || {
+                started.send(()).unwrap();
+                let result = match operation {
+                    "quiet" => store
+                        .read(ReadMode::Quiet)
+                        .map(|actual| assert_eq!(actual, bytes)),
+                    "restore" => store
+                        .read(ReadMode::UserInitiated)
+                        .map(|actual| assert_eq!(actual, bytes)),
+                    _ => store.write(&bytes, &bytes),
+                };
+                finished.send(result).unwrap();
+            });
+            starting.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(matches!(
+                finishing.recv_timeout(Duration::from_millis(100)),
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout)
+            ));
+            assert!(!SecKeychain::user_interaction_allowed().unwrap());
+            drop(interaction);
+            assert!(SecKeychain::user_interaction_allowed().unwrap());
+            drop(lock);
+            finishing
+                .recv_timeout(Duration::from_secs(5))
+                .unwrap()
+                .unwrap();
+            worker.join().unwrap();
+            let _lock = INTERACTION.lock().unwrap();
+            assert!(SecKeychain::user_interaction_allowed().unwrap());
+        }
+        unsafe {
+            assert_eq!(SecKeychainDelete(handle.as_CFTypeRef() as *mut _), 0);
+        }
+        let _ = std::fs::remove_dir_all(&directory);
+    }
+}

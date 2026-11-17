@@ -8,7 +8,6 @@ export { ServiceProtocolError } from './service-engine.js';
 export interface BrowserConnectionOptions {
   readonly requestTimeoutMs?: number;
   readonly fetch?: typeof globalThis.fetch;
-  readonly onUnauthorized?: () => void;
 }
 export function createBrowserConnection(options: BrowserConnectionOptions = {}): ServiceConnection {
   const fetch = options.fetch ?? globalThis.fetch.bind(globalThis);

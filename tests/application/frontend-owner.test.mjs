@@ -23,7 +23,6 @@ async function fixture(t, { drafts = storage(), reply, images } = {}) {
     const owner = createFrontendSends({
       generations: source,
       rowsChanged() { changes++; },
-      unauthorized() { void owner.session(null, connection); },
     });
     owners.push(owner);
     return owner;

@@ -47,7 +47,7 @@ async function fixture(t) {
   };
   const clients = {
     'browser-development': createBrowserConnection({ fetch: (path, init) => fetch(origin + path, { ...init, headers: headers('browser-development') }) }),
-    native: createMacConnection({ kind: 'ready', observation: 'fixture', hostId: access.hostId, principalId: 'trusted-owner' }, async command => {
+    native: createMacConnection({ observation: 'fixture', hostId: access.hostId, principalId: 'trusted-owner' }, async command => {
       assert.equal(command.kind, 'execute');
       assert.equal(command.observation, 'fixture');
       assert.deepEqual(Object.keys(command).sort(), ['kind', 'observation', 'request']);

@@ -34,9 +34,9 @@ test('background search leaves active state usable and rejects stale, foreign an
   await f.app.reconnect();
   replaced.resolve({ items: [], after: null });
   await assert.rejects(outdated, /Search connection changed/);
-  f.behavior.search = async () => { throw new ServiceError('unauthorized', 'Revoked'); };
-  await assert.rejects(f.app.search('garden', null, live), /Revoked/);
-  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
+  f.behavior.search = async () => { throw new ServiceError('unavailable', 'Host offline'); };
+  await assert.rejects(f.app.search('garden', null, live), /Host offline/);
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
   assert.equal(f.drafts.get('original-view/host/conversation').draft, 'Unsent during search');
 });
 
@@ -242,7 +242,7 @@ test('own corrupt view blocks commands; a new host clears the old active convers
   assert.equal(f.created.length, 0);
 });
 
-test('a disposed startup releases its late storage lease and ignores old connection callbacks', async t => {
+test('a disposed startup releases its late storage lease', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   const gate = deferred();
   f.behavior.acquire = () => gate.promise;
@@ -254,13 +254,7 @@ test('a disposed startup releases its late storage lease and ignores old connect
   await firstStart;
   assert.equal(f.leases[0].closed, false);
   assert.equal(f.leases[1].closed, true);
-  f.unauthorized[0]();
   assert.equal(applicationEnabled(f.app.getSnapshot()), true);
-  f.unauthorized[1]();
-  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-  await f.app.create();
-  assert.equal(f.created.length, 0);
-  assert.equal(f.submitted.length, 0);
 });
 
 test('failed reopening refuses view mutations and reconnect preserves creation recovery', async t => {
@@ -402,31 +396,6 @@ test('confirmed creation preserves expanded catalog pages and later paging does 
 });
 
 
-for (const operation of ['metadata', 'catalog', 'create']) {
-  test(`a revoked ${operation} request keeps the feed-expiry explanation`, async t => {
-    const f = fixture(); t.after(() => f.app.dispose());
-    f.views.set('original-view/host', { ...empty(), route: scope });
-    await f.app.start();
-    const active = f.app.getSnapshot().active;
-    f.unauthorized[0]();
-    const explanation = f.app.getSnapshot().error;
-    assert.match(explanation, /previous access may have been revoked/);
-    await f.app.reconnect();
-    assert.equal(applicationEnabled(f.app.getSnapshot()), true);
-    f.behavior[operation] = async () => {
-      f.unauthorized[0]();
-      throw new ServiceError('unauthorized', 'Pair this device with the host');
-    };
-    await (operation === 'create' ? f.app.create() : f.app.reconnect());
-    const snapshot = f.app.getSnapshot();
-    assert.equal(snapshot.host.kind, 'unpaired');
-    assert.equal(snapshot.error, explanation);
-    assert.equal(snapshot.busy, false);
-    assert.equal(applicationEnabled(snapshot), false);
-    assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
-  });
-}
-
 test('an initial metadata failure ends loading without enabling commands', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   f.behavior.metadata = async () => { throw new Error('Host cannot be reached'); };
@@ -491,22 +460,20 @@ for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted'
   });
 }
 
-for (const unauthorized of [false, true]) {
-  test(`SDK rejects ${unauthorized ? 'authorization' : 'transport'} failures while the UI submission stays caught`, async t => {
-    for (const sdk of [true, false]) {
-      const f = await openCommands(t);
-      const failure = unauthorized ? new ServiceError('unauthorized', 'Access denied') : new Error('Transport lost');
-      f.behavior.submit = async () => { throw failure; };
-      if (sdk) await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
-      else { await f.target.store.setDraft('prompt'); await f.actions.submit(() => f.target.store.send()); }
-      assert.match(f.app.getSnapshot().error, unauthorized ? /previous access may have been revoked/ : /Transport lost/);
-      assert.equal(f.app.getSnapshot().busy, false);
-      assert.equal(f.submitted.length, 1);
-      assert.equal(f.target.store.getSnapshot().outbox.length, 1);
-      if (unauthorized) assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-    }
-  });
-}
+test('SDK rejects transport failures while the UI submission stays caught', async t => {
+  for (const sdk of [true, false]) {
+    const f = await openCommands(t);
+    const failure = new Error('Transport lost');
+    f.behavior.submit = async () => { throw failure; };
+    if (sdk) await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
+    else { await f.target.store.setDraft('prompt'); await f.actions.submit(() => f.target.store.send()); }
+    assert.match(f.app.getSnapshot().error, /Transport lost/);
+    assert.equal(f.app.getSnapshot().busy, false);
+    assert.equal(f.submitted.length, 1);
+    assert.equal(f.target.store.getSnapshot().outbox.length, 1);
+    assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  }
+});
 
 test('SDK busy refusal does not persist another command or release the running operation', async t => {
   const f = await openCommands(t), entered = deferred(), reply = deferred();
@@ -555,33 +522,6 @@ for (const blocked of ['disconnected', 'feed-ended', 'storage', 'incompatible'])
     assert.equal(f.app.getSnapshot().busy, false);
   });
 }
-
-test('revoked SDK commands and caught UI submission preserve the access explanation without local changes', async t => {
-  const f = await openCommands(t);
-  await f.target.store.setDraft('Keep the unsent draft');
-  f.unauthorized[0]();
-  const revoked = f.app.getSnapshot();
-  assert.match(revoked.error, /previous access may have been revoked/);
-  assert.equal(revoked.host.kind, 'unpaired');
-  assert.equal(revoked.busy, false);
-  const records = structuredClone([...f.drafts]), updates = [];
-  const unsubscribe = f.app.subscribe(() => updates.push(f.app.getSnapshot()));
-  t.after(unsubscribe);
-  for (const invoke of [() => f.actions.commands.send('blocked'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
-    await assert.rejects(invoke(), /compatible paired host/);
-    assert.strictEqual(f.app.getSnapshot(), revoked);
-    assert.deepEqual([...f.drafts], records);
-    assert.deepEqual(f.target.store.getSnapshot().outbox, []);
-    assert.deepEqual(f.submitted, []);
-  }
-  await assert.doesNotReject(f.actions.submit(() => f.target.store.send()));
-  assert.strictEqual(f.app.getSnapshot(), revoked);
-  assert.deepEqual(updates, []);
-  assert.deepEqual([...f.drafts], records);
-  assert.equal(f.target.store.getSnapshot().draft, 'Keep the unsent draft');
-  assert.deepEqual(f.target.store.getSnapshot().outbox, []);
-  assert.deepEqual(f.submitted, []);
-});
 
 for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES.sonnet, PI_RUNTIME]) {
   for (const state of ['running', 'stopping', 'incomplete']) {
@@ -857,7 +797,7 @@ test('observation retry stays local, joins duplicate clicks, and ignores late se
   assert.equal(f.app.getSnapshot(), disposed);
 });
 
-test('observation transport failure is local unknown status, and revoked access follows the protected path', async t => {
+test('observation failures are local unknown status and keep the host connected', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const f = fixture(); t.after(() => f.app.dispose());
   f.views.set('original-view/host', { ...empty(), route: scope });
@@ -866,10 +806,11 @@ test('observation transport failure is local unknown status, and revoked access 
   assert.equal(f.app.getSnapshot().host.kind, 'ready');
   assert.deepEqual(f.app.getSnapshot().observation, { status: { kind: 'unknown' }, retrying: false });
   assert.equal(f.app.getSnapshot().error, ''); assert.equal(f.app.getSnapshot().active, active);
-  f.behavior.observation = async () => { throw new ServiceError('unauthorized', 'Revoked'); };
+  f.behavior.observation = async () => { throw new ServiceError('unavailable', 'Host offline'); };
   t.mock.timers.tick(2000); await new Promise(resolve => setImmediate(resolve));
-  assert.equal(f.app.getSnapshot().host.kind, 'unpaired');
-  assert.equal(active.store.getSnapshot().connection.kind, 'disconnected');
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.deepEqual(f.app.getSnapshot().observation, { status: { kind: 'unknown' }, retrying: false });
+  assert.equal(f.app.getSnapshot().error, '');
 });
 
 test('empty provider hosts reject create before saving and retain original pending creation recovery', async t => {

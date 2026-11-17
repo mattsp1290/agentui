@@ -11,24 +11,22 @@ const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 4, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const reply = value => Response.json({ ok: true, value });
-const unauthorized = () => Response.json({ ok: false, error: { kind: 'unauthorized', message: 'Expired' } }, { status: 401 });
 const until = async predicate => {
   for (let attempt = 0; attempt < 100; attempt++) { if (predicate()) return; await setImmediate(); }
   assert.fail('Expected asynchronous operation did not complete');
 };
 
-test('shared engine bounds an executor that ignores abort and ignores its late unauthorized reply', async () => {
+test('shared engine bounds an executor that ignores abort', async () => {
   const pending = Promise.withResolvers();
-  let signal, notifications = 0;
+  let signal;
   const connection = createServiceConnection(async (_body, context) => {
     signal = context.signal;
     return pending.promise;
-  }, transcriptProjection, { requestTimeoutMs: 10, onUnauthorized: () => notifications++ });
+  }, transcriptProjection, { requestTimeoutMs: 10 });
   await assert.rejects(connection.metadata(), error => error instanceof ServiceError && /timed out/.test(error.message));
   assert.equal(signal.aborted, true);
-  pending.resolve(unauthorized());
+  pending.resolve(reply(null));
   await setImmediate();
-  assert.equal(notifications, 0);
 });
 
 test('shared engine validates before execution and never retries a failed command', async () => {
@@ -137,15 +135,12 @@ for (const [name, mutate, kind] of [
 }
 
 for (const [name, response, kind] of [
-  ['malformed unauthorized', () => new Response('{', { status: 401, headers: { 'Content-Type': 'application/json' } }), 'unauthorized'],
   ['non-OK success', () => Response.json({ ok: true, value: null }, { status: 503 }), 'unavailable'],
   ['classified failure', () => Response.json({ ok: false, error: { kind: 'forbidden', message: 'Denied' } }, { status: 403 }), 'forbidden'],
 ]) {
   test(`shared engine classifies ${name}`, async () => {
-    let notifications = 0;
-    const connection = createServiceConnection(response, transcriptProjection, { onUnauthorized: () => notifications++ });
+    const connection = createServiceConnection(response, transcriptProjection);
     await assert.rejects(connection.reconcile(scope, 'command'), error => error instanceof ServiceError && error.kind === kind);
-    assert.equal(notifications, kind === 'unauthorized' ? 1 : 0);
   });
 }
 

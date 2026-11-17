@@ -51,7 +51,6 @@ export type FrontendSends = ReturnType<typeof createFrontendSends>;
 export function createFrontendSends(deps: {
   readonly generations: Pick<GenerationSource, 'snapshot'>;
   rowsChanged(): void;
-  unauthorized(): void;
 }) {
   let closed = false;
   let authority: Authority = { session: null, lifetime: new AbortController() };
@@ -122,8 +121,8 @@ export function createFrontendSends(deps: {
       if (valid() && matches(reference) && reference.state === 'unavailable-pending') {
         remember(viewId, reference); syncRows();
       }
-    } catch (error) {
-      if (valid() && error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized') deps.unauthorized();
+    } catch {
+      return;
     }
   }
   async function read(entry: Entry): Promise<void> {
@@ -146,8 +145,8 @@ export function createFrontendSends(deps: {
         if (response.kind === 'unavailable') { await unavailable(entry); return; }
       }
       syncRows();
-    } catch (error) {
-      if (error && typeof error === 'object' && 'kind' in error && error.kind === 'unauthorized' && valid()) deps.unauthorized();
+    } catch {
+      return;
     } finally { entry.pending = false; }
   }
   async function poll(): Promise<void> { await Promise.all([...entries.values()].map(read)); schedule(); }

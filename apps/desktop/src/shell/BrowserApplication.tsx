@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactElement, type ReactNode } from 'react';
+import { useState, type ReactElement, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
 import { HostStatusLabel } from './HostStatusLabel.js';
 import { applicationEnabled } from '../application/application-controller.js';
@@ -25,14 +25,6 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
 }) {
   const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
-  const connectionHeading = useRef<HTMLHeadingElement>(null);
-  const [focusConnection, setFocusConnection] = useState(false);
-  useEffect(() => {
-    if (!focusConnection || selectedView !== 'settings' || suspended) return;
-    connectionHeading.current?.focus();
-    setFocusConnection(false);
-  }, [focusConnection, selectedView, suspended]);
-  const nativeRecovery = connection.kind === 'native' && app.host.kind === 'unpaired';
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const custom = useDesktopCustomizations({ customizations: customization, sink: controller.frontendGenerations, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
@@ -82,10 +74,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </section>}
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
     {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
-    {nativeRecovery ? <div className="application-alert" role="alert">
-      <p>This Mac no longer has access to the host. Access may have expired or been revoked. Open connection settings to pair this Mac again. Your chats, drafts, and unresolved commands stay saved. No command is replayed on reconnect.</p>
-      <button type="button" disabled={suspended} onClick={() => { setSelectedView('settings'); setFocusConnection(true); }}>Open connection settings</button>
-    </div> : app.error && <p className="application-alert" role="alert">{app.error}</p>}
+    {app.error && <p className="application-alert" role="alert">{app.error}</p>}
     {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
       {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
     </div>}
@@ -123,7 +112,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>;
   const settings = <section className="settings-panel" aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>
-      <section className="settings-section"><h2 ref={connectionHeading} tabIndex={-1}>Connection</h2>
+      <section className="settings-section"><h2>Connection</h2>
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>
         <p>{presentation.settings}</p>
         {connection.kind === 'native' && connection.controls}

@@ -40,7 +40,6 @@ export async function readServiceResponseBody(response: Response, limit = SERVIC
 }
 export interface ServiceConnectionOptions {
   readonly requestTimeoutMs?: number;
-  readonly onUnauthorized?: () => void;
 }
 export type ServiceExecutor = (body: string, context: {
   readonly op: ServiceRequest['op'];
@@ -70,27 +69,17 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     });
     const perform = async (): Promise<ServiceValueMap[K]> => {
       const response = await execute(body, { op: value.op, signal: controller.signal });
+      const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
       let result: ServiceResponse<ServiceValueMap[K]>;
-      try {
-        const raw = await readServiceResponseBody(response, imageOperation ? IMAGE_TRANSFER_MAX_BYTES : SERVICE_MAX_RESPONSE_BYTES);
-        try { result = parseServiceResponse<K>(value, raw); }
-        catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
-      } catch (error) {
-        if (response.status === 401) throw new ServiceError('unauthorized', 'Pair this device with the host');
-        throw error;
-      }
-      if (response.status === 401) throw new ServiceError('unauthorized', result.ok ? 'Pair this device with the host' : result.error.message);
+      try { result = parseServiceResponse<K>(value, raw); }
+      catch (error) { throw new ServiceProtocolError(error instanceof Error ? error.message : 'Invalid service response'); }
       if (!result.ok && result.error.kind === 'create-rejected' && response.status !== 409) throw new ServiceProtocolError('Invalid creation refusal status');
       if (!result.ok) throw new ServiceError(result.error.kind, result.error.message);
       if (!response.ok) throw new ServiceError('unavailable', `Service returned HTTP ${response.status}`);
       return result.value;
     };
     try { return await Promise.race([perform(), interrupted]); }
-    catch (error) {
-      if (error instanceof ServiceError && error.kind === 'unauthorized' &&
-        !controller.signal.aborted) options.onUnauthorized?.();
-      throw error;
-    } finally {
+    finally {
       clearTimeout(timer);
       signal?.removeEventListener('abort', abort);
     }
