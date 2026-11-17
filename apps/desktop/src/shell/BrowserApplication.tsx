@@ -109,13 +109,11 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
-  const views = <>
-    <div className="chat-view" hidden={selectedView !== 'chats'} inert={suspended}>{conversation}
+  const views = <div className="chat-view" inert={suspended}>{conversation}
       {custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
         active={app.active} actions={app.active ? controller.conversationActions(app.active) : null} enabled={enabled} agent={agent} />)}
-    </div>
-  </>;
-  const settings = <section className="settings-panel" hidden={selectedView !== 'settings'} aria-label="Settings" id="connection-settings">
+    </div>;
+  const settings = <section className="settings-panel" aria-label="Settings" id="connection-settings">
       <h1>Settings</h1>
       <section className="settings-section"><h2 ref={connectionHeading} tabIndex={-1}>Connection</h2>
         <div className="application-status"><strong>{presentation.hostLabel}</strong><HostStatusLabel host={app.host} /></div>

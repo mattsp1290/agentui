@@ -68,6 +68,7 @@ export function DesktopShell({ children, defaultView, settingsView, protectedCon
   const [view, setView] = useState<{ readonly kind: 'initial' } | { readonly kind: 'default'; readonly revision: number }>({ kind: 'initial' });
   const boundaryKey = restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision;
   const revision = view.kind === 'initial' ? 0 : view.revision;
+  const showSettings = settingsView !== undefined && activeView === 'settings';
   return <ThemeScope className="desktop-shell" data-workspace-view={activeView}>
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
@@ -79,12 +80,12 @@ export function DesktopShell({ children, defaultView, settingsView, protectedCon
     {navigation}
     {protectedContent}
     <main id="main-content">
-      <div className="shell-view" hidden={settingsView !== undefined && activeView === 'settings'}>
+      <div className="shell-view" hidden={showSettings}>
         <ContentBoundary key={boundaryKey} revision={revision}>
           {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
         </ContentBoundary>
       </div>
-      {settingsView !== undefined && <div className="shell-view" hidden={activeView !== 'settings'}>
+      {settingsView !== undefined && <div className="shell-view" hidden={!showSettings}>
         <ContentBoundary key={`settings-${boundaryKey}`} revision={revision}>{settingsView}</ContentBoundary>
       </div>}
     </main>
