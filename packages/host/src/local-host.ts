@@ -249,7 +249,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   /** Resolves true when the host refused the new attempt before recording it. */
   const startSuccessor = async (scope: ConversationScope, predecessor: StoredCreation, providers: ProviderCreationOperations): Promise<boolean> => {
     await checkSuccessors(scope, providers);
-    // An uncertain attempt does not block a deliberate new one: Crew's seal lets only one handoff of the source succeed.
+    // An uncertain attempt does not block a deliberate new one; the provider accepts at most one successor per predecessor.
     if (store.successors(scope).some(creation => !creation.observation || creation.observation.kind === 'confirmed' ||
       creation.observation.kind === 'pending' || creating.has(canonicalJson(creation.intent.scope)))) return false;
     const next = { hostId: scope.hostId, conversationId: randomUUID() };
