@@ -10,7 +10,7 @@ import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
 import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
-import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
+import type { CommandAvailability, ConversationCommand, ConversationCommands, ConversationModuleProps, ConversationOutputReader } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
 import { createFrontendSends, createGenerationSource } from './frontend-sends.js';
@@ -30,6 +30,7 @@ export interface OpenConversation {
   readonly viewId: string;
   readonly scope: ConversationScope;
   readonly store: ConversationStore<Transcript>;
+  readonly outputs: ConversationOutputReader;
 }
 export interface ConversationObservation {
   readonly status: ProviderObservationStatus | { readonly kind: 'unknown' };
@@ -55,6 +56,7 @@ export interface ApplicationSnapshot {
   readonly capturedSends: readonly CapturedSend[];
 }
 export interface ConversationActions {
+  readonly outputs: ConversationOutputReader;
   readonly commands: ConversationCommands;
   readonly permissions: ConversationModuleProps['permissions'];
   submit(operation: () => Promise<SubmitResult>): Promise<void>;
@@ -99,8 +101,7 @@ function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
     : { ...agent, availability: { kind: 'unavailable', reason: 'This agent runtime is unsupported by this app.' } };
 }
 const IMAGE_TRANSFER_ATTEMPTS = 3;
-// The host admits one image transfer per access and refuses overlaps as unavailable, so transfers run one at a time.
-function imageTransfers(connection: ServiceConnection): ImageTransfers {
+function serializedImageTransfers(connection: ServiceConnection): ImageTransfers {
   let tail: Promise<unknown> = Promise.resolve();
   const reads = new Map<string, Promise<Uint8Array>>();
   function queued<T>(operation: () => Promise<T>): Promise<T> {
@@ -279,18 +280,17 @@ export function createApplicationController(deps: {
       const kind = state.observation?.status.kind;
       if (current() && !retrying && kind !== 'not-applicable' && kind !== 'concluded') timer = setTimeout(() => { void read('read'); }, 2_000);
     }
-    function observed(status: ConversationObservation['status']): void {
+    function publishPreservingConclusion(status: ConversationObservation['status']): void {
       if (status.kind === 'concluded') concludedScopes.set(key, status);
-      // The host never clears a closure, so a later failed read or a stopped status during an extension change is transient.
       publish({ observation: { status: concludedScopes.get(key) ?? status, retrying } });
     }
     function read(action: 'read' | 'retry'): Promise<void> {
       const task = (async () => {
         try {
           const status = await owner.connection.providerObservation({ scope: target.scope, action });
-          if (current()) observed(status);
+          if (current()) publishPreservingConclusion(status);
         } catch {
-          if (current()) observed({ kind: 'unknown' });
+          if (current()) publishPreservingConclusion({ kind: 'unknown' });
         }
       })();
       pending = task;
@@ -326,7 +326,7 @@ export function createApplicationController(deps: {
       const store = borrow.store;
       const previous = owner.activeOwner;
       if (previous?.target.store === store) {
-        const active: OpenConversation = { ...previous.target, agent };
+        const active = outputTarget(owner, { ...previous.target, agent });
         setActive(owner, { borrow: previous.borrow, target: active });
         publish({});
         local(owner);
@@ -336,7 +336,7 @@ export function createApplicationController(deps: {
       }
       disconnectActive();
       local(owner);
-      const active: OpenConversation = { scope, agent, viewId: storage.viewId, store };
+      const active = outputTarget(owner, { scope, agent, viewId: storage.viewId, store });
       setActive(owner, { borrow, target: active });
       publish({ permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
       local(owner);
@@ -468,6 +468,21 @@ export function createApplicationController(deps: {
     publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
     await install(owner, scope);
   }
+  function outputTarget(owner: Session, fields: Omit<OpenConversation, 'outputs'>): OpenConversation {
+    const target: OpenConversation = { ...fields, outputs: {
+      async list() {
+        requireTarget(owner, target);
+        try { return await owner.connection.conversationOutputs(target.scope); }
+        finally { requireTarget(owner, target); }
+      },
+      async read(outputId) {
+        requireTarget(owner, target);
+        try { return await owner.connection.readOutput(target.scope, outputId); }
+        finally { requireTarget(owner, target); }
+      },
+    } };
+    return target;
+  }
   function requireTarget(owner: Session, target: OpenConversation): void {
     requireHost(owner);
     if (state.active !== target) throw new Error('Open the command’s conversation before continuing.');
@@ -487,7 +502,7 @@ export function createApplicationController(deps: {
       const closing = disposal;
       const connection = deps.createConnection({ onConnectionLost: cause => lose(next, cause) });
       const next: Session = {
-        activeOwner: null, view: null, images: imageTransfers(connection),
+        activeOwner: null, view: null, images: serializedImageTransfers(connection),
         pool: createViewLeasePool({
           createStore: (storage, scope, agentId, capture) => createConversationStore({ scope,
             port: next.connection.conversation(scope), projection: transcriptProjection,
@@ -616,16 +631,38 @@ export function createApplicationController(deps: {
     }),
     conversationActions(target) {
       const owner = session;
-      const invoke = (kind: 'send' | 'approve' | 'cancel', operation: () => Promise<SubmitResult>) => submitCommand(owner, target, () => {
+      function command<Args extends unknown[]>(guard: (...args: Args) => void, operation: (...args: Args) => Promise<SubmitResult>): ConversationCommand<Args> {
+        function requireAvailable(...args: Args): void {
+          if (!owner || session !== owner) throw new Error('This application has closed.');
+          if (state.busy) throw new Error('Another operation is in progress.');
+          requireTarget(owner, target);
+          if (target.agent.availability.kind !== 'ready') throw new Error(target.agent.availability.reason);
+          guard(...args);
+        }
+        return {
+          availability(...args): CommandAvailability {
+            try { requireAvailable(...args); return { kind: 'available' }; }
+            catch (error) { return { kind: 'disabled', reason: message(error) }; }
+          },
+          async run(...args) {
+            requireAvailable(...args);
+            return submitCommand(owner, target, () => operation(...args));
+          },
+        };
+      }
+      function requireCommand(kind: 'send' | 'approve' | 'cancel'): void {
         const view = target.store.getSnapshot();
         if (view.connection.kind !== 'connected') throw new Error('Connect the conversation before continuing.');
         if (!target.agent.commands.includes(kind)) throw new Error('This agent does not support that command.');
-        if (kind === 'send' && conversationResponding(agentPresentation('runtime' in target.agent ? target.agent.runtime : target.agent).agent, view.document.domain)) {
-          throw new Error('Wait for the current response before sending.');
+        if (kind === 'send') {
+          if (concludedScopes.has(JSON.stringify([target.scope.hostId, target.scope.conversationId]))) throw new Error(refusalMessage('conversation-closed'));
+          if (conversationResponding(agentPresentation('runtime' in target.agent ? target.agent.runtime : target.agent).agent, view.document.domain)) {
+            throw new Error('Wait for the current response before sending.');
+          }
         }
-        return operation();
-      });
+      }
       return {
+        outputs: target.outputs,
         async readImage(imageId) {
           if (!owner || session !== owner) throw new Error('This application has closed.');
           requireTarget(owner, target);
@@ -639,22 +676,18 @@ export function createApplicationController(deps: {
           return readPermissions(owner, target);
         } },
         commands: {
-          revokePermission: (permissionId, scope) => {
-            if (!owner) return Promise.reject(new Error('Connect the conversation before continuing.'));
-            try { requireTarget(owner, target); } catch (cause) { return Promise.reject(cause); }
+          revokePermission: command((permissionId, scope) => {
             const current = state.permissionState;
-            if (state.active !== target || current.kind !== 'fresh' ||
-              !current.listing.permissions.some(row => row.permissionId === permissionId && row.scope === scope)) {
-              return Promise.reject(new Error('Refresh permissions before revoking this permission.'));
+            if (current.kind !== 'fresh' || !current.listing.permissions.some(row => row.permissionId === permissionId && row.scope === scope)) {
+              throw new Error('Refresh permissions before revoking this permission.');
             }
-            return submitCommand(owner, target, () => target.store.revokePermission(permissionId, scope));
-          },
-          send: text => invoke('send', () => {
+          }, (permissionId, scope) => target.store.revokePermission(permissionId, scope)),
+          send: command<[text: string]>(() => requireCommand('send'), text => {
             if (typeof text !== 'string') throw new Error('An explicit message is required.');
             return target.store.send(text);
           }),
-          approve: (pendingId, choiceId) => invoke('approve', () => target.store.approve(pendingId, choiceId)),
-          cancel: runId => invoke('cancel', () => target.store.cancel(runId)),
+          approve: command<[pendingId: string, choiceId: string]>(() => requireCommand('approve'), (pendingId, choiceId) => target.store.approve(pendingId, choiceId)),
+          cancel: command<[runId: string]>(() => requireCommand('cancel'), runId => target.store.cancel(runId)),
         },
         async submit(operation) {
           try { await submitCommand(owner, target, operation); } catch {}

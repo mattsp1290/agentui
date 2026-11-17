@@ -124,7 +124,7 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     void operation().catch((error: unknown) => setImageError({ store, message: error instanceof Error ? error.message : 'The image could not be changed.' }));
   }
   const conversationKey = `${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`;
-  const context = { conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions };
+  const context = { conversation: active.scope, activity: view.document, outputs: actions.outputs, commands: actions.commands, permissions: actions.permissions };
   const nativeMessages = <>
       {view.document.domain.messages.length === 0 && <p className="empty-state">{agent === 'recorded' ? 'Send a message to begin this recorded demonstration.' : 'Send a message to begin.'}</p>}
       {view.document.domain.messages.map(message => <article className={`message message-${message.role}`} key={message.messageId}>

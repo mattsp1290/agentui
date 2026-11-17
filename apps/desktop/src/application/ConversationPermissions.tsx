@@ -20,7 +20,7 @@ export function ConversationPermissions({ state, actions, enabled, retained }: {
   async function revoke(permission: ConversationPermission) {
     setConfirming(null);
     setError('');
-    try { await actions.commands.revokePermission(permission.permissionId, permission.scope); }
+    try { await actions.commands.revokePermission.run(permission.permissionId, permission.scope); }
     catch (cause) { setError(cause instanceof Error ? cause.message : 'Revocation failed. Refresh permissions.'); }
   }
   function refresh() {

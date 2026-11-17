@@ -92,8 +92,8 @@ test('layout activation, initial and retained suspension preserve protected DOM 
       async setDraft(draft) { view = { ...view, draft }; publish(); },
       async cancel(runId) { window.calls.push(runId); view = { ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'original-stop', body: { kind: 'cancel', runId } }, draftRevision: null }] }; publish(); },
       async approve(pendingId, choiceId) { window.calls.push([pendingId, choiceId]); }, async retry(id) { window.calls.push(id); } };
-    const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {} };
-    const active = { viewId: 'one', scope, store, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
+    const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {}, outputs: { async list() { return { kind: 'available', outputs: [] }; }, async read() { return { kind: 'missing', reason: 'output-missing' }; } } };
+    const active = { viewId: 'one', scope, store, outputs: actions.outputs, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
     window.transcriptInstances = []; window.moduleInstances = []; let identity = 0;
     function Tracked({ kind }) { const [id] = React.useState(() => ++identity); React.useEffect(() => { window[kind + 'Instances'].push(id); }, []); return <p>{kind + ' content'}</p>; }
     let suspended = true, gate; const resetGate = () => { gate = new Promise(resolve => { window.resume = () => { suspended = false; resolve(); }; }); }; resetGate();
@@ -104,11 +104,11 @@ test('layout activation, initial and retained suspension preserve protected DOM 
       return broken ? <Broken /> : <div data-layout={version}><button onClick={() => fail(true)}>Fail live layout</button>{transcript}{modules}</div>;
     }
     function Broken() { throw new Error('Live failure'); }
-    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.10.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
-      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { window.activations++; return new Promise(resolve => { window.activateLayout = () => resolve({ contentLayout: Layout, modules: [{ id: 'tracked', label: 'Tracked', component() { return <Tracked kind="module" />; } }], overrides: { transcript() { return <Tracked kind="transcript" />; } }, dispose() { window.disposals++; } }); }); } } }) }];
+    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.11.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
+      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { window.activations++; return new Promise(resolve => { window.activateLayout = () => resolve({ contentLayout: Layout, modules: [{ id: 'tracked', label: 'Tracked', component() { return <Tracked kind="module" />; } }], overrides: { transcript() { return <Tracked kind="transcript" />; } }, dispose() { window.disposals++; } }); }); } } }) }];
     function App() { const [enabled, setEnabled] = React.useState(true); window.disable = () => flushSync(() => setEnabled(false)); window.enable = () => flushSync(() => setEnabled(true));
       const custom = useDesktopCustomizations({ customizations, enabled });
-      return <DesktopShell protectedContent={<aside className="application-controls">Protected navigation</aside>} defaultView={<div className="chat-view"><ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} contentLayout={custom.contentLayout} modules={custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner} active={active} actions={actions} enabled agent="codex" />)} /></div>} restoreMode="managed" onRestore={() => setEnabled(false)} />; }
+      return <DesktopShell protectedContent={<aside className="application-controls">Protected navigation</aside>} defaultView={<div className="chat-view"><ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} contentLayout={custom.contentLayout} modules={custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner} active={active} actions={actions} />)} /></div>} restoreMode="managed" onRestore={() => setEnabled(false)} />; }
     createRoot(document.getElementById('root')).render(<App />);`, resolveDir: root, loader: 'jsx' }, bundle: true, write: false, outfile: 'fixture.js', jsx: 'automatic', define: { 'process.env.NODE_ENV': '"production"' } });
   const browser = await chromium.launch(); t.after(() => browser.close()); const page = await browser.newPage();
   await page.route('http://localhost/fixture', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div>' }));
@@ -167,7 +167,7 @@ test('layout activation, initial and retained suspension preserve protected DOM 
   await page.screenshot({ path: join(root, '.audit/conversation-layout/implementation/short-controls.png'), fullPage: false });
 });
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { ${body} } } })`;
 const arranged = `function Layout({ transcript, modules }) { return <section aria-label="Selected layout"><main>{transcript}</main><aside>{modules}</aside></section>; }`;
 async function open(t) {
   const host = await fixture(t), page = await host.page();
@@ -255,8 +255,8 @@ test('layout navigation preserves scope fencing while nested action is pending',
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   await customRuntime(page, host, entry(`${arranged} window.contexts = []; return { contentLayout: Layout, modules: [{ id: 'context', label: 'Context', component() { return null; },
-    actions: [{ id: 'run', label: 'Context action', run(context) { window.contexts.push(context);
-      if (window.sendNow) return context.commands.send('New conversation action');
+    actions: [{ id: 'run', label: 'Context action', availability: () => ({ kind: 'available' }), run(context) { window.contexts.push(context);
+      if (window.sendNow) return context.commands.send.run('New conversation action');
       return new Promise(resolve => { window.finishOld = resolve; }); } }] }], dispose() {} };`));
   const first = await page.locator('.scope-label').textContent();
   await page.getByRole('button', { name: 'Context action', exact: true }).click();
@@ -268,7 +268,7 @@ test('layout navigation preserves scope fencing while nested action is pending',
   await draft(page, 'New conversation draft');
   await page.evaluate(() => window.finishOld({ kind: 'rejected', reason: 'OLD CONVERSATION RESULT' }));
   const refused = await page.evaluate(async () => {
-    try { await window.contexts[0].commands.send('Old captured action'); return ''; } catch (error) { return error.message; }
+    try { await window.contexts[0].commands.send.run('Old captured action'); return ''; } catch (error) { return error.message; }
   });
   assert.match(refused, /Open the command’s conversation/);
   assert.equal(await status(page, 'Context action').textContent(), '');
@@ -287,8 +287,8 @@ test('StrictMode delayed same-array reactivation never remounts an obsolete layo
     import { CustomizationContent } from './apps/desktop/src/application/CustomizationContent.tsx';
     import { useDesktopCustomizations } from './apps/desktop/src/application/DesktopCustomizations.tsx';
     window.activations = 0; window.loads = 0; window.disposals = []; window.mounts = []; window.finish = {};
-    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.10.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
-      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.10.0', activate() {
+    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.11.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
+      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.11.0', activate() {
         const id = ++window.activations; let disposed = false;
         function Layout() { React.useLayoutEffect(() => { window.mounts.push({ id, disposed }); }, []); return <p>Owner {id}</p>; }
         return new Promise(resolve => { window.finish[id] = malformed => resolve({ modules: [],

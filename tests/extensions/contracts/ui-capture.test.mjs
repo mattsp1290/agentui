@@ -13,9 +13,17 @@ function onceFields(fields) {
   }])));
 }
 
+test('action availability captures each returned field on its first observation', () => {
+  const value = onceFields({ kind: 'disabled', reason: 'Not ready.' });
+  const captured = parseConversationModules([{ ...module, actions: [{
+    id: 'review', label: 'Review', availability: () => value, run: async () => rejected,
+  }] }]);
+  assert.deepEqual(captured[0].actions[0].availability({}), { kind: 'disabled', reason: 'Not ready.' });
+});
+
 test('capture validates the first observation and copies every nested presentation record and array', async () => {
   let disposals = 0;
-  const action = onceFields({ id: 'send', label: 'Send', run: async () => rejected });
+  const action = onceFields({ id: 'send', label: 'Send', availability: () => ({ kind: 'available' }), run: async () => rejected });
   const child = onceFields({ ...module, actions: [action], children: undefined });
   const root = onceFields({ ...module, actions: undefined, children: [child] });
   const overrides = onceFields({ transcript: View });
@@ -35,7 +43,7 @@ test('capture validates the first observation and copies every nested presentati
 });
 
 test('mutating author objects cannot replace captured modules, children, actions, functions or transcript', async () => {
-  const action = { id: 'send', label: 'Send', async run() { return rejected; } };
+  const action = { id: 'send', label: 'Send', availability: () => ({ kind: 'available' }), async run() { return rejected; } };
   const children = [{ ...module, actions: [action] }], modules = [{ ...module, children }];
   const source = { modules, overrides: { transcript: View }, dispose() {} };
   const captured = parseUiExtensionContributions(source);
@@ -52,6 +60,7 @@ test('mutating author objects cannot replace captured modules, children, actions
 
 test('capture preserves private-field action and disposal receivers and caches completion before invoking cleanup', async () => {
   class Action {
+    availability() { return { kind: 'available' }; }
     #result = rejected;
     id = 'send'; label = 'Send';
     async run() { return this.#result; }
@@ -82,7 +91,7 @@ test('each failure retains exactly the cleanup authority acquired before it', as
     { modules: [], overrides: { get transcript() { throw failure; } } },
     { modules: [{ ...module, get actions() { throw failure; } }] },
     { modules: [{ ...module, children: [{ ...module, get label() { throw failure; } }] }] },
-    { modules: [{ ...module, actions: [{ id: 'send', label: 'Send', get run() { throw failure; } }] }] },
+    { modules: [{ ...module, actions: [{ id: 'send', label: 'Send', availability: () => ({ kind: 'available' }), get run() { throw failure; } }] }] },
   ]) {
     let disposals = 0;
     const source = Object.defineProperties({ dispose() { disposals++; } }, Object.getOwnPropertyDescriptors(fields));

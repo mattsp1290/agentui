@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { ${body} } } })`;
 const outcome = kind => ({ kind: 'receipt', receipt: { scope: { hostId: 'test', conversationId: 'test' }, clientCommandId: 'test', hostOperationId: 'test', sequence: 1,
   state: ['rejected', 'not-dispatched', 'uncertain'].includes(kind) ? { kind, reason: 'Exact receipt reason' } : { kind } } });
 const status = (page, label) => page.getByRole('status', { name: `${label} status`, exact: true });
@@ -14,7 +14,7 @@ test('nested action identity includes each parent and namespace, with one pendin
   const module = label => `({ id: 'same', label: '${label}', component(context) {
     window.contexts['${label}'] = context;
     return <p>{'${label} ' + context.conversation.conversationId}</p>;
-  }, actions: [{ id: 'same', label: 'Run ${label}', run(context) {
+  }, actions: [{ id: 'same', label: 'Run ${label}', availability: () => ({ kind: 'available' }), run(context) {
     const previous = window.contexts['${label}'];
     if (context.conversation !== previous.conversation || context.activity !== previous.activity || context.commands !== previous.commands) throw new Error('Props diverged');
     window.calls['${label}'] = (window.calls['${label}'] || 0) + 1;
@@ -49,7 +49,7 @@ test('module actions report admission, receipt and thrown outcomes without autom
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   await customRuntime(page, host, entry(`window.calls = 0; return { modules: [{ id: 'outcomes', label: 'Outcomes', component() { return null; },
-    actions: [{ id: 'run', label: 'Try action', async run() { window.calls++; if (window.throwAction) throw new Error('Exact thrown reason'); return window.result; } }] }], dispose() {} };`));
+    actions: [{ id: 'run', label: 'Try action', availability: () => ({ kind: 'available' }), async run() { window.calls++; if (window.throwAction) throw new Error('Exact thrown reason'); return window.result; } }] }], dispose() {} };`));
   await draft(page, 'Outcome draft');
   const variants = [
     [{ kind: 'rejected', reason: 'Exact admission reason' }, 'Submission rejected. Exact admission reason'],
@@ -79,8 +79,8 @@ test('navigation captures new action context and ignores old completion while ol
   await page.getByRole('button', { name: 'New recorded conversation' }).click();
   await connected(page);
   await customRuntime(page, host, entry(`window.contexts = []; return { modules: [{ id: 'context', label: 'Context', component() { return null; },
-    actions: [{ id: 'run', label: 'Context action', run(context) { window.contexts.push(context);
-      if (window.sendNow) return context.commands.send('New conversation action');
+    actions: [{ id: 'run', label: 'Context action', availability: () => ({ kind: 'available' }), run(context) { window.contexts.push(context);
+      if (window.sendNow) return context.commands.send.run('New conversation action');
       return new Promise(resolve => { window.finishOld = resolve; }); } }] }], dispose() {} };`));
   const first = await page.locator('.scope-label').textContent();
   await page.getByRole('button', { name: 'Context action', exact: true }).click();
@@ -92,7 +92,7 @@ test('navigation captures new action context and ignores old completion while ol
   await draft(page, 'New conversation draft');
   await page.evaluate(() => window.finishOld({ kind: 'rejected', reason: 'OLD CONVERSATION RESULT' }));
   const refused = await page.evaluate(async () => {
-    try { await window.contexts[0].commands.send('Old captured action'); return ''; } catch (error) { return error.message; }
+    try { await window.contexts[0].commands.send.run('Old captured action'); return ''; } catch (error) { return error.message; }
   });
   assert.match(refused, /Open the command’s conversation/);
   assert.equal(await status(page, 'Context action').textContent(), '');
@@ -117,12 +117,12 @@ test('unavailable and disconnected conversations disable module actions and guar
       await route.fulfill({ response, json: body });
     });
     await customRuntime(page, host, entry(`window.calls = 0; return { modules: [{ id: 'gated', label: 'Gated', component({ commands }) { window.captured = commands; return null; },
-      actions: [{ id: 'run', label: 'Gated action', run({ commands }) { window.calls++; return commands.send('Gated command'); } }] }], dispose() {} };`));
+      actions: [{ id: 'run', label: 'Gated action', availability: ({ commands }) => commands.send.availability('Gated command'), run({ commands }) { window.calls++; return commands.send.run('Gated command'); } }] }], dispose() {} };`));
     if (!unavailable) await host.stop();
     await wait(async () => !await page.getByRole('button', { name: 'Gated action', exact: true }).isEnabled(), 'gated custom action');
     await page.getByRole('button', { name: 'Gated action', exact: true }).evaluate(button => button.click());
     assert.equal(await page.evaluate(() => window.calls), 0);
-    const reason = await page.evaluate(async () => { try { await window.captured.send('Bypass attempt'); return ''; } catch (error) { return error.message; } });
+    const reason = await page.evaluate(async () => { try { await window.captured.send.run('Bypass attempt'); return ''; } catch (error) { return error.message; } });
     assert.match(reason, unavailable ? /Fixture unavailable/ : /Connect the conversation/);
     assert.deepEqual(await host.entries(), []);
   }

@@ -91,4 +91,15 @@ The template returns `contentLayout: ReviewLayout`. Its `ConversationContentLayo
 The transcript includes any selected transcript override. Render each node once with ordinary React and CSS.
 This desktop arrangement keeps permissions, approvals, the composer, Stop, and recovery under their existing host owners.
 Omit `contentLayout` to use the transcript-then-modules stack. A suspended layout temporarily shows native activity while custom transcript and module views, actions, and namespace diagnostics wait.
-SDK compatibility is `0.10.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.
+SDK compatibility is `0.11.0` and requires an exact match in both the manifest and loaded entry. Rebuild older extensions.
+
+
+### Read outputs beside command controls
+
+Modules and transcript or activity overrides receive a stable, scope-bound `outputs` reader.
+Call `outputs.list()` and pass a listed `outputId` to `outputs.read(outputId)`. Keep available bytes unchanged for exact content.
+Handle domain outcomes separately from rejected transport or ownership operations. Reads remain usable while send is disabled.
+Use `commands.send.availability(text)` to explain eligibility and `commands.send.run(text)` to submit. Other commands have the same handle shape with their existing arguments.
+Every declarative action must provide synchronous `availability(context)` plus `run(context)`.
+Tag query feedback by reader, request and effect lifetime so a replaced conversation or retired module cannot publish old results.
+See [retained output ownership](../../docs/architecture/extension-sdk.md#read-retained-outputs) for result types and lifecycle rules.

@@ -15,14 +15,14 @@ function onceFields(fields, reads) {
 
 test('UI generation captures producer fields once and returns only nested presentation', async () => {
   const reads = {}, nested = {}, actionReads = {}; let disposals = 0;
-  const action = onceFields({ id: 'send', label: 'Send', run: async () => ({ kind: 'rejected', reason: 'disabled' }) }, actionReads);
+  const action = onceFields({ id: 'send', label: 'Send', availability: () => ({ kind: 'available' }), run: async () => ({ kind: 'rejected', reason: 'disabled' }) }, actionReads);
   const child = onceFields({ id: 'child', label: 'Child', component: () => null, actions: [action], children: undefined }, nested);
   const modules = [{ id: 'parent', label: 'Parent', component: () => null, children: [child] }];
   const source = onceFields({ modules, overrides: undefined, contentLayout: () => null, dispose() { assert.equal(this, source); disposals++; } }, reads);
   const active = await createUiExtensionGeneration({ ...options, activate({ frontendTools }) { frontendTools.add(tool); return source; } });
   assert.deepEqual(reads, { dispose: 1, modules: 1, overrides: 1, contentLayout: 1 });
   assert.deepEqual(nested, { id: 1, label: 1, component: 1, actions: 1, children: 1 });
-  assert.deepEqual(actionReads, { id: 1, label: 1, run: 1 });
+  assert.deepEqual(actionReads, { id: 1, label: 1, run: 1, availability: 1 });
   assert.deepEqual(Object.keys(active.presentation).sort(), ['activity', 'contentLayout', 'modules', 'transcript']);
   modules.length = 0;
   assert.equal(active.presentation.modules[0].children[0].label, 'Child');

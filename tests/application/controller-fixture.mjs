@@ -43,6 +43,8 @@ export function fixture() {
     async catalog(after) { const supplied = await behavior.catalog(after); cursors.push(after); return (supplied ?? (after === null ? Array.from({ length: 100 }, (_, n) => ({ hostId, conversationId: `c-${n}` })) : [])).map(scope => ({ scope, preview: null })); },
     async create(value, agentId) { created.push(value); selected.push(agentId); captured.set(value.conversationId, descriptor(agentId)); await behavior.create(); return value; },
     async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
+    conversationOutputs: input => behavior.outputs(input),
+    readOutput: (...args) => behavior.readOutput(...args),
     conversationPermissions: input => behavior.permissions(input),
     providerObservation: input => behavior.observation(input),
     search: (...args) => behavior.search(...args),

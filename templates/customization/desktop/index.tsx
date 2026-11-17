@@ -31,7 +31,7 @@ export default {
     return {
       contentLayout: ReviewLayout,
       modules: [{ id: 'plan-review', label: 'Plan review', component: ReviewPlan,
-        actions: [{ id: 'review', label: 'Review the plan', run: ({ commands }: ConversationModuleProps) => commands.send(reviewPrompt) }],
+        actions: [{ id: 'review', label: 'Review the plan', availability: ({ commands }: ConversationModuleProps) => commands.send.availability(reviewPrompt), run: ({ commands }: ConversationModuleProps) => commands.send.run(reviewPrompt) }],
         children: [{ id: 'guidance', label: 'Review guidance', component: ReviewGuidance }] }],
       dispose() {},
     };

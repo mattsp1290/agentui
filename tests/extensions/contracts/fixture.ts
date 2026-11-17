@@ -22,7 +22,7 @@ export function createNotesFixture(onDispose: () => void): UiExtensionEntry<'des
       return {
         modules: [{
           id: 'notes', label: 'Notes', component: Notes,
-          actions: [{ id: 'summarize', label: 'Summarize', run: ({ commands }) => commands.send('Summarize this conversation.') }],
+          actions: [{ id: 'summarize', label: 'Summarize', availability: ({ commands }) => commands.send.availability('Summarize this conversation.'), run: ({ commands }) => commands.send.run('Summarize this conversation.') }],
           children: [{ id: 'history', label: 'History', component: History }],
         }],
         dispose: onDispose,
@@ -54,7 +54,8 @@ export class ServerEntry implements ServerExtensionEntry {
 export class Summarize implements ModuleAction {
   readonly id = 'summarize';
   get label() { return 'Summarize'; }
-  run({ commands }: ConversationModuleProps) { return commands.send('Summarize'); }
+  availability({ commands }: ConversationModuleProps) { return commands.send.availability('Summarize'); }
+  run({ commands }: ConversationModuleProps) { return commands.send.run('Summarize'); }
 }
 export class NotesModule implements ConversationModule {
   readonly id = 'notes';
@@ -74,7 +75,8 @@ export const callableContribution = Object.assign(() => {}, {
   modules: [Object.assign(() => {}, {
     id: 'notes', label: 'Notes', component: Notes,
     actions: [Object.assign(() => {}, { id: 'summarize', label: 'Summarize',
-      run: ({ commands }: ConversationModuleProps) => commands.send('Summarize') })],
+      availability: ({ commands }: ConversationModuleProps) => commands.send.availability('Summarize'),
+      run: ({ commands }: ConversationModuleProps) => commands.send.run('Summarize') })],
   })],
   dispose() {},
 }) satisfies UiExtensionContributions;

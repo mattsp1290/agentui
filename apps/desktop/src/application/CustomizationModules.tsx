@@ -5,7 +5,6 @@ import type { SubmitResult } from '@agentui/contracts';
 import { Button } from '@agentui/ui-primitives/desktop';
 import { refusalMessage } from './application-controller.js';
 import type { ConversationActions, OpenConversation } from './application-controller.js';
-import { conversationResponding } from './responding.js';
 import { CustomizationBoundary, customizationMessage as message, type NamespaceActivation } from './DesktopCustomizations.js';
 
 function actionOutcome(result: SubmitResult): string {
@@ -23,30 +22,38 @@ function actionOutcome(result: SubmitResult): string {
 }
 
 function ConversationModuleAction({ action, context }: { readonly action: ModuleAction; readonly context: ConversationModuleProps }) {
-  const owner = useRef({ mounted: true, pending: false });
-  const [state, setState] = useState<{ readonly kind: 'idle' | 'pending' } | { readonly kind: 'settled'; readonly message: string }>({ kind: 'idle' });
+  const lifetime = useRef({ alive: false });
+  type Request = { readonly owner: ConversationModuleProps['outputs']; readonly lifetime: { alive: boolean }; pending: boolean };
+  const latest = useRef<Request | null>(null);
+  const [feedback, setFeedback] = useState<{ readonly request: Request; readonly pending: boolean; readonly message: string } | null>(null);
   useEffect(() => {
-    const current = owner.current;
-    current.mounted = true;
-    return () => { current.mounted = false; };
+    const current = { alive: true };
+    lifetime.current = current;
+    return () => { current.alive = false; };
   }, []);
+  const state = feedback?.request.owner === context.outputs && feedback.request.lifetime === lifetime.current ? feedback : null;
+  const pending = state?.pending ?? false;
+  const availability = action.availability(context);
   async function run() {
-    const current = owner.current;
-    if (current.pending) return;
-    current.pending = true;
-    setState({ kind: 'pending' });
-    try {
-      const result = await action.run(context);
-      if (current.mounted) setState({ kind: 'settled', message: actionOutcome(result) });
-    } catch (error) {
-      if (current.mounted) setState({ kind: 'settled', message: `Action failed. ${message(error)} Check conversation recovery before trying again.` });
-    } finally {
-      current.pending = false;
+    const previous = latest.current;
+    if (previous?.owner === context.outputs && previous.lifetime === lifetime.current && previous.pending) return;
+    const request = { owner: context.outputs, lifetime: lifetime.current, pending: true };
+    latest.current = request;
+    function settle(message: string) {
+      if (request.lifetime.alive && latest.current === request) setFeedback({ request, pending: false, message });
     }
+    try {
+      if (action.availability(context).kind !== 'available') return;
+      setFeedback({ request, pending: true, message: '' });
+      settle(actionOutcome(await action.run(context)));
+    }
+    catch (error) { settle(`Action failed. ${message(error)} Check conversation recovery before trying again.`); }
+    finally { request.pending = false; }
   }
   return <div>
-    <Button disabled={state.kind === 'pending'} aria-busy={state.kind === 'pending'} onClick={() => void run()}>{action.label}</Button>
-    <p role="status" aria-label={`${action.label} status`}>{state.kind === 'pending' ? 'Submitting…' : state.kind === 'settled' ? state.message : ''}</p>
+    <Button disabled={pending || availability.kind === 'disabled'} aria-busy={pending} onClick={() => void run()}>{action.label}</Button>
+    {availability.kind === 'disabled' && <p>{availability.reason}</p>}
+    <p role="status" aria-label={`${action.label} status`}>{pending ? 'Submitting…' : state?.message ?? ''}</p>
   </div>;
 }
 
@@ -59,23 +66,19 @@ function ConversationModuleView({ module, context }: { readonly module: Conversa
   </section>;
 }
 
-function ConversationModules({ modules, active, actions, enabled, agent }: {
+function ConversationModules({ modules, active, actions }: {
   readonly modules: readonly ConversationModule[]; readonly active: OpenConversation; readonly actions: ConversationActions;
-  readonly enabled: boolean; readonly agent: string;
 }) {
   const view = useConversation(active.store);
-  const context: ConversationModuleProps = { conversation: active.scope, activity: view.document, commands: actions.commands, permissions: actions.permissions };
-  const available = enabled && active.agent.availability.kind === 'ready' && active.agent.commands.includes('send') && view.connection.kind === 'connected' && !conversationResponding(agent, view.document.domain);
-  return <fieldset disabled={!available} className="customization-modules">
-    <legend>Custom tools</legend>
-    {!available && <p>Available when this conversation is connected and ready.</p>}
+  const context: ConversationModuleProps = { conversation: active.scope, activity: view.document, outputs: actions.outputs, commands: actions.commands, permissions: actions.permissions };
+  return <section className="customization-modules" aria-label="Custom tools">
     {modules.map(module => <ConversationModuleView key={module.id} module={module} context={context} />)}
-  </fieldset>;
+  </section>;
 }
 
-export function CustomizationModules({ owner, active, actions, enabled, agent }: {
+export function CustomizationModules({ owner, active, actions }: {
   readonly owner: NamespaceActivation; readonly active: OpenConversation | null;
-  readonly actions: ConversationActions | null; readonly enabled: boolean; readonly agent: string;
+  readonly actions: ConversationActions | null;
 }) {
   return <aside className="customization-panel" aria-label={`Customization ${owner.namespace}`}
     data-customization-namespace={owner.namespace} data-customization-state={owner.kind}>
@@ -83,7 +86,7 @@ export function CustomizationModules({ owner, active, actions, enabled, agent }:
     {owner.kind === 'failed' && <p role="alert">Custom tools could not load. {owner.message} Use Restore default view to continue without them.</p>}
     {owner.kind === 'ready' && active && actions && <Suspense fallback={<p role="status">Loading custom tools…</p>}>
       <CustomizationBoundary key={`${owner.lifetime}/${active.viewId}/${active.scope.hostId}/${active.scope.conversationId}`} fail={owner.fail} fallback={null}>
-        <ConversationModules modules={owner.presentation.modules} active={active} actions={actions} enabled={enabled} agent={agent} />
+        <ConversationModules modules={owner.presentation.modules} active={active} actions={actions} />
       </CustomizationBoundary>
     </Suspense>}
   </aside>;

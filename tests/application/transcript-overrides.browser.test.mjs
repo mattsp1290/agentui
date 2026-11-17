@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { repository, buildCustom } from '../customization/build/support.mjs';
 import { root, fixture, connected, draft, revealRecovery, customRuntime, wait } from './browser-support.mjs';
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { ${body} } } })`;
 const override = `function Transcript(context) {
   const [broken, setBroken] = React.useState(false);
   window.contexts ??= []; if (!window.contexts.some(previous => previous.conversation.conversationId === context.conversation.conversationId)) window.contexts.push(context);
@@ -26,7 +26,7 @@ async function open(t) {
   return { host, page };
 }
 const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, ${entry(`return { modules: [{ id: 'healthy', label: 'Healthy', component() { return <p>Healthy namespace</p>; },
-  actions: [{ id: 'send', label: 'Send sibling', run: ({ commands }) => commands.send('Sibling command') }] }], dispose() { window.siblingDisposals = (window.siblingDisposals || 0) + 1; } };`)} }`;
+  actions: [{ id: 'send', label: 'Send sibling', availability: ({ commands }) => commands.send.availability('Sibling command'), run: ({ commands }) => commands.send.run('Sibling command') }] }], dispose() { window.siblingDisposals = (window.siblingDisposals || 0) + 1; } };`)} }`;
 
 test('committed artifact replaces transcript, updates activity and retains independent additive actions and composer', { timeout: 90_000 }, async t => {
   const custom = repository(), child = repository();
@@ -154,7 +154,7 @@ test('override receives each conversation and refuses retained commands after na
   await wait(async () => await page.locator('.scope-label').textContent() !== first, 'new override conversation'); await connected(page);
   const second = await page.locator('.scope-label').textContent();
   await page.getByRole('region', { name: 'Fixture transcript' }).getByText(`${second} messages 0`, { exact: true }).waitFor();
-  const reason = await page.evaluate(async () => { try { await window.contexts[0].commands.send('Old scope'); return ''; } catch (error) { return error.message; } });
+  const reason = await page.evaluate(async () => { try { await window.contexts[0].commands.send.run('Old scope'); return ''; } catch (error) { return error.message; } });
   assert.match(reason, /Open the command’s conversation/); assert.equal(await page.evaluate(() => window.activations), 1);
   await draft(page, 'Next conversation'); await page.getByRole('button', { name: 'Send', exact: true }).click();
   await page.getByRole('region', { name: 'Fixture transcript' }).getByText(new RegExp(`${second} messages [1-9]`)).waitFor();
@@ -212,12 +212,12 @@ test('overridden live conversation retains approval, Stop and uncertain recovery
       async setDraft(draft) { view = { ...view, draft }; publish(); },
       async cancel(runId) { window.calls.push(runId); view = { ...view, outbox: [{ command: { version: 1, scope, clientCommandId: 'original-stop', body: { kind: 'cancel', runId } }, draftRevision: null }] }; publish(); },
       async approve(pendingId, choiceId) { window.calls.push([pendingId, choiceId]); }, async retry(id) { window.calls.push(id); } };
-    const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {} };
-    const active = { viewId: 'one', scope, store, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
+    const actions = { async submit(operation) { await operation(); }, async reconcile() {}, commands: {}, outputs: { async list() { return { kind: 'available', outputs: [] }; }, async read() { return { kind: 'missing', reason: 'output-missing' }; } } };
+    const active = { viewId: 'one', scope, store, outputs: actions.outputs, agent: { imageInput: { kind: 'unsupported', reason: 'This model cannot read images.' }, commands: ['send', 'approve', 'cancel'], availability: { kind: 'ready' } } };
     function Broken() { throw new Error('Live failure'); }
     function Transcript() { const [broken, setBroken] = React.useState(false); return broken ? <Broken /> : <button onClick={() => setBroken(true)}>Fail live transcript</button>; }
-    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.10.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
-      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.10.0', activate() { window.activations++; return { modules: [], overrides: { transcript: Transcript }, dispose() { window.disposals++; } }; } } }) }];
+    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.11.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
+      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { window.activations++; return { modules: [], overrides: { transcript: Transcript }, dispose() { window.disposals++; } }; } } }) }];
     function App() { const [enabled, setEnabled] = React.useState(true); window.disable = () => flushSync(() => setEnabled(false)); window.enable = () => flushSync(() => setEnabled(true));
       const custom = useDesktopCustomizations({ customizations, enabled });
       return <ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} />; }
@@ -249,7 +249,8 @@ test('nested module and action capture survives author mutation through real she
   const { host, page } = await open(t);
   await customRuntime(page, host, entry(`class Action {
     #text = 'Captured nested command'; id = 'send'; label = 'Send captured';
-    run({ commands }) { return commands.send(this.#text); }
+    availability({ commands }) { return commands.send.availability(this.#text); }
+    run({ commands }) { return commands.send.run(this.#text); }
   }
   class Contribution {
     #disposed = false;
@@ -292,8 +293,8 @@ test('StrictMode delayed same-array reactivation never remounts an obsolete tran
   const bundle = await build({ stdin: { contents: `import React from 'react'; import { createRoot } from 'react-dom/client'; import { flushSync } from 'react-dom';
     import { CustomizationTranscript, useDesktopCustomizations } from './apps/desktop/src/application/DesktopCustomizations.tsx';
     window.activations = 0; window.loads = 0; window.disposals = []; window.mounts = []; window.finish = {};
-    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.10.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
-      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.10.0', activate() {
+    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.11.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
+      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.11.0', activate() {
         const id = ++window.activations; let disposed = false;
         function Transcript() { React.useLayoutEffect(() => { window.mounts.push({ id, disposed }); }, []); return <p>Owner {id}</p>; }
         return new Promise(resolve => { window.finish[id] = malformed => resolve({ modules: [],

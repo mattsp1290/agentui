@@ -21,7 +21,7 @@ export const contentLayout = ({ transcript, modules }: ConversationContentLayout
 export const arranged: UiExtensionContributions = { modules: [], contentLayout, dispose() {} };
 export type ExactLayoutProps = Exclude<keyof ConversationContentLayoutProps, 'transcript' | 'modules'>;
 export const exactLayoutProps: ExactLayoutProps extends never ? true : false = true;
-export const action: ModuleAction = { id: 'cancel', label: 'Stop', run: ({ commands }) => commands.cancel('run') };
+export const action: ModuleAction = { id: 'cancel', label: 'Stop', availability: ({ commands }) => commands.cancel.availability('run'), run: ({ commands }) => commands.cancel.run('run') };
 `,
   cases: [
     ['', null],

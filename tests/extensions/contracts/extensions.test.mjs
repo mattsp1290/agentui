@@ -13,7 +13,7 @@ const module = { id: 'notes', label: 'Notes', component: () => null };
 
 test('provider-free nested module activates, renders changing activity and preserves scoped command results', async () => {
   let disposals = 0;
-  assert.equal(EXTENSION_SDK_VERSION, '0.10.0');
+  assert.equal(EXTENSION_SDK_VERSION, '0.11.0');
   const fixture = createNotesFixture(() => { disposals++; });
   const metadata = parseExtensionManifest(manifest);
   assert.deepEqual(checkExtensionEntrypoint(metadata, 'desktop', fixture), { kind: 'compatible' });
@@ -24,8 +24,8 @@ test('provider-free nested module activates, renders changing activity and prese
   const result = { kind: 'receipt', receipt: { scope: conversation, clientCommandId: 'existing-client-command',
     hostOperationId: 'existing-host-operation', sequence: 1, state: { kind: 'uncertain', reason: 'lost acknowledgement' } } };
   const props = { conversation, activity: { domain: { messages: [], currentRun: null }, decisions: {}, receipts: {} },
-    commands: { async send(text) { calls.push({ conversation, text }); return result; },
-      async approve() { throw new Error('Unexpected approval'); }, async cancel() { throw new Error('Unexpected cancel'); } } };
+    outputs: { async list() { return { kind: 'available', outputs: [] }; }, async read() { return { kind: 'missing' }; } },
+    commands: { send: { availability: () => ({ kind: 'available' }), async run(text) { calls.push({ conversation, text }); return result; } } } };
   const notes = active.modules[0];
   const render = (component, props) => renderToStaticMarkup(createElement(ThemeScope, null, createElement(component, props)));
   assert.match(render(notes.component, props), /conversation-A: 0 messages/u);
@@ -36,7 +36,7 @@ test('provider-free nested module activates, renders changing activity and prese
   assert.equal(await notes.actions[0].run(props), result);
   assert.deepEqual(calls, [{ conversation, text: 'Summarize this conversation.' }]);
   const rejection = { kind: 'rejected', reason: 'conversation-capacity' };
-  assert.equal(await notes.actions[0].run({ ...props, commands: { ...props.commands, async send() { return rejection; } } }), rejection);
+  assert.equal(await notes.actions[0].run({ ...props, commands: { ...props.commands, send: { availability: () => ({ kind: 'available' }), async run() { return rejection; } } } }), rejection);
   await active.dispose();
   assert.equal(disposals, 1);
 });
@@ -72,6 +72,8 @@ test('compatibility rejects undeclared targets and invalid exports before activa
   const valid = { ...entry, activate() { activations++; } };
   for (const [metadata, target, loaded, code] of [
     [{ ...manifest, sdkVersion: 'future' }, 'desktop', valid, 'sdk-version'],
+    [{ ...manifest, sdkVersion: '0.10.0' }, 'desktop', valid, 'sdk-version'],
+    [manifest, 'desktop', { ...valid, sdkVersion: '0.10.0' }, 'sdk-version'],
     [{ ...manifest, sdkVersion: '0.9.0' }, 'desktop', valid, 'sdk-version'],
     [manifest, 'desktop', { ...valid, sdkVersion: '0.9.0' }, 'sdk-version'],
     [{ ...manifest, sdkVersion: '0.8.0' }, 'desktop', valid, 'sdk-version'],
@@ -99,7 +101,7 @@ test('compatibility rejects undeclared targets and invalid exports before activa
 test('contribution boundary rejects malformed trees and cycles but allows IDs under different parents', () => {
   const cyclic = { ...module, children: [] };
   cyclic.children.push(cyclic);
-  const action = { id: 'send', label: 'Send', async run() { return { kind: 'rejected', reason: 'disabled' }; } };
+  const action = { id: 'send', label: 'Send', availability: () => ({ kind: 'available' }), async run() { return { kind: 'rejected', reason: 'disabled' }; } };
   for (const value of [null, {}, [null], [{ ...module, id: '' }], [{ ...module, label: ' ' }], [module, module],
     [{ ...module, component: {} }], [{ ...module, children: {} }], [{ ...module, actions: {} }],
     [{ ...module, actions: [action, action] }], [{ ...module, actions: [{ ...action, run: false }] }],
@@ -135,7 +137,7 @@ test('in-process contracts accept class instances, getters and callable objects'
     assert.equal(active.modules[0].label, 'Notes');
     assert.equal(active.modules[0].actions[0].label, 'Summarize');
     assert.equal(await active.modules[0].actions[0].run({ commands: {
-      async send(text) { sent.push(text); return result; },
+      send: { availability: () => ({ kind: 'available' }), async run(text) { sent.push(text); return result; } },
     } }), result);
     await active.dispose();
   }

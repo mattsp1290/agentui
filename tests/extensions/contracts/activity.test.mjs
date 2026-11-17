@@ -51,7 +51,7 @@ test('activity authors get readonly updates and the existing module context', ()
   prefix: `
 import { createElement, memo } from 'react';
 import type { ConversationActivityProps, ConversationModuleProps, UiExtensionContributions } from '@agentui/sdk/react';
-export const activity = ({ updates, activity, commands }: ConversationActivityProps) => createElement('button', { onClick: () => commands.cancel('run') }, updates, activity.domain.activities?.length ?? 0);
+export const activity = ({ updates, activity, commands }: ConversationActivityProps) => createElement('button', { onClick: () => commands.cancel.run('run') }, updates, activity.domain.activities?.length ?? 0);
 export const contribution: UiExtensionContributions = { modules: [], overrides: { activity: memo(activity) }, dispose() {} };
 export const ignoresUpdates: UiExtensionContributions = { modules: [], overrides: { activity: (_props: ConversationModuleProps) => null }, dispose() {} };
 `,

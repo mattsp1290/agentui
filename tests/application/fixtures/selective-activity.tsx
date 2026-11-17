@@ -27,8 +27,8 @@ function Activity(props: ConversationActivityProps) {
     <p>Committed selective activity</p>
     <p>Updates {props.updates}</p>
     <pre>{JSON.stringify(props.activity.domain)}</pre>
-    <button onClick={() => Object.assign(window, { activityCapturedSend: () => props.commands.send('Captured activity command') })}>Capture activity command</button>
-    <button onClick={() => void props.commands.send('Current activity command').then(result => Object.assign(window, { activityCommandResult: result }))}>Send activity command</button>
+    <button onClick={() => Object.assign(window, { activityCapturedSend: () => props.commands.send.run('Captured activity command') })}>Capture activity command</button>
+    <button onClick={() => void props.commands.send.run('Current activity command').then(result => Object.assign(window, { activityCommandResult: result }))}>Send activity command</button>
   </section>;
 }
 function Layout({ transcript, modules }: ConversationContentLayoutProps) {

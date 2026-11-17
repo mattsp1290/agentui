@@ -89,9 +89,9 @@ test('provider observation wire 5 requires matching artifacts and rejects wire 4
 });
 
 
-test('conversation closure release requires wire 12 and SDK 0.10.0', () => {
+test('conversation closure release requires wire 12 and SDK 0.11.0', () => {
   assert.equal(SERVICE_WIRE_VERSION, 12);
-  assert.equal(EXTENSION_SDK_VERSION, '0.10.0');
+  assert.equal(EXTENSION_SDK_VERSION, '0.11.0');
   const current = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
   for (const [changes, dimension] of [[{ supportedWireVersions: [11] }, 'wire'], [{ supportedExtensionSdkVersions: ['0.9.0'] }, 'extension-sdk']]) {
     const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, ...changes }, current);

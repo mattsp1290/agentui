@@ -30,11 +30,11 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.10.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.11.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.10.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.11.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
 SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
 SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It reads a provider-confirmed end of the conversation from saved state without I/O and returns `{ cause }` or `null`. Hosts report such a conversation as `concluded`, start no observation for it and refuse its sends. Existing presentations may omit the hook. The new observation status requires wire 12; backend contract 1, core DB 7 and transcript 4 are unchanged.
@@ -242,7 +242,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.10.0",
+			"sdkVersion": "0.11.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -322,7 +322,6 @@ function MyTranscript({ conversation, activity }: ConversationModuleProps) {
     {activity.domain.messages.map(message => <p key={message.messageId}>{message.text}</p>)}
   </section>;
 }
-// Returned from the existing activate function.
 return { modules: [], overrides: { transcript: MyTranscript }, dispose() {} };
 ```
 
@@ -343,13 +342,45 @@ A failed namespace releases its claim and disposes once; other namespaces remain
 Restore default view removes all presentation contributions while preserving the composer and draft.
 This slot does not provide a layout language, split conversations, or live artifact refresh.
 
-The host calls `action.run(context)` directly.
-The supplied commands already use the existing client command and outbox path; wrapping an action in another submission owner would contend with that path.
-`commands.send(text)` submits explicit text without replacing the composer draft.
-Controls are disabled when the conversation is unavailable, disconnected, busy, or responding.
-Captured commands still validate the active conversation and availability at invocation; a saved callback cannot bypass those checks.
-The client owns command IDs, persisted intent, and retries of captured commands.
-The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
+SDK 0.11.0 replaces callable commands with handles. Use `commands.send.run(text)` and `commands.send.availability(text)`.
+Approve, cancel and revokePermission have the same two methods with their existing arguments. Every `ModuleAction` requires `availability(context)` and `run(context)`.
+Availability is synchronous and returns `{ kind: 'available' }` or `{ kind: 'disabled', reason: string }` with a nonblank reason.
+The host captures both callbacks with their original receiver and validates each availability result. Malformed or asynchronous results are errors.
+The renderer shows the disabled reason, prevents overlapping invocations and checks live availability before calling `action.run(context)`.
+Inline authored mutation controls must query their handle for presentation and call its `run` method for invocation.
+
+Availability describes current invocation eligibility, not text validity, decision validity or host admission. It is not a reservation.
+Every command checks logical conversation ownership, host and storage readiness, application busy state and agent availability again at invocation.
+An already disabled SDK invocation rejects before acquiring busy state or refreshing permissions. Admitted commands retain the existing submission and receipt lifecycle.
+Send additionally requires a connected transcript, send support, no response in progress and no known conclusion.
+Approve and cancel require a connected transcript and their own command support, without send, responding or conclusion restrictions.
+Revoke requires the exact permission ID and scope in a fresh permission listing, without transcript or command-list requirements.
+`send.run(text)` submits explicit text without replacing the composer draft and returns the original `SubmitResult`.
+The client owns command IDs, persisted intent and retries. Native submission, reconciliation and retained-command retries keep their existing rules.
+The SDK never retries arbitrary extension action callbacks.
+
+### Read retained outputs
+
+Every conversation module, transcript override and activity override receives required `outputs: ConversationOutputReader`.
+`outputs.list()` returns canonical `OutputListing`. `outputs.read(outputId)` accepts the branded `OutputId` from a listing and returns canonical `OutputRead`.
+Available reads contain owned, verified bytes. Preserve those bytes for exact content, including a BOM, Unicode and control bytes.
+Unsupported, unavailable and invalid are domain outcomes; reads can also report missing. Transport, protocol and stale-owner failures reject.
+The reader adds no cache, polling, parsing, hashing or storage owner. Each call uses the existing service operation.
+
+The reader object and its methods remain stable for one logical open conversation. Draft, theme and receipt updates do not create readers.
+Navigation, session replacement and target replacement create a new owner, even when the store is reused.
+Both methods check captured ownership before dispatch and after resolution or rejection. A stale owner, unavailable host or failed storage overrides the old settlement.
+Reads require no send support, idle run, available agent, connected transcript or idle application. Query controls remain usable beside disabled mutation controls.
+Native connection suspension still owns its inert presentation.
+
+Authored query UI must tag pending, result and error state with `outputs`, a fresh request identity and an effect-lifetime identity.
+Filter that state during rendering so replaced readers cannot display old feedback before an effect runs.
+An effect cleanup invalidates only that effect's lifetime. A later setup, including StrictMode replay, must create a new lifetime.
+Accept a settlement only for the latest request in its still-live lifetime. Repeated reads of the same output need distinct request identities.
+Use `[outputs]` for an intentional automatic read and perform no automatic retries.
+The host applies these presentation rules to declarative action feedback. Namespace retirement removes presentation but does not revoke saved full-trust readers.
+Suspension preserves component instances and their reader and result state. Conversation ownership still governs saved reader calls.
+
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.
 
 ## Arrange conversation content

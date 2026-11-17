@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import type { ConversationDocument, ConversationPermissions, ConversationScope, PermissionScope, SubmitResult } from '@agentui/contracts';
+import type { OutputId, OutputListing, OutputRead } from '@agentui/contracts/output';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
 import type { UiExtensionContext } from './tool-contracts.js';
@@ -7,15 +8,25 @@ export type { FrontendToolContribution, FrontendToolContributions, UiExtensionCo
 import { behaviour } from './extensions.js';
 import type { EXTENSION_SDK_VERSION, ExtensionLifetime, FrontendPlatform } from './extensions.js';
 
+export type CommandAvailability = { readonly kind: 'available' } | { readonly kind: 'disabled'; readonly reason: string };
+export interface ConversationCommand<Args extends unknown[]> {
+  availability(...args: Args): CommandAvailability;
+  run(...args: Args): Promise<SubmitResult>;
+}
 export interface ConversationCommands {
-  send(text: string): Promise<SubmitResult>;
-  approve(pendingId: string, choiceId: string): Promise<SubmitResult>;
-  revokePermission(permissionId: string, scope: PermissionScope): Promise<SubmitResult>;
-  cancel(runId: string): Promise<SubmitResult>;
+  readonly send: ConversationCommand<[text: string]>;
+  readonly approve: ConversationCommand<[pendingId: string, choiceId: string]>;
+  readonly revokePermission: ConversationCommand<[permissionId: string, scope: PermissionScope]>;
+  readonly cancel: ConversationCommand<[runId: string]>;
+}
+export interface ConversationOutputReader {
+  list(): Promise<OutputListing>;
+  read(outputId: OutputId): Promise<OutputRead>;
 }
 export interface ConversationModuleProps {
   readonly conversation: ConversationScope;
   readonly activity: ConversationDocument<Transcript>;
+  readonly outputs: ConversationOutputReader;
   readonly commands: ConversationCommands;
   readonly permissions: { read(): Promise<ConversationPermissions> };
 }
@@ -25,6 +36,7 @@ export interface ConversationActivityProps extends ConversationModuleProps {
 export interface ModuleAction {
   readonly id: string;
   readonly label: string;
+  availability(context: ConversationModuleProps): CommandAvailability;
   run(context: ConversationModuleProps): Promise<SubmitResult>;
 }
 export interface ConversationModule {
@@ -104,9 +116,22 @@ export function parseConversationModules(value: unknown): readonly ConversationM
       validateComponent<ConversationModuleProps>(component);
       const actionIds = new Set<string>();
       const capturedActions = actions === undefined ? undefined : captureArray(actions, 'Expected action array', value => {
-        const action = behaviour(value), named = name(action, actionIds), run = action.run;
-        if (typeof run !== 'function') throw new Error('Expected action function');
-        return { ...named, run: (context: ConversationModuleProps) => run.call(action, context) };
+        const action = behaviour(value), named = name(action, actionIds), run = action.run, availability = action.availability;
+        if (typeof run !== 'function' || typeof availability !== 'function') throw new Error('Expected action functions');
+        return { ...named, run: (context: ConversationModuleProps) => run.call(action, context),
+          availability(context: ConversationModuleProps): CommandAvailability {
+            const value: unknown = availability.call(action, context);
+            if (value instanceof Promise) void value.catch(() => {});
+            if (typeof value === 'object' && value !== null && 'kind' in value && !('then' in value)) {
+              const kind = value.kind;
+              if (kind === 'available') return { kind: 'available' };
+              if (kind === 'disabled' && 'reason' in value) {
+                const reason = value.reason;
+                if (typeof reason === 'string' && reason.trim()) return { kind: 'disabled', reason };
+              }
+            }
+            throw new Error('Expected synchronous command availability');
+          } };
       });
       ancestors.add(moduleValue);
       const capturedChildren = children === undefined ? undefined : modules(children);

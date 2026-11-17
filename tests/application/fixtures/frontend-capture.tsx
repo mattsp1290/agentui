@@ -11,7 +11,7 @@ export default {
     frontendTools.add({ definition: { name: 'echo', description: `Original activation ${activation}`, parameters: { type: 'object' } },
       decodeInput: value => value, async execute() { fixture.executions++; return String(activation); } });
     return { modules: [{ id: 'capture', label: 'Capture fixture', component() { return <p>Capture activation {activation}</p>; },
-      actions: [{ id: 'send', label: 'Send captured extension message', run: ({ commands }) => commands.send('Extension capture') }] }],
+      actions: [{ id: 'send', label: 'Send captured extension message', availability: ({ commands }) => commands.send.availability('Extension capture'), run: ({ commands }) => commands.send.run('Extension capture') }] }],
     dispose() { fixture.disposed.push(activation); } };
   },
 } satisfies UiExtensionEntry<'desktop'>;

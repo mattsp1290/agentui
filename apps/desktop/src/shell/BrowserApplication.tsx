@@ -49,7 +49,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const { agent, presentation } = agentPresentation(runtime);
   const activeActions = app.active ? controller.conversationActions(app.active) : null;
   const modules = custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
-    active={app.active} actions={activeActions} enabled={enabled} agent={agent} />);
+    active={app.active} actions={activeActions} />);
   const conversation = app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}

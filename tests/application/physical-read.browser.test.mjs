@@ -141,7 +141,7 @@ for (const scenario of ['obsolete-read-abort', 'obsolete-parse', 'current-read-a
         retryError = imageRead ? document.querySelector('[role=alert]')?.textContent ?? null : null;
         const state = app.getSnapshot();
         let saveB;
-        try { await app.conversationActions(active).commands.send('B after failure'); saveB = 'sent'; }
+        try { await app.conversationActions(active).commands.send.run('B after failure'); saveB = 'sent'; }
         catch (error) { saveB = error.message; }
         const after = { viewId: state.active?.viewId, activeSame: state.active === active, host: state.host.kind, error: state.error,
           storageFailure: state.storageFailure, connection: active?.store.getSnapshot().connection.kind,

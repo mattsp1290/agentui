@@ -116,7 +116,7 @@ test('disposal closes admission and feeds immediately, and restart waits for the
   assert.equal(old.store.getSnapshot().connection.kind, 'disconnected');
   assert.equal(f.feedCloses(), 1);
   void closing.then(() => { settled = true; });
-  await assert.rejects(actions.commands.send('Closed session'), /application has closed/);
+  await assert.rejects(actions.commands.send.run('Closed session'), /application has closed/);
   await assert.rejects(f.app.search('closed', null, new AbortController().signal), /application has closed/);
   const restart = f.app.start();
   await Promise.resolve();
@@ -453,7 +453,7 @@ for (const outcome of ['admission-rejected', 'rejected', 'uncertain', 'accepted'
         : resultFor(command, ['rejected', 'uncertain', 'not-dispatched'].includes(outcome) ? { kind: outcome, reason: 'Host reason' } : { kind: outcome });
       return expected;
     };
-    assert.deepEqual(await f.actions.commands.send('review prompt'), expected);
+    assert.deepEqual(await f.actions.commands.send.run('review prompt'), expected);
     assert.deepEqual(f.submitted[0].body, { kind: 'send', text: 'review prompt' });
     assert.equal(f.target.store.getSnapshot().draft, 'review prompt');
     assert.equal(f.app.getSnapshot().error, outcome === 'admission-rejected' ? 'Admission refused' : outcome === 'rejected' ? 'Host reason' : '');
@@ -465,7 +465,7 @@ test('a lost native connection during a command disables the app until an explic
   const f = await openCommands(t);
   const failure = new ServiceConnectionLost('A different AgentUI host is answering on this Mac. Reconnect to switch to it.');
   f.behavior.submit = async () => { f.connectionLost(failure); throw failure; };
-  await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
+  await assert.rejects(f.actions.commands.send.run('prompt'), error => error === failure);
   const snapshot = f.app.getSnapshot();
   assert.equal(snapshot.host.kind, 'unavailable');
   assert.match(snapshot.error, /different AgentUI host/);
@@ -495,7 +495,7 @@ test('SDK rejects transport failures while the UI submission stays caught', asyn
     const f = await openCommands(t);
     const failure = new Error('Transport lost');
     f.behavior.submit = async () => { throw failure; };
-    if (sdk) await assert.rejects(f.actions.commands.send('prompt'), error => error === failure);
+    if (sdk) await assert.rejects(f.actions.commands.send.run('prompt'), error => error === failure);
     else { await f.target.store.setDraft('prompt'); await f.actions.submit(() => f.target.store.send()); }
     assert.match(f.app.getSnapshot().error, /Transport lost/);
     assert.equal(f.app.getSnapshot().busy, false);
@@ -508,7 +508,7 @@ test('SDK rejects transport failures while the UI submission stays caught', asyn
 test('a closed conversation refusal is shown as a sentence while SDK commands keep the reason', async t => {
   const f = await openCommands(t);
   f.behavior.submit = async () => ({ kind: 'rejected', reason: 'conversation-closed' });
-  assert.deepEqual(await f.actions.commands.send('after closure'), { kind: 'rejected', reason: 'conversation-closed' });
+  assert.deepEqual(await f.actions.commands.send.run('after closure'), { kind: 'rejected', reason: 'conversation-closed' });
   assert.equal(f.app.getSnapshot().error, 'This conversation ended. Start a new chat to keep going.');
 });
 
@@ -516,9 +516,9 @@ test('a closed conversation refusal is shown as a sentence while SDK commands ke
 test('SDK busy refusal does not persist another command or release the running operation', async t => {
   const f = await openCommands(t), entered = deferred(), reply = deferred();
   f.behavior.submit = async command => { entered.resolve(); await reply.promise; return resultFor(command, { kind: 'accepted' }); };
-  const sending = f.actions.commands.send('first');
+  const sending = f.actions.commands.send.run('first');
   await entered.promise;
-  await assert.rejects(f.actions.commands.send('second'), /operation is in progress/);
+  await assert.rejects(f.actions.commands.send.run('second'), /operation is in progress/);
   assert.equal(f.app.getSnapshot().busy, true);
   assert.equal(f.submitted.length, 1);
   assert.equal(f.target.store.getSnapshot().outbox.length, 1);
@@ -534,7 +534,7 @@ for (const replacement of ['conversation', 'view', 'session']) {
     if (replacement === 'session') { f.app.dispose(); await f.app.start(); }
     const replacementState = f.app.getSnapshot();
     const records = structuredClone([...f.drafts]);
-    for (const invoke of [() => f.actions.commands.send('old'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
+    for (const invoke of [() => f.actions.commands.send.run('old'), () => f.actions.commands.approve.run('decision', 'accept'), () => f.actions.commands.cancel.run('run')]) {
       await assert.rejects(invoke());
       assert.strictEqual(f.app.getSnapshot(), replacementState);
     }
@@ -552,7 +552,7 @@ for (const blocked of ['disconnected', 'feed-ended', 'storage', 'incompatible'])
     if (blocked === 'storage') f.leases[0].failure(new Error('Storage unavailable'));
     if (blocked === 'incompatible') { f.behavior.runtime = { engine: 'unknown', version: '1', format: 'unknown' }; await f.app.reconnect(); }
     const records = structuredClone([...f.drafts]);
-    for (const invoke of [() => f.actions.commands.send('blocked'), () => f.actions.commands.approve('decision', 'accept'), () => f.actions.commands.cancel('run')]) {
+    for (const invoke of [() => f.actions.commands.send.run('blocked'), () => f.actions.commands.approve.run('decision', 'accept'), () => f.actions.commands.cancel.run('run')]) {
       await assert.rejects(invoke());
     }
     assert.deepEqual([...f.drafts], records);
@@ -569,15 +569,15 @@ for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES.son
         : { kind: 'stopping', runId: 'run', clientCommandId: 'cancel-id' };
       await deliver(f, { currentRun, messages: state === 'incomplete' ? [{ messageId: 'partial', revision: 1, role: 'assistant', text: 'partial', complete: false }] : [] });
       f.behavior.submit = async command => resultFor(command, { kind: 'accepted' });
-      await assert.rejects(f.actions.commands.send('wait'), /current response/);
+      await assert.rejects(f.actions.commands.send.run('wait'), /current response/);
       assert.equal(f.drafts.size, 0);
-      await f.actions.commands.approve('pending', 'accept');
-      await f.actions.commands.cancel('run');
+      await f.actions.commands.approve.run('pending', 'accept');
+      await f.actions.commands.cancel.run('run');
       assert.deepEqual(f.submitted.map(command => command.body), [
         { kind: 'approve', pendingId: 'pending', choiceId: 'accept' }, { kind: 'cancel', runId: 'run' },
       ]);
       await deliver(f, { currentRun: { kind: 'ended', runId: 'run', outcome: 'completed' }, messages: [] });
-      await f.actions.commands.send('next');
+      await f.actions.commands.send.run('next');
       assert.deepEqual(f.submitted.at(-1).body, { kind: 'send', text: 'next' });
     });
   }
@@ -585,7 +585,7 @@ for (const runtime of [CODEX_RUNTIME, CODEX_SDK_RUNTIME, CLAUDE_SDK_RUNTIMES.son
 
 test('UI recovery can retry a retained command while disconnected', async t => {
   const f = await openCommands(t);
-  await assert.rejects(f.actions.commands.send('retained'), /Reply lost/);
+  await assert.rejects(f.actions.commands.send.run('retained'), /Reply lost/);
   const [entry] = f.target.store.getSnapshot().outbox;
   f.target.store.disconnect();
   f.behavior.submit = async command => resultFor(command, { kind: 'accepted' });
@@ -598,8 +598,8 @@ test('SDK send refuses missing and non-string text without submitting the compos
   const f = await openCommands(t);
   await f.target.store.setDraft('Private unfinished draft');
   const records = structuredClone([...f.drafts]);
-  await assert.rejects(f.actions.commands.send(), /explicit message/);
-  for (const text of [undefined, null, 42, {}, '']) await assert.rejects(f.actions.commands.send(text));
+  await assert.rejects(f.actions.commands.send.run(), /explicit message/);
+  for (const text of [undefined, null, 42, {}, '']) await assert.rejects(f.actions.commands.send.run(text));
   assert.deepEqual([...f.drafts], records);
   assert.equal(f.target.store.getSnapshot().draft, 'Private unfinished draft');
   assert.deepEqual(f.target.store.getSnapshot().outbox, []);
@@ -740,12 +740,12 @@ test('active descriptors override default controls and unavailable history stays
   assert.equal(f.app.getSnapshot().host.kind, 'ready');
   let target = f.app.getSnapshot().active;
   assert.deepEqual(target.agent.runtime, CODEX_SDK_RUNTIME);
-  await assert.rejects(f.app.conversationActions(target).commands.approve('decision', 'yes'), /does not support/);
+  await assert.rejects(f.app.conversationActions(target).commands.approve.run('decision', 'yes'), /does not support/);
   f.behavior.agentLookup = async () => ({ ...f.descriptor('sdk', CODEX_SDK_RUNTIME), availability: { kind: 'unavailable', reason: 'Agent removed' } });
   await f.app.reconnect(); await deliver(f, { messages: [{ messageId: 'saved', revision: 1, role: 'assistant', text: 'Saved response', complete: true }], currentRun: null });
   target = f.app.getSnapshot().active;
   assert.equal(target.store.getSnapshot().document.domain.messages[0].text, 'Saved response');
-  await assert.rejects(f.app.conversationActions(target).commands.send('hello'), /Agent removed/);
+  await assert.rejects(f.app.conversationActions(target).commands.send.run('hello'), /Agent removed/);
   let effects = 0;
   await f.app.conversationActions(target).submit(async () => { effects++; });
   await f.app.conversationActions(target).reconcile('old-command');
@@ -885,7 +885,7 @@ test('module permission reads reject stale conversation results and revoke retai
   await f.app.open({ ...scope, conversationId: 'other' });
   read.resolve({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] });
   await assert.rejects(pending, /conversation/);
-  await assert.rejects(actions.commands.revokePermission('permission', 'agent'), /conversation/);
+  await assert.rejects(actions.commands.revokePermission.run('permission', 'agent'), /conversation/);
   assert.deepEqual(f.submitted, []);
   f.behavior.permissions = async () => ({ kind: 'available', observedAt: new Date().toISOString(),
     permissions: [{ permissionId: 'permission', scope: 'agent', actionLabel: 'Work items', detail: 'All conversations' }] });
@@ -893,7 +893,7 @@ test('module permission reads reject stale conversation results and revoke retai
   const current = f.app.getSnapshot().active;
   await f.app.conversationActions(current).permissions.read();
   await current.store.setDraft('Keep my draft');
-  await assert.rejects(f.app.conversationActions(current).commands.revokePermission('permission', 'agent'), /Reply lost/);
+  await assert.rejects(f.app.conversationActions(current).commands.revokePermission.run('permission', 'agent'), /Reply lost/);
   assert.deepEqual(f.submitted[0].body, { kind: 'revoke-permission', permissionId: 'permission', scope: 'agent' });
   assert.deepEqual(current.store.getSnapshot().outbox[0].command, f.submitted[0]);
   assert.equal(current.store.getSnapshot().draft, 'Keep my draft');
@@ -915,7 +915,7 @@ test('permission freshness follows opening, failed commands, reconnect and newer
   f.behavior.permissions = () => old.promise;
   const pending = actions.permissions.read();
   assert.equal(f.app.getSnapshot().permissionState.kind, 'loading');
-  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Refresh permissions/);
+  await assert.rejects(actions.commands.revokePermission.run('grant', 'conversation'), /Refresh permissions/);
   f.behavior.permissions = async () => ({ ...listing, permissions: [] });
   await actions.permissions.read();
   old.resolve(listing); await pending;
@@ -924,14 +924,14 @@ test('permission freshness follows opening, failed commands, reconnect and newer
   await assert.rejects(actions.permissions.read(), /List unavailable/);
   assert.equal(f.app.getSnapshot().permissionState.kind, 'stale');
   assert.equal(f.app.getSnapshot().permissionState.listing.observedAt, listing.observedAt);
-  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Refresh permissions/);
+  await assert.rejects(actions.commands.revokePermission.run('grant', 'conversation'), /Refresh permissions/);
   f.behavior.permissions = async () => { reads++; return listing; };
   const before = reads;
   await f.app.reconnect(); await new Promise(resolve => setImmediate(resolve));
   assert(reads > before);
   actions = f.app.conversationActions(f.app.getSnapshot().active);
   await actions.permissions.read();
-  await assert.rejects(actions.commands.revokePermission('grant', 'conversation'), /Reply lost/);
+  await assert.rejects(actions.commands.revokePermission.run('grant', 'conversation'), /Reply lost/);
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(f.app.getSnapshot().permissionState.kind, 'fresh');
   assert.equal(f.submitted.length, 1);
@@ -1455,7 +1455,6 @@ test('image previews and uploads share one host transfer slot, reusing concurren
   const active = f.app.getSnapshot().active;
   let busy = false, overlaps = 0;
   const reads = [], uploads = [];
-  // Mirrors the host: one transfer per host, overlaps refused as unavailable.
   const transfer = async work => {
     if (busy) { overlaps++; throw new ServiceError('unavailable', 'Another image transfer is in progress. Try again.'); }
     busy = true;

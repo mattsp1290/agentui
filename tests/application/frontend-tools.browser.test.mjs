@@ -11,7 +11,7 @@ import { root, fixture, connected, draft, revealRecovery, customRuntime, wait } 
 const tool = `{ definition: { name: 'echo', description: 'Echo' }, decodeInput: x => x, async execute() { return 'ok'; } }`;
 const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '${EXTENSION_SDK_VERSION}', activate({frontendTools}) { ${body} } } })`;
 const sibling = `, { manifest: { ...manifest, namespace: 'sibling' }, ${entry(`return { modules: [{ id: 'healthy', label: 'Healthy', component() { return <p>Healthy namespace</p>; },
-  actions: [{ id: 'send', label: 'Send sibling', run: ({commands}) => commands.send('Sibling command') }] }], dispose() {} };`)} }`;
+  actions: [{ id: 'send', label: 'Send sibling', run: ({commands}) => commands.send.run('Sibling command') }] }], dispose() {} };`)} }`;
 const editor = page => page.getByRole('textbox', { name: 'Message', exact: true });
 
 for (const failure of ['load', 'ready activation']) test(`capture keeps a healthy namespace after sibling ${failure} failure and refuses loading`, async t => {

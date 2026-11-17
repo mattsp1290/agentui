@@ -6,9 +6,10 @@ import { fileURLToPath } from 'node:url';
 const root = new URL('../../', import.meta.url);
 const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root));
 
-export async function assertCompileCases({ config = 'tsconfig.base.json', prefix, cases }) {
+export async function assertCompileCases({ config = 'tsconfig.base.json', prefix, cases, jsx = false }) {
   assert.equal(cases[0]?.[1], null, 'the first compile case must be a compiling positive control');
   const base = new URL(config, root);
+  const filename = jsx ? 'probe.tsx' : 'probe.ts';
   const audit = new URL('.audit/', base);
   await mkdir(audit, { recursive: true });
   const temporary = await mkdtemp(fileURLToPath(new URL('type-cases-', audit)));
@@ -16,10 +17,10 @@ export async function assertCompileCases({ config = 'tsconfig.base.json', prefix
     await writeFile(`${temporary}/tsconfig.json`, JSON.stringify({
       extends: fileURLToPath(base),
       compilerOptions: { noEmit: true, rootDir: temporary },
-      files: [`${temporary}/probe.ts`], include: [],
+      files: [`${temporary}/${filename}`], include: [],
     }));
     for (const [source, diagnostic] of cases) {
-      await writeFile(`${temporary}/probe.ts`, prefix + source);
+      await writeFile(`${temporary}/${filename}`, prefix + source);
       const result = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8', timeout: 120_000 });
       const context = `${source || '<control>'}\n${result.error?.message ?? ''}${result.stdout}${result.stderr}`;
       assert.ok(Number.isInteger(result.status) && !result.error, context);
