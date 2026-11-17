@@ -1,15 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdir, realpath } from 'node:fs/promises';
-import { isAbsolute, join, resolve } from 'node:path';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { canonicalJson, JsonLimitError } from '@agentui/contracts';
-import { count, hex, identifier, record } from '@agentui/contracts/decode';
+import { count, hex, identifier, nonempty, record } from '@agentui/contracts/decode';
 import { parseGitExtensionReference, parseServerCustomizationArtifact, readServerCustomizationArtifact } from '@agentui/host/customization';
 import type { GitExtensionReference, ServerCustomizationArtifact } from '@agentui/host/customization';
 import type { AccessDatabase } from './access-database.js';
 import { serverArtifactExpectation } from './server-artifact-runtime.js';
 import { assertRefreshSelectionOwner, createServerSelection } from './server-selection.js';
-import { REFRESH_SELECTION_PREFIX, SelectionRefusal, parseSelection, parseSelectionCommand, operationId, RECEIPT_LIMIT } from './selection-protocol.js';
+import { REFRESH_SELECTION_PREFIX, SelectionRefusal, parseSelection, parseSelectionCommand, parseSelectionStatus, parseOperationSummary, operationId, RECEIPT_LIMIT } from './selection-protocol.js';
 import type { OperationSummary, RefreshAdmission, SelectionCommand, SelectionStatus } from './selection-protocol.js';
 
 export type RefreshRequest = Readonly<{ id: string; reference: GitExtensionReference; expectedSelectionRevision: number }>;
@@ -121,6 +121,61 @@ function parseJob(value: unknown, root: string): Job {
   record(build, ['kind', 'command']);
   if (build.kind !== 'building' && build.kind !== 'interrupted') throw new Error('Invalid refresh build');
   return { request, ordinal, build: { kind: build.kind, command }, promotion: { kind: 'not-built' } };
+}
+
+export function parseRefreshReceipt(value: unknown): RefreshReceipt {
+  const input = record(value, ['job', 'latestRequestId', 'selectionStatus']);
+  if (Buffer.byteLength(JSON.stringify(input)) > RECEIPT_LIMIT) throw new Error('Refresh receipt too large');
+  const raw = record(input.job, ['request', 'ordinal', 'build', 'promotion']);
+  const request = parseRefreshRequest(raw.request), ordinal = count(raw.ordinal), build = record(raw.build), promotion = record(raw.promotion);
+  const command = buildCommand(build.command);
+  if (!ordinal || command.id.length > 80 || command.requestId !== request.id || command.directory !== join(dirname(command.directory), command.id) ||
+    canonicalJson(command.source) !== canonicalJson(request.reference)) throw new Error('Invalid refresh attempt');
+  let job: JobSummary;
+  if (build.kind === 'built') {
+    record(build, ['kind', 'command', 'pin', 'provenance']);
+    const pin = parseSelection({ version: 1, artifacts: [build.pin] }).artifacts[0];
+    const provenance = record(build.provenance, ['root', 'builder', 'runtime', 'sdkVersion']);
+    const builder = record(provenance.builder, ['identity', 'esbuildVersion']), runtime = record(provenance.runtime, ['engine', 'version', 'modules', 'abiIdentity']);
+    if (!pin || pin.directory !== command.directory || command.toolchain.kind !== 'ready' ||
+      runtime.engine !== 'node' || typeof runtime.version !== 'string' || !/^\d+\.\d+\.\d+$/u.test(runtime.version) ||
+      typeof runtime.modules !== 'string' || !/^\d+$/u.test(runtime.modules)) throw new Error('Invalid refresh provenance');
+    const parsedProvenance: Extract<JobSummary['build'], { kind: 'built' }>['provenance'] = {
+      root: hex(provenance.root, 64), sdkVersion: nonempty(provenance.sdkVersion),
+      builder: { identity: hex(builder.identity, 64), esbuildVersion: identifier(builder.esbuildVersion, 128) },
+      runtime: { engine: 'node', version: runtime.version, modules: runtime.modules, abiIdentity: hex(runtime.abiIdentity, 64) },
+    };
+    if (canonicalJson(parsedProvenance.builder) !== canonicalJson(command.toolchain.builder)) throw new Error('Invalid refresh provenance');
+    const saved = parseSelectionCommand(promotion.command);
+    if (canonicalJson(saved) !== canonicalJson(commandFor(command, request, pin))) throw new Error('Invalid refresh promotion');
+    let parsed: Exclude<JobSummary['promotion'], { kind: 'not-built' }>;
+    if (promotion.kind === 'selected') {
+      record(promotion, ['kind', 'command', 'operation']);
+      const operation = parseOperationSummary(promotion.operation);
+      if (operation.id !== saved.id || operation.revision !== saved.expectedRevision + 1 || operation.artifacts !== 1) throw new Error('Invalid refresh selection');
+      parsed = { kind: 'selected', command: saved, operation };
+    } else if (promotion.kind === 'unconfirmed') {
+      record(promotion, ['kind', 'command']); parsed = { kind: 'unconfirmed', command: saved };
+    } else {
+      record(promotion, ['kind', 'command', 'reason']);
+      const reason = promotionRefusal(promotion.reason);
+      if (promotion.kind !== 'refused' || !reason) throw new Error('Invalid refresh promotion');
+      parsed = { kind: 'refused', command: saved, reason };
+    }
+    job = { request, ordinal, build: { kind: 'built', command, pin, provenance: parsedProvenance }, promotion: parsed };
+  } else {
+    record(promotion, ['kind']);
+    if (promotion.kind !== 'not-built') throw new Error('Invalid refresh promotion');
+    if (build.kind === 'failed') {
+      record(build, ['kind', 'command', 'failure']);
+      job = { request, ordinal, build: { kind: 'failed', command, failure: failure(build.failure) }, promotion: { kind: 'not-built' } };
+    } else {
+      record(build, ['kind', 'command']);
+      if (build.kind !== 'building' && build.kind !== 'interrupted') throw new Error('Invalid refresh build');
+      job = { request, ordinal, build: { kind: build.kind, command }, promotion: { kind: 'not-built' } };
+    }
+  }
+  return { job, latestRequestId: operationId(input.latestRequestId), selectionStatus: parseSelectionStatus(input.selectionStatus) };
 }
 
 export async function createRefreshController(deps: { readonly database: AccessDatabase; readonly artifactRoot: string; readonly builder: RefreshBuilder;
