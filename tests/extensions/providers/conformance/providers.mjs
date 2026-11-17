@@ -6,14 +6,15 @@ import { instrument } from './instrument.mjs';
 import { ledgerExtension, ledgerService } from './ledger.mjs';
 
 /**
- * Records every request a provider makes and can refuse new requests without touching the provider. Responses that
+ * Records every request a provider makes and can refuse or drop new requests without touching the provider. Responses that
  * are already streaming keep flowing while it is down.
  */
 async function recordingProxy(t, target) {
   const traffic = [];
-  let down = false;
+  let down = false, dropped = null;
   const server = createServer((incoming, outgoing) => {
     traffic.push({ method: incoming.method, path: incoming.url, headers: { ...incoming.headers } });
+    if (dropped?.(incoming.method, incoming.url)) { outgoing.destroy(); return; }
     if (down) { outgoing.writeHead(503, { 'content-type': 'application/json' }); outgoing.end('{"error":"unavailable"}'); return; }
     const upstream = new URL(target);
     const proxied = forward({ host: upstream.hostname, port: upstream.port, method: incoming.method, path: incoming.url,
@@ -26,7 +27,8 @@ async function recordingProxy(t, target) {
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   t.after(() => { server.closeAllConnections(); server.close(); });
-  return { origin: `http://127.0.0.1:${server.address().port}`, traffic, setDown(value) { down = value; } };
+  return { origin: `http://127.0.0.1:${server.address().port}`, traffic, setDown(value) { down = value; },
+    setDropped(predicate) { dropped = predicate; } };
 }
 
 /**
@@ -49,6 +51,7 @@ async function recordingProxy(t, target) {
  * @property {() => number} subscriptions Open observation streams at the service.
  * @property {(down: boolean) => void} setDown Takes the service offline at the proxy.
  * @property {(lost: boolean) => void} loseSendReplies While on, sends take effect but their replies are dropped.
+ * @property {(dropped: boolean) => void} dropSends While on, sends are cut at the proxy and never reach the service.
  * @property {() => void} dropStreams Ends every open observation stream at the service.
  * @property {(text: string) => void} reply Completes the open run with one assistant message.
  * @property {(prompt: string) => void} card Raises one approve/deny decision. The service withdraws it when answered.
@@ -73,6 +76,7 @@ async function crew(t) {
   const proxy = await recordingProxy(t, remote.origin);
   const latest = () => [...remote.conversations.keys()].at(-1);
   const posted = suffix => remote.calls.filter(call => call.method === 'POST' && call.path.endsWith(suffix)).length;
+  const isSend = (method, path) => method === 'POST' && new URL(path, 'http://proxy').pathname.endsWith('/requests');
   let current;
   return {
     namespace: 'crew', traffic: proxy.traffic, credentialHeader: 'authorization', secrets: [token, memberId],
@@ -87,6 +91,7 @@ async function crew(t) {
     subscriptions: () => remote.streams.size,
     setDown: value => proxy.setDown(value),
     loseSendReplies: lost => remote.setLost(lost),
+    dropSends: on => proxy.setDropped(on ? isSend : null),
     dropStreams() { for (const stream of remote.streams) stream.response.end(); },
     reply: text => remote.reply(latest(), text),
     card: prompt => { remote.pend(latest(), { summary: prompt }); },
@@ -106,6 +111,7 @@ async function ledger(t, supports) {
     subscriptions: () => service.tails.size,
     setDown: value => proxy.setDown(value),
     loseSendReplies: lost => service.loseRepliesTo(lost ? '/post' : null),
+    dropSends: on => proxy.setDropped(on ? (method, path) => method === 'POST' && path === '/post' : null),
     dropStreams: () => service.dropTails(),
     reply: text => service.reply(text),
     card: prompt => service.card(prompt),

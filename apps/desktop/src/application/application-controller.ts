@@ -135,8 +135,13 @@ function message(error: unknown): string { return error instanceof Error ? error
 export function applicationEnabled(state: ApplicationSnapshot): boolean {
   return state.host.kind === 'ready' && !state.storageFailure && !state.busy;
 }
+const SEND_AWAITING_CONFIRMATION = 'An earlier message has not been confirmed yet, so this one was not sent. Your draft is kept. '
+  + 'Use Reconcile command under Command recovery, or Check pending command under Pending commands, to check it, '
+  + 'or start a new chat if it stays unconfirmed.';
 export function refusalMessage(reason: string): string {
-  return reason === 'conversation-closed' ? 'This conversation ended. Start a new chat to keep going.' : reason;
+  if (reason === 'conversation-closed') return 'This conversation ended. Start a new chat to keep going.';
+  if (reason === 'send-awaiting-confirmation') return SEND_AWAITING_CONFIRMATION;
+  return reason;
 }
 
 export function createApplicationController(deps: {
