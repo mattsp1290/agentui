@@ -209,3 +209,24 @@ for (const kind of ['generic', 'tagged-v1', 'offered']) test(`${kind} capture re
   assert.deepEqual(durable(f), before);
   assert.equal(a.calls.submits.length, 0);
 });
+
+test('frontend binding keeps its captured command id when actor authorization mutates caller input', async t => {
+  const a = aguiExtension({ request: text => ({ ...actualInput(text), runId: `run-${text}` }) });
+  const { host } = await localProviderHost(t, a);
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => true };
+  for (const id of ['first', 'second']) {
+    const command = offered(hostScope, id); command.body.text = id;
+    assert.equal((await host.conversation(hostScope, actor).submit(command)).receipt.state.kind, 'completed');
+  }
+  const input = { scope: hostScope, id: 'first', action: 'recover' }, registrations = [];
+  actor.authorized = () => { input.id = 'second'; return true; };
+  const binding = await host.frontendBinding(input, actor, () => ({
+    register: value => registrations.push(value), cancel() { throw new Error('Unexpected cancellation'); },
+  }));
+  assert.equal(input.id, 'second');
+  assert.equal(binding.kind, 'bound');
+  assert.equal(binding.command.clientCommandId, 'first');
+  assert.deepEqual(registrations.map(value => value.identity.runId), ['run-first']);
+  assert.equal(a.calls.submits.length, 2);
+  assert.equal(a.calls.reconciles.length, 0);
+});

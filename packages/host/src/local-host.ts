@@ -125,9 +125,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     await task;
   };
   const assertMayReceiveEvidence = (stored: StoredCommand, actor?: FrontendSendActor) => {
-    if (!isOffered(stored)) return;
-    authorized(stored.command.scope);
-    store.frontendSends.ownerState(stored, actor);
+    if (isOffered(stored)) authorized(stored.command.scope);
+    store.frontendSends.authorize('evidence', stored, actor);
   };
   const ownedCommand = (scope: ConversationScope, id: string, actor?: FrontendSendActor) => {
     const stored = store.command(authorized(scope), nonempty(id));
@@ -140,8 +139,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     store.verifyIntent(stored);
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => effectFence(stored, () => {
-    if (isOffered(stored)) store.frontendSends.assertMayDispatch(stored, actor);
-    else if (actor) assertFrontendSendActor(actor);
+    store.frontendSends.authorize('dispatch', stored, actor);
   });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
@@ -162,8 +160,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     if (!blocker || !('kind' in blocker) || dispatching.has(commandKey(scope, blocker.command.clientCommandId))) return false;
     if (!isOffered(blocker) && blocker.receipt.state.kind !== 'accepted') return false;
     const assertRequester = () => {
-      if (isOffered(blocker)) store.frontendSends.assertMaySettle(blocker, actor);
-      else if (actor && !actor.authorized()) throw new Error('Unauthorized actor');
+      store.frontendSends.authorize('settle', blocker, actor);
       authorized(scope);
     };
     assertRequester();
@@ -318,7 +315,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         const owners = store.frontendSends;
         const identity = { scope, id: identifier(request.id) };
         const command = () => {
-          const stored = ownedCommand(scope, input.id, actor);
+          const stored = ownedCommand(scope, identity.id, actor);
           if (stored && !isOffered(stored)) throw new FrontendAccessError('frontend-owner-missing');
           return stored;
         };
@@ -332,15 +329,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             else owners.tombstone(identity, actor);
           });
         } else if (initial && initial.observation?.kind !== 'conclusive' && initial.observation?.kind !== 'not-dispatched') {
-          await host.reconcile(scope, input.id, actor);
+          await host.reconcile(scope, identity.id, actor);
         }
         const stored = command(), state = ownerFence(stored);
         if (stored) {
           const observation = stored.observation;
           const run = observation && 'evidence' in observation ? observation.evidence.source.run : null;
           if (!run && state !== 'unavailable') {
-            if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: request.id, reason: 'not-dispatched' };
-            if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: request.id, reason: 'provider-rejected' };
+            if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: identity.id, reason: 'not-dispatched' };
+            if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: identity.id, reason: 'provider-rejected' };
           }
           if (state !== 'unavailable') {
             if (!options.providers) throw new Error('Original AG-UI provider unavailable');
@@ -357,8 +354,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             else return bound;
           }
         }
-        if (ownerFence(stored) === 'unavailable') return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
-        return { kind: 'pending', id: request.id };
+        if (ownerFence(stored) === 'unavailable') return { kind: 'unavailable', id: identity.id, reason: 'closures-unavailable' };
+        return { kind: 'pending', id: identity.id };
       });
     },
     close(): void {

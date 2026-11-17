@@ -53,6 +53,16 @@ export class FrontendSends {
     assertFrontendSendActor(actor);
     this.admittedOwner(stored);
   }
+  authorize(intent: 'dispatch' | 'settle' | 'evidence', stored: StoredCommand, actor?: FrontendSendActor): void {
+    if (isOffered(stored)) {
+      if (intent === 'dispatch') this.assertMayDispatch(stored, actor);
+      else if (intent === 'settle') this.assertMaySettle(stored, actor);
+      else this.ownerState(stored, actor);
+    } else if (actor) {
+      if (intent === 'dispatch') assertFrontendSendActor(actor);
+      else if (intent === 'settle' && !actor.authorized()) throw new Error('Unauthorized actor');
+    }
+  }
 
   admission(command: ClientCommand, existing: StoredCommand | null, actor?: FrontendSendActor): void {
     if (existing) {
