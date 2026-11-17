@@ -151,13 +151,6 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
   assert.deepEqual(fullState(f, 'other'), sibling);
 });
 
-async function settledReplacement(f, values) {
-  for (let attempt = 0; ; attempt++) {
-    const result = await f.running.replaceProviderExtensions(values);
-    if (result.kind !== 'deferred' || result.reason !== 'active-work' || attempt === 200) return result;
-    await new Promise(resolve => setTimeout(resolve, 5));
-  }
-}
 for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authority isolates colliding scopes through decisions, provider resync, restart and disable`, { timeout: 15_000 }, async t => {
   const remote = await providerService(t, { native }), a = remote.extension({ controls: true });
   const retained = new Map(), endings = new Map(), observe = a.backend.observe;
@@ -284,7 +277,7 @@ for (const native of [false, true]) test(`${native ? 'host' : 'remote'} authorit
     assert.equal(document(record.final).domain.messages.at(-1).text, `${record.id} final answer`);
     assert.equal(document(record.final).domain.currentRun.outcome, 'completed');
   }
-  assert.equal((await settledReplacement(f, [])).kind, 'replaced');
+  assert.equal((await f.running.replaceProviderExtensions([])).kind, 'replaced');
   assert.equal(b.calls.feedClosed, 2); await until(() => remote.clients.size === 0);
   for (const record of records) {
     assert.equal((await record.port.submit(send(record.scope, 'disabled-send'))).kind, 'rejected');

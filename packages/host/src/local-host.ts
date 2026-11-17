@@ -7,8 +7,6 @@ import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
 import { identifier } from '@agentui/contracts/decode';
-import { transcriptProjection } from '@agentui/contracts/conversation';
-import type { Transcript } from '@agentui/contracts/conversation';
 import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
@@ -173,14 +171,14 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => effectFence(stored, () => {
     store.frontendSends.authorize('dispatch', stored, actor);
   });
-  const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
+  const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void, admitted?: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
     const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
       ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
     if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation, observations);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
-      ? await options.providers?.executeCommand(stored, false, () => effectFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
+      ? await options.providers?.executeCommand(stored, false, () => { effectFence(stored, assertCallerAuthority); admitted?.(); }) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
     if (observed.kind === 'outcome-unknown' && (isOffered(stored) || dispatching.has(commandKey(scope, id)))) {
       const current = store.command(scope, id);
@@ -189,22 +187,19 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     }
     return store.settle(scope, id, observed, observations);
   });
-  const lookedUp = new Set<string>();
-  // An observed run end is not settlement evidence; it triggers one read of the original request's status.
+  // An observed run end is not settlement evidence; it triggers one status read per command per host process. Only a
+  // read the provider admitted counts, so a run end seen while the provider is being replaced is checked again later.
+  const lookedUp = new Set<string>(), lookingUp = new Set<string>();
   const settleEndedSend = (scope: ConversationScope): void => {
-    try {
-      if (closed || store.projection !== (transcriptProjection as unknown)) return;
-      const stored = store.blockingSend(scope, 'provider')?.stored;
-      if (!stored || !('kind' in stored) || isOffered(stored) || stored.receipt.state.kind !== 'accepted') return;
-      const key = commandKey(scope, stored.command.clientCommandId);
-      const run = stored.observation && 'evidence' in stored.observation ? stored.observation.evidence.source.run : null;
-      if (!run || dispatching.has(key) || lookedUp.has(key)) return;
-      const current = (store.snapshot(scope).document.domain as Transcript).currentRun;
-      if (current?.kind !== 'ended' || current.runId !== run.identity.runId) return;
-      lookedUp.add(key);
-      void reconcileStored(stored, () => authorized(scope))
-        .then(receipt => { if (receipt.state.kind !== 'accepted') lookedUp.delete(key); }, () => {});
-    } catch { /* A failed check leaves the receipt for explicit reconciliation. */ }
+    if (closed) return;
+    let stored: StoredCommand | null;
+    try { stored = store.endedSend(scope); } catch { return; }
+    if (!stored) return;
+    const key = commandKey(scope, stored.command.clientCommandId);
+    if (dispatching.has(key) || lookedUp.has(key) || lookingUp.has(key)) return;
+    lookingUp.add(key);
+    void reconcileStored(stored, () => authorized(scope), () => lookedUp.add(key))
+      .catch(() => {}).finally(() => lookingUp.delete(key));
   };
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const found = store.blockingSend(scope, 'provider');

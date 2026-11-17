@@ -28,7 +28,7 @@ import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, InstallationKind, SendBlock, StoredCommand } from './durable-model.js';
-import { scopeKey as key, sendBlock } from './durable-model.js';
+import { isOffered, scopeKey as key, sendBlock } from './durable-model.js';
 
 type StoreTransaction = { readonly write: boolean };
 
@@ -339,6 +339,19 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       const stored = this.command(scope, nonempty(row.id));
       const block = stored ? sendBlock(kind, stored) : 'none';
       if (stored && block !== 'none') return { stored, block };
+    }
+    return null;
+  }
+  /** The accepted provider send whose observed run the transcript shows as ended, read without decoding the document. */
+  endedSend(scope: ConversationScope): StoredCommand | null {
+    if (this.projection !== transcriptProjection) return null;
+    const run = this.db.prepare("SELECT json_extract(document, '$.domain.currentRun.kind') AS kind, json_extract(document, '$.domain.currentRun.runId') AS id FROM conversations WHERE host=? AND conversation=?").get(...key(scope));
+    if (run?.kind !== 'ended' || typeof run.id !== 'string') return null;
+    const rows = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind')='accepted' ORDER BY rowid").all(...key(scope));
+    for (const row of rows) {
+      const stored = this.command(scope, nonempty(row.id));
+      if (!stored || !('kind' in stored) || isOffered(stored) || !stored.observation || !('evidence' in stored.observation)) continue;
+      if (stored.observation.evidence.source.run?.identity.runId === run.id) return stored;
     }
     return null;
   }
