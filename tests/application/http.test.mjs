@@ -1,6 +1,6 @@
 import { describeAgent } from '../../apps/host/build/tsc/agents.js';
 import { recordedInstallation } from '@agentui/host/recorded';
-const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }).id;
+const recordedAgentId = describeAgent(recordedInstallation, { kind: 'ready' }, { kind: 'unsupported', reason: 'Recorded text-only fixture.' }).id;
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, readFileSync, rmSync, watch } from 'node:fs';

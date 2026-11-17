@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { SqliteStore } from '../../packages/host/dist/sqlite-store.js';
+import { budgets } from '../../packages/host/dist/durable-model.js';
+import { transcriptProjection } from '@agentui/contracts/conversation';
 import { png } from '../host/image-fixtures.mjs';
 import { Worker } from 'node:worker_threads';
 import { join } from 'node:path';
@@ -154,7 +157,16 @@ for (const version of [1, 2]) test(`SQL projection refuses mismatched parsed ver
 
 test('provider image and combined offered image sends preserve the uploaded image without partial capture', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
-  const attachment = await f.client.uploadImage({ scope, uploadId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Screen.png', bytes: png() });
+  await assert.rejects(f.client.uploadImage({ scope, uploadId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'Screen.png', bytes: png() }), error => error.kind === 'image-unsupported');
+  const agent = await f.client.conversationAgent(scope);
+  assert.equal(agent.kind, 'provider');
+  assert.equal(agent.imageInput.kind, 'unsupported');
+  assert.equal((await f.client.metadata()).agents.find(item => item.id === agent.id).imageInput.kind, 'unsupported');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM images').get().n), 0);
+  const store = new SqliteStore(join(f.directory, 'host.sqlite'), transcriptProjection, budgets());
+  let attachment;
+  try { attachment = store.uploadImage(scope, 'retained-fixture', 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', 'Screen.png', png(), { kind: 'supported', format: 'png-jpeg-v1' }); }
+  finally { store.close(); }
   const before = durable(f), plain = { ...send(scope), body: { kind: 'send', text: '', imageId: attachment.imageId } };
   assert.deepEqual(await f.client.conversation(scope).submit(plain), { kind: 'rejected', reason: 'This model cannot read images.' });
   const combined = offered(scope);

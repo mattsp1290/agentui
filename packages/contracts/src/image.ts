@@ -1,4 +1,4 @@
-import { count, record, utf8Bytes } from './decode.js';
+import { count, exact, record, utf8Bytes } from './decode.js';
 
 export const IMAGE_MAX_BYTES = 4 * 1024 * 1024;
 export const IMAGE_MAX_PIXELS = 16_000_000;
@@ -10,6 +10,22 @@ export const IMAGE_HOST_MAX_COUNT = 10_000;
 export type ImageId = string & { readonly __brand: 'ImageId' };
 export type UploadId = string & { readonly __brand: 'UploadId' };
 export type ImageMediaType = 'image/png' | 'image/jpeg';
+export type ImageInputCapability =
+  | { readonly kind: 'supported'; readonly format: 'png-jpeg-v1' }
+  | { readonly kind: 'unsupported'; readonly reason: string };
+
+export function parseImageInputCapability(value: unknown): ImageInputCapability {
+  const input = record(value);
+  if (input.kind === 'supported') {
+    exact(input, ['kind', 'format']);
+    if (input.format !== 'png-jpeg-v1') throw new Error('Invalid image input format');
+    return { kind: 'supported', format: input.format };
+  }
+  exact(input, ['kind', 'reason']);
+  if (input.kind !== 'unsupported' || typeof input.reason !== 'string' || !input.reason.trim() ||
+    utf8Bytes(input.reason) > 256 || /[\p{Cc}\p{Cs}]/u.test(input.reason)) throw new Error('Invalid image input reason');
+  return { kind: 'unsupported', reason: input.reason };
+}
 export interface ImageAttachment {
   readonly imageId: ImageId;
   readonly name: string;
@@ -58,7 +74,7 @@ export function parseImageAttachment(value: unknown): ImageAttachment {
 export const IMAGE_MAX_BASE64_CHARS = 5_592_408;
 export const IMAGE_TRANSFER_MAX_BYTES = 6 * 1024 * 1024;
 export const IMAGE_BODY_TIMEOUT_MS = 30_000;
-export const IMAGE_FAILURE_KINDS = ['invalid-image', 'image-scope', 'image-upload-conflict', 'image-capacity', 'image-integrity'] as const;
+export const IMAGE_FAILURE_KINDS = ['invalid-image', 'image-scope', 'image-upload-conflict', 'image-unsupported', 'image-capacity', 'image-integrity'] as const;
 export type ImageFailureKind = typeof IMAGE_FAILURE_KINDS[number];
 
 export function parseImageBase64(value: unknown, byteLength: unknown): string {

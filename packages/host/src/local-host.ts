@@ -2,7 +2,7 @@ import { assertFrontendSendActor, FrontendAccessError } from './frontend-sends.j
 import type { FrontendSendActor } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
 import type { FrontendToolProducer } from './frontend-tools/index.js';
-import type { ImageAttachment, ImageId, UploadId } from '@agentui/contracts/image';
+import type { ImageAttachment, ImageId, ImageInputCapability, UploadId } from '@agentui/contracts/image';
 import { observationFailure } from './provider-stream.js';
 import type { ProviderStream } from './provider-stream.js';
 import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, parseScope, sameScope } from '@agentui/contracts';
@@ -29,6 +29,7 @@ export interface LocalHostOptions<E, P> {
   readonly budgets?: Partial<HostBudgets>;
 }
 export interface LocalHost<E, P> {
+  imageInput(target: ConversationInstallation | null): ImageInputCapability;
   uploadImage(scope: ConversationScope, uploader: string, uploadId: UploadId, name: string, bytes: Uint8Array): ImageAttachment;
   readImage(scope: ConversationScope, imageId: ImageId): { readonly attachment: ImageAttachment; readonly bytes: Uint8Array };
   readonly drained: Promise<void>;
@@ -54,6 +55,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const drivers = new Map(configured.map(driver => [canonicalJson(driver.installation), driver]));
   if (drivers.size !== configured.length) { store.close(); throw new Error('Duplicate agent installation'); }
   const driverFor = (target: Installation) => drivers.get(canonicalJson(target));
+  const imageInput = (target: ConversationInstallation | null): ImageInputCapability =>
+    target && !('kind' in target) && driverFor(target)?.imageInput === true
+      ? { kind: 'supported', format: 'png-jpeg-v1' }
+      : { kind: 'unsupported', reason: 'This model cannot read images.' };
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
   let closed = false, observationCleanupFailed = false;
@@ -169,7 +174,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     return receipt.state.kind === 'completed' || receipt.state.kind === 'rejected';
   };
   const host: LocalHost<E, P> = {
-    uploadImage: (scope, uploader, uploadId, name, bytes) => store.uploadImage(authorized(scope), uploader, uploadId, name, bytes),
+    imageInput,
+    uploadImage: (scope, uploader, uploadId, name, bytes) => {
+      const target = authorized(scope);
+      return store.uploadImage(target, uploader, uploadId, name, bytes, imageInput(store.findInstallation(target)));
+    },
     readImage: (scope, imageId) => store.readImage(authorized(scope), imageId),
     drained,
     observeProvider,
@@ -258,8 +267,9 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const registry = options.providers;
           const assertSubmitter = () => { authorized(scope); if (actor) assertFrontendSendActor(actor); };
           const image = command.version === 1 && command.body.kind === 'send' && command.body.imageId !== undefined;
-          const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
-            ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.version === 2
+          const inputCapability = imageInput(target);
+          const admit = () => store.admit(command, image && inputCapability.kind === 'unsupported'
+            ? inputCapability : provider ? { kind: 'supported' } : command.version === 2
             ? { kind: 'unsupported', reason: 'frontend-offers-unsupported' } : command.body.kind === 'revoke-permission'
             ? { kind: 'unsupported', reason: 'permission-management-unsupported' } : driver?.capability(command) ??
             { kind: 'unsupported', reason: 'This conversation’s agent is unavailable or belongs to a different agent or workspace.' }, driver?.installation,

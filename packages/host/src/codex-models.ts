@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { NativeAgentDescriptor } from '@agentui/contracts/service';
 
-export type CodexModel = NonNullable<NativeAgentDescriptor['model']>;
+export type CodexModel = NonNullable<NativeAgentDescriptor['model']> & { readonly inputModalities?: readonly ('text' | 'image')[] };
 interface CatalogModel {
   readonly model: CodexModel;
   readonly isDefault: boolean;

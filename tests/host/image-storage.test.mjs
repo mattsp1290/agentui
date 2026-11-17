@@ -19,7 +19,7 @@ function storeFixture(t) {
   store.create(scope, installed); store.create(other, installed);
   return { ...f, store, open };
 }
-const upload = (store, bytes = png(), options = {}) => store.uploadImage(options.scope ?? scope, options.principal ?? 'paired-owner', options.id ?? randomUUID(), options.name ?? 'Screenshot.png', bytes);
+const upload = (store, bytes = png(), options = {}) => store.uploadImage(options.scope ?? scope, options.principal ?? 'paired-owner', options.id ?? randomUUID(), options.name ?? 'Screenshot.png', bytes, options.imageInput ?? { kind: 'supported', format: 'png-jpeg-v1' });
 
 test('immutable upload survives restart, lost reply and independent connection retries', t => {
   const f = storeFixture(t), bytes = screenshotPng(), id = randomUUID();
@@ -96,6 +96,7 @@ test('retained row budget includes abandoned selections across conversations and
   f.store.transaction(() => {
     for (let i = 1; i < IMAGE_HOST_MAX_COUNT; i++) insert.run(randomUUID(), other.conversationId, randomUUID(), attachment.imageId);
   });
+  assert.throws(() => upload(f.store, bytes, { imageInput: { kind: 'unsupported', reason: 'Unavailable' } }), { code: 'image-unsupported' });
   assert.throws(() => upload(f.store), { code: 'image-capacity' });
   assert.deepEqual(upload(f.store, bytes, { id }), attachment);
   const foreignHost = { ...scope, hostId: 'second-host' }; f.store.create(foreignHost, installed);
@@ -151,7 +152,7 @@ function concurrentUpload(path, id) {
     import { budgets } from ${JSON.stringify(new URL('../../packages/host/dist/durable-model.js', import.meta.url).href)};
     import { projection, scope } from ${JSON.stringify(new URL('./fixture.mjs', import.meta.url).href)};
     const store = new SqliteStore(workerData.path, projection, budgets());
-    try { parentPort.postMessage({ kind: 'uploaded', attachment: store.uploadImage(scope, 'paired-owner', workerData.id, 'Screenshot.png', workerData.bytes) }); }
+    try { parentPort.postMessage({ kind: 'uploaded', attachment: store.uploadImage(scope, 'paired-owner', workerData.id, 'Screenshot.png', workerData.bytes, { kind: 'supported', format: 'png-jpeg-v1' }) }); }
     catch (error) { parentPort.postMessage({ kind: 'failed', code: error.code }); }
     finally { store.close(); }
   `;
@@ -234,4 +235,48 @@ test('a failed image link rolls back its command, receipt, snapshot and event to
   f.store.db.exec('DROP TRIGGER reject_link');
   assert.equal(f.store.admit(send, { kind: 'supported' }).kind, 'owned');
   assert.equal(f.store.db.prepare('SELECT COUNT(*) n FROM command_images').get().n, 1);
+});
+
+const unsupported = { kind: 'unsupported', reason: 'This model cannot read images.' };
+
+test('new image refusal follows scope, exact retry, conflict and integrity and precedes quota', t => {
+  const f = storeFixture(t), bytes = png(), id = randomUUID(), attachment = upload(f.store, bytes, { id });
+  f.store.close();
+  const reader = f.open(), peer = f.open();
+  for (const store of [reader, peer]) {
+    assert.deepEqual(upload(store, bytes, { id, imageInput: unsupported }), attachment);
+    assert.deepEqual(store.readImage(scope, attachment.imageId), { attachment, bytes });
+    assert.throws(() => upload(store, bytes, { id, name: 'Changed', imageInput: unsupported }), { code: 'image-upload-conflict' });
+    assert.throws(() => upload(store, png({ width: 3 }), { id, imageInput: unsupported }), { code: 'image-upload-conflict' });
+    assert.throws(() => upload(store, bytes, { imageInput: unsupported }), { code: 'image-unsupported' });
+    assert.throws(() => upload(store, bytes, { scope: { ...scope, conversationId: 'missing' }, imageInput: unsupported }), { code: 'image-scope' });
+  }
+  reader.db.exec("DROP TRIGGER images_no_update; UPDATE images SET digest=printf('%064d',0)");
+  assert.throws(() => upload(peer, bytes, { id, imageInput: unsupported }), { code: 'image-integrity' });
+  assert.equal(reader.db.prepare('SELECT COUNT(*) n FROM images').get().n, 1);
+});
+
+test('missing driver after restart preserves upload identity, read and old receipt but refuses fresh input', async t => {
+  const f = fixture(t), host = f.open({ driver: { ...f.driver, imageInput: true } });
+  host.createConversation(scope, installed);
+  const id = randomUUID(), bytes = png(), attachment = host.uploadImage(scope, 'owner', id, 'Screen.png', bytes);
+  const sent = command('image-before-loss', { kind: 'send', text: '', imageId: attachment.imageId });
+  const receipt = await host.conversation(scope).submit(sent);
+  host.close(); await host.drained;
+  const reopened = f.open({ driver: [] });
+  assert.equal(reopened.imageInput(installed).kind, 'unsupported');
+  assert.deepEqual(reopened.uploadImage(scope, 'owner', id, 'Screen.png', bytes), attachment);
+  assert.deepEqual(reopened.readImage(scope, attachment.imageId), { attachment, bytes });
+  assert.deepEqual(await reopened.conversation(scope).submit(sent), receipt);
+  assert.throws(() => reopened.uploadImage(scope, 'owner', randomUUID(), 'Screen.png', bytes), { code: 'image-unsupported' });
+  assert.equal((await reopened.conversation(scope).submit(command('new-image', sent.body))).kind, 'rejected');
+});
+
+test('busy image-capable driver accepts retained upload while send readiness remains separate', async t => {
+  const f = fixture(t), host = f.open({ driver: { ...f.driver, imageInput: true, capability: () => ({ kind: 'unsupported', reason: 'Busy' }) } });
+  host.createConversation(scope, installed);
+  assert.deepEqual(host.imageInput(installed), { kind: 'supported', format: 'png-jpeg-v1' });
+  const attachment = host.uploadImage(scope, 'owner', randomUUID(), 'Screen.png', png());
+  assert.deepEqual(await host.conversation(scope).submit(command('busy', { kind: 'send', text: '', imageId: attachment.imageId })), { kind: 'rejected', reason: 'Busy' });
+  assert.deepEqual(host.readImage(scope, attachment.imageId).attachment, attachment);
 });

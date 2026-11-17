@@ -143,3 +143,25 @@ for (const change of ['closed', 'removed', 'current']) test(`rejected byte read 
   assert.equal(await result, change === 'closed' ? 'This conversation store has closed.' : change === 'current' ? 'Byte read failed' : null);
   assert.deepEqual(f.drafts.value, before); assert.equal(f.drafts.writes.length, writes);
 });
+
+test('typed unsupported upload preserves selected bytes and identity for later retry', async t => {
+  const calls = [];
+  const f = fixture(t, { images: { async upload(input) {
+    calls.push(structuredClone(input));
+    if (calls.length === 1) throw Object.assign(new Error('Unsupported'), { kind: 'image-unsupported' });
+    return attachment;
+  } } });
+  await f.store.setDraft('Keep caption');
+  await f.store.selectImage({ name: attachment.name, bytes });
+  assert.equal(f.store.getSnapshot().image.status, 'failed');
+  assert.match(f.store.getSnapshot().image.reason, /cannot receive images/);
+  const selected = structuredClone(f.drafts.value.image);
+  assert.deepEqual(f.drafts.images.get(selected.selectionId), bytes);
+  await f.store.retryImage();
+  assert.deepEqual(calls[1], calls[0]);
+  assert.equal(f.drafts.value.image.selectionId, selected.selectionId);
+  assert.equal(f.drafts.value.image.uploadId, selected.uploadId);
+  assert.equal(f.drafts.value.draft, 'Keep caption');
+  assert.deepEqual(f.drafts.images.get(selected.selectionId), bytes);
+  assert.equal(f.store.getSnapshot().image.status, 'ready');
+});
