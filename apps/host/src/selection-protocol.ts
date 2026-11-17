@@ -115,7 +115,7 @@ export interface SelectionControl {
   receipt(digest: string, offset: number): ReceiptChunk;
 }
 export class SelectionRefusal extends Error {
-  constructor(readonly reason: 'source-superseded' | 'refresh-intent-conflict' | 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset' | 'attempt-conflict' | 'uncertain') {
-    super(reason === 'ownership' ? 'Selection requires durable artifact ownership' : `Selection ${reason}`);
+  constructor(readonly reason: 'source-superseded' | 'refresh-intent-conflict' | 'invalid-artifact' | 'ownership' | 'unavailable' | 'id-conflict' | 'revision-conflict' | 'busy' | 'receipt-too-large' | 'unknown-operation' | 'unknown-receipt' | 'invalid-offset' | 'attempt-conflict' | 'uncertain') {
+    super(reason === 'ownership' ? 'Selection requires durable artifact ownership' : reason === 'invalid-artifact' ? 'Invalid artifact selection' : `Selection ${reason}`);
   }
 }

@@ -68,7 +68,6 @@ for (const [name, damage] of [
   ['canonical ownership marker', 'DROP TABLE service_extension_refresh_owner'],
   ['foreign canonical owner', "UPDATE service_extension_refresh_owner SET host='foreign'"],
   ['empty canonical owner', 'DELETE FROM service_extension_refresh_owner'],
-  ['lost selection table', 'DROP TABLE service_extension_selections'],
   ['unknown refresh object', 'CREATE TABLE HOST_REFRESH_future(value TEXT)'],
   ['damaged request', "UPDATE host_refresh_jobs SET body='{}'"],
 ]) test(`damaged ${name} fails closed without rebuilding or repairing ownership`, async t => {
@@ -90,13 +89,11 @@ test('complete refresh namespace loss cannot recreate ownership under an existin
   assert.throws(() => assertNoSelectionJournal(f.access), /durable artifact ownership/);
 });
 
-test('opening-only first initialization can finish but ready ownership cannot reseed', async t => {
+test('lost canonical ownership cannot reseed an initialized refresh namespace', async t => {
   const f = databaseFixture(t), owner = await f.open();
   await owner.close();
-  f.database.exec("UPDATE host_refresh_schema SET phase='opening'; DROP TABLE service_extension_attempts; DROP TABLE service_extension_selections; DROP TABLE service_extension_selection_schema; DROP TABLE service_extension_refresh_owner");
-  const recovered = await f.open();
-  assert.equal(recovered.selection.status().desired.id, 'startup');
-  assert.equal(f.database.prepare('SELECT phase FROM host_refresh_schema').get().phase, 'ready');
+  f.database.exec('DROP TABLE service_extension_attempts; DROP TABLE service_extension_selections; DROP TABLE service_extension_selection_schema; DROP TABLE service_extension_refresh_owner');
+  await assert.rejects(f.open(), /Invalid refresh journal/);
 });
 
 test('initial selection SQL failure rolls back marker and interrupted initialization can recover', async t => {
@@ -110,6 +107,7 @@ test('initial selection SQL failure rolls back marker and interrupted initializa
   f.database.exec("CREATE TRIGGER reject_seed BEFORE INSERT ON service_extension_selections BEGIN SELECT RAISE(ABORT, 'PRIVATE'); END");
   await assert.rejects(f.open(), /Invalid refresh selection/);
   assert.equal(f.database.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name='service_extension_refresh_owner'").get().n, 0);
+  assert.equal(f.database.prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name GLOB 'host_refresh_*'").get().n, 0);
   assert.equal(f.database.prepare('SELECT count(*) AS n FROM service_extension_selections').get().n, 0);
   f.database.exec('DROP TRIGGER reject_seed');
   const owner = await f.open();
@@ -154,7 +152,8 @@ test('a decorated promise and malformed admission results cannot pass canonical 
     { kind: 'other' }, { kind: 'refuse', reason: 'unexpected' }]) {
     const f = databaseFixture(t);
     let enabled = false;
-    const owner = await createServerSelection({ database: f.access, ...f.selection, checkRefreshAdmission: () => enabled ? admission : { kind: 'allow' } });
+    const owner = await createServerSelection({ database: f.access, ...f.selection,
+      refreshOwnership: { recover: () => ({ kind: 'allow' }), admit: () => enabled ? admission : { kind: 'allow' } } });
     enabled = true;
     await assert.rejects(owner.select({ id: 'bad', expectedRevision: 0, selection: { version: 1, artifacts: [] } }), /unavailable/);
     assert.equal(owner.status().desiredRevision, 0); assert.equal(f.stops(), 1);

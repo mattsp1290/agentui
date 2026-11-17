@@ -20,7 +20,7 @@ const journalTables = new Map([
 const refreshOwnerTable = 'service_extension_refresh_owner';
 const refreshOwnerColumns = 'singleton INTEGER PRIMARY KEY CHECK(singleton=1), host TEXT NOT NULL';
 const legacyColumns = 'sequence INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, selection TEXT NOT NULL REFERENCES service_extension_selections(id), outcome TEXT NOT NULL';
-type Selection = { readonly id: string; readonly revision: number; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
+type Selection = { readonly id: string; readonly revision: number; readonly command: SelectionCommand; readonly intent: string; readonly receipt: Buffer; readonly receiptDigest: string;
   readonly target: ReturnType<typeof parseSelection>; readonly grantsDigest: string };
 type Attempt = { readonly id: string; readonly selection: string; readonly intent: string; readonly origin: LiveRequest | { readonly kind: 'boot' }; outcome: AttemptOutcome };
 type StoredAttempt = Pick<Attempt, 'id' | 'selection' | 'intent'> & { readonly sequence: number; readonly outcome: string };
@@ -48,8 +48,13 @@ export function assertRefreshSelectionOwner(database: AccessDatabase): void {
 export async function createServerSelection(deps: { readonly database: AccessDatabase; readonly entries: Extract<ExtensionStartup, { kind: 'durable-artifacts' }>['entries'];
   readonly runtime: () => ServerExtensionStatus; readonly isClosing: () => boolean;
   readonly replace: (selected: ProviderExtensionSelection) => Promise<ServerExtensionReplacement>; readonly stopRuntime: () => void;
-  readonly checkRefreshAdmission?: (command: SelectionCommand) => RefreshAdmission }) {
+  readonly refreshOwnership?: { readonly recover: (commands: readonly SelectionCommand[]) => { readonly kind: 'allow' };
+    readonly admit: (command: SelectionCommand) => RefreshAdmission } }) {
   const db = deps.database.database;
+  if (deps.refreshOwnership !== undefined) {
+    const owner = record(deps.refreshOwnership, ['recover', 'admit']);
+    if (typeof owner.recover !== 'function' || typeof owner.admit !== 'function') throw new Error('Invalid refresh ownership');
+  }
   const grants = normalizeGrantPool(deps.entries.flatMap(entry => entry.installations));
   const grantsDigest = digest('[' + grants.map(grant => canonicalJson(publicGrantBinding(grant))).sort().join(',') + ']');
   let selections = new Map<string, Selection>(), attempts: Attempt[] = [], byId = new Map<string, Attempt>();
@@ -68,7 +73,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   function decodeSelection(row: Record<string, unknown>): Selection {
     const id = identifier(row.id, 96), revision = count(row.revision), intent = identifier(row.intent, RECEIPT_LIMIT);
     const command = parseSelectionCommand(JSON.parse(intent));
-    if (command.id.startsWith(REFRESH_SELECTION_PREFIX) && !deps.checkRefreshAdmission) throw new Error();
+    if (command.id.startsWith(REFRESH_SELECTION_PREFIX) && !deps.refreshOwnership) throw new Error();
     if (command.id !== id || (revision === 0 ? id !== 'startup' || command.expectedRevision !== 0 : command.expectedRevision !== revision - 1) || canonicalJson(command) !== intent) throw new Error();
     const receipt = identifier(row.receipt, RECEIPT_LIMIT), receiptDigest = hex(row.digest, 64);
     if (Buffer.byteLength(receipt) > RECEIPT_LIMIT || digest(receipt) !== receiptDigest) throw new Error();
@@ -78,7 +83,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     const manifests = value.manifests.map(parseServerCustomizationArtifact);
     if (manifests.length !== target.artifacts.length || manifests.some((manifest, index) => manifest.artifactId !== target.artifacts[index]?.artifactId)) throw new Error();
     if (canonicalJson({ version: 1, hostId: value.hostId, selection: target, grantsDigest: hex(value.grantsDigest, 64), manifests }) !== receipt) throw new Error();
-    return { id, revision, intent, receipt: Buffer.from(receipt), receiptDigest, target, grantsDigest: hex(value.grantsDigest, 64) };
+    return { id, revision, command, intent, receipt: Buffer.from(receipt), receiptDigest, target, grantsDigest: hex(value.grantsDigest, 64) };
   }
   function inspectNamespace(): 0 | 1 | 2 {
     const objects = db.prepare("SELECT name, type, sql FROM sqlite_schema WHERE lower(name) GLOB 'service_extension_*'").all();
@@ -91,7 +96,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     const tables = new Map(journalTables);
     if (refreshOwned && !objects.some(object => object.name === refreshOwnerTable)) throw new Error('Missing refresh selection ownership');
     if (objects.some(object => object.name === refreshOwnerTable)) {
-      if (!deps.checkRefreshAdmission) throw new Error('Refresh ownership requires guarded selection');
+      if (!deps.refreshOwnership) throw new Error('Refresh ownership requires guarded selection');
       tables.set(refreshOwnerTable, refreshOwnerColumns);
       assertRefreshSelectionOwner(deps.database);
     }
@@ -107,11 +112,16 @@ export async function createServerSelection(deps: { readonly database: AccessDat
     return version;
   }
   function ownRefresh(): void {
-    if (!deps.checkRefreshAdmission) return;
+    if (!deps.refreshOwnership) return;
     if (db.prepare("SELECT 1 FROM sqlite_schema WHERE name=?").get(refreshOwnerTable)) { refreshOwned = true; return; }
     db.exec(`CREATE TABLE ${refreshOwnerTable} (${refreshOwnerColumns})`);
     if (db.prepare('INSERT INTO service_extension_refresh_owner VALUES(1,?)').run(deps.database.hostId).changes !== 1) throw new Error('Refresh ownership write failed');
     refreshOwned = true;
+  }
+  function recoverRefresh(commands: readonly SelectionCommand[]): void {
+    if (!deps.refreshOwnership) return;
+    const result = record(deps.refreshOwnership.recover(commands), ['kind']);
+    if ('then' in result || result.kind !== 'allow') throw new Error('Invalid refresh recovery');
   }
   function migrateV1(): void {
     db.exec(`CREATE TABLE service_extension_attempts (${journalTables.get('service_extension_attempts')})`);
@@ -174,6 +184,7 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         }
         if (!desired) return { namespace: 1, value: { selections, attempts, byId, desired, unresolved } };
         validatedRecoveryFailure = version === 1 ? 'Selection migration failed' : 'Selection recovery failed';
+        recoverRefresh([...selections.values()].map(selection => selection.command));
         if (version === 1) migrateV1();
         ownRefresh();
         const outcome = canonicalJson(interrupted), update = db.prepare('UPDATE service_extension_attempts SET outcome=? WHERE id=?');
@@ -240,10 +251,10 @@ export async function createServerSelection(deps: { readonly database: AccessDat
   }
   async function prepareSelection(command: SelectionCommand, expectedStoredRevision: number): Promise<Selection> {
     available();
-    const manifests = await verifyArtifactPins(command.selection.artifacts, grants);
+    const manifests = await verifyArtifactPins(command.selection.artifacts, grants).catch(() => { throw new SelectionRefusal('invalid-artifact'); });
     const receipt = canonicalJson({ version: 1, hostId: deps.database.hostId, selection: command.selection, grantsDigest, manifests });
     if (Buffer.byteLength(receipt) > RECEIPT_LIMIT) throw new SelectionRefusal('receipt-too-large');
-    return { id: command.id, revision: count(expectedStoredRevision + 1), intent: canonicalJson(command), receipt: Buffer.from(receipt),
+    return { id: command.id, revision: count(expectedStoredRevision + 1), command, intent: canonicalJson(command), receipt: Buffer.from(receipt),
       receiptDigest: digest(receipt), target: command.selection, grantsDigest };
   }
   function insertSelection(selection: Selection, expectedStoredRevision: number): void {
@@ -253,13 +264,8 @@ export async function createServerSelection(deps: { readonly database: AccessDat
       if (expectedStoredRevision !== -1 && version !== 2) throw new Error('Invalid selection journal');
       const storedRevision = version ? db.prepare('SELECT MAX(revision) AS revision FROM service_extension_selections').get()?.revision ?? -1 : -1;
       if (storedRevision !== expectedStoredRevision) throw new SelectionRefusal('revision-conflict');
-      const command = parseSelectionCommand(JSON.parse(selection.intent));
-      const admission = deps.checkRefreshAdmission ? deps.checkRefreshAdmission(command)
-        : command.id.startsWith(REFRESH_SELECTION_PREFIX) ? { kind: 'refuse', reason: 'refresh-intent-conflict' } : { kind: 'allow' };
-      if (!admission || typeof admission !== 'object' || 'then' in admission) throw new Error('Invalid refresh admission');
-      record(admission, admission.kind === 'refuse' ? ['kind', 'reason'] : ['kind']);
-      if (admission.kind === 'refuse' && (admission.reason === 'source-superseded' || admission.reason === 'refresh-intent-conflict')) throw new SelectionRefusal(admission.reason);
-      if (admission.kind !== 'allow') throw new Error('Invalid refresh admission');
+      if (expectedStoredRevision === -1) recoverRefresh([]);
+      const command = selection.command;
       if (version === 2 && db.prepare('SELECT 1 FROM service_extension_attempts WHERE id=?').get(selection.id)) throw new SelectionRefusal('id-conflict');
       if (expectedStoredRevision === -1) {
         if (version === 2) throw new Error('Invalid selection journal');
@@ -272,6 +278,12 @@ export async function createServerSelection(deps: { readonly database: AccessDat
         }
       }
       ownRefresh();
+      const admission = deps.refreshOwnership ? deps.refreshOwnership.admit(command)
+        : command.id.startsWith(REFRESH_SELECTION_PREFIX) ? { kind: 'refuse', reason: 'refresh-intent-conflict' } : { kind: 'allow' };
+      if (!admission || typeof admission !== 'object' || 'then' in admission) throw new Error('Invalid refresh admission');
+      record(admission, admission.kind === 'refuse' ? ['kind', 'reason'] : ['kind']);
+      if (admission.kind === 'refuse' && (admission.reason === 'source-superseded' || admission.reason === 'refresh-intent-conflict')) throw new SelectionRefusal(admission.reason);
+      if (admission.kind !== 'allow') throw new Error('Invalid refresh admission');
       if (db.prepare('INSERT INTO service_extension_selections VALUES(?,?,?,?,?)').run(selection.id, selection.revision, selection.intent, selection.receipt.toString(), selection.receiptDigest).changes !== 1) throw new Error('Selection journal write failed');
       if (version !== 2 && db.prepare('SELECT COUNT(*) AS n FROM service_extension_attempts').get()?.n !== 0) throw new Error('Selection journal write failed');
       verifyWriteTail(selection);
