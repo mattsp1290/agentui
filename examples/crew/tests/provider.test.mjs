@@ -1143,3 +1143,16 @@ test('Crew maps HTTP, transport and contract failures to typed provider failures
   await assert.rejects(connection.backend.discover(), error => error === refusal);
   await connection.backend.close();
 });
+
+test('Crew discovery and creation touch only the member, owned conversation and its observation, never a listing', async t => {
+  const remote = await service(t), foreign = randomUUID();
+  remote.conversations.set(foreign, { state: { conversationId: foreign, memberId, phase: 'idle' }, messages: [], cursor: 0 });
+  const f = await fixture(t, [remote.extension()]);
+  await f.create();
+  await until(() => remote.streams.size === 1);
+  const owned = [...remote.conversations.keys()].find(id => id !== foreign);
+  assert.deepEqual(remote.calls.map(call => `${call.method} ${call.path}`), ['GET /v1/capabilities', 'GET /v1/members',
+    'POST /v1/conversations', `POST /v1/conversations/${owned}/events`]);
+  assert(!remote.calls.some(call => call.method === 'GET' && call.path === '/v1/conversations'));
+  assert(!remote.calls.some(call => call.path.includes(foreign)));
+});
