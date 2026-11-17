@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { CrewClient, CrewHttpError, type Capabilities } from '@birbcrew/client';
+import { CrewClient, CrewHttpError, CrewProtocolError, type Capabilities } from '@birbcrew/client';
 import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
@@ -15,12 +15,32 @@ export interface CrewProviderOptions {
   readonly instance: ProviderInstance<string>;
 }
 const uncertain = () => ({ kind: 'uncertain', reason: 'Crew outcome is unresolved. Recover the original operation.', evidence: null } as const);
-const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable or authorization was refused.' } as const);
-function negative(error: unknown): ReturnType<typeof uncertain> | { kind: 'rejected'; reason: string; evidence: null } {
-  if (error instanceof CrewHttpError && [400, 401, 403, 422].includes(error.status)) {
-    return { kind: 'rejected', reason: 'Crew refused this operation.', evidence: null };
+const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable.' } as const);
+type CrewError = 'credential' | 'forbidden' | 'invalid-request' | 'unsupported' | 'transient';
+function classify(error: unknown): CrewError {
+  if (error instanceof CrewProtocolError) return 'unsupported';
+  if (!(error instanceof CrewHttpError)) return 'transient';
+  switch (error.status) {
+    case 401: return 'credential';
+    case 403: return 'forbidden';
+    case 400: case 422: return 'invalid-request';
+    case 408: case 429: return 'transient';
   }
-  return uncertain();
+  return error.status >= 400 && error.status < 500 ? 'unsupported' : 'transient';
+}
+type Failure = { readonly kind: 'unavailable' | 'authentication-failed' | 'unauthorized' | 'version-unsupported'; readonly reason: string };
+function failure(error: unknown): Failure {
+  switch (classify(error)) {
+    case 'credential': return { kind: 'authentication-failed', reason: 'Crew rejected the credential.' };
+    case 'forbidden': return { kind: 'unauthorized', reason: 'Crew refused access for this credential.' };
+    case 'invalid-request': case 'unsupported': return { kind: 'version-unsupported', reason: 'Crew does not support this request.' };
+    case 'transient': return { kind: 'unavailable', reason: 'Crew is offline or unreachable.' };
+  }
+}
+function negative(error: unknown): ReturnType<typeof uncertain> | { kind: 'rejected'; reason: string; evidence: null } {
+  const kind = classify(error);
+  return kind === 'credential' || kind === 'forbidden' || kind === 'invalid-request'
+    ? { kind: 'rejected', reason: 'Crew refused this operation.', evidence: null } : uncertain();
 }
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
   const service = new URL(options.service);
@@ -32,8 +52,9 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
     entries: [{ kind: 'server', module: './provider.js' }] };
   const entry: ServerExtensionEntry = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
     const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
-      if (request.apiVersion !== 1 || canonicalJson(request.instance) !== canonicalJson(instance) || !request.credential ||
-        canonicalJson(request.credential.instance) !== canonicalJson(instance)) return unavailable();
+      if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
+      if (!request.credential || canonicalJson(request.instance) !== canonicalJson(instance) ||
+        canonicalJson(request.credential.instance) !== canonicalJson(instance)) throw new Error('Crew installation is misconfigured');
       const credential = request.credential;
       let capabilities: Capabilities;
       let closed = false;
@@ -109,8 +130,12 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         }
         return current;
       }
-      try { capabilities = await use(client => client.capabilities({ signal: AbortSignal.timeout(10000) })); }
-      catch { return unavailable(); }
+      const probe = await use(async client => {
+        try { return { kind: 'available', capabilities: await client.capabilities({ signal: AbortSignal.timeout(10000) }) } as const; }
+        catch (error) { return failure(error); }
+      });
+      if (probe.kind !== 'available') return probe;
+      capabilities = probe.capabilities;
       const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
       const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
         standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
@@ -156,20 +181,24 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
         capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
           decide: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' } },
         async discover() {
-          try { return await use(async client => {
-            let after: string | undefined;
-            const seen = new Set<string>();
-            do {
-              const page = await client.listMembers(after ? { after } : {}, { signal: AbortSignal.timeout(10000) });
-              const member = page.members.find(member => member.memberId === memberId);
-              if (member) return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: memberId },
-                name: `Crew · ${member.engine} · ${member.profile}` }] } as const;
-              if (!page.next) break;
-              if (seen.has(page.next) || seen.size >= 100) throw new Error('Invalid Crew member pagination');
-              seen.add(page.next); after = page.next;
-            } while (after);
-            return { kind: 'unauthorized', reason: 'Configured Crew member is not available to this owner.' } as const;
-          }); } catch { return unavailable(); }
+          const found = await use(async client => {
+            try {
+              let after: string | undefined;
+              const seen = new Set<string>();
+              do {
+                const page = await client.listMembers(after ? { after } : {}, { signal: AbortSignal.timeout(10000) });
+                const member = page.members.find(member => member.memberId === memberId);
+                if (member) return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: memberId },
+                  name: `Crew · ${member.engine} · ${member.profile}` }] } as const;
+                if (!page.next) return null;
+                if (seen.has(page.next) || seen.size >= 100) return { kind: 'version-unsupported', reason: 'Crew returned invalid member pagination.' } as const;
+                seen.add(page.next); after = page.next;
+              } while (after);
+              return null;
+            } catch (error) { return failure(error); }
+          });
+          if (!found) throw new Error('Configured Crew member is not available');
+          return found;
         },
         create: operation => confirm(operation, true), reconcileCreation: operation => confirm(operation, false),
         submit: operation => command(operation, true), reconcileCommand: operation => command(operation, false),
