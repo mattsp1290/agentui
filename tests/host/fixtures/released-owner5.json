@@ -1,0 +1,113 @@
+{
+  "producerCommit": "ee8354c9306490953e6b1a57967b2ecf79d8be1d",
+  "producerStatus": "PREMERGE-UNRELEASED5 at generation",
+  "laterRelease": {
+    "pr": 102,
+    "mergeCommit": "d77cd2e5d7314faa25e7caca31fbcd65eec65d83",
+    "mergedAt": "2026-11-17T04:53:38Z",
+    "treeEquality": "Root verified merge tree equals producer commit"
+  },
+  "databaseSha256": "3a01b4c9b0e458225993455d80ebf9e05ede29b7ffa20fd7ebfbc00f573172e7",
+  "compressedSha256": "140ece08502ec717dc00f003ba81565bd434c16e2c94e8794ab55d5d5c9a86df",
+  "openerSha256": "1107a72806f47d9d521514359eccf290ce9c972f990ae4dc1a6d30a3a0a987ca",
+  "fixtureManifestSha256": "5bfc7a0f472b6284da4ee2a7c34d026006a1a6202e49d68515babebd259a5910",
+  "publicReaderSha256": "2e62e56e6882b689e9647292cf7a072af38ca7c8129d9714285e643bfb4d6ce7",
+  "sourceProvenance": {
+    "status": "candidate-PREMERGE-UNRELEASED5",
+    "fixtureKind": "trusted-localactor API fixture",
+    "qualification": "Core migration fixture only. No actual paired-device/native API qualification.",
+    "sourceCommit": "ee8354c9306490953e6b1a57967b2ecf79d8be1d",
+    "wireVersion": 9,
+    "extensionSdkVersion": "0.5.0",
+    "projectionVersion": 4,
+    "schemaVersion": 5,
+    "candidateSha256": "3a01b4c9b0e458225993455d80ebf9e05ede29b7ffa20fd7ebfbc00f573172e7",
+    "candidateBytes": 192512,
+    "originalCompressedSha256": "105c771adff35fe441a459f92715646c010af35c1fd703b89421e36205fb6e4b",
+    "originalDatabaseSha256": "5a6994e25cab10022b21618aae322c1fa82f3dbc32dfe0630a7d7c4161640214",
+    "opener5Sha256": "1107a72806f47d9d521514359eccf290ce9c972f990ae4dc1a6d30a3a0a987ca",
+    "opener4Sha256": "27b97e0df38a48c9be651468d8c730173b231ad257e3f257b956b7a9cfd803de",
+    "scopes": [
+      {
+        "hostId": "released-host",
+        "conversationId": "released-image-conversation"
+      },
+      {
+        "hostId": "released-host",
+        "conversationId": "candidate-owner-conversation"
+      }
+    ],
+    "ownerActorId": "trusted-owner",
+    "foreignActorId": "candidate-foreign-actor",
+    "owners": [
+      {
+        "host": "released-host",
+        "conversation": "candidate-owner-conversation",
+        "command_id": "candidate-available",
+        "actor_id": "trusted-owner",
+        "state": "available",
+        "thread_id": "candidate-thread-available",
+        "run_id": "candidate-run-available"
+      },
+      {
+        "host": "released-host",
+        "conversation": "candidate-owner-conversation",
+        "command_id": "candidate-unavailable",
+        "actor_id": "trusted-owner",
+        "state": "unavailable",
+        "thread_id": "candidate-thread-unavailable",
+        "run_id": "candidate-run-unavailable"
+      }
+    ],
+    "tombstones": [
+      {
+        "host": "released-host",
+        "conversation": "candidate-owner-conversation",
+        "command_id": "candidate-available",
+        "actor_id": "candidate-foreign-actor"
+      },
+      {
+        "host": "released-host",
+        "conversation": "candidate-owner-conversation",
+        "command_id": "candidate-isolated-preadmission",
+        "actor_id": "trusted-owner"
+      }
+    ],
+    "imageHashes": [
+      {
+        "id": "bcf0a5ba-bad3-4c60-8317-523c47e72235",
+        "storedDigest": "980055f32603462384baae4a3dbfa580f0579627bb98c190f84443a047126613",
+        "payloadSha256": "980055f32603462384baae4a3dbfa580f0579627bb98c190f84443a047126613"
+      }
+    ],
+    "counters": {
+      "originalImageCommandSubmits": 0,
+      "nativeDriverDispatches": 0,
+      "frontendHandlerExecutions": 0,
+      "providerCreates": 1,
+      "providerSubmits": 2,
+      "providerReconciles": 0,
+      "actorAuthorizationCalls": 66,
+      "scopeAuthorizationCalls": 152,
+      "registryClose": 0,
+      "backendClose": 0,
+      "extensionDispose": 0,
+      "hostsOpened": 2,
+      "hostsClosed": 2,
+      "hostsDrained": 2
+    },
+    "methodLimitations": [
+      "Current-owner events, allow decisions and completed receipts are manually injected canonical fixture inputs through actual public coordinator APIs.",
+      "No production provider observation bridge, JavaScript frontend handler, consent UI or continuation execution is claimed.",
+      "Original native Codex installation is absent. Original completed and uncertain receipts are read and compared without resubmitting original image commands or qualifying backend reconciliation.",
+      "Scope and actor callbacks explicitly trust test identities. No service auth database was copied, merged or manufactured.",
+      "Source ee8354c is a pre-merge candidate. Released/public-main attribution requires root verification of actual merge-tree equality.",
+      "Old5 opens untouched5 only. No future6 refusal result exists."
+    ]
+  },
+  "limitations": [
+    "Coordinator events, decisions and receipts are injected public API fixture inputs. No handler execution is claimed by this fixture.",
+    "Original source provenance reports SDK0.5.0; this is retained verbatim as historical producer metadata, not asserted as current SDK.",
+    "Public frozen old5 opener refusal is separately recorded in the implementation audit; only the exact original low-level opener source is vendored here."
+  ]
+}

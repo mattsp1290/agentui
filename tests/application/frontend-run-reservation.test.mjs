@@ -12,7 +12,9 @@ for (const changed of [false, true]) test(`offered run reservation rejects ${cha
   const receipt = (await f.client.conversation(scope).submit(first)).receipt;
   assert.equal((await f.client.frontendBinding({ scope, id: 'first', action: 'recover' })).kind, 'bound');
   await f.client.frontendBinding({ scope, id: 'first', action: 'unavailable' });
-  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+  assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_send_owners').get().state), 'unavailable');
+  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'collecting');
+  assert.equal((await f.client.frontendBinding({ scope, id: 'first', action: 'recover' })).reason, 'closures-unavailable');
   await f.restart([a]);
   const second = offered(scope, 'second');
   if (changed) second.body.frontend.tools[0].activationId = 'replacement';

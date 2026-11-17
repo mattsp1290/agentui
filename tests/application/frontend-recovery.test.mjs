@@ -212,7 +212,8 @@ test('offered original closure release during private lookup does not adopt or r
   await f.client.frontendBinding({ scope, id: 'offered', action: 'unavailable' }); release.resolve();
   assert.equal((await next).receipt.state.kind, 'completed');
   assert.equal((await f.client.frontendBinding({ scope, id: 'offered', action: 'recover' })).reason, 'closures-unavailable');
-  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+  assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) n FROM frontend_runs').get().n), 0);
+  assert.equal(f.inspect(db => db.prepare("SELECT state FROM frontend_send_owners WHERE command_id='offered'").get().state), 'unavailable');
   assert.equal(a.calls.submits.length, 2); noFrontendEffects(f);
 });
 test('offered settled blocker cannot admit a new plain send whose decoder revokes the new actor', async t => {
@@ -232,34 +233,38 @@ test('offered settled blocker cannot admit a new plain send whose decoder revoke
 });
 
 
-test('released recovery repairs a crash between registration and cancellation after offline reopen', async t => {
+test('released recovery reads effective blocked state after offline reopen without repairing rows', async t => {
   const { host, f } = await localOfferedHost(t, aguiExtension());
   const actor = { id: 'owner', platform: 'desktop', authorized: () => true };
   await host.conversation(hostScope, actor).submit(offered(hostScope));
   const producer = frontendToolsFor(host).producer(hostScope), key = { threadId: 'actual-thread', runId: 'actual-run' };
-  await assert.rejects(host.frontendBinding({ scope: hostScope, id: 'offered', action: 'unavailable' }, actor, () => ({
-    register: value => producer.register(value), cancel() { throw new Error('Stopped before cancellation'); },
-  })), /Stopped before cancellation/);
-  assert.equal(producer.inspect(key).status, 'collecting');
+  await host.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor, () => producer);
+  const db = new DatabaseSync(f.path);
+  const before = db.prepare('SELECT data FROM frontend_runs').get().data;
+  assert.equal((await host.frontendBinding({ scope: hostScope, id: 'offered', action: 'unavailable' }, actor,
+    () => { assert.fail('Withdrawal must not acquire a producer'); })).kind, 'unavailable');
+  assert.equal(producer.inspect(key).status, 'blocked');
+  assert.equal(db.prepare('SELECT data FROM frontend_runs').get().data, before);
   host.close(); await host.drained;
-  const offline = f.open(), repair = frontendToolsFor(offline).producer(hostScope);
-  const binding = await offline.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor, () => repair);
+  const offline = f.open(), reader = frontendToolsFor(offline).producer(hostScope);
+  const binding = await offline.frontendBinding({ scope: hostScope, id: 'offered', action: 'recover' }, actor,
+    () => { assert.fail('Unavailable recovery must not acquire a producer'); });
   assert.deepEqual(binding, { kind: 'unavailable', id: 'offered', reason: 'closures-unavailable' });
-  assert.equal(repair.inspect(key).status, 'blocked');
+  assert.equal(reader.inspect(key).status, 'blocked');
+  assert.equal(db.prepare('SELECT data FROM frontend_runs').get().data, before);
+  db.close();
 });
 
-
-test('released binding refuses actor revocation during producer cancellation', async t => {
+test('released binding acknowledges without acquiring or cancelling a producer', async t => {
   const { host } = await localOfferedHost(t, aguiExtension());
-  let authorized = true;
-  const actor = { id: 'owner', platform: 'desktop', authorized: () => authorized };
+  const actor = { id: 'owner', platform: 'desktop', authorized: () => true };
   await host.conversation(hostScope, actor).submit(offered(hostScope));
-  const producer = frontendToolsFor(host).producer(hostScope), key = { threadId: 'actual-thread', runId: 'actual-run' };
-  await assert.rejects(host.frontendBinding({ scope: hostScope, id: 'offered', action: 'unavailable' }, actor, () => ({
-    register: value => producer.register(value),
-    cancel(value) { producer.cancel(value); authorized = false; },
-  })), /frontend-owner-unavailable/);
-  assert.equal(producer.inspect(key).status, 'blocked');
+  const request = { scope: hostScope, id: 'offered', action: 'unavailable' };
+  const callback = () => { assert.fail('No callback after durable withdrawal'); };
+  assert.deepEqual(await host.frontendBinding(request, actor, callback),
+    { kind: 'unavailable', id: 'offered', reason: 'closures-unavailable' });
+  assert.deepEqual(await host.frontendBinding(request, actor, callback),
+    { kind: 'unavailable', id: 'offered', reason: 'closures-unavailable' });
 });
 
 test('binding recovery retains quarantined terminal evidence while explicit reconciliation reapplies it', async t => {

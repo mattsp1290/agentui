@@ -1,5 +1,7 @@
 import type { DatabaseSync } from 'node:sqlite';
 import { identifier } from '@agentui/contracts/decode';
+import { parseCommand } from '@agentui/contracts';
+import { taggedKeySql } from './sqlite-frontend-sends.js';
 import type { ClientCommand, ConversationScope } from '@agentui/contracts';
 import { isOffered } from './durable-model.js';
 import type { StoredCommand, OfferedStoredCommand } from './durable-model.js';
@@ -28,6 +30,22 @@ export class FrontendSends {
     if (row.state !== 'available' && row.state !== 'unavailable') throw new FrontendAccessError('frontend-owner-corrupt');
     return { actorId: identifier(row.actor_id), state: row.state,
       run: { threadId: identifier(row.thread_id), runId: identifier(row.run_id) } };
+  }
+  runState(scope: ConversationScope, key: AguiRunKey): 'unowned' | 'available' | 'unavailable' {
+    const row = this.db.prepare('SELECT state,actor_id FROM frontend_send_owners WHERE host=? AND conversation=? AND thread_id=? AND run_id=?')
+      .get(scope.hostId, scope.conversationId, key.threadId, key.runId);
+    if (row) {
+      identifier(row.actor_id);
+      if (row.state !== 'available' && row.state !== 'unavailable') throw new FrontendAccessError('frontend-owner-corrupt');
+      return row.state;
+    }
+    const commands = this.db.prepare(`SELECT intent FROM commands INDEXED BY commands_tagged_send_key WHERE host=? AND conversation=? AND ${taggedKeySql}`)
+      .all(scope.hostId, scope.conversationId, key.threadId, key.runId);
+    for (const command of commands) {
+      if (typeof command.intent !== 'string') throw new FrontendAccessError('frontend-owner-corrupt');
+      if (parseCommand(JSON.parse(command.intent)).version === 2) throw new FrontendAccessError('frontend-owner-missing');
+    }
+    return 'unowned';
   }
   private admittedOwner(stored: OfferedStoredCommand): AdmittedOwner {
     const owner = this.owner({ scope: stored.command.scope, id: stored.command.clientCommandId });

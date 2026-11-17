@@ -563,10 +563,14 @@ test('offered recovery survives lost replies and registration crash gaps using o
   assert.equal(bound.kind, 'bound');
   assert.deepEqual(stored(f, 'chat'), original);
   assert.equal(a.calls.translations, 1); assert.equal(a.calls.submits.length, 1);
+  const coordinator = f.inspect(db => db.prepare('SELECT data FROM frontend_runs').get().data);
   f.inspect(db => db.exec("UPDATE frontend_send_owners SET state='unavailable'"));
   await f.restart([]);
-  assert.equal((await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' })).kind, 'unavailable');
-  assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+  assert.deepEqual(await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'recover' }),
+    { kind: 'unavailable', id: command.clientCommandId, reason: 'closures-unavailable' });
+  assert.equal(f.inspect(db => db.prepare('SELECT data FROM frontend_runs').get().data), coordinator);
+  assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_send_owners').get().state), 'unavailable');
+  assert.deepEqual(stored(f, 'chat'), original);
 });
 
 test('offered conflicts cannot alter original text, definitions, activations, ordering or platform', async t => {
@@ -598,8 +602,9 @@ test('offered delayed recovery cannot revive a released owner', async t => {
     await f.client.frontendBinding({ scope, id: command.clientCommandId, action: 'unavailable' });
     release.resolve();
     const result = await observed;
-    assert.equal(result.value.kind, 'unavailable');
-    assert.equal(f.inspect(db => JSON.parse(db.prepare('SELECT data FROM frontend_runs').get().data).status), 'blocked');
+    assert.deepEqual(result.value, { kind: 'unavailable', id: command.clientCommandId, reason: 'closures-unavailable' });
+    assert.equal(f.inspect(db => db.prepare('SELECT COUNT(*) AS n FROM frontend_runs').get().n), 0);
+    assert.equal(f.inspect(db => db.prepare('SELECT state FROM frontend_send_owners').get().state), 'unavailable');
     assert.equal(a.calls.submits.length, 1);
   }
 });

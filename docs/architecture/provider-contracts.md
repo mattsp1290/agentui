@@ -178,11 +178,19 @@ Both final no-run results work offline and need no coordinator. Explicit closure
 A prior confirmed run retained through later rejection remains a binding. Command settlement does not finish the run.
 `action: 'unavailable'` irreversibly releases host availability. Before admission it records an owner-specific tombstone that cannot reserve another principal's command ID.
 After confirmation, recovery registers the exact binding outside command transactions. Repeated recovery repairs a crash between evidence and registration.
-Unavailable recovery also repairs local coordinator blocking, even if the original provider has gone offline.
+Unavailable acknowledgement follows the owner or tombstone commit and does not acquire a producer or call the provider.
+The coordinator reads committed ownership with each run. Unavailable ownership blocks fresh permits even through retained clients and after reopen.
+Inspection and result reads expose effective blocking without rewriting coordinator rows. Existing faulted diagnostics remain faulted.
+A permit committed before withdrawal remains uncertain. Its original actor can record the original receipt, but another call cannot gain a fresh permit.
+With a valid cursor, unavailable observation accepts only an exact stored replay as a duplicate. Other payloads return faulted without changing stored evidence.
+Invalid cursors retain their existing rejection.
 `frontendToolsFor` requires the exact handle returned by `openLocalHost` or `openRecordedHost`. A copy or wrapper has a different identity and is not registered.
 
 Database format 5 adds frontend ownership and the new optional target tag without rewriting existing commands, targets, observations or receipts.
-The joint format-5 release preserves released format-4 images. Earlier hosts refuse format 5.
+The format-5 release preserves released format-4 images.
+Format 6 enforces committed ownership for coordinator access without rewriting existing rows or changing ownership tables.
+It requires the existing image tables, validates the ownership schema, and advances the version last in the migration transaction.
+Format-5 core openers refuse format 6 before returning a core writer. Already-open mixed-version writers are unsupported.
 Image and owner schema changes from formats 2 and 3 commit in one transaction. Format 4 must contain the released image tables; the private capture-only format 4 is unsupported.
 Format 5 stores keyed admitted owners in `frontend_send_owners` and keyless actor-specific tombstones in `frontend_send_tombstones`.
 Each owner has one command and a unique host, conversation, thread and run key. Both available and unavailable owners retain that key.
@@ -192,7 +200,7 @@ The host requires these records to agree when it reads an offered command. A mis
 The host does not reconstruct the reservation from whichever record still parses. Releasing closures changes availability and retains the original reservation.
 An admitted owner takes precedence over foreign actor tombstones for the same command. Tombstones never reserve a run key.
 The tagged history index derives its keys from immutable saved targets. Admission checks that those raw JSON keys agree with the parsed capture.
-Existing format 5 requires both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
+Formats 5 and 6 require both ownership tables, their command keys, owner run uniqueness, conversation and deferred command foreign keys, and a usable tagged history index. Opening does not repair missing objects.
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
 Wire 9 and SDK 0.6.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.

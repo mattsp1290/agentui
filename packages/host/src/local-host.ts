@@ -45,7 +45,7 @@ export interface LocalHost<E, P> {
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
-  frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register' | 'cancel'>): Promise<FrontendBinding>;
+  frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register'>): Promise<FrontendBinding>;
   close(): void;
 }
 export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
@@ -328,21 +328,21 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             if (stored) owners.markUnavailable(stored, actor);
             else owners.tombstone(identity, actor);
           });
+          return { kind: 'unavailable', id: identity.id, reason: 'closures-unavailable' };
         } else if (initial && initial.observation?.kind !== 'conclusive' && initial.observation?.kind !== 'not-dispatched') {
           await host.reconcile(scope, identity.id, actor);
         }
         const stored = command(), state = ownerFence(stored);
+        if (state === 'unavailable') return { kind: 'unavailable', id: identity.id, reason: 'closures-unavailable' };
         if (stored) {
           const observation = stored.observation;
           const run = observation && 'evidence' in observation ? observation.evidence.source.run : null;
-          if (!run && state !== 'unavailable') {
+          if (!run) {
             if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: identity.id, reason: 'not-dispatched' };
             if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: identity.id, reason: 'provider-rejected' };
           }
-          if (state !== 'unavailable') {
-            if (!options.providers) throw new Error('Original AG-UI provider unavailable');
-            options.providers.assertFrontendInput(stored.target);
-          }
+          if (!options.providers) throw new Error('Original AG-UI provider unavailable');
+          options.providers.assertFrontendInput(stored.target);
           ownerFence(stored);
           if (run) {
             const bound = { kind: 'bound', command: stored.command, hostOperationId: stored.receipt.hostOperationId,
@@ -350,8 +350,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
             const producer = producerFor(scope);
             producer.register({ identity: bound.run, threadId: bound.threadId, platform: bound.command.body.frontend.platform,
               bindings: bound.command.body.frontend.tools.map(tool => ({ ...tool, name: tool.definition.name })) });
-            if (ownerFence(stored) === 'unavailable') producer.cancel({ threadId: bound.threadId, runId: bound.run.runId });
-            else return bound;
+            if (ownerFence(stored) === 'available') return bound;
           }
         }
         if (ownerFence(stored) === 'unavailable') return { kind: 'unavailable', id: identity.id, reason: 'closures-unavailable' };
@@ -377,7 +376,8 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   };
   registerFrontendToolsHost(host, {
     db: store.db,
-    transaction: work => store.transaction(work),
+    transaction: (work, write) => store.transaction(work, write),
+    frontendSends: store.frontendSends,
     findInstallation: scope => store.findInstallation(scope),
     authorized,
   });
