@@ -441,6 +441,7 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         const granted = validate(original.installation);
         if (canonicalJson(original.credential) !== canonicalJson(granted.credential)) throw new Error('Provider unavailable');
         const operation = creationIntent(original.intent, original.installation, instance);
+        if (operation.from && typeof presentation.continuation !== 'function') return { kind: fresh ? 'not-dispatched' : 'uncertain', source, evidence: null };
         const connected = await acquire();
         validate(original.installation);
         if (!capability(connected.capabilities[fresh ? 'create' : 'reconcile'])) {

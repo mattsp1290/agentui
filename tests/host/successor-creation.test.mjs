@@ -49,7 +49,7 @@ async function providers(t, { continuation = true, session = drawn } = {}) {
   await registry.activate();
   t.after(() => registry.close());
   const [discovered] = await registry.discover();
-  return { registry, creates, lookups, target: { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance,
+  return { registry, presentation, creates, lookups, target: { kind: 'provider', contributionId: discovered.contributionId, instance: discovered.instance,
     agent: discovered.agents[0], presentationVersion: 1, expectedAuthority: discovered.expectedAuthority } };
 }
 
@@ -128,6 +128,19 @@ test('a provider whose presentation has no continuation hook is never handed a p
   const binding = host.creation(before).observation.binding.authority.binding;
   assert.throws(() => p.registry.capture(after, p.target, { scope: before, binding }), /^Error: Provider does not continue conversations$/u);
   assert.equal(p.creates.length, 1);
+});
+
+test('a stored successor is never dispatched to a provider that no longer declares the continuation hook', async t => {
+  const f = fixture(t), host = f.open(), p = await providers(t);
+  assert.equal((await host.createProviderConversation(before, p.target, p.registry)).kind, 'confirmed');
+  const captured = p.registry.capture(after, p.target, { scope: before, binding: host.creation(before).observation.binding.authority.binding });
+  delete p.presentation.continuation;
+  let effects = 0;
+  assert.deepEqual(await p.registry.execute(captured, true, () => { effects += 1; }), { kind: 'not-dispatched', source: 'create', evidence: null });
+  assert.deepEqual(await p.registry.execute(captured, false, () => { effects += 1; }), { kind: 'uncertain', source: 'lookup', evidence: null });
+  assert.equal(effects, 0);
+  assert.equal(p.creates.length, 1);
+  assert.equal(p.lookups.length, 0);
 });
 
 test('a successor confirmed on its predecessor\'s session settles uncertain on create and on lookup', async t => {
