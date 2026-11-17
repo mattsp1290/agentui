@@ -1,4 +1,4 @@
-import { FrontendAccessError, recoverFrontendBinding } from './frontend-sends.js';
+import { assertFrontendSendActor, FrontendAccessError } from './frontend-sends.js';
 import type { FrontendSendActor } from './frontend-sends.js';
 import type { FrontendBinding, FrontendBindingRequest } from '@agentui/contracts';
 import type { FrontendToolProducer } from './frontend-tools/index.js';
@@ -12,7 +12,7 @@ import { budgets, commandKey, isOffered } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
-import type { HostBudgets, HostOutput, Installation, ProviderDriver, StoredCommand } from './durable-model.js';
+import type { HostBudgets, HostOutput, Installation, ProviderDriver, StoredCommand, OfferedStoredCommand } from './durable-model.js';
 import { providerInstallationKey } from './provider-creation.js';
 import type { ConversationInstallation, ProviderInstallation, StoredCreation, CreationObservation, ProviderCreation } from './provider-creation.js';
 import type { ProviderConversationOperations, ProviderCreationOperations } from './providers.js';
@@ -141,7 +141,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   };
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => effectFence(stored, () => {
     if (isOffered(stored)) store.frontendSends.assertMayDispatch(stored, actor);
-    else if (actor) store.frontendSends.assertActor(actor);
+    else if (actor) assertFrontendSendActor(actor);
   });
   const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
     const { scope, clientCommandId: id } = stored.command;
@@ -259,7 +259,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
           const provider = target && 'kind' in target;
           const driver = target && !('kind' in target) ? driverFor(target) : undefined;
           const registry = options.providers;
-          const assertSubmitter = () => { authorized(scope); if (actor) store.frontendSends.assertActor(actor); };
+          const assertSubmitter = () => { authorized(scope); if (actor) assertFrontendSendActor(actor); };
           const image = command.version === 1 && command.body.kind === 'send' && command.body.imageId !== undefined;
           const admit = () => store.admit(command, image && (provider || (driver && driver.imageInput !== true))
             ? { kind: 'unsupported', reason: 'This model cannot read images.' } : provider ? { kind: 'supported' } : command.version === 2
@@ -313,14 +313,53 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     },
     frontendBinding(input, actor, producerFor) {
       const scope = authorized(input.scope);
-      return inFlight(() => recoverFrontendBinding({ request: { ...input, scope }, actor, owners: store.frontendSends,
-        command: () => {
+      return inFlight(async () => {
+        const request = { ...input, scope };
+        const owners = store.frontendSends;
+        const identity = { scope, id: identifier(request.id) };
+        const command = () => {
           const stored = ownedCommand(scope, input.id, actor);
           if (stored && !isOffered(stored)) throw new FrontendAccessError('frontend-owner-missing');
           return stored;
-        },
-        transaction: work => store.transaction(work), reconcile: () => host.reconcile(scope, input.id, actor),
-        producer: () => producerFor(scope), providers: options.providers }));
+        };
+        const initial = command();
+        const ownerFence = (stored: OfferedStoredCommand | null) => owners.ownerState(stored ?? identity, actor);
+        ownerFence(initial);
+        if (request.action === 'unavailable') {
+          store.transaction(() => {
+            const stored = command();
+            if (stored) owners.markUnavailable(stored, actor);
+            else owners.tombstone(identity, actor);
+          });
+        } else if (initial && initial.observation?.kind !== 'conclusive' && initial.observation?.kind !== 'not-dispatched') {
+          await host.reconcile(scope, input.id, actor);
+        }
+        const stored = command(), state = ownerFence(stored);
+        if (stored) {
+          const observation = stored.observation;
+          const run = observation && 'evidence' in observation ? observation.evidence.source.run : null;
+          if (!run && state !== 'unavailable') {
+            if (observation?.kind === 'not-dispatched') return { kind: 'unavailable', id: request.id, reason: 'not-dispatched' };
+            if (observation?.kind === 'conclusive' && observation.result.kind === 'rejected') return { kind: 'unavailable', id: request.id, reason: 'provider-rejected' };
+          }
+          if (state !== 'unavailable') {
+            if (!options.providers) throw new Error('Original AG-UI provider unavailable');
+            options.providers.assertFrontendInput(stored.target);
+          }
+          ownerFence(stored);
+          if (run) {
+            const bound = { kind: 'bound', command: stored.command, hostOperationId: stored.receipt.hostOperationId,
+              run: run.identity, threadId: stored.agui.threadId } satisfies FrontendBinding;
+            const producer = producerFor(scope);
+            producer.register({ identity: bound.run, threadId: bound.threadId, platform: bound.command.body.frontend.platform,
+              bindings: bound.command.body.frontend.tools.map(tool => ({ ...tool, name: tool.definition.name })) });
+            if (ownerFence(stored) === 'unavailable') producer.cancel({ threadId: bound.threadId, runId: bound.run.runId });
+            else return bound;
+          }
+        }
+        if (ownerFence(stored) === 'unavailable') return { kind: 'unavailable', id: request.id, reason: 'closures-unavailable' };
+        return { kind: 'pending', id: request.id };
+      });
     },
     close(): void {
       if (closed) return;

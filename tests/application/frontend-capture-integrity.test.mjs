@@ -27,6 +27,16 @@ test('command insertion failure after new owner insertion rolls back the whole a
   assert.equal(a.calls.submits.length, 1);
 });
 
+test('owner insertion failure rolls back pending event and every admission row', async t => {
+  const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f), before = durable(f);
+  f.inspect(db => db.exec("CREATE TRIGGER fail_owner AFTER INSERT ON frontend_send_owners BEGIN SELECT RAISE(ABORT,'late-owner-insert'); END"));
+  await unavailable(f.client.conversation(scope).submit(offered(scope)));
+  assert.deepEqual(durable(f), before);
+  assert.equal(a.calls.submits.length, 0);
+  f.inspect(db => db.exec('DROP TRIGGER fail_owner'));
+  assert.equal((await f.client.conversation(scope).submit(offered(scope))).receipt.state.kind, 'completed');
+});
+
 test('multiple actor tombstones remain isolated before and after original owner admission', async t => {
   const a = aguiExtension(), f = await fixture(t, [a]), scope = await create(f);
   const others = [await f.anotherClient(), await f.anotherClient()];
