@@ -5,7 +5,7 @@ import { parseTranscript, transcriptProjection } from '@agentui/contracts/conver
 
 export async function activityProvider(t) {
   const instance = { namespace: 'activity-feed', installationId: 'activity-install', generation: 'one', protocolVersion: '1' };
-  const saved = new Map(), clients = new Set(), requests = [], errors = [], feeds = new Set();
+  const saved = new Map(), clients = new Set(), requests = [], errors = [], feeds = new Set(), pumps = [];
   let sequence = 0, context, credential;
   const ref = binding => ({ binding, ref: { kind: 'run', instance, opaqueId: 'same-run' } });
   const cursor = binding => ({ kind: 'provider-cursor', binding, opaque: { token: String(++sequence) } });
@@ -36,9 +36,10 @@ export async function activityProvider(t) {
     else { response.statusCode = 404; response.end('{}'); }
   });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  t.after(() => {
+  t.after(async () => {
     for (const close of feeds) close();
     server.closeAllConnections(); server.close();
+    await Promise.all(pumps);
     assert.deepEqual(errors, []);
   });
   const service = `http://127.0.0.1:${server.address().port}`;
@@ -67,19 +68,23 @@ export async function activityProvider(t) {
       const controller = new AbortController(), end = Promise.withResolvers(); let stopped = false;
       const close = () => { if (stopped) return; stopped = true; feeds.delete(close); controller.abort(); end.resolve({ kind: 'closed', cursor: null, reason: 'closed' }); };
       feeds.add(close);
-      void (async () => {
+      const pump = (async () => {
         try {
           const response = await request('/observe', input, controller.signal); let buffered = '';
           for await (const bytes of response.body) {
             buffered += Buffer.from(bytes).toString(); let newline;
             while ((newline = buffered.indexOf('\n')) >= 0) {
               const item = JSON.parse(buffered.slice(0, newline)); buffered = buffered.slice(newline + 1);
-              if (!stopped) await receive(item);
+              if (!stopped) {
+                try { await receive(item); }
+                catch (error) { errors.push(error); return; }
+              }
             }
           }
         } catch (error) { if (!stopped) errors.push(error); }
         finally { close(); }
       })();
+      pumps.push(pump);
       return { close, ended: end.promise };
     },
     async close() {},
