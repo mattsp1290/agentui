@@ -68,7 +68,7 @@ The exporter receives no request URLs, headers, bodies, prompts, replies, search
 
 ## Inspect observed agent runs
 
-AgentUI consumes Switchboard's public `./observability` entry from revision `dadfe09fb2f0090b46168309309ca01bb89b9a0e`. Its observer uses `contentPolicy: { kind: 'none' }` and an empty tool allowlist. The host borrows a tracer from its own provider under Switchboard's versioned instrumentation scope.
+AgentUI consumes Switchboard's public `./observability` entry from revision `6f80e6e6e4186c2d0d0731792fff984a21048c3d`. Its observer uses `contentPolicy: { kind: 'none' }` and an empty tool allowlist. The host borrows a tracer from its own provider under Switchboard's versioned instrumentation scope.
 
 After the host persists a native `run-started` event, it opens an `invoke_agent` span. The matching persisted `run-ended` event closes it. This covers Codex CLI, Codex SDK, Claude SDK, and Pi. The interval measures the host's observed run lifecycle. It starts after run-start persistence and ends after terminal-event persistence. Failures before a run starts produce no agent span.
 

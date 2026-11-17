@@ -1,9 +1,9 @@
 {
   "sourceRepository": "https://github.com/mattsp1290/switchboard",
-  "sourceRevision": "dadfe09fb2f0090b46168309309ca01bb89b9a0e",
-  "sourceTree": "24f889f95efa3b36dd2f9d86e01236cc0f0fba47",
-  "artifact": "switchboard-dadfe09fb2f0090b46168309309ca01bb89b9a0e.tgz",
-  "sha256": "675957f5550d34fa8ed43de6ec16693725917c0930a013304904c2fd5ce046c5",
+  "sourceRevision": "6f80e6e6e4186c2d0d0731792fff984a21048c3d",
+  "sourceTree": "4cb13f275f746b4dab04267981ebfbefa059bbea",
+  "artifact": "switchboard-6f80e6e6e4186c2d0d0731792fff984a21048c3d.tgz",
+  "sha256": "00a50bb2f0302196d2a6cb3e12c83a96460d219f1924a22e98d3b686972a933e",
   "license": "MIT",
   "historicalRecord": "historical/switchboard-58c7922d8fade3617cc86fedcf41677f897025ef.json",
   "toolchain": {
@@ -14,7 +14,7 @@
     "platform": "Darwin arm64",
     "node": "v24.22.3",
     "npm": "11.19.1",
-    "sourceLockSha256": "5dc513c082a3a0affef0feb820bba452ef9e1b36e1f30a4fefd5ce63d07cd653",
+    "sourceLockSha256": "8047e5922201bbab421bbcd72229ff445ddbc6d889b578635865d624fc1bd6ae",
     "steps": [
       {
         "command": [
@@ -74,7 +74,7 @@
           "pack",
           "--json",
           "--pack-destination",
-          "/tmp"
+          "/private/tmp/claude-501/-Users-punk1290--claude-spares-spare-IXwf25/3779003f-5ca8-4797-ab2c-320427332275/scratchpad/sb-pack"
         ],
         "exitCode": 0,
         "context": "clean-source-archive"
@@ -82,35 +82,35 @@
     ],
     "logs": {
       "npm-ci": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/npm-ci.log.gz",
-        "uncompressedSha256": "c291c0b171cfbd0cc368c8478bbfdf98c182b4eb2105e50ed72a172a05d8fe2e"
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/npm-ci.log.gz",
+        "uncompressedSha256": "b677ed33084055f310084fe5fa9affad1688af34404001dcb291df7895a1a1d4"
       },
       "build": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/build.log.gz",
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/build.log.gz",
         "uncompressedSha256": "f4ce765048c5215b42130876fdd5b62baead8f9e909cf3e36bf93a09aa0c8a26"
       },
       "lint": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/lint.log.gz",
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/lint.log.gz",
         "uncompressedSha256": "3b4de50643085dce3a43371f5ab83e5eec6e270d7530eccbcee664013605e8e6"
       },
       "check": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/check.log.gz",
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/check.log.gz",
         "uncompressedSha256": "db410f76a409a6e9efa2a0f57ae7c606455dd82f14ccf52b79568a478a2e6614"
       },
       "test": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/test.log.gz",
-        "uncompressedSha256": "b0969abadd4615a028086ad0df4b0627c53774a97a36139867964185ffb56651"
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/test.log.gz",
+        "uncompressedSha256": "e9ee22489898a35714cecbe2b1c0e2bd6966209e9d03b6fe5a13549966d8923c"
       },
       "verify-package": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/verify-package.log.gz",
-        "uncompressedSha256": "aefc23e21922770176f9629c96433e6615c6847fbb01189b9ab9a012ff5d5a7b"
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/verify-package.log.gz",
+        "uncompressedSha256": "cbd65ac6f3ef209fb1f7ba2bf420e84d0e35fca8963984f05e97ced43f3da866"
       },
       "pack": {
-        "path": "qualification/dadfe09fb2f0090b46168309309ca01bb89b9a0e/pack.log.gz",
-        "uncompressedSha256": "01bdb0f7561dabef8b46008bd2aff1a9bed09d1c0085603583c4e533293de6b6"
+        "path": "qualification/6f80e6e6e4186c2d0d0731792fff984a21048c3d/pack.log.gz",
+        "uncompressedSha256": "66221610f60de0bfa3309ea39cf7c58af929145e557e56646bd9b7d55e1209ab"
       }
     },
-    "testsPassed": 185,
+    "testsPassed": 238,
     "limits": "Current package and controlled fixture checks only. Historical native and Apple measurements do not qualify this revision. No live native agent, Datadog backend or Apple application execution was performed for this update."
   }
 }

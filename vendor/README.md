@@ -13,7 +13,7 @@ approvals, discovery, provider routes and Apple qualification remain open.
 
 The host installs `@mattsp1290/switchboard@0.0.0` and the existing Pi, Codex,
 and Claude aliases from one immutable artifact at source
-`dadfe09fb2f0090b46168309309ca01bb89b9a0e`.
+`6f80e6e6e4186c2d0d0731792fff984a21048c3d`.
 The [active pin](switchboard.json) records the source tree, source-lock SHA-256,
 artifact SHA-256, toolchain, command results, and retained logs.
 The alias pins identify their public entrypoints and native SDK versions. Their
@@ -29,7 +29,7 @@ native SDK versions. The host owns telemetry providers and exporters.
 
 Qualification ran from a clean `git archive` of this revision on Darwin arm64
 with Node 24.22.3 and npm 11.19.1. `npm ci`, build, lint, type checking,
-`npm test`, and `verify:package` passed. The source test runner reported 185
+`npm test`, and `verify:package` passed. The source test runner reported 238
 passing top-level tests. Its package verification also exercised controlled
 installed-package, compiler, observability, and AG-UI fixtures.
 The explicit package-verification command passed separately.
@@ -40,7 +40,7 @@ Reproduce the artifact from a separate directory. Do not replace a working
 Switchboard checkout to build the dependency.
 
 ```sh
-	git -C /path/to/switchboard archive dadfe09fb2f0090b46168309309ca01bb89b9a0e | tar -x -C /path/to/empty-source
+	git -C /path/to/switchboard archive 6f80e6e6e4186c2d0d0731792fff984a21048c3d | tar -x -C /path/to/empty-source
 	cd /path/to/empty-source
 	npm ci
 	npm run build
