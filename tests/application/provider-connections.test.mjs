@@ -123,32 +123,40 @@ test('failed activation disposes earlier entries, refuses credentials and releas
   ownDirectory(configured.directory).close();
 });
 
-test('revocation during connect closes late backend exactly once before extension disposal', async t => {
+test('revocation during connect retires the late backend exactly once and reports an invalid installation', async t => {
   const configured = options(t), events = [];
   const fixture = extension({ async connect({ connected }) {
     await new Promise(resolve => setImmediate(resolve)); revoke(configured.directory);
     return { kind: 'connected', backend: connected };
   }, close() { events.push('close'); }, dispose() { events.push('dispose'); } });
-  await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } }), /^Error: Provider discovery failed$/);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    assert.deepEqual((await host.discoverProviders()).map(item => [item.kind, item.cause]), [['unavailable', 'invalid-installation']]);
+    assert.deepEqual(events, ['close']);
+  } finally { await host.close(); }
   assert.deepEqual(events, ['close', 'dispose']);
-  assert.equal(fixture.calls.discover, 0); assert.equal(fixture.calls.close, 1);
-  ownDirectory(configured.directory).close();
+  assert.equal(fixture.calls.discover, 0); assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.connect, 1);
 });
 
-test('failed startup drains a late peer connection and cleans both lifetimes', async t => {
+test('a failing provider is retired without blocking a late healthy peer', async t => {
   const configured = options(t), entered = Promise.withResolvers(), finish = Promise.withResolvers();
   const bad = extension({ async discover() { await entered.promise; throw new Error(sentinel); } });
   const late = extension({ provider: local, backend: localBackend, presentation: localPresentation,
     async connect({ connected }) { entered.resolve(); await finish.promise; return { kind: 'connected', backend: connected }; } });
   let settled = false;
   const starting = startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [bad.value, late.value] } });
-  const rejected = assert.rejects(starting, /^Error: Provider discovery failed$/).then(() => { settled = true; });
+  void starting.then(() => { settled = true; }, () => { settled = true; });
   await entered.promise; await new Promise(resolve => setImmediate(resolve));
   assert.equal(settled, false);
-  finish.resolve(); await rejected;
+  finish.resolve();
+  const host = await starting;
+  try {
+    const statuses = await host.discoverProviders();
+    assert.deepEqual(statuses.map(item => item.kind), ['unavailable', 'available']);
+    assert.equal(statuses[0].cause, 'invalid-installation'); assert.doesNotMatch(JSON.stringify(statuses), new RegExp(sentinel));
+    assert.equal(bad.calls.close, 1); assert.equal(late.calls.close, 0); assert.equal(late.calls.discover, 2);
+  } finally { await host.close(); }
   for (const fixture of [bad, late]) { assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 1); }
-  assert.equal(late.calls.discover, 0, 'peer failure freezes authority before late connection can discover');
-  ownDirectory(configured.directory).close();
 });
 
 test('close freezes credential use, waits for discovery and discards late catalog before disposal', async t => {
@@ -178,24 +186,36 @@ for (const [name, discover] of [
   ['blank name', async () => { const result = await crewBackend.discover(); return { ...result, agents: [{ ...result.agents[0], name: ' ' }] }; }],
   ['unbounded JSON', async () => ({ kind: 'available', agents: [], extra: 'x'.repeat(16_000_001) })],
   ['private exception', async () => { throw new Error(sentinel); }],
-]) test(`discovery rejects ${name} with fixed safe errors and closes acquired backend`, async t => {
+]) test(`discovery reports ${name} as a fixed invalid installation and closes acquired backend`, async t => {
   const fixture = extension({ discover }), configured = options(t);
-  await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } }), error => {
-    assert.equal(error.message, 'Provider discovery failed'); assert.equal(error.cause, undefined); return true;
-  });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    const statuses = await host.discoverProviders();
+    assert.deepEqual(statuses, [{ kind: 'unavailable', contributionId: 'service', instance: crewPresentation.instance, cause: 'invalid-installation' }]);
+    assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.discover, 1);
+  } finally { await host.close(); }
   assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 1);
-  ownDirectory(configured.directory).close();
 });
 
 for (const [name, setup] of [
   ['missing provisioning', fixture => { fixture.value.installations = []; }],
   ['foreign installation', fixture => { fixture.value.installations[0].instance = { ...crewPresentation.instance, generation: 'other' }; }],
+]) test(`host reports ${name} as an invalid installation before provider effects`, async t => {
+  const fixture = extension(), configured = options(t);
+  setup(fixture);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try { assert.deepEqual((await host.discoverProviders()).map(item => item.cause), ['invalid-installation']); }
+  finally { await host.close(); }
+  assert.equal(fixture.calls.connect, 0); assert.equal(fixture.calls.discover, 0);
+});
+
+for (const [name, setup] of [
   ['old SDK', fixture => { fixture.value.entry.sdkVersion = '0.0.0'; }],
   ['invalid lifetime', fixture => { const activate = fixture.value.entry.activate; fixture.value.entry.activate = async context => { await activate(context); return {}; }; }],
 ]) test(`host refuses ${name} before provider effects`, async t => {
   const fixture = extension(), configured = options(t);
   setup(fixture);
-  await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } }), /Provider (activation|discovery) failed/);
+  await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } }), /Provider activation failed/);
   assert.equal(fixture.calls.connect, 0); assert.equal(fixture.calls.discover, 0);
   ownDirectory(configured.directory).close();
 });
@@ -206,9 +226,12 @@ for (const [name, setup] of [
 ]) test(`host closes ${name} before discovery`, async t => {
   const fixture = extension(), configured = options(t);
   setup(fixture.connected);
-  await assert.rejects(startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } }), /^Error: Provider discovery failed$/);
-  assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.discover, 0); assert.equal(fixture.calls.dispose, 1);
-  ownDirectory(configured.directory).close();
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    assert.deepEqual((await host.discoverProviders()).map(item => item.cause), ['invalid-installation']);
+    assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.discover, 0);
+  } finally { await host.close(); }
+  assert.equal(fixture.calls.dispose, 1);
 });
 
 test('revocation discards overlapping discovery through one call and closes the backend once', async t => {
@@ -218,11 +241,46 @@ test('revocation discards overlapping discovery through one call and closes the 
     return crewBackend.discover();
   } });
   const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
-  const first = assert.rejects(host.discoverProviders(), /^Error: Provider discovery failed$/);
-  const second = assert.rejects(host.discoverProviders(), /^Error: Provider discovery failed$/);
+  const first = host.discoverProviders(), second = host.discoverProviders();
   await entered.promise; revoke(configured.directory); finish.resolve();
-  await Promise.all([first, second]); await host.close();
+  for (const statuses of await Promise.all([first, second])) assert.deepEqual(statuses.map(item => item.cause), ['invalid-installation']);
+  assert.equal(fixture.calls.close, 1); await host.close();
   assert.equal(fixture.calls.discover, 2); assert.equal(fixture.calls.close, 1); assert.equal(fixture.calls.dispose, 1);
+});
+
+for (const [name, options_] of [
+  ['thrown connect', { connect() { throw new Error(sentinel); } }],
+  ['unknown connect kind', { connect: () => ({ kind: 'maybe', reason: sentinel }) }],
+  ['unknown discovery kind', { discover: () => ({ kind: 'maybe', reason: sentinel }) }],
+]) test(`${name} is a terminal invalid installation that refresh does not reconnect`, async t => {
+  const fixture = extension(options_), configured = options(t);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const statuses = await host.discoverProviders();
+      assert.deepEqual(statuses.map(item => item.cause), ['invalid-installation']); assert.doesNotMatch(JSON.stringify(statuses), new RegExp(sentinel));
+    }
+    assert.equal(fixture.calls.connect, 1); assert.equal(fixture.calls.discover, name === 'unknown discovery kind' ? 1 : 0);
+  } finally { await host.close(); }
+});
+
+for (const [cause, reconnects] of [['version-unsupported', true], ['unauthorized', false], ['unavailable', false]]) test(`reported ${cause} discovery ${reconnects ? 'reconnects to probe capabilities again' : 'keeps its connection'} on the next refresh`, async t => {
+  const fixture = extension({ discover: () => fixture.calls.discover === 1 ? { kind: cause, reason: sentinel } : crewBackend.discover() }), configured = options(t);
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  try {
+    assert.equal((await host.discoverProviders())[0].kind, 'available');
+    assert.equal(fixture.calls.connect, reconnects ? 2 : 1); assert.equal(fixture.calls.close, reconnects ? 1 : 0);
+  } finally { await host.close(); }
+  assert.equal(fixture.calls.close, reconnects ? 2 : 1);
+});
+
+test('a retired connection whose close throws surfaces cleanup failure at shutdown', async t => {
+  const configured = options(t), fixture = extension({ discover() { throw new Error(sentinel); }, close() { throw new Error(sentinel); } });
+  const host = await startBrowserHost({ agentStartup: { kind: 'recorded' }, ...configured, extensions: { kind: 'transient', entries: [fixture.value] } });
+  assert.deepEqual((await host.discoverProviders()).map(item => item.cause), ['invalid-installation']);
+  await assert.rejects(host.close(), error => error.message === 'Host shutdown failed' && error.cause.message === 'Provider cleanup failed');
+  assert.equal(fixture.calls.close, 1);
+  assert.throws(() => ownDirectory(configured.directory), /Another host owns/);
 });
 
 test('provider cleanup failure remains visible and retains directory ownership', async t => {

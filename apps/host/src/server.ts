@@ -184,7 +184,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
           const replacement = await replaceExtensions(readyHost, { kind: 'entries', entries: extensions.entries });
           if (replacement.kind === 'failed') {
             const messages = { load: 'Server extension loading failed', authorization: 'Provider authorization refused',
-              activation: 'Provider activation failed', discovery: 'Provider discovery failed', cleanup: 'Provider cleanup failed' };
+              activation: 'Provider activation failed', cleanup: 'Provider cleanup failed' };
             throw new Error(messages[replacement.failure]);
           }
           if (replacement.kind !== 'replaced') throw new Error('Provider activation unavailable');
@@ -332,7 +332,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const address = http.address();
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
-    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl);
+    control = await startControl(join(owner.directory, 'control.sock'), access, registry, () => closing, selectionControl, providers.discover);
     return { origin, hostId: access.hostId, close, fatal, discoverProviders: providers.discover,
       extensionStatus: providers.status,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {

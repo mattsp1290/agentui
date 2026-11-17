@@ -41,12 +41,6 @@ const artifactFailures = [
     arrange(f, candidate) { candidate.installations[0].service = 'invalid service'; return [candidate]; } },
   { name: 'import', classification: 'load', imported: 1, arrange: failPhase('import') },
   { name: 'activation', classification: 'activation', imported: 1, arrange: failPhase('activate') },
-  { name: 'discovery', classification: 'discovery', imported: 1, arrange: failPhase('discover'),
-    async assertRetired(f) {
-      const bad = f.state.modules[1];
-      assert.equal(f.count(bad, 'close'), 1); assert.equal(f.count(bad, 'dispose'), 1);
-      await assert.rejects(bad.probe(), /./);
-    } },
 ];
 
 test('packaged server replaces verified artifact generations through its existing owner', { timeout: 120000 }, async t => {

@@ -41,7 +41,9 @@ export function parseSelectionQuery(value: unknown): SelectionQuery {
   if (input.kind !== 'selection' && input.kind !== 'attempt') throw new Error('Invalid selection query');
   return { kind: input.kind, id: operationId(input.id) };
 }
-export type AttemptOutcome = { readonly kind: 'pending' | 'applying' | 'applied' | 'applied-empty' | 'interrupted' | 'grant-mismatch' } | ServerExtensionFailure | Extract<ServerExtensionReplacement, { kind: 'deferred' }>;
+// Journals written before per-installation provider status may still record a generation-level discovery failure.
+type RecordedFailure = ServerExtensionFailure | { readonly kind: 'failed'; readonly failure: 'discovery'; readonly recovery: 'replace' };
+export type AttemptOutcome = { readonly kind: 'pending' | 'applying' | 'applied' | 'applied-empty' | 'interrupted' | 'grant-mismatch' } | RecordedFailure | Extract<ServerExtensionReplacement, { kind: 'deferred' }>;
 export function parseAttemptOutcome(value: unknown): AttemptOutcome {
   const input = record(value);
   if (input.kind === 'deferred') {
