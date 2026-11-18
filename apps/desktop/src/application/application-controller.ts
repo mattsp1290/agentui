@@ -58,6 +58,10 @@ export interface ConversationContinuation {
   readonly view: ContinuationView | null;
   readonly action: 'start' | 'check' | 'move' | 'earlier' | null;
   readonly error: string;
+  /** Background reads or moves reached their bound; only a click tries again. */
+  readonly stalled: boolean;
+  /** Set when a Continue or Start a new chat click opened this chat, so its composer takes focus. */
+  readonly arrived: 'continue' | 'new-chat' | null;
   /** The boundary above the open segment's own messages, when it continues an earlier one. */
   readonly boundary: ContinuationBoundary | null;
   /** Earlier segments loaded on request, oldest first. */
@@ -133,6 +137,7 @@ interface ContinuationRecord {
   readonly target: OpenConversation;
   /** The open segment, then each predecessor read so far. */
   readonly chain: ChainLink[];
+  readonly arrived: ConversationContinuation['arrived'];
   earlier: readonly EarlierSegment[];
   action: ConversationContinuation['action'];
   error: string;
@@ -140,9 +145,14 @@ interface ContinuationRecord {
   timer: ReturnType<typeof setTimeout> | undefined;
   delay: number;
   failures: number;
+  /** Failed moves to a confirmed successor; unlike `failures`, a successful read never resets it. */
+  moves: number;
   stopped: boolean;
 }
-const CONTINUATION_POLL_MS = 500, CONTINUATION_POLL_MAX_MS = 4_000, CONTINUATION_READ_ATTEMPTS = 6, CHAIN_HOP_LIMIT = 64;
+const CONTINUATION_POLL_MS = 500, CONTINUATION_POLL_MAX_MS = 4_000, CONTINUATION_READ_ATTEMPTS = 6, CONTINUATION_MOVE_ATTEMPTS = 3, CHAIN_HOP_LIMIT = 64;
+function stalled(record: ContinuationRecord): boolean {
+  return record.failures >= CONTINUATION_READ_ATTEMPTS || record.moves >= CONTINUATION_MOVE_ATTEMPTS;
+}
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -208,7 +218,7 @@ export function createApplicationController(deps: {
   const listeners = new Set<() => void>();
   const recovery = createFrontendRecovery();
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
-  let continuation: ContinuationRecord | null = null;
+  let continuation: ContinuationRecord | null = null, arrival: ConversationContinuation['arrived'] = null;
   const concludedScopes = new Map<string, Extract<ProviderObservationStatus, { readonly kind: 'concluded' }>>();
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
@@ -385,7 +395,11 @@ export function createApplicationController(deps: {
   /** Follows confirmed successors to the newest segment of the chain; a link that cannot be read ends the walk. */
   async function newestSegment(owner: Session, scope: ConversationScope): Promise<ConversationScope> {
     let segment = scope;
+    const seen = new Set<string>();
     for (let hop = 0; hop < CHAIN_HOP_LIMIT; hop++) {
+      const key = JSON.stringify([segment.hostId, segment.conversationId]);
+      if (seen.has(key)) throw new Error('The continuations of this chat form a loop, so its newest conversation cannot be opened.');
+      seen.add(key);
       let view: ContinuationView;
       try { view = await readContinuation(owner, segment); }
       catch (cause) { if (session !== owner) throw cause; break; }
@@ -399,6 +413,7 @@ export function createApplicationController(deps: {
     const newest = await newestSegment(owner, route);
     if (!sameScope(newest, route)) await save(owner, { ...requireSaved(owner).saved, route: newest });
     await install(owner, newest);
+    await moveDraft(owner, route);
   }
   function liveContinuation(record: ContinuationRecord): boolean {
     return !record.stopped && continuation === record && session === record.owner && state.active?.store === record.target.store;
@@ -410,7 +425,7 @@ export function createApplicationController(deps: {
   }
   function publishContinuation(record: ContinuationRecord): void {
     if (continuation !== record) return;
-    publish({ continuation: { view: record.chain[0]?.view ?? null, action: record.action, error: record.error, boundary: boundaryAt(record, 0),
+    publish({ continuation: { view: record.chain[0]?.view ?? null, action: record.action, error: record.error, stalled: stalled(record), arrived: record.arrived, boundary: boundaryAt(record, 0),
       earlier: record.earlier, earlierError: record.earlierError,
       more: record.earlier.length < EARLIER_SEGMENT_LIMIT && record.chain[record.earlier.length + 1] !== undefined } });
   }
@@ -420,9 +435,10 @@ export function createApplicationController(deps: {
       return;
     }
     stopContinuation();
-    const record: ContinuationRecord = { owner, target, chain: [{ scope: target.scope, view: null }], earlier: [], action: null,
-      error: '', earlierError: '', timer: undefined, delay: CONTINUATION_POLL_MS, failures: 0, stopped: false };
+    const record: ContinuationRecord = { owner, target, chain: [{ scope: target.scope, view: null }], arrived: arrival, earlier: [], action: null,
+      error: '', earlierError: '', timer: undefined, delay: CONTINUATION_POLL_MS, failures: 0, moves: 0, stopped: false };
     continuation = record;
+    arrival = null;
     publishContinuation(record);
     void refreshContinuation(record);
   }
@@ -456,27 +472,33 @@ export function createApplicationController(deps: {
     let view: ContinuationView;
     try { view = await readContinuation(record.owner, record.target.scope); }
     catch {
-      if (liveContinuation(record) && !record.action && ++record.failures < CONTINUATION_READ_ATTEMPTS) pollContinuation(record);
+      if (!liveContinuation(record) || record.action) return;
+      if (++record.failures < CONTINUATION_READ_ATTEMPTS) pollContinuation(record);
+      else publishContinuation(record);
       return;
     }
     if (!liveContinuation(record) || record.action) return;
     const successor = await settleContinuation(record, view);
-    if (!successor || !liveContinuation(record)) return;
+    if (!successor || !liveContinuation(record) || stalled(record)) return;
     if (state.busy) pollContinuation(record);
     else void run(owner => moveToSuccessor(owner, record, successor));
   }
-  /** Moves the unsent draft into whichever chat `open` makes active. It is never sent. */
-  async function carryDraft(owner: Session, from: OpenConversation, open: () => Promise<void>): Promise<void> {
-    const text = from.store.getSnapshot().draft, lease = owner.view?.borrow;
-    // Holding the earlier store keeps it writable after the new chat replaces it, so its copy can be cleared.
-    const held = text && lease ? await owner.pool.recovery(lease, from.scope) : null;
+  /** Moves the unsent draft of a chat that is no longer open into the empty composer of the open one. It is never sent. */
+  async function moveDraft(owner: Session, earlier: ConversationScope): Promise<void> {
+    const lease = owner.view?.borrow, next = state.active;
+    if (session !== owner || !lease || !next || sameScope(next.scope, earlier)) return;
+    // The earlier store closed when the open chat replaced it, after its queued saves landed, so this loads the last text typed there.
+    const held = await owner.pool.recovery(lease, earlier);
     try {
-      await open();
-      const next = state.active;
-      if (!held || session !== owner || !next || next.store === from.store || next.store.getSnapshot().draft) return;
+      const text = held.store.getSnapshot().draft;
+      if (!text || session !== owner || state.active?.store !== next.store || next.store.getSnapshot().draft) return;
       await next.store.setDraft(text);
       await held.store.setDraft('');
-    } finally { held?.release(); }
+    } finally { held.release(); }
+  }
+  async function arrive(how: 'continue' | 'new-chat', open: () => Promise<void>): Promise<void> {
+    arrival = how;
+    try { await open(); } finally { arrival = null; }
   }
   async function moveToSuccessor(owner: Session, record: ContinuationRecord, successor: ConversationScope): Promise<void> {
     if (!liveContinuation(record)) return;
@@ -484,23 +506,22 @@ export function createApplicationController(deps: {
     record.action = 'move';
     publishContinuation(record);
     try {
-      await carryDraft(owner, from, async () => {
-        const newest = await newestSegment(owner, successor);
-        await save(owner, { ...requireSaved(owner).saved, route: newest });
-        const items = state.catalog.items.filter(entry => !sameScope(entry.scope, newest));
-        const at = items.findIndex(entry => sameScope(entry.scope, from.scope));
-        const entry = { scope: newest, preview: null };
-        publish({ catalog: { ...state.catalog, items: at < 0 ? [entry, ...items] : items.map((item, index) => index === at ? entry : item) } });
-        await install(owner, newest);
-      });
+      const newest = await newestSegment(owner, successor);
+      await save(owner, { ...requireSaved(owner).saved, route: newest });
+      const items = state.catalog.items.filter(entry => !sameScope(entry.scope, newest));
+      const at = items.findIndex(entry => sameScope(entry.scope, from.scope));
+      const entry = { scope: newest, preview: null };
+      publish({ catalog: { ...state.catalog, items: at < 0 ? [entry, ...items] : items.map((item, index) => index === at ? entry : item) } });
+      await arrive('continue', () => install(owner, newest));
     } catch (cause) {
       if (liveContinuation(record)) {
         record.action = null;
+        if (++record.moves < CONTINUATION_MOVE_ATTEMPTS) pollContinuation(record);
         publishContinuation(record);
-        if (++record.failures < CONTINUATION_READ_ATTEMPTS) pollContinuation(record);
       }
       throw cause;
     }
+    await moveDraft(owner, from.scope);
   }
   async function continuationAction(owner: Session, target: OpenConversation, action: 'start' | 'check'): Promise<void> {
     requireTarget(owner, target);
@@ -511,6 +532,7 @@ export function createApplicationController(deps: {
     record.error = '';
     record.delay = CONTINUATION_POLL_MS;
     record.failures = 0;
+    record.moves = 0;
     publishContinuation(record);
     let view: ContinuationView | null = null, error = '', lost = false;
     try { view = await readContinuation(owner, target.scope, action); }
@@ -567,6 +589,9 @@ export function createApplicationController(deps: {
       if (liveContinuation(record)) {
         record.action = null;
         publishContinuation(record);
+        // A poll that fired during the load gave way to it without arming another.
+        const kind = record.chain[0]?.view?.successor?.kind;
+        if ((kind === 'starting' || kind === 'confirmed') && !stalled(record)) pollContinuation(record);
       }
     }
   }
@@ -875,6 +900,7 @@ export function createApplicationController(deps: {
       const newest = await newestSegment(owner, scope);
       await save(owner, { ...requireSaved(owner).saved, route: newest });
       await install(owner, newest);
+      await moveDraft(owner, scope);
     }),
     conversationActions(target) {
       const owner = session;
@@ -901,7 +927,8 @@ export function createApplicationController(deps: {
         startNewChat: () => run(async active => {
           if (active !== owner) return;
           requireTarget(active, target);
-          await carryDraft(active, target, () => createConversation(active, target.agent.id));
+          await arrive('new-chat', () => createConversation(active, target.agent.id));
+          await moveDraft(active, target.scope);
         }),
         async loadEarlierSegment() {
           if (owner && session === owner) await readEarlierSegment(owner, target);

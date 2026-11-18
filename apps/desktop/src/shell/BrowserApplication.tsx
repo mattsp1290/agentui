@@ -11,6 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
+import { continuationAnnouncement } from '../application/continuation-copy.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -107,7 +108,11 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
-  const views = <div className="chat-view" inert={suspended}>{conversation}
+  // Outside the keyed conversation view, so a move to another chat cannot unmount it mid-announcement.
+  const views = <div className="chat-view" inert={suspended}>
+      <div id="continuation-status" className="visually-hidden" aria-live="polite" aria-atomic="true">
+        {continuationAnnouncement(app.continuation, app.observation?.status.kind === 'concluded')}</div>
+      {conversation}
       {!app.active && modules}
     </div>;
   const settings = <section className="settings-panel" aria-label="Settings" id="connection-settings">

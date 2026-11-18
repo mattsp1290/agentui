@@ -47,6 +47,8 @@ const notice = (page, cause = 'it was stopped') => page.getByRole('status').filt
 const showing = (page, conversationId, timeout = 10_000) =>
   page.waitForFunction(id => document.querySelector('.scope-label')?.textContent === id, conversationId, { timeout });
 const buttons = locator => locator.getByRole('button').allTextContents();
+const composerFocused = page => page.waitForFunction(() => document.activeElement?.id === 'message');
+const announced = (page, text) => page.waitForFunction(value => document.getElementById('continuation-status')?.textContent === value, text);
 
 test('browser stops a Crew chat, continues it on one click, shows the boundary counts, moves the draft and loads the earlier segment', { timeout: 40_000 }, async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]);
@@ -75,12 +77,15 @@ test('browser stops a Crew chat, continues it on one click, shows the boundary c
   await until(() => attempts(f, 'chat').length === 1, 5000);
   const [after] = attempts(f, 'chat');
   await showing(page, after);
+  await composerFocused(page);
   const [row] = remote.handoffs;
   assert.deepEqual([row.carriedTurns, row.omittedTurns, row.uncertainTurns], [1, 1, 0]);
   const boundary = page.getByRole('note').filter({ hasText: 'Continued in a new provider conversation' });
-  assert.equal(await boundary.textContent(), 'Continued in a new provider conversation because the earlier one was stopped. '
+  const boundaryText = 'Continued in a new provider conversation because the earlier one was stopped. '
     + `Carried the newest 1 completed turn (${kib(row.transcriptBytes)} KiB of 64 KiB). 1 older turn left out. `
-    + 'Tools, approvals and the agent’s memory did not carry over. The first reply acknowledges the carried turns.');
+    + 'Tools, approvals and the agent’s memory did not carry over. The first reply acknowledges the carried turns.';
+  assert.equal(await boundary.textContent(), boundaryText);
+  await announced(page, boundaryText);
   await page.getByText(acknowledgement, { exact: true }).waitFor();
   assert.equal(await page.getByText('BirbCrew conversation handoff v1').count(), 0);
   await page.waitForFunction(() => document.querySelector('textarea#message')?.value === 'Ask about watering next');
@@ -93,6 +98,7 @@ test('browser stops a Crew chat, continues it on one click, shows the boundary c
   await page.getByRole('button', { name: 'Show earlier messages', exact: true }).click();
   const earlier = page.getByRole('region', { name: 'Earlier messages', exact: true });
   await earlier.getByText('Plan the balcony garden', { exact: true }).waitFor();
+  assert.equal(await page.locator('.conversation-content').getByRole('region', { name: 'Earlier messages', exact: true }).count(), 1);
   assert.equal(await page.getByRole('button', { name: 'Show earlier messages', exact: true }).count(), 0);
   assert(requests.some(body => body?.op === 'watch' && body.scope.conversationId === 'chat'));
 
@@ -120,6 +126,7 @@ test('two pages that both choose Continue converge on one successor with one han
   const release = remote.holdHandoffs();
   for (const page of pages) await notice(page).getByRole('button', { name: 'Continue', exact: true }).click();
   for (const page of pages) await notice(page).getByText('Continuing…', { exact: true }).waitFor();
+  for (const page of pages) await announced(page, 'Continuing…');
   await until(() => handoffPosts(remote).length === 1, 5000);
   release();
   await until(() => attempts(f, 'chat').length === 1, 5000);
@@ -160,7 +167,7 @@ test('each Crew refusal shows its own text and buttons; Try again and Start a ne
   const remote = await service(t), f = await fixture(t, [remote.extension()]);
   const cases = [
     ['busy', { status: 409, code: 'busy' }, 'The provider is still finishing work here.', ['Try again']],
-    ['limit', { status: 409, code: 'usage_limit' }, 'The agent is over a provider limit.', []],
+    ['limit', { status: 409, code: 'usage_limit' }, 'The agent is over a provider limit.', ['Try again', 'Start a new chat']],
     ['unavailable', { status: 409, code: 'handoff_too_large' }, 'The provider could not carry context.', ['Start a new chat']],
     ['elsewhere', { status: 409, code: 'handed_off' }, 'This conversation was continued outside AgentUI.', ['Start a new chat']],
   ];
@@ -173,6 +180,7 @@ test('each Crew refusal shows its own text and buttons; Try again and Start a ne
     await openChat(page, `Refused as ${id}`, scopes[id]);
     await notice(page).getByRole('button', { name: 'Continue', exact: true }).click();
     await notice(page).getByText(text, { exact: true }).waitFor();
+    await announced(page, text);
     assert.deepEqual(await buttons(notice(page)), expected, id);
     assert.equal(await notice(page).getByText(NEW_CHAT_NOTE, { exact: true }).count(), expected.includes('Start a new chat') ? 1 : 0, id);
   }
@@ -189,6 +197,7 @@ test('each Crew refusal shows its own text and buttons; Try again and Start a ne
   const fresh = f.inspect(db => db.prepare('SELECT conversation, original FROM provider_creations').all()).find(row => !known.has(row.conversation));
   assert.equal(JSON.parse(fresh.original).intent.from, undefined);
   await showing(page, fresh.conversation);
+  await composerFocused(page);
   await page.waitForFunction(() => document.querySelector('textarea#message')?.value === 'Context I add myself');
   assert.equal(await page.getByRole('note').filter({ hasText: 'Continued in a new provider conversation' }).count(), 0);
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path === '/v1/conversations').length, creations + 1);
