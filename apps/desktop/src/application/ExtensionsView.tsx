@@ -6,7 +6,7 @@ import { classifyExtensionCall } from '@agentui/contracts/service';
 import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
 import { CustomizationBoundary, workspaceTranscript, type ContentLayoutSelection, type DesktopCustomization, type NamespaceActivation, type TranscriptSelection } from './DesktopCustomizations.js';
 import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
-import { outcomeMessage } from './customization-messages.js';
+import { BUILD_PHASES, buildFailureMessage, outcomeMessage } from './customization-messages.js';
 
 export type ExtensionRowState = 'Ready' | 'Not configured' | 'Unavailable' | 'No view' | 'Failed' | 'Disabled' | 'Loading';
 export interface ExtensionRow {
@@ -111,13 +111,134 @@ export function ApplyPanel({ controller, status, restarting, enabled }: {
   </div>;
 }
 
-export function ExtensionsList({ rows, onOpen, enabled, children }: {
+export type RepositoryRowState = ExtensionRowState | 'Enabled, not applied yet' | 'Disabled, still running until applied' | 'Not in the connected repository';
+export interface RepositoryRow {
+  /** The reference key, or null for a running extension the connected repository does not list. */
+  readonly key: string | null;
+  readonly label: string;
+  /** The extension's namespace, when the repository's manifest or the running build names one. */
+  readonly namespace: string | null;
+  readonly enabled: boolean;
+  readonly state: RepositoryRowState;
+  readonly detail: string | null;
+  /** The running extension's row, whose workspace can open. */
+  readonly running: ExtensionRow | null;
+}
+const tokenPart = (namespace: string) => namespace.toUpperCase().replace(/[^A-Z0-9]/gu, '_');
+/** One row per reference in the connected repository, sorted by label, then running extensions it does not list. */
+export function repositoryRows(status: CustomizationStatus, running: readonly ExtensionRow[]): readonly RepositoryRow[] {
+  const listed = status.extensions.map((reference): RepositoryRow => {
+    const row = reference.namespace === null ? null : running.find(item => item.namespace === reference.namespace) ?? null;
+    const label = row?.label ?? reference.namespace ?? reference.key;
+    const namespace = reference.namespace;
+    if (!reference.enabled) return { key: reference.key, label, namespace, enabled: false, running: row, detail: null, state: row ? 'Disabled, still running until applied' : 'Disabled' };
+    if (!row) return { key: reference.key, label, namespace, enabled: true, running: null, detail: null, state: 'Enabled, not applied yet' };
+    // A grant left out at startup for a missing token: name the variable to set.
+    // Grant variables are named AGENTUI_EXTENSION_<NAMESPACE>_…; when none matches, every omitted name is listed.
+    const own = status.running.omittedGrants.filter(name => reference.namespace !== null && name.startsWith(`AGENTUI_EXTENSION_${tokenPart(reference.namespace)}_`));
+    const omitted = own.length ? own : status.running.omittedGrants;
+    const detail = row.state === 'Not configured' && omitted.length
+      ? `Set ${omitted.join(', ')} in the shell that runs the AgentUI launcher, then restart AgentUI.` : row.detail;
+    return { key: reference.key, label, namespace, enabled: true, running: row, detail, state: row.state };
+  }).sort((a, b) => a.label.localeCompare(b.label));
+  const namespaces = new Set(status.extensions.map(reference => reference.namespace));
+  const extra = running.filter(row => !namespaces.has(row.namespace)).map((row): RepositoryRow =>
+    ({ key: null, label: row.label, namespace: row.namespace, enabled: true, running: row, detail: null, state: 'Not in the connected repository' }));
+  return [...listed, ...extra];
+}
+
+/** The build of the connected head: its phase, its failure with Rebuild, or the apply step. */
+export function BuildPanel({ controller, status, restarting, enabled }: {
+  readonly controller: ApplicationController; readonly status: CustomizationStatus; readonly restarting: boolean; readonly enabled: boolean;
+}) {
+  const [notice, setNotice] = useState('');
+  const build = status.build;
+  const [, setTick] = useState(0);
+  const active = build !== null && !['ready', 'failed', 'cancelled'].includes(build.state);
+  useEffect(() => {
+    if (!active) return;
+    const timer = setInterval(() => setTick(value => value + 1), 1_000);
+    return () => clearInterval(timer);
+  }, [active]);
+  const rebuild = () => { setNotice(''); void controller.rebuildCustomization().then(outcome => setNotice(outcomeMessage(outcome, controller.getSnapshot().customization))); };
+  return <div className="customization-build">
+    {status.running.stale && <p>AgentUI was updated, so the applied customization was built for another version. It is being rebuilt, or is ready to apply.</p>}
+    {build && active && <p>{BUILD_PHASES[build.state]} · {Math.max(0, Math.round((Date.now() - build.startedAt) / 1_000))} s</p>}
+    {build?.state === 'cancelled' && <p>The build was cancelled.</p>}
+    {build?.state === 'failed' && <div role="alert">
+      <p>The build failed. {build.failure ? buildFailureMessage(build.failure) : ''}</p>
+      <p>The log is in <code>customization/builds/{build.buildKey}/log.txt</code> under the AgentUI setup root on the machine that runs the launcher.</p>
+    </div>}
+    {(build?.state === 'failed' || build?.state === 'cancelled') && <button type="button" disabled={!enabled || status.pending !== null} onClick={rebuild}>Rebuild</button>}
+    <ApplyPanel controller={controller} status={status} restarting={restarting} enabled={enabled && status.pending === null} />
+    {notice && <p role="alert">{notice}</p>}
+  </div>;
+}
+
+/** The Extensions page body: the connected repository's extensions with toggles, or the running ones when it cannot change. */
+export function ExtensionsPage({ controller, status, rows, restarting, enabled, onOpen, onSettings }: {
+  readonly controller: ApplicationController; readonly status: CustomizationStatus | null; readonly rows: readonly ExtensionRow[];
+  readonly restarting: boolean; readonly enabled: boolean; readonly onOpen: (namespace: string) => void; readonly onSettings: () => void;
+}) {
+  const [saving, setSaving] = useState<string | null>(null);
+  const [notice, setNotice] = useState('');
+  if (status === null || status.support === 'worker-offline') {
+    return <ExtensionsList rows={rows} enabled={enabled} onOpen={onOpen} onSettings={onSettings}>
+      {status !== null && <p>These extensions cannot be changed until the launcher is connected.</p>}
+    </ExtensionsList>;
+  }
+  if (status.connection === null) {
+    return <section className="extensions-panel" aria-label="Extensions">
+      <h1>Extensions</h1>
+      <div className="empty-state"><p>No customization repository is connected. Extensions come from the repository you connect in Settings.</p>
+        <button type="button" onClick={onSettings}>Open Settings</button></div>
+      <ApplyPanel controller={controller} status={status} restarting={restarting} enabled={enabled} />
+    </section>;
+  }
+  const listed = repositoryRows(status, rows);
+  const pending = status.pending !== null || saving !== null;
+  const toggle = async (row: RepositoryRow) => {
+    if (row.key === null) return;
+    setSaving(row.key);
+    setNotice('');
+    try {
+      const outcome = await controller.toggleExtension(row.key, !row.enabled);
+      if (outcome.kind !== 'ok') setNotice(outcomeMessage(outcome, controller.getSnapshot().customization));
+    } finally { setSaving(null); }
+  };
+  return <section className="extensions-panel" aria-label="Extensions">
+    <h1>Extensions</h1>
+    <BuildPanel controller={controller} status={status} restarting={restarting} enabled={enabled && !restarting} />
+    {!restarting && <p role="status" className="customization-status">{saving !== null ? 'Saving\u2026' : ''}</p>}
+    {notice && <p role="alert">{notice}</p>}
+    {listed.length === 0 ? <p className="empty-state">The connected repository lists no extensions.</p> : <ul className="extension-list">
+      {listed.map(row => {
+        const open = row.running ? openableRow(row.running) : null;
+        return <li key={row.key ?? `running:${row.namespace ?? row.label}`} className="extension-row" data-extension={row.namespace ?? row.key ?? undefined} data-extension-key={row.key ?? undefined}>
+          <div className="extension-row-text">
+            <strong>{row.label}</strong>
+            {row.key && <code className="extension-key">{row.key}</code>}
+            <span className="extension-state" data-state={row.state}>{saving !== null && saving === row.key ? 'Saving\u2026' : row.state}</span>
+            {row.detail && <p>{row.detail}</p>}
+          </div>
+          {row.key !== null && <button type="button" role="switch" aria-checked={row.enabled} aria-label={`${row.label} enabled`} disabled={!enabled || pending || restarting}
+            onClick={() => void toggle(row)}>{row.enabled ? 'On' : 'Off'}</button>}
+          {open && <button type="button" disabled={!enabled} aria-label={`Open ${row.label}`} onClick={() => onOpen(open.namespace)}>Open</button>}
+        </li>;
+      })}
+    </ul>}
+  </section>;
+}
+
+export function ExtensionsList({ rows, onOpen, enabled, children, onSettings }: {
   readonly rows: readonly ExtensionRow[]; readonly onOpen: (namespace: string) => void; readonly enabled: boolean; readonly children?: ReactNode;
+  readonly onSettings?: () => void;
 }) {
   return <section className="extensions-panel" aria-label="Extensions">
     <h1>Extensions</h1>
     {children}
-    {rows.length === 0 ? <p className="empty-state">No extensions are installed in this build or configured on this host.</p>
+    {rows.length === 0 ? <div className="empty-state"><p>No extensions are running. Extensions come from a customization repository you connect in Settings.</p>
+      {onSettings && <button type="button" onClick={onSettings}>Open Settings</button>}</div>
       : <ul className="extension-list">
         {rows.map(row => {
           const selectable = openableRow(row) !== null;

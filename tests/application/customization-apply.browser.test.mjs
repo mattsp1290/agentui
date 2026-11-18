@@ -1,78 +1,13 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
-import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { randomBytes } from 'node:crypto';
 import test from 'node:test';
 import { chromium } from 'playwright';
-import { startCustomizationWorker } from '../../scripts/agentui-customization-worker.mjs';
 import { customizationFixtureFiles, fixtureConnection } from '../support/customization-fixture.mjs';
-import { seedRemote } from '../support/customization-session.mjs';
-import { draft, root } from './browser-support.mjs';
-
-const ALPHA = 'AGENTUI_EXTENSION_ALPHA_TOKEN', BETA = 'AGENTUI_EXTENSION_BETA_TOKEN';
-const until = async (predicate, label, timeout = 300_000) => {
-  const deadline = Date.now() + timeout;
-  for (;;) {
-    const value = await predicate();
-    if (value) return value;
-    if (Date.now() > deadline) throw new Error(`Timed out waiting for ${label}`);
-    await new Promise(resolve => setTimeout(resolve, 100));
-  }
-};
-
-/**
- * A host started by the real session wrapper, the way the launcher starts it, with a real worker in this process, a local
- * bare remote and real builds of the dependency-free fixture. Every directory is temporary.
- */
-async function session(t) {
-  const directory = await mkdtemp(join(tmpdir(), 'agentui-apply-'));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  const { remote, git, gitEnvironment, home } = await seedRemote(directory, customizationFixtureFiles());
-  const data = join(directory, 'data');
-  await mkdir(data, { mode: 0o700 });
-  const port = await new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
-  const origin = `http://127.0.0.1:${port}`;
-  // A temporary HOME: the host and its Pi setup never read or write the real one.
-  const environment = { ...Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('AGENTUI_EXTENSION_'))), HOME: home };
-  const workspace = join(directory, 'workspace');
-  await mkdir(workspace);
-  // The launcher's own host command line for a Pi session.
-  const wrapper = spawn(process.execPath, [join(root, 'scripts/agentui-launch-session.mjs'), process.execPath, join(root, 'apps/host/dist/main.js'), 'desktop',
-    '--preferred', 'pi', '--workspace', workspace, '--data-dir', data, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port)],
-    { cwd: root, env: environment, stdio: ['pipe', 'pipe', 'pipe'] });
-  let output = '', errors = '';
-  wrapper.stdout.on('data', chunk => { output += chunk; });
-  wrapper.stderr.on('data', chunk => { errors += chunk; });
-  const closed = new Promise(resolve => wrapper.once('close', resolve));
-  const tokens = { [ALPHA]: 'alpha-test-token', [BETA]: 'beta-test-token' };
-  wrapper.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: null, AGENTUI_SETUP_CAPABILITY: randomBytes(32).toString('hex'), extensionVariables: tokens })}\n`);
-  const controller = new AbortController();
-  let worker;
-  t.after(async () => { controller.abort(); await worker?.stopped; wrapper.stdin.end(); await closed; });
-  await until(() => output.includes('"hostId"'), 'host ready', 30_000).catch(error => { throw new Error(`${error.message}\n${errors}`); });
-  worker = startCustomizationWorker({ origin, localSetupRoot: join(directory, 'setup'), repositoryRoot: root, signal: controller.signal, gitEnvironment,
-    environment: tokens, pushIntervalMs: 500, profileId: 'browser-test' });
-  const call = async body => {
-    const response = await fetch(`${origin}/api/v1`, { method: 'POST', headers: { 'content-type': 'application/json', origin }, body: JSON.stringify(body) });
-    const reply = await response.json();
-    if (!reply.ok) throw new Error(reply.error.message);
-    return reply.value;
-  };
-  const status = () => call({ op: 'customization-status' });
-  const mutate = async (op, fields = {}) => {
-    const requestId = randomUUID();
-    const reply = await call({ op: `customization-${op}`, requestId, ...fields });
-    if (reply.kind !== 'accepted') return { refused: reply.cause };
-    return (await until(async () => (await status()).results.find(item => item.requestId === requestId), `${op} result`, 120_000)).outcome;
-  };
-  const agents = async () => (await call({ op: 'metadata' })).agents.map(agent => agent.label);
-  return { origin, data, remote, git, call, status, mutate, agents, output: () => output, errors: () => errors };
-}
+import { startSession } from '../support/customization-session.mjs';
+import { draft } from './browser-support.mjs';
 
 async function applyFromPage(page, s, buildKey) {
+  const until = s.until;
   await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
   const apply = page.getByRole('button', { name: 'Apply and restart' });
   await until(() => apply.isVisible(), 'the apply button', 60_000);
@@ -90,8 +25,8 @@ async function pickerAgents(page) {
 }
 
 test('apply restarts the host through the wrapper; the page reconnects and reloads by itself, and a disabled extension’s agent is gone', { timeout: 900_000 }, async t => {
-  const s = await session(t);
-  await until(async () => (await s.status()).support === 'supported', 'worker online', 30_000);
+  const s = await startSession(t, { files: customizationFixtureFiles() });
+  const until = s.until;
   assert.equal(await s.mutate('connect', fixtureConnection(s.remote)), 'ok');
   const first = await until(async () => { const build = (await s.status()).build; return build?.state === 'ready' ? build : build?.state === 'failed' ? assert.fail(JSON.stringify(build)) : null; }, 'first build');
   assert.deepEqual(first.namespaces, ['alpha', 'beta']);

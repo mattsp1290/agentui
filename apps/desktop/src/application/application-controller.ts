@@ -9,8 +9,8 @@ import type { ConversationScope, SubmitResult, ProviderObservationStatus, Conver
 import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, CustomizationMutation, CustomizationRefusal, CustomizationStatus,
-  CustomizationWorkerFailure, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, CustomizationConnection, CustomizationMutation, CustomizationRefusal,
+  CustomizationSettings, CustomizationStatus, CustomizationWorkerFailure, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
@@ -20,6 +20,7 @@ import { createFrontendRecovery } from './frontend-recovery.js';
 import { createViewLeasePool } from './view-leases.js';
 import type { StoreBorrow, ViewBorrow } from './view-leases.js';
 import { conversationResponding } from './responding.js';
+import { resolveDefaultAgent } from './default-agent.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
 type HostState =
@@ -122,6 +123,15 @@ export interface ApplicationController {
   setCustomizationVisible(visible: boolean): void;
   /** Applies a ready build: the host restarts with it, and the page reconnects, then reloads when its build changed. */
   applyCustomization(buildKey: string): Promise<CustomizationOutcome>;
+  /** Each of these queues one request for the launcher's worker and resolves with its outcome; none rejects. */
+  connectCustomization(connection: CustomizationConnection): Promise<CustomizationOutcome>;
+  disconnectCustomization(): Promise<CustomizationOutcome>;
+  syncCustomization(): Promise<CustomizationOutcome>;
+  rebuildCustomization(): Promise<CustomizationOutcome>;
+  /** Commits and pushes the `enabled` value of one reference, against the head the page shows. */
+  toggleExtension(key: string, enabled: boolean): Promise<CustomizationOutcome>;
+  /** Commits and pushes the whole settings file, against the head the page shows. */
+  saveSettings(settings: CustomizationSettings): Promise<CustomizationOutcome>;
 }
 interface LoadedView { readonly borrow: ViewBorrow; readonly saved: SavedView; readonly hostId: string }
 type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedView;
@@ -391,6 +401,15 @@ export function createApplicationController(deps: {
     if (session !== owner) return;
     if (answered) { await finishRestart(owner); return; }
     endRestart('AgentUI did not come back after the restart. Select Reconnect to try again.');
+  }
+  function queued(build: (requestId: string) => CustomizationMutation): Promise<CustomizationOutcome> {
+    const owner = session;
+    return owner ? customizationRequest(owner, build) : Promise.resolve({ kind: 'unknown' });
+  }
+  /** A change made against the head the page shows; the worker refuses it as a conflict when the repository moved. */
+  function headed(build: (head: string) => (requestId: string) => CustomizationMutation): Promise<CustomizationOutcome> {
+    const head = state.customization?.head;
+    return head ? queued(build(head)) : Promise.resolve({ kind: 'failed', cause: 'state-invalid' });
   }
   async function customizationRequest(owner: Session, build: (requestId: string) => CustomizationMutation): Promise<CustomizationOutcome> {
     const requestId = deps.createId();
@@ -810,7 +829,8 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       const { saved } = requireSaved(owner);
       if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
-      const selected = agentId ?? host.defaultAgentId;
+      // The connected repository's default agent, when it is ready here; otherwise the host's default.
+      const selected = agentId ?? resolveDefaultAgent(state.customization?.settings ?? null, host) ?? host.defaultAgentId;
       if (selected === null) throw new Error('No agent is available to start a conversation.');
       const agent = host.agents.find(agent => agent.id === selected);
       if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
@@ -883,6 +903,12 @@ export function createApplicationController(deps: {
       const owner = session;
       if (owner && visible && state.host.kind === 'ready') void readCustomization(owner);
     },
+    connectCustomization: connection => queued(requestId => ({ op: 'customization-connect', requestId, ...connection })),
+    disconnectCustomization: () => queued(requestId => ({ op: 'customization-disconnect', requestId })),
+    syncCustomization: () => queued(requestId => ({ op: 'customization-sync', requestId })),
+    rebuildCustomization: () => queued(requestId => ({ op: 'customization-rebuild', requestId })),
+    toggleExtension: (key, enabled) => headed(head => requestId => ({ op: 'customization-toggle', requestId, key, enabled, expectedHead: head })),
+    saveSettings: settings => headed(head => requestId => ({ op: 'customization-settings', requestId, settings, expectedHead: head })),
     async applyCustomization(buildKey) {
       const owner = session;
       if (!owner || state.restarting) return { kind: 'unknown' };

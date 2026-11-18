@@ -11,7 +11,10 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
-import { ApplyPanel, ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
+import { ExtensionsPage, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
+import { CustomizationRepository } from '../application/CustomizationRepository.js';
+import { SettingsPreferences } from '../application/SettingsPreferences.js';
+import { resolveDefaultAgent } from '../application/default-agent.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -27,7 +30,15 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const { controller, snapshot: app } = useApplication(supplied);
   const [selectedView, setSelectedView] = useState<'chats' | 'extensions' | 'settings'>('chats');
   const [selectedExtension, setSelectedExtension] = useState<string | null>(null);
-  const [customizationEnabled, setCustomizationEnabled] = useState(true);
+  const repositorySettings = app.customization?.settings ?? null;
+  // Extension views follow the repository's setting once status arrives. Restore default view and the session switch
+  // override it in this window only; nothing is written to the repository.
+  const [sessionViews, setSessionViews] = useState<boolean | null>(null);
+  const customizationEnabled = sessionViews ?? repositorySettings?.showExtensionViews ?? true;
+  // A change of the repository's value, from this or another client, replaces the session override.
+  const repositoryViews = repositorySettings?.showExtensionViews;
+  useEffect(() => { setSessionViews(null); }, [repositoryViews]);
+  const appearance = repositorySettings?.appearance === 'light' || repositorySettings?.appearance === 'dark' ? repositorySettings.appearance : undefined;
   const customizationVisible = selectedView === 'extensions' || selectedView === 'settings';
   useEffect(() => { controller.setCustomizationVisible(customizationVisible); }, [controller, customizationVisible]);
   const custom = useDesktopCustomizations({ customizations: customization, sink: controller.frontendGenerations, enabled: children === undefined && customizationEnabled });
@@ -40,8 +51,9 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const choices = metadata?.agents ?? [];
   const pi = choices.find(agent => 'runtime' in agent && agent.runtime.engine === 'pi');
   const setupPi = () => setSelectedView('settings');
+  const preferred = metadata ? resolveDefaultAgent(repositorySettings, metadata) ?? metadata.defaultAgentId : null;
   const selected = choices.find(agent => agent.id === app.active?.agent.id && agent.availability.kind === 'ready')
-    ?? choices.find(agent => agent.id === metadata?.defaultAgentId && agent.availability.kind === 'ready')
+    ?? choices.find(agent => agent.id === preferred && agent.availability.kind === 'ready')
     ?? choices.find(agent => agent.availability.kind === 'ready');
   const options = choices.map(agent => <option key={agent.id} value={agent.id} disabled={agent.availability.kind !== 'ready'}>
     {agent.label}{agent.availability.kind !== 'ready' ? ' · Unavailable' : ''}
@@ -93,9 +105,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     {workspaceOpen
       ? <ExtensionWorkspace row={workspaceRow} metadata={metadata} workspaces={app.workspaces} active={app.active} controller={controller}
           conversation={workspaceConversation} status={<>{hostAlerts}{creationRecovery}</>} onBack={() => setSelectedExtension(null)} />
-      : <ExtensionsList rows={rows} enabled={!suspended} onOpen={setSelectedExtension}>
-          <ApplyPanel controller={controller} status={app.customization} restarting={app.restarting} enabled={!suspended && !app.restarting} />
-        </ExtensionsList>}
+      : <ExtensionsPage controller={controller} status={app.customization} rows={rows} restarting={app.restarting} enabled={!suspended}
+          onOpen={setSelectedExtension} onSettings={() => setSelectedView('settings')} />}
   </div>;
   const controls = <div className="application-controls">
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : selectedView === 'extensions' ? 'Extensions' : 'Settings'}</h2>
@@ -145,6 +156,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
         {connection.kind === 'native' && connection.controls}
         <button disabled={suspended || app.busy || Boolean(app.storageFailure)} onClick={() => connection.kind === 'native' ? connection.reconnect() : void controller.reconnect()}>Reconnect</button>
       </section>
+      <CustomizationRepository controller={controller} status={app.customization} enabled={!suspended} />
       <section className="settings-section" aria-label="Pi and OpenCode Go"><h2>Pi and OpenCode Go</h2>
         <p>AgentUI includes a compatible Pi runtime. Your installed Pi command is separate and is not required for this chat.</p>
         <p role="status">{pi?.availability.kind === 'ready' ? 'Pi is configured for GLM 5.3 through OpenCode Go.'
@@ -155,7 +167,10 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
           <p>In a browser, reopen this host with the AgentUI Mac app to use protected setup. You can also supply OPENCODE_GO_API_KEY in the host environment.</p></>}
         <p>Pi supports text chat, saved conversations, and Stop. Tools and file access are unavailable in this integration.</p>
       </section>
-      <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p><label><input type="checkbox" checked={customizationEnabled} onChange={event => setCustomizationEnabled(event.target.checked)} />Enable customizations</label></section>
+      <SettingsPreferences controller={controller} status={app.customization} metadata={metadata} enabled={!suspended}>
+        <label><input type="checkbox" checked={customizationEnabled} onChange={event => setSessionViews(event.target.checked)} />Enable customizations</label>
+        <p>Turns extension views on or off in this window only, until it reloads.</p>
+      </SettingsPreferences>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>
     </section>;
   const rail = <nav className="view-rail" aria-label="Workspace views">
@@ -171,7 +186,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   </nav>;
   return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} settingsView={settings}
     extensionsView={extensionsView} workspaceOpen={workspaceOpen} restoreMode={children === undefined ? 'managed' : 'remount'}
-    onRestore={() => { setCustomizationEnabled(false); setSelectedView('chats'); }}
+    onRestore={() => { setSessionViews(false); setSelectedView('chats'); }}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
-    buildLabel={presentation.buildLabel}>{children}</DesktopShell>;
+    buildLabel={presentation.buildLabel} {...(appearance ? { appearance } : {})}>{children}</DesktopShell>;
 }

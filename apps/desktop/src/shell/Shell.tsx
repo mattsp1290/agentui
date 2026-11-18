@@ -53,7 +53,7 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children, defaultView, settingsView, extensionsView, workspaceOpen = false, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
+export function DesktopShell({ children, defaultView, settingsView, extensionsView, workspaceOpen = false, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel, appearance }: {
   readonly children?: ReactNode;
   readonly defaultView?: ReactNode;
   readonly settingsView?: ReactNode;
@@ -67,13 +67,15 @@ export function DesktopShell({ children, defaultView, settingsView, extensionsVi
   readonly restoreMode?: 'remount' | 'managed';
   readonly status?: ReactNode;
   readonly buildLabel?: string;
+  /** Light or dark from the connected repository's settings; absent follows the system. */
+  readonly appearance?: 'light' | 'dark';
 }) {
   const [view, setView] = useState<{ readonly kind: 'initial' } | { readonly kind: 'default'; readonly revision: number }>({ kind: 'initial' });
   const boundaryKey = restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision;
   const revision = view.kind === 'initial' ? 0 : view.revision;
   const showSettings = settingsView !== undefined && activeView === 'settings';
   const showExtensions = extensionsView !== undefined && activeView === 'extensions';
-  return <ThemeScope className="desktop-shell" data-workspace-view={activeView} data-workspace-open={showExtensions && workspaceOpen ? 'true' : undefined}>
+  return <ThemeScope className="desktop-shell" {...(appearance ? { appearance } : {})} data-workspace-view={activeView} data-workspace-open={showExtensions && workspaceOpen ? 'true' : undefined}>
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
       <details className="recovery-menu"><summary>View options</summary><nav aria-label="Recovery controls">

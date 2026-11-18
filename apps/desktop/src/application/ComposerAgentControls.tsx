@@ -2,9 +2,9 @@ import { useEffect, useId, useRef, useState } from 'react';
 import type { AgentDescriptor } from '@agentui/contracts/service';
 import { CLAUDE_SDK_RUNTIMES, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 
-type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'provider' | 'other';
+export type Harness = 'pi' | 'claude' | 'codex' | 'recorded' | 'provider' | 'other';
 type Picker = { readonly kind: 'closed' } | { readonly kind: 'harness' } | { readonly kind: 'model'; readonly harness: Harness };
-const harnessLabels = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', provider: 'Provider', other: 'Local agent' };
+export const harnessLabels: Readonly<Record<Harness, string>> = { pi: 'Pi', claude: 'Claude', codex: 'Codex', recorded: 'Recorded', provider: 'Provider', other: 'Local agent' };
 const modelLabels = [
   { runtime: CODEX_SDK_RUNTIME, label: CODEX_SDK_MODEL.label },
   { runtime: CLAUDE_SDK_RUNTIMES.opus, label: 'Opus' },
@@ -12,7 +12,8 @@ const modelLabels = [
   { runtime: PI_RUNTIME, label: 'GLM 5.3' },
   { runtime: RECORDED_RUNTIME, label: 'No live model' },
 ];
-function harness(agent: AgentDescriptor | null): Harness {
+/** The composer's harness group of an agent. Settings and the default-agent selector use the same grouping. */
+export function harness(agent: AgentDescriptor | null): Harness {
   if (agent && !('runtime' in agent)) return 'provider';
   switch (agent?.runtime.engine) {
     case 'pi': return 'pi';

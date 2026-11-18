@@ -206,3 +206,107 @@ test('the extension test bundle lists the in-repo Crew workspace Not configured 
   assert.deepEqual(violations, []);
   assert.deepEqual(errors, []);
 });
+
+// The Extensions page driven by a connected customization repository: a real host under the session wrapper, a real
+// worker, a local bare remote with the dependency-free fixture, and real builds.
+const repositoryPage = async (t, s) => {
+  const { chromium } = await import('playwright');
+  const browser = await chromium.launch();
+  t.after(() => browser.close());
+  const page = await (await browser.newContext({ bypassCSP: true })).newPage();
+  page.setDefaultTimeout(30_000);
+  page.loads = 0;
+  page.on('load', () => { page.loads++; });
+  await page.goto(`${s.origin}/browser.html`);
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
+  return page;
+};
+/** Applies from the page and waits for its one reload, then shows the Extensions view again. */
+async function applyAndReload(s, page, buildKey) {
+  const loads = page.loads;
+  await page.getByRole('button', { name: 'Apply and restart' }).click({ timeout: 60_000 });
+  await s.until(async () => (await s.status().catch(() => null))?.running.buildKey === buildKey, 'the applied build running', 120_000);
+  await s.until(() => page.loads === loads + 1, 'one reload', 60_000);
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
+}
+/** Commits a change to the remote as someone other than AgentUI. */
+async function pushElsewhere(s, path, edit) {
+  const { readFile, writeFile } = await import('node:fs/promises');
+  const { join } = await import('node:path');
+  s.git(s.seed, 'fetch', '--quiet', s.remote, 'customization');
+  s.git(s.seed, 'reset', '--quiet', '--hard', 'FETCH_HEAD');
+  const file = join(s.seed, path);
+  await writeFile(file, edit(await readFile(file, 'utf8').catch(() => '')));
+  s.git(s.seed, 'add', '-A');
+  s.git(s.seed, 'commit', '--quiet', '-m', `Change ${path} elsewhere`);
+  s.git(s.seed, 'push', '--quiet', s.remote, 'HEAD:customization');
+}
+
+test('with no repository connected the Extensions page shows an empty state whose button opens Settings', { timeout: 120_000 }, async t => {
+  const { startSession } = await import('../support/customization-session.mjs');
+  const { customizationFixtureFiles } = await import('../support/customization-fixture.mjs');
+  const s = await startSession(t, { files: customizationFixtureFiles() });
+  const page = await repositoryPage(t, s);
+  await page.getByText('No customization repository is connected.').waitFor();
+  await audit(page, 'extensions without a repository');
+  await page.getByRole('button', { name: 'Open Settings' }).click();
+  await page.getByRole('region', { name: 'Customization repository' }).waitFor();
+});
+
+test('repository toggles commit and push, show the build and Apply; a conflict and a failed build show their sentences', { timeout: 900_000 }, async t => {
+  const { startSession } = await import('../support/customization-session.mjs');
+  const { customizationFixtureFiles, fixtureConnection } = await import('../support/customization-fixture.mjs');
+  const s = await startSession(t, { files: customizationFixtureFiles() });
+  assert.equal(await s.mutate('connect', fixtureConnection(s.remote)), 'ok');
+  const first = await s.ready();
+  const page = await repositoryPage(t, s);
+  const toggle = label => page.getByRole('switch', { name: `${label} enabled` });
+  const state = namespace => page.locator(`[data-extension="${namespace}"] .extension-state`).textContent();
+  await toggle('alpha').waitFor();
+  assert.equal(await state('alpha'), 'Enabled, not applied yet');
+  await audit(page, 'extensions before apply');
+  await applyAndReload(s, page, first.buildKey);
+  await s.until(async () => await toggle('alpha').count() === 1 && await state('alpha').catch(() => '') === 'No view', 'running rows after the reload', 60_000);
+  assert.equal(await toggle('alpha').getAttribute('aria-checked'), 'true');
+  assert.equal(await toggle('beta').getAttribute('aria-checked'), 'true');
+
+  // Turning beta off: every toggle waits for the save; one commit on the remote; the row says it still runs until applied.
+  const before = s.git(s.remote, 'rev-parse', 'customization');
+  await toggle('beta').click();
+  assert.equal(await toggle('alpha').isDisabled(), true, 'all toggles are disabled while a change is saved');
+  await s.until(async () => await state('beta').catch(() => '') === 'Disabled, still running until applied', 'disabled but running', 60_000);
+  assert.equal(s.git(s.remote, 'rev-list', '--count', `${before}..customization`), '1');
+  assert.equal(s.git(s.remote, 'log', '-1', '--format=%s', 'customization'), 'Disable ext/beta extension');
+  const second = await s.ready(first.buildKey);
+  await applyAndReload(s, page, second.buildKey);
+  await s.until(async () => await state('beta').catch(() => '') === 'Disabled', 'disabled after the apply', 60_000);
+  assert.equal(await page.locator('[data-extension="beta"]').getByRole('button', { name: /^Open/ }).count(), 0);
+  assert.equal((await s.agents()).includes('beta fixture agent'), false);
+
+  // Someone else pushed first: the toggle reports a conflict, and the switch shows the repository's value.
+  await pushElsewhere(s, 'custom/NOTES.md', text => `${text}elsewhere\n`);
+  await toggle('alpha').click();
+  await page.getByRole('alert').filter({ hasText: 'The repository changed.' }).waitFor({ timeout: 60_000 });
+  assert.equal((await s.status()).head, s.git(s.remote, 'rev-parse', 'customization'), 'the page now knows the pushed head');
+  assert.equal(await toggle('alpha').getAttribute('aria-checked'), 'true', 'the switch shows the repository value');
+
+  // A build that fails shows its sentence, where the log is, and Rebuild.
+  await pushElsewhere(s, 'ext/alpha/package.json', text => text.replace(/"sdkVersion": "[^"]+"/u, '"sdkVersion": "0.0.1"'));
+  assert.equal(await s.mutate('sync'), 'ok');
+  await page.getByRole('alert').filter({ hasText: 'target a different AgentUI version' }).waitFor({ timeout: 120_000 });
+  assert.match(await page.getByRole('alert').filter({ hasText: 'The build failed.' }).textContent(), /customization\/builds\/[0-9a-f]{64}\/log\.txt/u);
+  await page.getByRole('button', { name: 'Rebuild' }).waitFor();
+  await audit(page, 'extensions with a failed build');
+});
+
+test('applying a build whose token variable is unset names the variable and restarts nothing', { timeout: 600_000 }, async t => {
+  const { startSession } = await import('../support/customization-session.mjs');
+  const { customizationFixtureFiles, fixtureConnection } = await import('../support/customization-fixture.mjs');
+  const s = await startSession(t, { files: customizationFixtureFiles(), tokens: {}, hostTokens: {} });
+  assert.equal(await s.mutate('connect', fixtureConnection(s.remote)), 'ok');
+  await s.ready();
+  const page = await repositoryPage(t, s);
+  await page.getByRole('button', { name: 'Apply and restart' }).click();
+  await page.getByRole('alert').filter({ hasText: 'AGENTUI_EXTENSION_ALPHA_TOKEN, AGENTUI_EXTENSION_BETA_TOKEN' }).waitFor();
+  assert.equal((await s.status()).running.buildKey, null);
+});

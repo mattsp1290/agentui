@@ -292,3 +292,16 @@
   .extension-status-strip { padding-right: 112px; }
 }
 @media (max-width: 520px) { .desktop-shell[data-workspace-open="true"] { grid-template-columns: 44px 0 minmax(0, 1fr); } }
+
+/* Connected customization repository: Settings sections and the Extensions page. */
+.settings-preferences, .customization-connect { display: grid; gap: 0.75rem; justify-items: start; }
+.settings-preferences > label, .customization-connect > label { display: grid; gap: 0.25rem; }
+.settings-preferences > label:has(input[type="checkbox"]) { display: flex; align-items: center; gap: 0.5rem; }
+.appearance-choice { display: flex; flex-wrap: wrap; gap: 1rem; }
+.appearance-choice label { display: flex; align-items: center; gap: 0.35rem; }
+.customization-connect input { min-width: min(28rem, 100%); }
+.customization-connection { display: grid; grid-template-columns: max-content 1fr; gap: 0.25rem 1rem; margin: 0; }
+.customization-connection dd { margin: 0; overflow-wrap: anywhere; }
+.customization-confirm { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+.customization-status:empty { display: none; }
+.extension-key { font-size: 0.8em; opacity: 0.8; overflow-wrap: anywhere; }
