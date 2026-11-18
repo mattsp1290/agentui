@@ -54,8 +54,9 @@ test('multiple platform kinds can share one mapped source module', () => {
 
 test('shared and external inputs survive without a local SDK manifest', () => {
   const extensions = [{ repository: 'git@example.org:me/widgets.git', commit: oid, subdirectory: 'packages/widgets' }];
-  assert.deepEqual(parse({ shared: './shared.ts', extensions }), { shared: './shared.ts', extensions });
-  assert.deepEqual(parse({ extensions }), { extensions });
+  const parsed = extensions.map(item => ({ ...item, enabled: true }));
+  assert.deepEqual(parse({ shared: './shared.ts', extensions }), { shared: './shared.ts', extensions: parsed });
+  assert.deepEqual(parse({ extensions }), { extensions: parsed });
 });
 
 test('source maps and shared inputs must identify contained committed regular files', () => {

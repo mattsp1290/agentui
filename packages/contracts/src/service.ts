@@ -17,6 +17,7 @@ import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
 import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_DEPTH, JSON_MAX_NODES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
+export * from './customization.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;

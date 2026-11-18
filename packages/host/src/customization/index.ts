@@ -1,7 +1,11 @@
 export { readCustomizationSnapshot } from './repository.js';
 export type { CustomizationSnapshot } from './repository.js';
-export { CustomizationError, parseGitExtensionReference, assertSupportedNode, supportedNpmVersion, supportedPackageManager, serverCatalogFile } from './contract.js';
-export type { CustomizationErrorCode, CustomizationSource, GitExtensionReference } from './contract.js';
+export { CustomizationError, parseGitExtensionReference, parseCommittedExtensionReference, isSiblingReference, committedReferenceKey, parseCustomizationPackage, repositoryLocation, containedPath, assertSupportedNode, supportedNpmVersion, supportedPackageManager, serverCatalogFile } from './contract.js';
+export type { CommittedExtensionReference, CustomizationErrorCode, CustomizationSource, GitExtensionReference } from './contract.js';
+export { EXTENSION_TOKEN_VARIABLE, parseInstallationGrant, parseInstallationGrants } from './installations.js';
+export type { InstallationGrant, InstallationGrantAuthentication, InstallationGrantInstance } from './installations.js';
+export { customizationSettingsFile, parseCustomizationSettings, serializeCustomizationSettings } from './settings.js';
+export type { CustomizationSettings } from './settings.js';
 export { resolveCustomizationSources } from './sources.js';
 export type { ResolvedCustomizationPackage, ResolvedCustomizationSources } from './sources.js';
 export type { CommittedInputs, SourceFile } from './repository.js';

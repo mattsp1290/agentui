@@ -37,6 +37,33 @@ Local repository paths may contain spaces. File URLs use ordinary URL encoding. 
 }
 ```
 
+### Same-repository references
+
+A reference that names only a `subdirectory`, such as `{ "subdirectory": "extensions/crew" }`, is a same-repository reference. A committed file cannot name its own commit, so this form resolves in the snapshot of the package that declares it: same repository, same commit, no second acquisition. The `subdirectory` is a path from the repository root, not from the referencing package, and must stay inside the repository. Inside an external package it refers to that package's repository. The existing cycle check rejects a package that references its own subdirectory. A reference with `repository` but no `commit`, or `commit` but no `repository`, is rejected. Only committed metadata may use this form. Refresh requests and the root reference passed to `resolveCustomizationSources` still require a repository and a full commit.
+
+### Enabled flag
+
+Both reference forms accept an optional boolean `enabled`. Absent means `true`. The parsed package keeps every reference with its flag, so a disabled extension stays listed. The resolver skips a disabled reference and never fetches or parses it, so a disabled reference to an unreachable repository does not fail resolution. A disabled reference still counts toward the 256-entry cap. Flipping the flag changes the root package's committed files and therefore the desktop and server artifact identities.
+
+### Installation grants
+
+The root package may declare `installations`: at most 64 grants in the host's version 2 installation shape (`id`, `instance { namespace, installationId, generation, protocolVersion }`, `service`, `expectedAuthority`, `authentication`). `authentication` is `{ "kind": "environment", "variable": "AGENTUI_EXTENSION_…", "revision": "…" }` or `{ "kind": "unauthenticated" }`. A grant names a token variable and never holds a secret; a literal secret, an unknown key or a variable outside the `AGENTUI_EXTENSION_` namespace is rejected. Parsing never reads the environment. `installations` in a referenced package is rejected with `invalid-package`. `resolveCustomizationSources` returns the root's grants as `installations`. A grant for a namespace whose reference is disabled does not fail resolution; builds ignore it.
+
+### Settings file
+
+An optional `agentui-settings.json` beside the root package's `package.json` holds client settings:
+
+```json
+{
+  "version": 1,
+  "appearance": "system",
+  "showExtensionViews": true,
+  "defaultAgent": { "kind": "native", "harness": "codex" }
+}
+```
+
+`appearance` is `system` (the default), `light` or `dark`. `showExtensionViews` defaults to `true`. `defaultAgent` is absent, `{ "kind": "native", "harness", "model"? }` or `{ "kind": "provider", "namespace", "installationId", "providerAgentId" }`; `harness` is at most 64 bytes and `model` at most 128. Unknown keys, a `version` other than 1 and a file over 16,384 bytes are rejected. `serializeCustomizationSettings` writes two-space JSON with keys in that order and a trailing newline, so a settings commit is a small, stable diff. The settings file is never a build input.
+
 ## Npm inputs
 
 Use Node 24.22.3 or newer within Node 24 and npm 11.19.1. If you add actual npm dependencies, commit an npm v3 `package-lock.json` whose root dependency declarations, name, and version agree with `package.json`. The resolver validates declarations against the committed lock entries and retains exact lock bytes. A committed `npm-shrinkwrap.json` in the owning npm root or selected package is unsupported, including uppercase and mixed-case filename aliases, even beside a valid `package-lock.json`. npm prefers shrinkwrap, so the resolver rejects that context rather than report the unused package lock as validated. Dependency entries declaring embedded shrinkwrap contexts are also unsupported.
@@ -49,7 +76,7 @@ Contained committed `file:` tarballs and links to declared members of the select
 
 Every read fetches the full commit into private storage, copies raw regular-file blobs, and leaves your working tree, index, refs, and `FETCH_HEAD` alone. Dirty and untracked changes are excluded. Executable bits are preserved. LFS pointers stay pointer bytes. Symlinks and Git submodules are unsupported. Git uses existing SSH agents and credential helpers. Do not put passwords or tokens in repository URLs. Custom code will run with host or client process privileges when a later builder and activation path enables it.
 
-A selected `subdirectory` reads that package's metadata while preserving the complete repository for sibling imports. Workspace declarations support literal paths and a trailing `/*` over immediate packages, as an array or a `packages` array inside an object. Duplicate patterns, overlapping declarations, and unsupported patterns on any examined ancestor fail. A declaring ancestor owns the npm lock. Multiple declaring ancestors, or a selected package lock alongside a declaring ancestor, fail as ambiguous. Workspace manifests and contained local package manifests must agree with their exact lock entries. Each workspace member also requires its canonical `node_modules/<name>` link with the matching member path, including entries with an explicit name. Normalized-only link spellings such as `packages/./foo` do not match the canonical member path. Sibling workspace customization does not activate automatically.
+A selected `subdirectory` reads that package's metadata while preserving the complete repository for sibling imports. Workspace declarations support literal paths and a trailing `/*` over immediate packages, as an array or a `packages` array inside an object. Duplicate patterns, overlapping declarations, and unsupported patterns on any examined ancestor fail. A declaring ancestor owns the npm lock. Multiple declaring ancestors, or a selected package lock alongside a declaring ancestor, fail as ambiguous. Workspace manifests and contained local package manifests must agree with their exact lock entries. Each workspace member also requires its canonical `node_modules/<name>` link with the matching member path, including entries with an explicit name. Normalized-only link spellings such as `packages/./foo` do not match the canonical member path. Sibling workspace customization does not activate automatically; a package enables a sibling only through an explicit same-repository reference.
 
 In-repo extensions are different. Every package under this repository's top-level `extensions/` directory is first-party and is bundled into the default desktop build when its `agentui.extension` manifest declares a `desktop` entry and `agentui.sources` maps that entry to a source file (`scripts/bundled-extensions.mjs`). The same import and CSS policies apply to them. Their package names stay outside the `@agentui/` scope. An external customization build merges its plan with the bundled plan, and a namespace in both fails the build. The rule for external repositories above is unchanged.
 

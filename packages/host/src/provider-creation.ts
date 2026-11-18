@@ -2,6 +2,7 @@ import { canonicalJson, copyJson, parseProviderBinding, parseRunAuthority, parse
 import type { ConversationScope, Json, RunAuthority } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import type { CreationIntent, CredentialHandle, ProviderConversation, ProviderInstance } from '@agentui/sdk';
+import { parseGrantInstance } from './customization/installations.js';
 import type { Installation } from './durable-model.js';
 import { installation } from './native-execution.js';
 
@@ -32,12 +33,7 @@ export interface StoredCreation extends ProviderCreation {
   readonly status: 'reserved' | 'attempted' | 'observed';
   readonly observation: CreationObservation | null;
 }
-export function providerIdentity(value: unknown): ProviderIdentity {
-  const input = record(value, ['namespace', 'installationId', 'generation', 'protocolVersion']);
-  if (Object.values(input).some(value => typeof value !== 'string' || !value.trim())) throw new Error('Invalid provider identity');
-  return { namespace: identifier(input.namespace), installationId: identifier(input.installationId),
-    generation: identifier(input.generation), protocolVersion: identifier(input.protocolVersion) };
-}
+export function providerIdentity(value: unknown): ProviderIdentity { return parseGrantInstance(value); }
 export function providerInstallation(value: unknown): ProviderInstallation {
   const input = record(value, ['kind', 'contributionId', 'instance', 'agent', 'presentationVersion', 'expectedAuthority']);
   const agent = record(input.agent, ['opaqueId', 'name']);

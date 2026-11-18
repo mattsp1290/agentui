@@ -1,6 +1,7 @@
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
-import { commitId, containedPath, CustomizationError, repositoryAddress, identity, type CustomizationSource, type GitExtensionReference } from './contract.js';
+import { commitId, containedPath, CustomizationError, isSiblingReference, repositoryAddress, identity, type CustomizationSource, type GitExtensionReference } from './contract.js';
+import type { InstallationGrant } from './installations.js';
 import { selectPackage, type NpmInputs } from './packages.js';
 import { SourceBudget } from './budget.js';
 import { readCommittedRepository, type CommittedInputs, type RepositoryTree } from './repository.js';
@@ -20,6 +21,8 @@ export interface ResolvedCustomizationPackage {
 }
 export interface ResolvedCustomizationSources {
   readonly root: ResolvedCustomizationPackage;
+  /** The root package's installation grants. Referenced packages may not declare any. */
+  readonly installations: readonly InstallationGrant[];
   dispose(): Promise<void>;
 }
 /**
@@ -43,13 +46,10 @@ export async function resolveCustomizationSources(input: {
   await mkdir(scratchParent, { recursive: true, mode: 0o700 });
   const owner = await mkdtemp(join(scratchParent, 'agentui-sources-'));
   const dispose = () => rm(owner, { recursive: true, force: true });
-  const visit = async (reference: GitExtensionReference, depth: number, external: boolean): Promise<ResolvedCustomizationPackage> => {
-    budget.check();
-    if (depth > 32) throw new CustomizationError('resource-limit', 'Customization source traversal limit exceeded.');
+  const acquire = async (reference: GitExtensionReference): Promise<{ readonly address: string; readonly tree: RepositoryTree }> => {
     const commit = commitId(reference.commit);
     const location = repositoryAddress(reference.repository, cwd);
     if (location.address === undefined) throw new CustomizationError('retrieval-failed', 'Could not resolve committed customization sources.');
-    const subdirectory = reference.subdirectory === undefined ? '' : containedPath(reference.subdirectory);
     const address = JSON.stringify([location.address, commit]);
     let tree = repositories.get(address);
     if (!tree) {
@@ -57,6 +57,14 @@ export async function resolveCustomizationSources(input: {
       tree = await readCommittedRepository({ transport: location.transport, commit, scratchParent: owner, budget });
       repositories.set(address, tree);
     }
+    return { address, tree };
+  };
+  // A same-repository reference resolves in its parent's snapshot: same address and tree, no acquisition.
+  const visit = async (source: { readonly address: string; readonly tree: RepositoryTree }, subdirectoryValue: string | undefined, depth: number, external: boolean): Promise<ResolvedCustomizationPackage> => {
+    budget.check();
+    if (depth > 32) throw new CustomizationError('resource-limit', 'Customization source traversal limit exceeded.');
+    const { address, tree } = source;
+    const subdirectory = subdirectoryValue === undefined ? '' : containedPath(subdirectoryValue);
     const key = JSON.stringify([address, subdirectory]);
     const id = packageIdentity(tree.inputs.identity, subdirectory);
     if (active.has(id)) throw new CustomizationError('invalid-package', 'Customization source dependency cycle detected.');
@@ -66,10 +74,13 @@ export async function resolveCustomizationSources(input: {
     active.add(id);
     const selected = await selectPackage(tree, subdirectory, budget);
     if (external && !selected.customization) throw new CustomizationError('invalid-package', 'External sources require committed customization metadata.');
+    if (external && selected.customization?.installations !== undefined) throw new CustomizationError('invalid-package', 'Only the root customization package may declare installations.');
     const extensions: ResolvedCustomizationPackage[] = [];
     for (const child of selected.customization?.extensions ?? []) {
+      if (!child.enabled) continue;
       if (++edges > 256) throw new CustomizationError('resource-limit', 'Customization source edge limit exceeded.');
-      extensions.push(await visit(child, depth + 1, true));
+      const target = isSiblingReference(child) ? source : await acquire(child);
+      extensions.push(await visit(target, child.subdirectory, depth + 1, true));
     }
     const result: ResolvedCustomizationPackage = Object.freeze({ directory: selected.directory, repositoryDirectory: tree.directory, customization: selected.customization, npm: selected.npm, identity: id, commit: tree.commit,
       subdirectory, inputs: tree.inputs, extensions: Object.freeze(extensions) });
@@ -78,7 +89,9 @@ export async function resolveCustomizationSources(input: {
     return result;
   };
   try {
-    return { root: await visit(input.reference, 0, false), dispose };
+    budget.check();
+    const root = await visit(await acquire(input.reference), input.reference.subdirectory, 0, false);
+    return { root, installations: Object.freeze([...root.customization?.installations ?? []]), dispose };
   } catch (error) {
     await dispose().catch(() => {});
     if (error instanceof CustomizationError) throw error;

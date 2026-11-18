@@ -221,7 +221,7 @@ test('file URL retrieval preserves shared and external-only inputs', async t => 
   await writeFile(join(f.repo, 'shared.ts'), 'export const label = "Notes";\n');
   await writeFile(join(f.repo, 'package.json'), JSON.stringify({ agentui: { shared: './shared.ts', extensions } }));
   const snapshot = await readCustomizationSnapshot({ repository: new URL(`file://${f.repo}`).href, commit: f.commit(), scratchParent: f.scratchParent });
-  assert.deepEqual(snapshot.customization, { shared: './shared.ts', extensions });
+  assert.deepEqual(snapshot.customization, { shared: './shared.ts', extensions: extensions.map(item => ({ ...item, enabled: true })) });
   await snapshot.dispose();
 });
 
