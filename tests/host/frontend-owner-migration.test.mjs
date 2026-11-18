@@ -55,7 +55,7 @@ test('authentic released owner5 upgrades to8 and reopens with every original row
       }
     } finally { host.close(); await host.drained; }
     const after = snapshot(f.path);
-    assert.equal(after.version, 8);
+    assert.equal(after.version, 9);
     for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
     assert.deepEqual(after.schema.filter(row => !row.name.includes('frontend_observation') && row.name !== 'provider_creations_from'), before.schema);
     assert.deepEqual(after.tables.frontend_observation_runs, []); assert.deepEqual(after.tables.frontend_observation_events, []);
@@ -126,7 +126,7 @@ test('genuine released6 migrates and reopens8 preserving every old row, public t
         for (const call of run.calls.filter(call => call.state.kind === 'permitted')) assert.equal(client.claim(key, call.id, call.state.activationId).kind, 'uncertain');
       }
     } finally { host.close(); await host.drained; }
-    const after = snapshot(f.path); assert.equal(after.version, 8);
+    const after = snapshot(f.path); assert.equal(after.version, 9);
     for (const [table, rows] of Object.entries(before.tables)) assert.deepEqual(after.tables[table], rows);
   }
   for (const [openOld, filename, provenance] of [[openOriginal5, 'sqlite-format5.ts', JSON.parse(readFileSync(new URL('./fixtures/released-owner5.json', import.meta.url)))], [openOriginal6, 'sqlite-format6.ts', provenance6]]) {

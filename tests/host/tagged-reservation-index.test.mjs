@@ -22,7 +22,7 @@ for (const format of [2, 3]) test(`format ${format} upgrade builds tagged index 
   const before = saved(db); db.close();
   const store = new SqliteStore(f.path, projection, budgets());
   try {
-    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(store.db.prepare('PRAGMA user_version').get().user_version, 9);
     assert.deepEqual(saved(store.db), before);
     assert.equal(store.db.prepare(history).get(scope.hostId, scope.conversationId, 'missing', 'missing'), undefined);
     assert.equal(store.db.prepare("SELECT COUNT(*) n FROM commands INDEXED BY commands_tagged_send_key WHERE " + predicate).get().n, 0);
@@ -121,7 +121,7 @@ for (const [name, mutation, error] of [
   assert.throws(() => new SqliteStore(f.path, projection, budgets()), error);
   const reader = new DatabaseSync(f.path);
   try {
-    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 8);
+    assert.equal(reader.prepare('PRAGMA user_version').get().user_version, 9);
     assert.deepEqual(reader.prepare('SELECT name,sql FROM sqlite_schema ORDER BY name').all(), schema);
   } finally { reader.close(); }
 });

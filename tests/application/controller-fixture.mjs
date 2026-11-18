@@ -47,6 +47,7 @@ export function fixture() {
     providerObservation: input => behavior.observation(input),
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
+    async abandon(...args) { return behavior.abandon ? behavior.abandon(...args) : null; },
     uploadImage: input => behavior.uploadImage(input),
     readImage: (selected, imageId) => behavior.readImage(selected, imageId),
     conversation(selected) { return { scope: selected,

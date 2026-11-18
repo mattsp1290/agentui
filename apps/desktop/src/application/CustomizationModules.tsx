@@ -18,6 +18,7 @@ function actionOutcome(result: SubmitResult): string {
     case 'rejected': return `Submission rejected. ${state.reason}`;
     case 'not-dispatched': return `Not dispatched. ${state.reason}`;
     case 'uncertain': return `Submission uncertain. ${state.reason} Use the conversation recovery controls before trying again.`;
+    case 'abandoned': return 'Stopped waiting. Whether this command ran is unknown.';
     default: { const exhaustive: never = state; return exhaustive; }
   }
 }

@@ -29,7 +29,7 @@ import { nonempty, object, integer, copyCanonicalJson } from './codec.js';
 import { installation, nativeRun, output, capturedTarget, observation, captureTarget, settlementObservation, nativeObservation } from './native-execution.js';
 import { settlement, isQuarantined, OUTPUT_REJECTED, CAPACITY_EXHAUSTED } from './settlement.js';
 import type { HostBudgets, HostOutput, Installation, InstallationKind, SendBlock, StoredCommand } from './durable-model.js';
-import { scopeKey as key, sendBlock } from './durable-model.js';
+import { isOffered, scopeKey as key, sendBlock } from './durable-model.js';
 
 type StoreTransaction = { readonly write: boolean };
 
@@ -51,6 +51,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
   private frontendCoordinator: ReturnType<typeof createFrontendCoordinator> | undefined;
   private activeTransaction: StoreTransaction | undefined;
   onCommit: (() => void) | undefined;
+  onProviderCommit: ((scope: ConversationScope) => void) | undefined;
   constructor(path: string, readonly projection: Projection<E, P>, readonly limits: HostBudgets) {
     this.db = openDatabase(path);
     this.frontendSends = new FrontendSends(this.db);
@@ -220,7 +221,7 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     event: { readonly id: string; readonly payload: string } | null, render: () => ProviderChange,
     prepared?: PreparedProviderObservations): ProviderCheckpoint {
     if (!prepared && this.hasFrontendObservations(original.intent.scope)) throw new Error('Observation preparation required');
-    return this.transaction(transaction => {
+    const committed = this.transaction(transaction => {
       const scope = original.intent.scope, creation = this.creation(scope);
       if (this.projection !== transcriptProjection || creation?.observation?.kind !== 'confirmed' ||
         canonicalJson({ installation: creation.installation, intent: creation.intent, credential: creation.credential }) !== canonicalJson(original)) {
@@ -289,6 +290,8 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       if (event) this.db.prepare('INSERT INTO provider_event_ids(host, conversation, id, payload) VALUES (?, ?, ?, ?)').run(...key(scope), event.id, event.payload);
       return next;
     });
+    this.onProviderCommit?.(original.intent.scope);
+    return committed;
   }
   /** A conversation with a confirmed successor is listed only through its newest segment. */
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
@@ -350,6 +353,19 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       const stored = this.command(scope, nonempty(row.id));
       const block = stored ? sendBlock(kind, stored) : 'none';
       if (stored && block !== 'none') return { stored, block };
+    }
+    return null;
+  }
+  /** The accepted provider send whose observed run the transcript shows as ended, read without decoding the document. */
+  endedSend(scope: ConversationScope): StoredCommand | null {
+    if (this.projection !== transcriptProjection) return null;
+    const run = this.db.prepare("SELECT json_extract(document, '$.domain.currentRun.kind') AS kind, json_extract(document, '$.domain.currentRun.runId') AS id FROM conversations WHERE host=? AND conversation=?").get(...key(scope));
+    if (run?.kind !== 'ended' || typeof run.id !== 'string') return null;
+    const rows = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind')='accepted' ORDER BY rowid").all(...key(scope));
+    for (const row of rows) {
+      const stored = this.command(scope, nonempty(row.id));
+      if (!stored || !('kind' in stored) || isOffered(stored) || !stored.observation || !('evidence' in stored.observation)) continue;
+      if (stored.observation.evidence.source.run?.identity.runId === run.id) return stored;
     }
     return null;
   }
@@ -539,10 +555,25 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       this.appendEvents(scope, this.writeOutput(scope, value, installed));
     });
   }
+  /** Records that the user stopped waiting on a provider send that still blocks its conversation. The stored
+   * observation is kept; the receipt event is the audit record. Any other command is returned unchanged. */
+  abandon(scope: ConversationScope, id: string): Receipt | null {
+    return this.transaction(() => {
+      const stored = this.command(scope, id);
+      if (!stored) return null;
+      if (!('kind' in stored) || stored.command.body.kind !== 'send' || sendBlock('provider', stored) !== 'blocked-reconcilable') return stored.receipt;
+      const next: Receipt = { ...stored.receipt, sequence: this.head(scope) + 1, state: { kind: 'abandoned' } };
+      this.db.prepare('UPDATE commands SET receipt=? WHERE host=? AND conversation=? AND id=?')
+        .run(canonicalJson(next), ...key(scope), id);
+      this.appendEvents(scope, [{ kind: 'receipt', receipt: next }]);
+      return next;
+    });
+  }
   settle(scope: ConversationScope, id: string, value: Observation, observations?: typeof FrontendObservations): Receipt {
     return this.transaction(transaction => {
       const stored = this.command(scope, id);
       if (!stored) throw new Error('Unknown command');
+      if (stored.receipt.state.kind === 'abandoned') return stored.receipt;
       if ('kind' in stored) {
         if (stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol && !observations) throw new Error('Observation settlement required');
         const transition = settlement(stored.observation, retainProviderRun(providerObservation(value, stored), stored.observation), { quarantined: isQuarantined(stored) });

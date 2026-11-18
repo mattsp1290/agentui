@@ -45,3 +45,17 @@ test('receipt refresh reports failed persistence while retaining recoverable int
   assert.equal(f.store.getSnapshot().draft, 'original');
   assert.equal(f.port.submitted.length, 1);
 });
+test('an abandoned receipt removes the outbox entry, keeps the unsent draft and never resubmits', async () => {
+  const f = fixture();
+  await f.store.setDraft('original');
+  f.port.submit = async command => { f.port.submitted.push(command); throw new Error('Lost reply'); };
+  await assert.rejects(f.store.send(), /Lost reply/);
+  const [entry] = f.store.getSnapshot().outbox;
+  f.port.receipt = async () => receipt(entry.command, 'abandoned', 8);
+  const result = await f.store.refreshReceipt(entry.command.clientCommandId);
+  assert.deepEqual(result.state, { kind: 'abandoned' });
+  assert.deepEqual(f.store.getSnapshot().outbox, []);
+  assert.deepEqual(f.drafts.value.outbox, []);
+  assert.equal(f.store.getSnapshot().draft, 'original');
+  assert.equal(f.port.submitted.length, 1);
+});

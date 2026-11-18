@@ -27,7 +27,7 @@ The run used the private spark deployment on 2026-11-17. The host ran `node exam
 2. Send request `0fdd9a97-8400-46a0-9aa9-afb520c5e30f` streamed a 40-line reply.
 3. The host was stopped and restarted after the run. One conversation was listed. The prompt and reply each appeared once. No other Crew conversations were imported.
 4. Second send `fdfe707d-8597-47c9-9f28-66a26a8c737b` on the same conversation streamed. The host was killed at 26 of 60 lines and restarted. The fresh baseline showed all 60 unique lines once. The earlier turn stayed intact.
-5. Both send receipts stayed `accepted` until **Check pending command** settled them. That gap is tracked as `agentui-ulb5`.
+5. Both send receipts stayed `accepted` until **Check pending command** settled them. The host recorded the observed run end in the transcript but never read the original request status for the send. This was `agentui-ulb5` and is fixed: an observed run end now triggers one status read that settles the receipt. The real Crew run has not been repeated with the fix.
 
 The run did not exercise protected approvals, Stop, cancellation races, owner-detail cards, permissions or a Crew worker replacement.
 
@@ -40,6 +40,7 @@ The controlled tests drive the extension through its public HTTP and SSE boundar
 - Creation, streaming, approval, Stop and SQLite reopen: `Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen`.
 - No external history: `Crew discovery, creation and host restart touch only the member, owned conversation and its observation, never a listing`. It records every request path. Connection, discovery and creation call exactly `GET /v1/capabilities`, `GET /v1/members`, `POST /v1/conversations` and `POST /v1/conversations/{owned}/events`. After a host restart the calls are exactly `GET /v1/capabilities`, `GET /v1/members` and `POST /v1/conversations/{owned}/events`. The fixture serves the excluded listing route `GET /v1/conversations` with a foreign conversation in it, so a listing call or any foreign conversation path fails the assertion.
 - Follow-up sends: `Crew follow-up confirms the original completed request before admitting its own send once`.
+- Automatic send settlement: `Crew settles a finished send from its original request status once observation sees the run end` and `Crew settles a send whose request finished while the host was stopped after restart`.
 - Lost replies and uncertainty: `Crew lost submit remains original-only GET recovery and does not turn missing lookup into rejection`, `Crew missing original GET remains uncertain and foreign binding refuses before HTTP` and `Crew conflicting admission remains uncertain without retry or replacement identity`.
 - Observation integrity: `Crew same-source handoff awaits admitted callbacks and close drains without remote cancellation` and `Crew invalid remote content drains and retains only the last acknowledged cursor`.
 - Decisions: `Crew lost decision remains uncertain after card omission and original-only GET on SQLite reopen`, the owner-detail tests and `browser retries owner detail failures and renders a full escaped note before one exact approval`.
@@ -67,7 +68,6 @@ The generic provider host tests in `tests/application/provider-*.test.mjs` cover
 - **Member-wide grants are deferred.** The extension offers only the conversation standing choice. It filters member-wide grant creation.
 - **Crew handoffs only create successors.** The extension calls `createHandoff` once to start a successor conversation and afterwards only reads the handoff record while settling that creation. The successor then trusts its stored link. No Continue control reaches users yet.
 - **Subagent child transcripts are hidden.** The observation drops messages that carry a `subagentRunId`. Discovery accepts members that declare subagents.
-- **Receipts are not settled automatically.** A send receipt stays `accepted` until a follow-up send or **Check pending command** reads the original request status. This is `agentui-ulb5`.
 
 ## Verification
 

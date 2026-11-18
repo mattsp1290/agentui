@@ -336,7 +336,7 @@ test('an actual archived v1 bundled reader refuses database format 7 before impo
   let host = f.launch(); await host.ready; await f.select('build-b', 0); await host.stop();
   const imported = await readFile(f.marker, 'utf8');
   assert.equal(f.database(db => db.prepare('SELECT count(*) AS n FROM conversations').get().n), 0);
-  assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 8);
+  assert.equal(f.database(db => db.prepare('PRAGMA user_version').get().user_version), 9);
   assert.equal(f.database(db => db.prepare('SELECT version FROM service_extension_selection_schema').get().version), 2);
   // The archived access schema must pass before its conversation format guard can run.
   f.database(db => db.exec(`UPDATE service_schema SET version=1 WHERE singleton=1;

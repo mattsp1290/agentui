@@ -10,7 +10,7 @@ import { canRetryObservation, canonicalJson, CORE_CATALOG_PAGE, parseCommand, pa
 import { identifier } from '@agentui/contracts/decode';
 import type { OutputId, OutputListing, OutputRead, OutputFailure, ConversationClosure, ConversationPermissions, ConversationPort, ConversationScope, ContinuationRefusal, Projection, Receipt, Snapshot, ProviderObservationStatus } from '@agentui/contracts';
 import type { ContinuationAction, ContinuationView } from '@agentui/contracts/service';
-import { budgets, commandKey, isOffered } from './durable-model.js';
+import { budgets, commandKey, isOffered, sendBlock } from './durable-model.js';
 import { nonempty } from './codec.js';
 import { installation, dispatchNative, reconcileNative } from './native-execution.js';
 import { isQuarantined } from './settlement.js';
@@ -57,6 +57,8 @@ export interface LocalHost<E, P> {
   append(scope: ConversationScope, output: HostOutput<E>): void;
   conversation(scope: ConversationScope, actor?: FrontendSendActor): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
+  /** Stops waiting on a provider send that blocks its conversation and is not being dispatched. Never says whether it took effect. */
+  abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
   frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register'>): Promise<FrontendBinding>;
   close(): void;
 }
@@ -72,6 +74,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       : { kind: 'unsupported', reason: 'This model cannot read images.' };
   const journal = new Journal(store);
   store.onCommit = () => journal.wake();
+  store.onProviderCommit = scope => { void Promise.resolve().then(() => settleEndedSend(scope)); };
   let closed = false, observationCleanupFailed = false;
   let active = 0;
   const dispatching = new Set<string>();
@@ -151,6 +154,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       try {
         const stream = await Promise.resolve().then(() => registry.observe(original, store, freshSnapshot));
         entry.state = { kind: 'live', stream };
+        settleEndedSend(scope);
         void stream.drained.then(reason => {
           if (observing.get(key) === entry) entry.state = { kind: 'stopped', reason: reason === 'closed' ? 'provider-disconnected' : reason };
         }, () => {
@@ -182,14 +186,15 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
   const dispatchFence = (stored: StoredCommand, actor?: FrontendSendActor) => effectFence(stored, () => {
     store.frontendSends.authorize('dispatch', stored, actor);
   });
-  const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void): Promise<Receipt> => inFlight(async () => {
+  const reconcileStored = (stored: StoredCommand, assertCallerAuthority: () => void, admitted?: () => void): Promise<Receipt> => inFlight(async () => {
+    if (stored.receipt.state.kind === 'abandoned') return stored.receipt;
     const { scope, clientCommandId: id } = stored.command;
     const observations = 'kind' in stored && stored.target.operation.kind === 'send' && stored.target.operation.observationProtocol
       ? (await import('./frontend-observations.js')).FrontendObservations : undefined;
     if (stored.observation?.kind === 'conclusive' && isQuarantined(stored)) return store.settle(scope, id, stored.observation, observations);
     if (stored.observation?.kind === 'conclusive' || stored.observation?.kind === 'not-dispatched') return stored.receipt;
     const observed = 'kind' in stored
-      ? await options.providers?.executeCommand(stored, false, () => effectFence(stored, assertCallerAuthority)) ?? { kind: 'outcome-unknown' } as const
+      ? await options.providers?.executeCommand(stored, false, () => { effectFence(stored, assertCallerAuthority); admitted?.(); }) ?? { kind: 'outcome-unknown' } as const
       : await reconcileNative(stored, driverFor(stored.target.installation));
     if (observed.kind === 'outcome-unknown' && (isOffered(stored) || dispatching.has(commandKey(scope, id)))) {
       const current = store.command(scope, id);
@@ -198,6 +203,20 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     }
     return store.settle(scope, id, observed, observations);
   });
+  // An observed run end is not settlement evidence; it triggers one status read per command per host process. Only a
+  // read the provider admitted counts, so a run end seen while the provider is being replaced is checked again later.
+  const lookedUp = new Set<string>(), lookingUp = new Set<string>();
+  const settleEndedSend = (scope: ConversationScope): void => {
+    if (closed) return;
+    let stored: StoredCommand | null;
+    try { stored = store.endedSend(scope); } catch { return; }
+    if (!stored) return;
+    const key = commandKey(scope, stored.command.clientCommandId);
+    if (dispatching.has(key) || lookedUp.has(key) || lookingUp.has(key)) return;
+    lookingUp.add(key);
+    void reconcileStored(stored, () => authorized(scope), () => lookedUp.add(key))
+      .catch(() => {}).finally(() => lookingUp.delete(key));
+  };
   const settleSendBlocker = async (scope: ConversationScope, actor?: FrontendSendActor): Promise<boolean> => {
     const found = store.blockingSend(scope, 'provider');
     if (found?.block !== 'blocked-reconcilable' || dispatching.has(commandKey(scope, found.stored.command.clientCommandId))) return false;
@@ -425,7 +444,10 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
               const receipt = store.settle(scope, command.clientCommandId, observed, observations);
               assertMayReceiveEvidence(stored, actor);
               return { kind: 'receipt' as const, receipt };
-            } finally { dispatching.delete(key); }
+            } finally {
+              dispatching.delete(key);
+              if (provider) settleEndedSend(scope);
+            }
           });
         },
         async receipt(id) {
@@ -444,6 +466,17 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
       const receipt = await reconcileStored(stored, () => assertMayReceiveEvidence(stored, actor));
       assertMayReceiveEvidence(stored, actor);
       return receipt;
+    },
+    abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor) {
+      return inFlight(async () => {
+        const stored = ownedCommand(scope, id, actor);
+        if (!stored) return null;
+        if (!('kind' in stored) || stored.command.body.kind !== 'send' || sendBlock('provider', stored) !== 'blocked-reconcilable' ||
+          dispatching.has(commandKey(stored.command.scope, stored.command.clientCommandId))) return stored.receipt;
+        store.frontendSends.authorize('settle', stored, actor);
+        authorized(scope);
+        return store.abandon(stored.command.scope, stored.command.clientCommandId);
+      });
     },
     frontendBinding(input, actor, producerFor) {
       const scope = authorized(input.scope);

@@ -194,6 +194,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     conversationPermissions: scope => request({ op: 'conversation-permissions', scope }),
     conversationAgent: scope => request({ op: 'conversation-agent', scope }),
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
+    abandon: (scope, id) => request({ op: 'abandon', scope, id }),
     conversation(value) {
       const scope = parseScope(value);
       return { scope,

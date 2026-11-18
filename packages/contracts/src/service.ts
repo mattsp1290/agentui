@@ -60,7 +60,7 @@ export type ServiceRequest =
   | { readonly op: 'provider-observation'; readonly scope: ConversationScope; readonly action: 'read' | 'retry' }
   | { readonly op: 'continuation'; readonly scope: ConversationScope; readonly action: ContinuationAction }
   | { readonly op: 'submit'; readonly command: ClientCommand }
-  | { readonly op: 'receipt' | 'reconcile'; readonly scope: ConversationScope; readonly id: string }
+  | { readonly op: 'receipt' | 'reconcile' | 'abandon'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string };
@@ -118,6 +118,7 @@ export interface ServiceValueMap {
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
   readonly reconcile: Receipt | null;
+  readonly abandon: Receipt | null;
   readonly watch: { readonly feedId: string };
   readonly pull: ServicePull;
   readonly close: null;
@@ -145,6 +146,8 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   continuation(input: { readonly scope: ConversationScope; readonly action: ContinuationAction }): Promise<ContinuationView>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
+  /** Stop waiting on a provider send that blocks its conversation. The result says nothing about whether the send took effect. */
+  abandon(scope: ConversationScope, id: string): Promise<Receipt | null>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }
 function nil(value: unknown): null {
@@ -198,7 +201,7 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       if (utf8Bytes(canonicalJson(command)) > SERVICE_MAX_COMMAND_BYTES) throw new Error('Message too large. Shorten it and try again.');
       return { op: 'submit', command };
     }
-    case 'receipt': case 'reconcile':
+    case 'receipt': case 'reconcile': case 'abandon':
       exact(input, ['op', 'scope', 'id']);
       return { op: input.op, scope: parseScope(input.scope), id: identifier(input.id) };
     case 'watch': {
@@ -372,6 +375,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   },
   receipt: value => value === null ? null : parseReceipt(value),
   reconcile: value => value === null ? null : parseReceipt(value),
+  abandon: value => value === null ? null : parseReceipt(value),
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
 };

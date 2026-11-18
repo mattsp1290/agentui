@@ -39,7 +39,7 @@ SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding
 SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
 SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It reads a provider-confirmed end of the conversation from saved state without I/O and returns `{ cause }` or `null`. Hosts report such a conversation as `concluded`, start no observation for it and refuse its sends. Existing presentations may omit the hook. The new observation status requires wire 12; backend contract 1, core DB 7 and transcript 4 are unchanged.
 SDK 0.11.0 adds the optional `CreationIntent.from`, which names the confirmed conversation a new creation continues, and the optional `ProviderPresentation.continuation(evidence)` hook. The host copies `from` from its own record of that conversation: the scope must be on the same host and the binding must belong to the same provider installation. A presentation opts its provider in to continuation by declaring `continuation`. A presentation may omit it; the host then refuses a successor for that provider and never passes it `from`. A provider that receives `from` must continue that predecessor or refuse the creation. It derives the binding of a `from` creation from its intent except for what the provider service assigns: the session and, optionally, `carryingTurn`, the provider's ID for the turn that carried the predecessor. The host refuses a successor whose session equals the predecessor's and any other binding that names `carryingTurn`. `continuation(evidence)` reads the creation's saved evidence without I/O and returns the carried turn and byte counts, `{ refused }` or `null`. Core DB 8 adds an index of creations by predecessor, and format 7 hosts refuse it. Wire 12, backend contract 1 and transcript 4 are unchanged.
-Wire 13 later adds the `continuation` service operation without an SDK change, so SDK 0.11.0 stays current.
+Wire 13 later adds the `abandon` service operation and wire 14 the `continuation` operation, both without an SDK change, so SDK 0.11.0 stays current.
 
 SDK 0.8.0 adds an optional fourth `providers.addAgui` argument, `AguiObservations<Model, Installation>`.
 Its `event(event)` callback returns ordered `AguiRunBatch` values. Its `snapshot(state, originals)` callback returns complete prefixes or explicit unavailable histories for the supplied original operations.
@@ -53,7 +53,7 @@ This contract does not add browser consent, execution or continuation. Existing 
 
 SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 13, and transcript projection version is 4.
+Workspace package versions are `0.0.0`, service wire version is 14, and transcript projection version is 4.
 
 Desktop contributions may arrange transcript and module presentation with `contentLayout`.
 The composer, approvals, Stop, recovery, agent selection and protected navigation remain host-owned.
@@ -300,7 +300,8 @@ Resolving an action does not establish native execution success.
 The desktop customization host renders nested modules as labeled sections after the transcript, before approvals and the composer.
 Transcript and modules share one content scrollbar by default.
 It renders declarative actions as labeled buttons, suppresses duplicate clicks while an action is pending, and reports the returned submission state.
-The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, and thrown errors.
+The host reports rejected admission, rejected receipts, not-dispatched receipts, uncertain receipts, abandoned receipts, and thrown errors.
+An abandoned receipt means the user stopped waiting on the command; it does not say whether the command ran.
 An accepted or pending receipt does not mean the agent has finished.
 Uncertain feedback points to the conversation recovery controls; the host never automatically replays an action callback.
 Action state belongs to its namespace, complete module path, action ID, and current conversation.
