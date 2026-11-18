@@ -1,6 +1,7 @@
 import type { AguiObservations } from './agui-observations.js';
 import type { RunAgentInput } from '@agentui/protocol';
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
+import { EXTENSION_NAMESPACE_PATTERN } from '@agentui/contracts/service';
 import { nonempty, record } from '@agentui/contracts/decode';
 import type { Json } from '@agentui/contracts';
 import type { BackendProvider, CredentialHandle, ProviderInstance, ProviderModel } from './providers.js';
@@ -38,8 +39,7 @@ export interface ServerExtensionInstallation {
   readonly service: string;
   readonly expectedAuthority: 'agentui-host' | 'remote-provider';
 }
-export const EXTENSION_OPERATION_PATTERN = /^[a-z][a-z0-9.-]{0,63}$/u;
-export const EXTENSION_REFUSAL_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
+export { EXTENSION_OPERATION_PATTERN, EXTENSION_REFUSAL_PATTERN } from '@agentui/contracts/service';
 /** The runtime `AbortSignal`, read from the consumer's global types so the SDK root needs no DOM or Node types. */
 export type ExtensionAbortSignal = typeof globalThis extends { readonly AbortSignal: { readonly prototype: infer Signal } }
   ? Signal : { readonly aborted: boolean };
@@ -97,7 +97,7 @@ function text(value: unknown): string {
 }
 export function extensionNamespace(value: unknown): string {
   const namespace = nonempty(value);
-  if (!/^[a-z][a-z0-9-]{0,31}$/u.test(namespace)) throw new Error('Invalid extension namespace');
+  if (!EXTENSION_NAMESPACE_PATTERN.test(namespace)) throw new Error('Invalid extension namespace');
   return namespace;
 }
 function parseEntry(value: unknown): ExtensionEntry {

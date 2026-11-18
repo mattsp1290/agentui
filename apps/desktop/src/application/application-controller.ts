@@ -435,6 +435,12 @@ export function createApplicationController(deps: {
       throw cause;
     }
   }
+  /** A workspace action: the first page, or the next one when `more`, for the current session. */
+  const workspaceRead = (more: boolean) => async (namespace: string): Promise<void> => {
+    const owner = session;
+    if (!owner) return;
+    try { await readWorkspace(owner, namespace, more); } catch (cause) { fail(owner, cause); }
+  };
   async function readSavedViews(owner: Session, hostId: string, after: string | null = null): Promise<void> {
     try {
       const page = await current(owner, local(owner).savedViews(hostId, after));
@@ -682,16 +688,8 @@ export function createApplicationController(deps: {
       await save(owner, { ...requireSaved(owner).saved, route: scope });
       await install(owner, scope);
     }),
-    async loadWorkspace(namespace) {
-      const owner = session;
-      if (!owner) return;
-      try { await readWorkspace(owner, namespace, false); } catch (cause) { fail(owner, cause); }
-    },
-    async moreWorkspace(namespace) {
-      const owner = session;
-      if (!owner) return;
-      try { await readWorkspace(owner, namespace, true); } catch (cause) { fail(owner, cause); }
-    },
+    loadWorkspace: workspaceRead(false),
+    moreWorkspace: workspaceRead(true),
     async refreshMetadata() {
       const owner = session;
       if (!owner || state.host.kind !== 'ready') return;

@@ -84,11 +84,11 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       if (result.kind === 'http' && (result.status === 409 || (result.status === 404 && fresh) || result.status === 400)) return rejected('Coworkers refused this conversation.');
       return uncertain();
     }
-    /** One read of the conversation plus the receipts of requests whose status is not yet terminal. */
     /**
-     * `progressing` is true when some request is not terminal and its receipt could be read. A request the conversation
-     * lists but whose receipt reads 404 keeps its last status, but cannot move on its own, so it does not keep the
-     * conversation on the one-second active schedule.
+     * One read of the conversation plus the receipts of requests whose status is not yet terminal. `progressing` is true
+     * when some request is not terminal and its receipt could be read. A request the conversation lists but whose receipt
+     * reads 404 keeps its last status, but cannot move on its own, so it does not keep the conversation on the one-second
+     * active schedule.
      */
     async function build(binding: ProviderConversation<string>, previous: CoworkersState | null): Promise<{ kind: 'ok'; state: CoworkersState; progressing: boolean } | { kind: 'gone' } | { kind: 'failed' }> {
       const conversationId = conversationOf(binding);

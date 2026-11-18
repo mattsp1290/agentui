@@ -1,6 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
 import type { ConversationDocument, ConversationPermissions, ConversationScope, Json, PermissionScope, SubmitResult } from '@agentui/contracts';
-import type { AgentDescriptor, ExtensionCallValue } from '@agentui/contracts/service';
+import type { AgentDescriptor, ConversationProvider, ExtensionCallValue, ExtensionInstallationStatus } from '@agentui/contracts/service';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
 import type { UiExtensionContext } from './tool-contracts.js';
@@ -51,12 +51,12 @@ export interface WorkspaceAgent {
 export interface WorkspaceConversation {
   readonly scope: ConversationScope;
   readonly preview: string | null;
-  readonly provider: { readonly installationId: string; readonly providerAgentId: string };
+  readonly provider: Omit<ConversationProvider, 'namespace'>;
 }
 /** Props of a workspace view. Every list is limited to the extension's own namespace. */
 export interface WorkspaceViewProps {
   readonly namespace: string;
-  readonly installations: readonly { readonly installationId: string; readonly status: 'available' | 'unavailable' }[];
+  readonly installations: readonly ExtensionInstallationStatus[];
   readonly agents: readonly WorkspaceAgent[];
   readonly conversations: {
     /** Loaded pages in catalog order. The selected conversation is always included, after the pages when it is not on one yet. */

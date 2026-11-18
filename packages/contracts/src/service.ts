@@ -64,9 +64,10 @@ export interface ExtensionDescriptor {
   readonly operations: readonly string[];
   readonly installations: readonly ExtensionInstallationStatus[];
 }
-const EXTENSION_NAMESPACE = /^[a-z][a-z0-9-]{0,31}$/u;
-const EXTENSION_OPERATION = /^[a-z][a-z0-9.-]{0,63}$/u;
-const EXTENSION_REFUSAL = /^[a-z][a-z0-9-]{0,63}$/u;
+/** The single source of the extension name patterns. The SDK re-exports these; the Rust validator mirrors them. */
+export const EXTENSION_NAMESPACE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
+export const EXTENSION_OPERATION_PATTERN = /^[a-z][a-z0-9.-]{0,63}$/u;
+export const EXTENSION_REFUSAL_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
 function patterned(value: unknown, pattern: RegExp, name: string): string {
   if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`Invalid extension ${name}`);
   return value;
@@ -90,8 +91,8 @@ function boundedJson(value: unknown, limit: number, budget: { readonly maxDepth:
 }
 export function parseExtensionCallRequest(value: unknown): ExtensionCallRequest {
   const input = record(value, ['namespace', 'installationId', 'operation', 'input']);
-  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
-    operation: patterned(input.operation, EXTENSION_OPERATION, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES, EXTENSION_CALL_INPUT_BUDGET) };
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), installationId: identifier(input.installationId),
+    operation: patterned(input.operation, EXTENSION_OPERATION_PATTERN, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES, EXTENSION_CALL_INPUT_BUDGET) };
 }
 /**
  * Parses an extension call, mapping an over-limit call to the `too-large` failure every layer replies with. Any other
@@ -109,7 +110,7 @@ export function parseExtensionCallValue(value: unknown): ExtensionCallValue {
   const input = record(value);
   switch (input.kind) {
     case 'ok': exact(input, ['kind', 'output']); return { kind: 'ok', output: boundedJson(input.output, EXTENSION_CALL_OUTPUT_BYTES, EXTENSION_CALL_OUTPUT_BUDGET) };
-    case 'refused': exact(input, ['kind', 'code']); return { kind: 'refused', code: patterned(input.code, EXTENSION_REFUSAL, 'refusal') };
+    case 'refused': exact(input, ['kind', 'code']); return { kind: 'refused', code: patterned(input.code, EXTENSION_REFUSAL_PATTERN, 'refusal') };
     case 'failed': {
       exact(input, ['kind', 'cause']);
       const cause = EXTENSION_CALL_FAILURES.find(cause => cause === input.cause);
@@ -123,9 +124,9 @@ function extensionDescriptor(value: unknown): ExtensionDescriptor {
   const input = record(value, ['namespace', 'state', 'operations', 'installations']);
   if (input.state !== 'active' && input.state !== 'failed') throw new Error('Invalid extension state');
   if (!Array.isArray(input.operations) || !Array.isArray(input.installations)) throw new Error('Invalid extension descriptor');
-  const operations = input.operations.map(operation => patterned(operation, EXTENSION_OPERATION, 'operation'));
+  const operations = input.operations.map(operation => patterned(operation, EXTENSION_OPERATION_PATTERN, 'operation'));
   if (new Set(operations).size !== operations.length || (input.state === 'failed' && operations.length)) throw new Error('Invalid extension operations');
-  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), state: input.state, operations,
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), state: input.state, operations,
     installations: input.installations.map(item => {
       const installation = record(item, ['installationId', 'status']);
       if (installation.status !== 'available' && installation.status !== 'unavailable') throw new Error('Invalid extension installation status');
@@ -343,7 +344,7 @@ export function parseCatalogFilter(value: unknown): CatalogFilter {
   const input = record(value);
   if (input.kind === 'namespace') {
     exact(input, ['kind', 'namespace']);
-    return { kind: 'namespace', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace') };
+    return { kind: 'namespace', namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace') };
   }
   if (input.kind !== 'provider-agent') throw new Error('Invalid catalog filter');
   exact(input, ['kind', 'namespace', 'installationId', 'providerAgentId']);
@@ -351,7 +352,7 @@ export function parseCatalogFilter(value: unknown): CatalogFilter {
 }
 /** The fields of a provider identity, shared by the catalog filter and catalog entries. */
 function providerFields(input: Readonly<Record<string, unknown>>): ConversationProvider {
-  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), installationId: identifier(input.installationId),
     providerAgentId: identifier(input.providerAgentId) };
 }
 function conversationProvider(value: unknown): ConversationProvider | null {
@@ -376,7 +377,7 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   });
   if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
   const common: AgentDescription = { imageInput: parseImageInputCapability(input.imageInput), frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
-  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), protocolVersion: identifier(input.protocolVersion),
+  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), protocolVersion: identifier(input.protocolVersion),
     installationId: identifier(input.installationId), providerAgentId: input.providerAgentId === null ? null : identifier(input.providerAgentId) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;

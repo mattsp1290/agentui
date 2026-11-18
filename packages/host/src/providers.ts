@@ -578,6 +578,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     return available.length === 1 ? available[0] : undefined;
   }
   /**
+   * Waits out a discovery that is already running, since it may predate an operation's change, then runs a fresh one.
+   * Never rejects.
+   */
+  async function rediscoverAfterChange(signal: AbortSignal): Promise<void> {
+    try {
+      await refreshing?.catch(() => {});
+      if (phase === 'active' && !signal.aborted) await track(refresh);
+    } catch {}
+  }
+  /**
    * Admits one operation call. The admission ends at the reply, so a handler that outlives the deadline does not defer
    * replacement. Registry close aborts every admitted call and replies `unavailable` at once.
    * A malformed request rejects as a caller error; an over-limit input resolves as `too-large`.
@@ -609,12 +619,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
       if (result.agentsChanged && phase === 'active') {
         // The handler has made its change, so a deadline or close during the rediscovery still replies with its result.
         commit(result.value);
-        // A discovery that is already running may predate the change, so wait for it before starting a fresh one.
         // runAdmitted bounds this wait: the reply ends at the deadline or on close.
-        await (async () => {
-          await refreshing?.catch(() => {});
-          if (phase === 'active' && !signal.aborted) await track(refresh);
-        })().catch(() => {});
+        await rediscoverAfterChange(signal);
       }
       return result.value;
     }, operationDeadlineMs, operationControllers);

@@ -26,10 +26,10 @@ try {
     ...(values.subdirectory ? { subdirectory: values.subdirectory } : {}) }, scratchParent: scratch });
   const plan = desktopPlan(prepared.root);
   const stage = join(scratch, 'browser');
-  // The desktop Vite configuration adds the only customization plugin, merging this external plan with the bundled
-  // first-party plan; a namespace in both fails the build.
+  // The external plan merged with the bundled first-party plan, once: the desktop Vite configuration builds this plan and
+  // qualification checks its namespaces. A namespace in both fails the build.
   const merged = mergePlans(bundledPlan(root), plan);
-  const config = desktopConfig('browser', plan);
+  const config = desktopConfig('browser', merged);
   const result = await build({ ...config, configFile: false, mode: 'browser', root: join(root, 'apps/desktop'),
     build: { ...config.build, outDir: stage, emptyOutDir: true } });
   const builds = Array.isArray(result) ? result : [result];

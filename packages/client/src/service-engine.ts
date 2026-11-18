@@ -201,7 +201,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       try { call = classifyExtensionCall(input); }
       catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
       if (call.kind === 'failed') return call;
-      return request({ op: 'extension-call', namespace: input.namespace, installationId: input.installationId, operation: input.operation, input: input.input });
+      return request({ op: 'extension-call', ...call.request });
     },
     conversation(value) {
       const scope = parseScope(value);
