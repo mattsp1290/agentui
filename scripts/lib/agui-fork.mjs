@@ -7,7 +7,7 @@ import { resolveLockedFork } from './agui-fork/identity.mjs';
 import { verifyArchive } from './agui-fork/archives.mjs';
 import { verifyLedger } from './agui-fork/ledger.mjs';
 
-const aguiPackages = ['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => `@ag-ui/${name}`);
+export const aguiPackages = ['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => `@ag-ui/${name}`);
 
 export const OFFLINE_RECORD_SCOPE = 'retained archives, evidence, source lock, fixtures and frozen consumer lock; no install';
 
