@@ -1,6 +1,6 @@
 # Crew extension
 
-`extensions/crew` (package `agentui-extension-crew`, namespace `crew`) connects AgentUI to a Crew service. Its server entry registers one provider per configured installation and the operations `members.list` and `members.create`. Its desktop workspace lists members, creates them and chats with them inside the Extensions view. The workspace shows one installation, the available one with the first installation ID in sort order; members and conversations of other installations stay reachable from Chats.
+`extensions/crew` (package `agentui-extension-crew`, namespace `crew`) connects AgentUI to a Crew service. Its server entry registers one provider per configured installation and the operations `members.list` and `members.create`. Its desktop workspace lists members, creates them and chats with them inside the Extensions view. The workspace shows one installation: the selected conversation's installation while it is available, otherwise the available installation with the first installation ID in sort order (the first installation when none is available). Members and conversations of other installations stay reachable from Chats.
 
 ## Set up
 

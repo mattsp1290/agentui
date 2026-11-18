@@ -74,7 +74,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
     </div>;
   }
   if (!available) {
-    const reason = props.agents.find(agent => agent.availability.kind === 'unavailable');
+    const reason = props.agents.find(agent => agent.installationId === installation.installationId && agent.availability.kind === 'unavailable');
     return <div className="coworkers-workspace coworkers-setup" role="region" aria-label="Coworkers unavailable">
       <h2>Coworkers is unavailable</h2>
       <p role="status">{reason?.availability.kind === 'unavailable' ? reason.availability.reason : 'Coworkers is offline or unreachable.'}</p>
@@ -84,7 +84,9 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const byId = new Map(coworkers.map(item => [item.providerAgentId, item]));
   const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
   const current = selectedEntry ? byId.get(selectedEntry.provider.providerAgentId) : filter ? byId.get(filter) : undefined;
-  const detail = current ? details.get(current.providerAgentId) : undefined;
+  // The selected chat still shows when its coworker is no longer listed; it is then named by its coworker ID.
+  const shown = current ?? (selectedEntry ? { label: selectedEntry.provider.providerAgentId, providerAgentId: selectedEntry.provider.providerAgentId } : undefined);
+  const detail = shown ? details.get(shown.providerAgentId) : undefined;
   const chats = entries.filter(entry => !filter || entry.provider.providerAgentId === filter);
   /** Opens or creates a chat. A rejection is shown here; any other failure is in the host status strip. */
   async function attempt(action: () => Promise<void>) {
@@ -159,26 +161,26 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
         {props.conversations.hasMore && <button type="button" className="coworkers-more" onClick={() => props.conversations.more()}>More chats</button>}
       </section>
       <section className="coworkers-main" aria-label="Coworker conversation">
-        {current ? <>
+        {shown ? <>
           <header className="coworkers-header">
             <button type="button" className="coworkers-back" onClick={() => { setAwaiting(null); setNarrowPane('list'); }}>Chats</button>
-            <span className="coworkers-avatar" aria-hidden="true">{initials(current.label)}</span>
-            <div className="coworkers-header-text"><h2>{current.label}</h2>{detail && <span className="coworkers-role">{detail.role}</span>}</div>
+            <span className="coworkers-avatar" aria-hidden="true">{initials(shown.label)}</span>
+            <div className="coworkers-header-text"><h2>{shown.label}</h2>{detail && <span className="coworkers-role">{detail.role}</span>}</div>
             <div className="coworkers-pills" role="group" aria-label="Conversation views">
               <button type="button" aria-pressed={pill === 'chat'} onClick={() => setPill('chat')}>Chat</button>
               <button type="button" aria-pressed={pill === 'about'} onClick={() => setPill('about')}>About</button>
             </div>
           </header>
           <div className="coworkers-pane">
-            {pill === 'about' ? <dl className="coworkers-about" aria-label={`About ${current.label}`}>
-              <dt>Coworker ID</dt><dd><code>{current.providerAgentId}</code></dd>
+            {pill === 'about' ? <dl className="coworkers-about" aria-label={`About ${shown.label}`}>
+              <dt>Coworker ID</dt><dd><code>{shown.providerAgentId}</code></dd>
               <dt>Role</dt><dd>{detail?.role ?? 'Unknown'}</dd>
               <dt>Workspace access</dt><dd>{detail ? WORKSPACE_ACCESS[detail.workspace] ?? detail.workspace : 'Unknown'}</dd>
               <dt>Instructions</dt><dd>{detail ? `${detail.instructionsBytes} bytes` : 'Unknown'}</dd>
             </dl> : selectedEntry && props.conversation
-              ? <CoworkerContext.Provider value={{ name: current.label }}>{props.conversation}</CoworkerContext.Provider>
-              : <div className="coworkers-empty-state"><p>No chat with {current.label} is open.</p>
-                  <button type="button" onClick={() => void attempt(() => props.create(current.id))}>Start a chat</button></div>}
+              ? <CoworkerContext.Provider value={{ name: shown.label }}>{props.conversation}</CoworkerContext.Provider>
+              : <div className="coworkers-empty-state"><p>No chat with {shown.label} is open.</p>
+                  {current && <button type="button" onClick={() => void attempt(() => props.create(current.id))}>Start a chat</button>}</div>}
           </div>
         </> : <div className="coworkers-empty-state"><p>Choose a chat, or open the Coworkers tab to start one.</p></div>}
       </section>

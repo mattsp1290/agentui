@@ -60,12 +60,13 @@ export interface WorkspaceViewProps {
   readonly agents: readonly WorkspaceAgent[];
   readonly conversations: {
     /**
-     * Loaded pages in catalog order. When the selected conversation's agent has a `providerAgentId`, the selected
+     * Loaded pages in catalog order, except that a conversation created in this session is listed first until the list is
+     * next read from its first page, for example by `refresh()`. When the selected conversation's agent has a `providerAgentId`, the selected
      * conversation is always included, after the pages when it is not on one yet. Otherwise it appears only if a loaded
      * page lists it.
      */
     readonly entries: readonly WorkspaceConversation[];
-    /** The last page length equalled the page limit, so more may exist. Order is catalog order, not recency. */
+    /** The last page length equalled the page limit, so more may exist. Order is catalog order, not recency, apart from conversations created in this session. */
     readonly hasMore: boolean;
     readonly loading: boolean;
     more(): void;

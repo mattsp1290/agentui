@@ -2,8 +2,10 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { WorkspaceViewProps } from '@agentui/sdk/react';
 
 const ENGINES = ['pi', 'claude', 'codex'] as const;
-/** Crew limits `profile` to 128 UTF-8 bytes. */
+/** Crew limits `profile` to 128 UTF-8 bytes and `instructions` to 16,384 UTF-8 bytes without control characters but tab and newline. */
 const PROFILE_BYTES = 128;
+const INSTRUCTIONS_BYTES = 16_384;
+const DISALLOWED_CONTROL = /(?![\t\n])\p{Cc}/u;
 const REFUSALS: Readonly<Record<string, string>> = {
   'unknown-profile': 'Crew has no profile with that name. Check the profile and try again.',
   'invalid-input': 'Check the engine, profile and instructions, then try again.',
@@ -48,9 +50,14 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
   const active = useRef(true);
   useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const tooLong = utf8Bytes(profile.trim()) > PROFILE_BYTES;
+  // Instructions are sent as typed, and only when they are not blank.
+  const sentInstructions = instructions.trim() ? instructions : '';
+  const instructionsTooLong = utf8Bytes(sentInstructions) > INSTRUCTIONS_BYTES;
+  const instructionsControl = DISALLOWED_CONTROL.test(sentInstructions);
+  const invalid = tooLong || instructionsTooLong || instructionsControl;
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (pending || !profile.trim() || tooLong) return;
+    if (pending || !profile.trim() || invalid) return;
     const retrying = unconfirmed !== null;
     const requestId = unconfirmed ?? crypto.randomUUID();
     setPending(true); setMessage(''); setUnconfirmed(requestId);
@@ -88,10 +95,12 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
     </select></label>
     <label>Profile<input value={profile} required disabled={locked} aria-invalid={tooLong || undefined} onChange={event => setProfile(event.target.value)} /></label>
     {tooLong && <p className="crew-form-message">The profile is longer than Crew accepts ({PROFILE_BYTES} bytes).</p>}
-    <label>Instructions<textarea value={instructions} rows={4} maxLength={16384} disabled={locked} onChange={event => setInstructions(event.target.value)} /></label>
+    <label>Instructions<textarea value={instructions} rows={4} maxLength={INSTRUCTIONS_BYTES} disabled={locked} aria-invalid={instructionsTooLong || instructionsControl || undefined} onChange={event => setInstructions(event.target.value)} /></label>
+    {instructionsTooLong && <p className="crew-form-message">The instructions are longer than Crew accepts ({INSTRUCTIONS_BYTES} bytes).</p>}
+    {instructionsControl && <p className="crew-form-message">The instructions contain control characters Crew does not accept. Only tabs and line breaks are allowed.</p>}
     {message && <p role="alert" className="crew-form-message">{message}</p>}
     <div className="crew-form-actions">
-      <button type="submit" disabled={pending || !profile.trim() || tooLong}>{pending ? 'Creating…' : unconfirmed ? 'Retry' : 'Create member'}</button>
+      <button type="submit" disabled={pending || !profile.trim() || invalid}>{pending ? 'Creating…' : unconfirmed ? 'Retry' : 'Create member'}</button>
       <button type="button" onClick={onCancel}>Cancel</button>
     </div>
   </form>;

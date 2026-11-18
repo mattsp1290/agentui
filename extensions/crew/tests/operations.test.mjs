@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { createBrowserConnection } from '@agentui/client/service';
 import { options, startBrowserHost } from '../../../tests/host/extensions/fixtures.mjs';
 import { crewService } from './support/crew-service.mjs';
+import { listedMembers } from '../dist/operations.js';
 
 const directory = fileURLToPath(new URL('../', import.meta.url));
 const token = 'PRIVATE_CREW_OPERATION_TOKEN_77';
@@ -51,6 +52,12 @@ test('members.list and members.create run through the host authority and a creat
   assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'é'.repeat(65) }), { kind: 'refused', code: 'invalid-input' });
   assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'é'.repeat(64) }), { kind: 'refused', code: 'unknown-profile' });
   assert.deepEqual(await f.call('members.list', { extra: true }), { kind: 'refused', code: 'invalid-input' });
+  // Crew's own bounds on instructions: 16,384 UTF-8 bytes, no control characters but tab and newline. Without this check the
+  // client throws before sending and the call reads as an unknown outcome.
+  for (const instructions of ['é'.repeat(8_193), 'Line one\rLine two', 'Bell\u0007']) {
+    assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'test', instructions }), { kind: 'refused', code: 'invalid-input' }, JSON.stringify(instructions.slice(0, 20)));
+  }
+  assert.equal(remote.members.length, 3, 'no refused instructions reached Crew');
   const text = f.raw.join('\n');
   for (const value of [token, remote.origin, 'unknown_profile']) assert.equal(text.includes(value), false, value);
 });
@@ -74,4 +81,16 @@ test('a service that never answers is abandoned when the host deadline aborts th
   // Replacement retires the generation, which waits for every pending credential use. It completes, so none is left.
   const replaced = await Promise.race([f.host.replaceProviderExtensions([]), new Promise(resolve => setTimeout(() => resolve('stuck'), 5000))]);
   assert.deepEqual(replaced, { kind: 'replaced', generation: null });
+});
+
+test('members.list stops at a byte budget well under the operation output limit and reports truncation', () => {
+  // 1,000 members whose 128-byte profiles each escape to 256 JSON bytes exceed 256,000 bytes; the list cuts before that.
+  const page = Array.from({ length: 1_000 }, () => ({ memberId: randomUUID(), engine: 'codex', profile: '"'.repeat(128) }));
+  const members = [];
+  assert.equal(listedMembers(members)(page), 'truncated');
+  assert.ok(members.length > 0 && members.length < page.length);
+  assert.ok(Buffer.byteLength(JSON.stringify({ members, truncated: true })) < 256_000);
+  const small = [];
+  assert.equal(listedMembers(small)(page.slice(0, 10)), undefined);
+  assert.equal(small.length, 10);
 });

@@ -50,6 +50,8 @@ export function extensionRows({ customizations, activations, enabled, metadata }
     if (descriptor?.state === 'failed') return row('Failed', SERVER_FAILURE);
     if (!activation || activation.kind === 'loading') return row('Loading');
     if (!workspace) return row('No view');
+    // Without host metadata (loading or unreachable) nothing is known about the host's installations yet.
+    if (metadata === null) return row('Loading', 'Waiting for the host to report its extensions.');
     if (!descriptor || descriptor.installations.length === 0) return row('Not configured');
     if (descriptor.installations.every(item => item.status === 'unavailable')) {
       const reason = namespaceAgents(metadata, namespace).find(agent => agent.availability.kind === 'unavailable');

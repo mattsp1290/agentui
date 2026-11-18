@@ -10,8 +10,14 @@ const engineSchema = z.enum(['pi', 'claude', 'codex']);
 const listInput = z.strictObject({});
 /** Crew bounds `profile` in UTF-8 bytes (`x-maxUtf8Bytes: 128`), not UTF-16 code units. */
 const profileSchema = z.string().min(1).refine(value => Buffer.byteLength(value, 'utf8') <= 128, 'profile too long');
+/** Crew bounds `instructions` to 16,384 UTF-8 bytes of well-formed text with no control characters but tab and newline. */
+const DISALLOWED_CONTROL = /(?![\t\n])\p{Cc}/u;
+const instructionsSchema = z.string().min(1).refine(value => value.isWellFormed() && !DISALLOWED_CONTROL.test(value) &&
+  Buffer.byteLength(value, 'utf8') <= 16_384, 'instructions not accepted by Crew');
 const createInput = z.strictObject({ requestId: z.uuid(), engine: engineSchema, profile: profileSchema,
-  instructions: z.string().min(1).max(16_384).optional() });
+  instructions: instructionsSchema.optional() });
+/** Keeps `members.list` well under the host's 256,000-byte operation output limit. */
+const LIST_BUDGET_BYTES = 200_000;
 type Refusal = { readonly kind: 'refused'; readonly code: string };
 const refused = (code: string): Refusal => ({ kind: 'refused', code });
 
@@ -44,19 +50,32 @@ function operation(credentials: ServerProviderCredentials, create: boolean,
   };
 }
 
+/**
+ * Collects listed members into `members` in Crew order, cut by count and by a byte budget for the encoded output. The
+ * returned visitor stops the page walk, so `members.list` reports `truncated`, at the first member that does not fit.
+ */
+export function listedMembers(members: MemberSummary[]): (page: readonly Pick<MemberSummary, 'memberId' | 'engine' | 'profile'>[]) => 'truncated' | undefined {
+  let bytes = 0;
+  return page => {
+    for (const member of page) {
+      if (members.length >= MAX_CREW_MEMBERS) return 'truncated';
+      const item = { memberId: member.memberId, engine: member.engine, profile: member.profile };
+      bytes += Buffer.byteLength(JSON.stringify(item)) + 1;
+      if (bytes > LIST_BUDGET_BYTES) return 'truncated';
+      members.push(item);
+    }
+    return undefined;
+  };
+}
+
 /** `members.list` and `members.create`, registered once per namespace. */
 export function crewOperations(credentials: ServerProviderCredentials): Readonly<Record<string, ExtensionOperation>> {
   return {
     'members.list': operation(credentials, false, async (client, input, signal) => {
       if (!listInput.safeParse(input).success) return refused('invalid-input');
       const members: MemberSummary[] = [];
-      const read = await eachMemberPage(client, () => signal, page => {
-        for (const member of page) {
-          if (members.length >= MAX_CREW_MEMBERS) return 'truncated' as const;
-          members.push({ memberId: member.memberId, engine: member.engine, profile: member.profile });
-        }
-        return undefined;
-      });
+      const visit = listedMembers(members);
+      const read = await eachMemberPage(client, () => signal, visit);
       if (read.kind === 'invalid') return refused('rejected');
       const output: MembersListOutput = { members, truncated: read.kind === 'stopped' };
       return { kind: 'ok', output };

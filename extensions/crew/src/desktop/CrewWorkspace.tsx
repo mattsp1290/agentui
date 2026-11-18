@@ -72,8 +72,11 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     // Re-read details when the member set changes.
   }, [available, installationId, memberKey]);
   const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
-  const activeMember = chosen ?? selectedEntry?.provider.providerAgentId ?? members[0]?.providerAgentId ?? null;
-  const member = members.find(item => item.providerAgentId === activeMember) ?? null;
+  // A chosen or selected member that is not listed (just created and not yet rediscovered, or deleted upstream) falls back
+  // to the first member, so the pane never claims the owner has no members while the sidebar lists some.
+  const wanted = chosen ?? selectedEntry?.provider.providerAgentId ?? null;
+  const member = members.find(item => item.providerAgentId === wanted) ?? members[0] ?? null;
+  const activeMember = member?.providerAgentId ?? null;
   const conversations = useMemo(() => entries.filter(entry => entry.provider.providerAgentId === activeMember), [entries, activeMember]);
   const showing = selectedEntry && selectedEntry.provider.providerAgentId === activeMember;
   const detail = member ? details.get(member.providerAgentId) : undefined;
@@ -93,7 +96,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     </div>;
   }
   if (!available) {
-    const reason = props.agents.find(agent => agent.availability.kind === 'unavailable');
+    const reason = props.agents.find(agent => agent.installationId === installation.installationId && agent.availability.kind === 'unavailable');
     return <div className="crew-workspace crew-setup" role="region" aria-label="Crew unavailable">
       <h2>Crew is unavailable</h2>
       <p role="status">{reason?.availability.kind === 'unavailable' ? reason.availability.reason : 'Crew is offline or unreachable.'}</p>

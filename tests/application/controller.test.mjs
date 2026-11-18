@@ -1557,3 +1557,28 @@ test('workspace lists page by namespace filter, refresh replaces metadata and ex
   assert.deepEqual(await f.app.extensionCall({ namespace: 'ledger', installationId: 'books', operation: 'echo', input: { a: 1 } }), { kind: 'ok', output: { a: 1 } });
   assert.equal(f.calls.length, 1);
 });
+
+test('a refreshMetadata reply superseded by a reconnect publishes nothing, and an incompatible reply runs the full handshake', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  const older = [{ namespace: 'ledger', state: 'active', operations: [], installations: [] }];
+  const newer = [{ namespace: 'ledger', state: 'active', operations: ['echo'], installations: [{ installationId: 'books', status: 'available' }] }];
+  const gate = deferred();
+  f.behavior.metadata = () => gate.promise;
+  const stale = f.app.refreshMetadata();
+  f.behavior.metadata = async () => {};
+  f.behavior.extensions = newer;
+  await f.app.reconnect();
+  assert.deepEqual(f.app.getSnapshot().host.metadata.extensions, newer);
+  // The superseded read now answers with what it saw before the reconnect.
+  f.behavior.extensions = older;
+  gate.resolve();
+  await stale;
+  assert.equal(f.app.getSnapshot().host.kind, 'ready');
+  assert.deepEqual(f.app.getSnapshot().host.metadata.extensions, newer, 'the stale reply did not overwrite the reconnect');
+  assert.equal(f.app.getSnapshot().error, '');
+
+  f.behavior.wireVersion = 'other-wire';
+  await f.app.refreshMetadata();
+  assert.equal(f.app.getSnapshot().host.kind, 'incompatible', 'an incompatible host blocks commands instead of staying ready');
+});

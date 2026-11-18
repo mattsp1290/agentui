@@ -278,6 +278,50 @@ test('a chat of an unavailable Coworkers installation does not hide the availabl
   assert.deepEqual((await directory.locator('.coworkers-card strong').allTextContents()).sort(), ['Ada', 'Grace']);
 });
 
+test('with every Coworkers installation unavailable the workspace shows the shown installation\'s own reason', { timeout: 90_000 }, async t => {
+  // Both installations read unavailable, each with its own reason, and the second installation's agents are listed first.
+  const { workspace } = await twoInstallations(t, page => page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const extension of body.value?.extensions ?? []) extension.installations = extension.installations.map(item => ({ ...item, status: 'unavailable' }));
+    if (body.value) {
+      body.value.agents = body.value.agents.map(agent => agent.namespace === 'coworkers'
+        ? { ...agent, availability: { kind: 'unavailable', reason: `Reason of ${agent.installationId}.` } } : agent)
+        .sort((a, b) => (b.installationId === 'zeta') - (a.installationId === 'zeta'));
+    }
+    await route.fulfill({ response, json: body });
+  }));
+  const region = workspace.getByRole('region', { name: 'Coworkers unavailable' });
+  await region.waitFor();
+  assert.equal(await region.getByRole('status').textContent(), 'Reason of team.');
+});
+
+test('the selected chat still shows when its coworker is no longer listed', { timeout: 90_000 }, async t => {
+  const remote = await coworkersService(t);
+  const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+  const view = await page(t, host);
+  await openWorkspace(view, 'Coworkers');
+  const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+  await workspace.getByRole('button', { name: 'Chat with Ada' }).click();
+  await workspace.locator('#message').waitFor();
+  // After a reload the host no longer lists Ada, as when she was removed from the service; her chat stays selected.
+  await view.page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.value) body.value.agents = body.value.agents.filter(agent => !(agent.namespace === 'coworkers' && agent.providerAgentId === 'ada'));
+    await route.fulfill({ response, json: body });
+  });
+  await view.page.reload();
+  await openWorkspace(view, 'Coworkers');
+  await workspace.locator('#message').waitFor();
+  assert.equal(await workspace.locator('.coworkers-header h2').textContent(), 'ada', 'named by its coworker ID');
+  assert.equal(await workspace.getByText('Choose a chat, or open the Coworkers tab to start one.').count(), 0);
+  assert.equal(await view.page.locator('#message').count(), 1);
+});
+
 test('without a Coworkers installation the workspace names the configuration and token variable', { timeout: 60_000 }, async t => {
   const host = await extensionFixture(t, { extensions: [] });
   const view = await page(t, host);

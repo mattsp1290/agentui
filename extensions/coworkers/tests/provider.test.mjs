@@ -6,7 +6,8 @@ import { fileURLToPath } from 'node:url';
 import { host, until, view, assistantTexts, runOf } from '../../../tests/extensions/providers/conformance/harness.mjs';
 import { coworkersService } from './support/coworkers-service.mjs';
 import { MAX_REQUESTS, MAX_TEXT_BYTES } from '../dist/presentation.js';
-import { IDLE_DELAYS_MS } from '../dist/poller.js';
+import { createPoller, IDLE_DELAYS_MS } from '../dist/poller.js';
+import { registerCoworkersProvider } from '../dist/provider.js';
 
 const directory = fileURLToPath(new URL('../', import.meta.url));
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).agentui.extension;
@@ -148,4 +149,33 @@ test('a window of 100 requests at the maximum text size stays under the state bu
   await store.send('Still observed');
   remote.complete('Yes');
   await until(() => assistantTexts(store).includes('Yes'), 'observation continues', 20_000);
+});
+
+test('close drops a call still queued behind the in-flight limit instead of sending it and waiting for it', { timeout: 30_000 }, async t => {
+  const remote = await coworkersService(t);
+  const gate = Promise.withResolvers(), held = Promise.withResolvers();
+  let uses = 0, hold = false, registered;
+  const context = { credentials: { async use(_request, action) {
+    uses++;
+    if (hold) { held.resolve(); await gate.promise; }
+    return action(remote.token);
+  } }, providers: { add(_id, provider) { registered = provider; } } };
+  registerCoworkersProvider(context, 'team', { service: remote.origin, instance, poller: createPoller({ maxInFlight: 1 }) });
+  const connected = await registered.connect({ apiVersion: 1, instance, credential: { instance } });
+  assert.equal(connected.kind, 'connected');
+  const { backend } = connected;
+  hold = true;
+  // The first discovery takes the only slot and holds it; the second waits behind the limit.
+  const first = backend.discover();
+  await held.promise;
+  hold = false;
+  const queued = backend.discover();
+  const before = remote.reads('/v1/coworkers');
+  const closing = backend.close();
+  gate.resolve();
+  await closing;
+  assert.equal((await first).kind, 'available');
+  assert.equal((await queued).kind, 'unavailable', 'the queued call is answered without reaching the service');
+  assert.equal(uses, 2, 'the probe and the held call only');
+  assert.equal(remote.reads('/v1/coworkers'), before + 1, 'only the held call reached the service');
 });

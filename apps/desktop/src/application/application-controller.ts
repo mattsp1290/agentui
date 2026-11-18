@@ -450,7 +450,10 @@ export function createApplicationController(deps: {
       if (session === owner) publish({ savedViewNotice: 'Saved views could not be listed. This view and its records remain available.' });
     }
   }
+  /** Bumped by every metadata read, so a `refreshMetadata` reply that a later read superseded publishes nothing. */
+  let metadataReads = 0;
   async function refresh(owner: Session): Promise<void> {
+    metadataReads++;
     const storage = local(owner);
     const previousHost = state.host;
     publish({ host: { kind: 'loading' } });
@@ -693,12 +696,18 @@ export function createApplicationController(deps: {
     async refreshMetadata() {
       const owner = session;
       if (!owner || state.host.kind !== 'ready') return;
+      const read = ++metadataReads;
       try {
         const received = await current(owner, owner.connection.metadata());
+        // A reconnect or a later refresh started since: its result stands, and this reply is stale.
+        if (read !== metadataReads) return;
         const previous = requireHost(owner);
-        if (received.hostId !== previous.hostId || received.principalId !== previous.principalId) { await run(refresh); return; }
+        const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, received.compatibility);
+        const incompatible = compatibility.kind === 'incompatible' && compatibility.issues.some(issue => issue.dimension !== 'native-runtime');
+        // A changed host, principal or compatibility needs the full handshake, which also blocks commands when incompatible.
+        if (incompatible || received.hostId !== previous.hostId || received.principalId !== previous.principalId) { await run(refresh); return; }
         publish({ host: { kind: 'ready', metadata: { ...received, agents: received.agents.map(compatibleAgent) } } });
-      } catch (cause) { fail(owner, cause); }
+      } catch (cause) { if (read === metadataReads) fail(owner, cause); }
     },
     async extensionCall(request) {
       const owner = session;

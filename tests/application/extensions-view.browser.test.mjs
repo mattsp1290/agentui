@@ -183,6 +183,9 @@ test('the real browser build bundles the in-repo Crew workspace, lists it Not co
   await page.goto(`${host.origin}/browser.html`);
   await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
   const crew = row(page, 'crew');
+  // Not configured is a claim about the host: check the host reported its extensions and no Crew installation.
+  await wait(() => page.evaluate(() => fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })
+    .then(response => response.json()).then(body => Array.isArray(body.value?.extensions) && !body.value.extensions.some(item => item.namespace === 'crew'))), 'host reports no Crew installation');
   await wait(async () => (await crew.locator('.extension-state').textContent().catch(() => '')) === 'Not configured', 'Crew row');
   assert.match(await crew.textContent(), /Crew/);
   await page.getByRole('button', { name: 'Open Crew' }).click();

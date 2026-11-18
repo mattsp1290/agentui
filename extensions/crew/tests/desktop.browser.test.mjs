@@ -238,9 +238,9 @@ test('a conversation started from the composer agent control shows its member ev
 
 /**
  * Two Crew installations, `personal` then `second`. `shared` gives both one member ID. `prepare(page)` runs before the
- * page loads, for routes.
+ * page loads, for routes. `state` is the row state to wait for; only a `Ready` row waits for the member sidebar.
  */
-async function twoInstallations(t, { shared = false, prepare } = {}) {
+async function twoInstallations(t, { shared = false, prepare, state = 'Ready' } = {}) {
   const otherToken = 'PRIVATE_CREW_BROWSER_TOKEN_20';
   const otherInstance = { ...instance, installationId: 'second' };
   const personalId = randomUUID();
@@ -257,13 +257,13 @@ async function twoInstallations(t, { shared = false, prepare } = {}) {
   await page.goto(`${host.origin}/browser.html`);
   await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
   const row = page.locator('[data-extension="crew"]');
-  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === 'Ready', 'Crew ready');
+  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === state, `Crew ${state}`);
   // Both installations' agents are in the namespace; wait for both before checking that only one is shown.
   await wait(async () => (await page.evaluate(() => fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })
     .then(response => response.json()).then(body => body.value.agents.filter(agent => agent.namespace === 'crew').length))) === 2, 'both installations discovered');
   await page.getByRole('button', { name: 'Open Crew' }).click();
   const sidebar = page.getByRole('navigation', { name: 'Crew members' });
-  await sidebar.getByText('codex · test').waitFor();
+  if (state === 'Ready') await sidebar.getByText('codex · test').waitFor();
   return { page, other, sidebar, workspace: page.locator('[data-extension-workspace="crew"]') };
 }
 /** Starts a conversation in the shown installation, then one with `label` from the composer's agent control. */
@@ -335,6 +335,53 @@ test('a conversation of an unavailable Crew installation does not hide the avail
   assert.equal(await sidebar.locator('header strong').textContent(), 'personal');
   assert.equal(await workspace.getByRole('region', { name: 'Crew unavailable' }).count(), 0);
   assert.deepEqual(await sidebar.locator('.crew-member-label').allTextContents(), ['codex · test']);
+});
+
+test('with every Crew installation unavailable the workspace shows the shown installation\'s own reason', { timeout: 90_000 }, async t => {
+  // Both installations read unavailable, each with its own reason, and the second installation's agent is listed first.
+  const { workspace } = await twoInstallations(t, { state: 'Unavailable', prepare: page => page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const extension of body.value?.extensions ?? []) extension.installations = extension.installations.map(item => ({ ...item, status: 'unavailable' }));
+    if (body.value) {
+      body.value.agents = body.value.agents.map(agent => agent.namespace === 'crew'
+        ? { ...agent, availability: { kind: 'unavailable', reason: `Reason of ${agent.installationId}.` } } : agent)
+        .sort((a, b) => (b.installationId === 'second') - (a.installationId === 'second'));
+    }
+    await route.fulfill({ response, json: body });
+  }) });
+  const region = workspace.getByRole('region', { name: 'Crew unavailable' });
+  await region.waitFor();
+  assert.equal(await region.getByRole('status').textContent(), 'Reason of personal.');
+});
+
+test('a chosen member that is not listed yet falls back to the first member instead of claiming there are none', { timeout: 90_000 }, async t => {
+  const f = await open(t);
+  const row = f.page.locator('[data-extension="crew"]');
+  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === 'Ready', 'Crew ready');
+  await f.page.getByRole('button', { name: 'Open Crew' }).click();
+  const sidebar = f.page.getByRole('navigation', { name: 'Crew members' });
+  await sidebar.getByText('pi · research').waitFor();
+  // From now on metadata never lists the member about to be created, as when its rediscovery has not finished.
+  await f.page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    if (body.value) body.value.agents = body.value.agents.filter(agent => agent.label !== 'claude · research');
+    await route.fulfill({ response, json: body });
+  });
+  await sidebar.getByRole('button', { name: 'Add member', exact: true }).first().click();
+  const form = f.page.getByRole('form', { name: 'Add member' });
+  await form.getByRole('combobox', { name: 'Engine' }).selectOption('claude');
+  await form.getByRole('textbox', { name: 'Profile' }).fill('research');
+  await form.getByRole('button', { name: 'Create member' }).click();
+  await form.waitFor({ state: 'detached' });
+  assert.equal(f.remote.members.length, 3, 'the member was created');
+  const workspace = f.page.locator('[data-extension-workspace="crew"]');
+  assert.equal(await workspace.getByText('This Crew owner has no members yet.').count(), 0);
+  assert.equal(await workspace.locator('.crew-header-title').textContent(), 'codex · test');
+  assert.equal(await sidebar.locator('.crew-member-row[aria-current="true"] .crew-member-label').textContent(), 'codex · test');
 });
 
 test('without a Crew installation the workspace shows setup guidance and calls nothing but the host', { timeout: 60_000 }, async t => {

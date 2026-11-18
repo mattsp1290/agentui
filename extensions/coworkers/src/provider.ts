@@ -47,10 +47,13 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
     const pending = new Set<Promise<unknown>>(), feeds = new Set<{ close(): void; readonly ended: Promise<unknown> }>();
     const handles = new Map<string, Set<PollHandle>>();
     let closed = false;
-    /** Every HTTP call runs inside credentials.use behind the installation's in-flight limit. Results are values. */
+    /**
+     * Every HTTP call runs inside credentials.use behind the installation's in-flight limit. Results are values. A call
+     * still queued behind the limit when the provider closes is dropped, so close never waits for it to reach the service.
+     */
     function use<T>(action: (client: CoworkersClient) => Promise<CallResult<T>>): Promise<CallResult<T>> {
       if (closed) return Promise.resolve({ kind: 'transport' });
-      const task = poller.limit(() => context.credentials.use({ credential, service: service.origin },
+      const task = poller.limit(async (): Promise<CallResult<T>> => closed ? { kind: 'transport' } : context.credentials.use({ credential, service: service.origin },
         token => action(new CoworkersClient({ origin: service.origin, token })))).catch((): CallResult<T> => ({ kind: 'transport' }));
       pending.add(task);
       void task.finally(() => pending.delete(task));
