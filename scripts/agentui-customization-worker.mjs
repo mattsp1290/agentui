@@ -9,6 +9,7 @@ import { committedReferenceKey, containedPath, customizationSettingsFile, EXTENS
   parseCustomizationPackage, parseCustomizationSettings, repositoryLocation, serializeCustomizationSettings } from '@agentui/host/customization';
 import { commitFailure, GitFailure, pushFailure, runGit, setReferenceEnabled } from './lib/customization-git.mjs';
 import { openStore, StateInvalid, StoreBusy } from './lib/customization-store.mjs';
+import { createBuildManager } from './lib/customization-builds.mjs';
 
 export const PUSH_INTERVAL_MS = 5_000;
 const PULL_WAIT_SECONDS = 10;
@@ -31,12 +32,18 @@ const packagePath = (subdirectory, file) => subdirectory ? posix.join(subdirecto
  * Starts the worker. `localSetupRoot` is the launcher machine's setup root, never a remote one; `target` says where the
  * host runs. Resolves once the worker has stopped after `signal` aborts: no child left, lock released.
  */
-export function startCustomizationWorker({ origin, localSetupRoot, signal, target = { kind: 'local' }, registerChild = () => {},
-  builds = null, environment = process.env, gitEnvironment = process.env, gitTimeoutMs, pushIntervalMs = PUSH_INTERVAL_MS, sessionId = randomUUID(), lockWaitMs,
+export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoot, signal, target = { kind: 'local' }, registerChild = () => {},
+  builds: injectedBuilds, buildOptions = {}, environment = process.env, gitEnvironment = process.env, gitTimeoutMs, pushIntervalMs = PUSH_INTERVAL_MS, sessionId = randomUUID(), lockWaitMs,
   fetch: send = fetch }) {
   const store = openStore(localSetupRoot);
   const workerId = randomUUID();
   const unsent = [];
+  let pushSoon = () => {};
+  const builds = injectedBuilds !== undefined ? injectedBuilds : repositoryRoot
+    ? createBuildManager({ store, repositoryRoot, sessionId, signal, registerChild, onChange: () => pushSoon(), environment, ...buildOptions }) : null;
+  // Builds start after the request's lock is released; they run in the background and report through status.
+  let requested = null;
+  const requestBuild = request => { requested = request; };
   let state = { connection: null, head: null, extensions: [], settings: null };
   const git = (args, cwd = store.paths.clone) => runGit(args, { cwd, signal, timeoutMs: gitTimeoutMs, env: gitEnvironment, registerChild });
   /** Runs git and returns its output; a nonzero exit records the output tail in git.log and fails with `cause`. */
@@ -124,7 +131,7 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
         await checked(['clone', '--quiet', '--no-tags', '--branch', branch, '--single-branch', '--', location, store.paths.clone], 'clone-failed', store.paths.root);
         await store.writeConnection(connection);
         const committed = await refresh();
-        builds?.start({ connection, head: committed.head });
+        requestBuild({ connection, head: committed.head });
       } catch (error) {
         await store.writeConnection(null);
         await rm(store.paths.clone, { recursive: true, force: true });
@@ -142,12 +149,12 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
       const connection = await connected();
       const before = state.head;
       const committed = await sync(connection);
-      if (committed.head !== before) builds?.start({ connection, head: committed.head });
+      if (committed.head !== before) requestBuild({ connection, head: committed.head });
     },
     async rebuild() {
       const connection = await connected();
       await refresh();
-      builds?.start({ connection, head: state.head, force: true });
+      requestBuild({ connection, head: state.head, force: true });
     },
     async toggle({ key, enabled, expectedHead }) {
       const connection = await connected();
@@ -163,7 +170,7 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
       try { await commitAndPush(connection, path, [`${enabled ? 'Enable' : 'Disable'} ${key} extension`, 'Changed by AgentUI.']); }
       catch (error) { await resetToRemote(connection); throw error; }
       const after = await refresh();
-      builds?.start({ connection, head: after.head });
+      requestBuild({ connection, head: after.head });
     },
     async settings({ settings, expectedHead }) {
       const connection = await connected();
@@ -198,6 +205,9 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
       return 'git-failed';
     } finally {
       await release();
+      const build = requested;
+      requested = null;
+      if (build && builds && !signal.aborted) void Promise.resolve(builds.start(build)).catch(() => {});
     }
   }
 
@@ -223,7 +233,12 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
   async function heartbeat() {
     while (!signal.aborted) {
       await push().catch(() => {});
-      await pause(pushIntervalMs);
+      await new Promise(resolve => {
+        const timer = setTimeout(done, pushIntervalMs);
+        function done() { clearTimeout(timer); pushSoon = () => {}; resolve(); }
+        pushSoon = done;
+        signal.addEventListener('abort', done, { once: true });
+      });
     }
   }
   async function requests() {
@@ -243,7 +258,14 @@ export function startCustomizationWorker({ origin, localSetupRoot, signal, targe
   const stopped = (async () => {
     await refresh().catch(() => {});
     void target;
-    await Promise.all([heartbeat(), requests()]);
+    // After an AgentUI update or a launcher restart: recover interrupted builds, then build the head if no ready build matches.
+    const recovered = (async () => {
+      if (!builds?.recover) return;
+      await builds.recover().catch(() => {});
+      if (state.connection && state.head && !signal.aborted) await builds.start({ connection: state.connection, head: state.head }).catch(() => {});
+    })();
+    await Promise.all([heartbeat(), requests(), recovered]);
+    await builds?.idle?.();
   })();
   return { workerId, stopped, store };
 }

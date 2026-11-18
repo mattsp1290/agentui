@@ -3,7 +3,8 @@ import { CustomizationError } from './contract.js';
 export const MAX_SOURCE_BYTES = 256 * 1024 * 1024;
 export class SourceBudget {
   static snapshot(): SourceBudget { return new SourceBudget(20_000, Infinity, Date.now); }
-  static graph(now = Date.now): SourceBudget { return new SourceBudget(50_000, now() + 600_000, now); }
+  /** The graph budget. `milliseconds` defaults to ten minutes. */
+  static graph(now = Date.now, milliseconds = 600_000): SourceBudget { return new SourceBudget(50_000, now() + milliseconds, now); }
   private bytes = MAX_SOURCE_BYTES;
   private constructor(private files: number, private readonly deadline: number, private readonly now: () => number) {}
   check(): void { this.timeout(Infinity); }

@@ -76,12 +76,16 @@ async function validateInstalledPackages(directory, packages, check) {
 /** @typedef {{readonly root: ResolvedCustomizationPackage, dispose(): Promise<void>}} PreparedCustomizationSources */
 
 /**
- * @param {{reference: import('@agentui/host/customization').GitExtensionReference, scratchParent: string}} input
+ * `prepareTimeoutMs` (default ten minutes) bounds the whole preparation, `installTimeoutMs` (default two minutes) each
+ * `npm ci`, and `resolveTimeoutMs` (default ten minutes) source resolution. `npmCache` replaces the private empty cache.
+ * @param {{reference: import('@agentui/host/customization').GitExtensionReference, scratchParent: string, prepareTimeoutMs?: number,
+ *   installTimeoutMs?: number, resolveTimeoutMs?: number, npmCache?: string}} input
  * @returns {Promise<PreparedCustomizationSources>}
  */
 export async function prepareCustomizationSources(input) {
   let owner, sources;
-  const deadline = Date.now() + 600_000;
+  const deadline = Date.now() + (input.prepareTimeoutMs ?? 600_000);
+  const installTimeoutMs = input.installTimeoutMs ?? 120_000;
   const check = () => {
     if (Date.now() >= deadline) throw CustomizationError.fixed('resource-limit');
   };
@@ -91,7 +95,7 @@ export async function prepareCustomizationSources(input) {
     await mkdir(scratchParent, { recursive: true, mode: 0o700 });
     owner = await mkdtemp(join(scratchParent, 'agentui-prepared-'));
     await chmod(owner, 0o700);
-    sources = await resolveCustomizationSources({ reference: input.reference, scratchParent: owner });
+    sources = await resolveCustomizationSources({ reference: input.reference, scratchParent: owner, ...(input.resolveTimeoutMs ? { timeoutMs: input.resolveTimeoutMs } : {}) });
     const repositories = new Map();
     const installs = new Map();
     const nodes = new Map();
@@ -143,7 +147,7 @@ export async function prepareCustomizationSources(input) {
       await writeFile(userconfig, '', { mode: 0o600 });
       await writeFile(globalconfig, '', { mode: 0o600 });
       const env = { PATH: dirname(process.execPath) + delimiter + (process.env.PATH ?? ''), HOME: home, TMPDIR: temporary, TMP: temporary, TEMP: temporary,
-        LC_ALL: 'C', LANG: 'C', npm_config_cache: join(privateDirectory, 'cache'),
+        LC_ALL: 'C', LANG: 'C', npm_config_cache: input.npmCache ? resolve(input.npmCache) : join(privateDirectory, 'cache'),
         npm_config_userconfig: userconfig, npm_config_globalconfig: globalconfig };
       let npm;
       try { npm = await realpath(join(dirname(process.execPath), 'npm')); }
@@ -153,7 +157,7 @@ export async function prepareCustomizationSources(input) {
         try {
           const prefix = await realpath(cwd);
           return (await execute(process.execPath, [npm, '--prefix', prefix, ...args], { cwd: prefix, env, encoding: 'utf8',
-            timeout: Math.min(version ? 10_000 : 120_000, deadline - Date.now()), maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' })).stdout;
+            timeout: Math.min(version ? 10_000 : installTimeoutMs, deadline - Date.now()), maxBuffer: 1024 * 1024, killSignal: 'SIGKILL' })).stdout;
         } catch (error) {
           if (error.killed || error.code === 'ERR_CHILD_PROCESS_STDIO_MAXBUFFER') throw CustomizationError.fixed('resource-limit');
           throw CustomizationError.fixed(version ? 'npm-mismatch' : 'install-failed');

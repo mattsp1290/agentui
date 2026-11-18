@@ -25,6 +25,18 @@ Requests:
 
 Every git command runs with a fixed argument list and no shell, `GIT_TERMINAL_PROMPT=0`, `LC_ALL=C`, hooks disabled (`core.hooksPath=/dev/null`), `user.useConfigOnly=true` (a missing identity reports `identity-missing`) and a 120-second deadline. Commit signing follows your git configuration; a signing prompt that blocks ends in `git-timeout`. The worker never force-pushes. A rejected push reports `push-rejected`, an authentication failure `push-unauthorized`, and the clone is reset to the remote branch. Git uses the launcher user's ambient SSH agent and credential helpers.
 
+## Builds
+
+The worker builds the connected head after a connect, after a sync or toggle that changed the build inputs, on Rebuild, and when it starts and finds no ready build for the head and the current AgentUI build. `scripts/build-customization.mjs` resolves the graph, prepares it once (one `npm ci` per owning npm directory, with a persistent cache in `customization/npm-cache/`), and runs the desktop and the server build from that one preparation. Limits: 900 seconds per install, 1,200 seconds for the preparation, 600 seconds for source resolution, 30 minutes overall.
+
+- The **inputs key** hashes the resolved graph without the settings file: the enabled references' packages in order, the root's metadata and grants, and, for packages in the connected repository, its file inventory with `agentui-settings.json` removed. A settings commit never starts a build.
+- The **build key** hashes the inputs key with the builder identity: the checkout's host artifact ID, SDK ABI identity, SDK version and wire version. After an AgentUI update the key changes and the worker rebuilds.
+- `customization/builds/<build key>/` holds `build.json` (state, phases with start and end times, artifact IDs, namespaces, grants that will be passed to the host and grants ignored because their extension is disabled), `log.txt` (the last 64 KiB of the builder's output, which never leaves the launcher machine) and the builders' `desktop/` and `server/` outputs. Scratch space is under `customization/scratch/`.
+- States: `queued`, `resolving`, `preparing`, `building-desktop`, `building-server`, `ready`, `failed`, `cancelled`. Failures: `toolchain-missing` (run `npm run setup:browser` in the AgentUI checkout), `builder-changed`, `resolve-failed`, `sdk-mismatch` (the connected branch needs the latest AgentUI changes merged), `prepare-failed`, `desktop-build-failed`, `qualification-failed`, `server-build-failed`, `timeout`, `interrupted`.
+- One build runs at a time per machine. A change of the build inputs cancels this worker's running build and starts the new one; another live session's build is shown, not interrupted. A worker that starts after a crash kills a recorded builder only when a process with that group ID and start time still exists, and marks the record `interrupted`.
+- While a build is running, the launcher skips its own `npm ci && npm run build` for that start and says so, because the build reads the checkout.
+- After each finished build the worker keeps every build a launcher profile references and the newest ready build, and deletes the rest.
+
 ## Trust
 
 AgentUI runs for one user on a private NetBird or Tailscale network, and that overlay network is the trust boundary (see `AGENTS.md`). Any client on the overlay network can queue a request that makes the launcher machine clone, commit, push and build, and any caller that reaches the host can act as the worker. This matches what clients can already do: they run agents with shell access on the host. Tokens never go into the repository, a wire reply, a state file or a log; the wire carries token variable names only.

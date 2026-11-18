@@ -257,7 +257,10 @@ export async function launch(options) {
   for (const signal of interruptionSignals) process.on(signal, interrupt);
   try {
     const nodeVersion = (await readFile(join(root, '.node-version'), 'utf8')).trim();
-    if (options.build) {
+    // A customization build reads this checkout; rebuilding it underneath would change what the build sees.
+    const building = options.build && await import('./lib/customization-store.mjs').then(store => store.activeCustomizationBuild(LOCAL_SETUP_ROOT));
+    if (building) process.stderr.write('A customization build is running from this checkout. Skipping the AgentUI rebuild for this start.\n');
+    if (options.build && !building) {
       const { packageManager } = JSON.parse(await readFile(join(root, 'package.json'), 'utf8'));
       const build = command('npm', ['exec', '--yes', `--package=node@${nodeVersion}`, `--package=${packageManager}`, '--call', 'npm ci && npm run build && npm run desktop:bundle'],
         { ...lifecycle, echo: true, env: { ...process.env, PATH: `/usr/bin:/bin:/usr/sbin:/sbin:${process.env.PATH}`, CARGO_TARGET_DIR: join(root, 'apps/desktop/src-tauri/target') } });

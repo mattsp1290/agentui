@@ -33,10 +33,12 @@ export interface ResolvedCustomizationSources {
 export async function resolveCustomizationSources(input: {
   readonly reference: GitExtensionReference;
   readonly scratchParent: string;
+  /** The graph time budget; ten minutes by default. */
+  readonly timeoutMs?: number;
 }): Promise<ResolvedCustomizationSources> {
   const cwd = process.cwd();
   const scratchParent = resolve(cwd, input.scratchParent);
-  const budget = SourceBudget.graph();
+  const budget = SourceBudget.graph(Date.now, input.timeoutMs);
   const repositories = new Map<string, RepositoryTree>();
   const packages = new Map<string, ResolvedCustomizationPackage>();
   const active = new Set<string>();

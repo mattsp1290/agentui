@@ -117,14 +117,15 @@ async function publishFresh(out, produce, attempt) {
   }
 }
 
-export async function buildServerCustomization({ reference, out, expectedToolchain, attempt }) {
+/** Builds a server artifact into `out`. With `prepared`, it uses that prepared graph and leaves its disposal to the caller. */
+export async function buildServerCustomization({ reference, out, expectedToolchain, attempt, prepared: shared }) {
   if (attempt !== undefined && !/^[a-zA-Z0-9_-]{1,80}$/.test(attempt)) throw CustomizationError.fixed('build-failed');
   const qualified = await qualifyServerCustomizationToolchain();
   if (expectedToolchain && canonicalJson(qualified) !== canonicalJson(expectedToolchain)) throw CustomizationError.fixed('toolchain-mismatch');
   const abi = await serverCustomizationAbi(), builder = qualified.identity.builder;
   const runtime = { engine: 'node', version: process.versions.node, modules: process.versions.modules, abiIdentity: abi.identity };
   return publishFresh(out, async (staged, owner) => {
-    const prepared = await prepareCustomizationSources({ reference, scratchParent: owner });
+    const prepared = shared ?? await prepareCustomizationSources({ reference, scratchParent: owner });
     try {
       const { catalog, ...compilation } = planServerCatalog(prepared.root, EXTENSION_SDK_VERSION);
       const assets = await compileCatalog({ ...compilation, directory: staged, abi });
@@ -140,7 +141,7 @@ export async function buildServerCustomization({ reference, out, expectedToolcha
       if (canonicalJson(await qualifyServerCustomizationToolchain()) !== canonicalJson(qualified)) throw CustomizationError.fixed('toolchain-mismatch');
       return manifest;
     } finally {
-      await prepared.dispose();
+      if (!shared) await prepared.dispose();
     }
   }, attempt);
 }

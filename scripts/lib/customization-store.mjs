@@ -2,7 +2,7 @@
 import { execFileSync } from 'node:child_process';
 import { randomBytes } from 'node:crypto';
 import { mkdirSync } from 'node:fs';
-import { mkdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
+import { mkdir, readdir, readFile, rename, rm, stat, writeFile } from 'node:fs/promises';
 import { hostname } from 'node:os';
 import { join } from 'node:path';
 
@@ -106,4 +106,18 @@ export function openStore(setupRoot) {
       };
     },
   };
+}
+
+/** True when a build record in a non-final state has a live owner, so the checkout must not be rebuilt now. */
+export async function activeCustomizationBuild(setupRoot) {
+  const builds = join(setupRoot, 'customization', 'builds');
+  let keys;
+  try { keys = await readdir(builds); } catch { return false; }
+  for (const key of keys) {
+    let record;
+    try { record = JSON.parse(await readFile(join(builds, key, 'build.json'), 'utf8')); } catch { continue; }
+    if (['ready', 'failed', 'cancelled'].includes(record?.state)) continue;
+    if (record?.owner && !ownerIsDead({ ...record.owner, heartbeatAt: Date.now() })) return true;
+  }
+  return false;
 }
