@@ -1,16 +1,22 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { test } from 'node:test';
-import { verifyConsumerLock, verifyConsumerMetadata, verifyInstalled } from '../../scripts/lib/agui-fork/consumer.mjs';
+import { aguiPackages } from '../../scripts/lib/agui-fork.mjs';
+import { digest } from '../../scripts/lib/agui-fork/bytes.mjs';
+import { nativeVersions, verifyConsumerLock, verifyConsumerMetadata, verifyInstalled } from '../../scripts/lib/agui-fork/consumer.mjs';
 
-const nativeVersions = { '@openai/codex-sdk': '0.167.1', '@openai/codex': '0.167.1', '@earendil-works/pi-agent-core': '1.5.0', '@earendil-works/pi-ai': '1.5.0', '@earendil-works/pi-coding-agent': '1.5.0', zod: '3.25.76' };
-const packages = new Map(['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => [`@ag-ui/${name}`, { filename: `${name}.tgz`, integrity: `sha512-${name}`, manifest: { name: `@ag-ui/${name}`, version: '1.0.0' } }]));
+// These fixtures exercise the verifier's structural checks, not the pins themselves, so
+// they derive from the verifier's own pin and package list. The pins are guarded
+// independently by the frozen consumer lock digests and the committed-fork tests.
+const codexVersion = nativeVersions['@openai/codex'];
+const packages = new Map(aguiPackages.map((name) => {
+  const short = name.slice('@ag-ui/'.length);
+  return [name, { filename: `${short}.tgz`, integrity: `sha512-${short}`, manifest: { name, version: '1.0.0' } }];
+}));
 const corePath = 'node_modules/@ag-ui/core';
 const optionalName = `@openai/codex-${process.platform}-${process.arch}`;
-const digest = (body) => createHash('sha256').update(body).digest('hex');
 
 function metadataFixture() {
   const manifest = { dependencies: { ...nativeVersions } };
@@ -23,7 +29,7 @@ function metadataFixture() {
   lock.packages[''] = { dependencies: { ...manifest.dependencies } };
   for (const [name, version] of Object.entries(nativeVersions)) lock.packages[`node_modules/${name}`] = { version };
   for (const os of ['darwin', 'linux', 'win32']) for (const arch of ['arm64', 'x64']) {
-    lock.packages[`node_modules/@openai/codex-${os}-${arch}`] = { optional: true, version: `0.167.1-${os}-${arch}` };
+    lock.packages[`node_modules/@openai/codex-${os}-${arch}`] = { optional: true, version: `${codexVersion}-${os}-${arch}` };
   }
   return { lock, manifest };
 }
@@ -41,7 +47,7 @@ function installedFixture(context) {
   const folder = temporary(context);
   for (const [name, packed] of packages) writeJson(join(folder, 'node_modules', name, 'package.json'), packed.manifest);
   for (const [name, version] of Object.entries(nativeVersions)) writeJson(join(folder, 'node_modules', name, 'package.json'), { name, version });
-  writeJson(join(folder, 'node_modules', optionalName, 'package.json'), { name: optionalName, version: `0.167.1-${process.platform}-${process.arch}` });
+  writeJson(join(folder, 'node_modules', optionalName, 'package.json'), { name: optionalName, version: `${codexVersion}-${process.platform}-${process.arch}` });
   const payload = join(folder, 'node_modules', optionalName, 'vendor/bin/codex');
   mkdirSync(dirname(payload), { recursive: true });
   writeFileSync(payload, 'controlled placeholder; never executed');

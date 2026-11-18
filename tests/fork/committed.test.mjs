@@ -1,6 +1,5 @@
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, relative } from 'node:path';
@@ -8,12 +7,19 @@ import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
 import { OFFLINE_RECORD_SCOPE, consumerScripts, measureVerifierSources, verifyFork, writeConsumerScripts } from '../../scripts/lib/agui-fork.mjs';
+import { digest } from '../../scripts/lib/agui-fork/bytes.mjs';
 
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const preMigrationLedger = 'evidence/qualification-ledger-pre-ci-migration.json.gz';
-const sha256 = (body) => createHash('sha256').update(body).digest('hex');
 
+// Verify the whole committed fork once per file. The lazy cache keeps each test
+// runnable on its own (for example with --test-name-pattern); callers only read it.
+let ledger;
 function committedLedger() {
+  ledger ??= readCommittedLedger();
+  return ledger;
+}
+function readCommittedLedger() {
   const fork = verifyFork(root);
   const qualification = JSON.parse(readFileSync(join(fork.folder, 'qualification.json'), 'utf8'));
   const evidence = new Map([...fork.metadata.evidence, ...qualification.evidence].map((entry) => [entry.path, entry]));
@@ -46,7 +52,7 @@ test('full qualification writes consumer scripts from the measured buffers', asy
 test('superseded nine-replay ledger retains all original logs and its earlier metadata history', () => {
   const { fork, qualification, evidence } = committedLedger();
   const historyBytes = gunzipSync(readFileSync(join(fork.folder, qualification.metadataHistory)));
-  assert.equal(sha256(historyBytes), 'fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f');
+  assert.equal(digest(historyBytes), 'fd918b62044471507f13945acfd3a5f2020ef7ebd7ef16c3ada4a2c902e6fa4f');
   const history = JSON.parse(historyBytes);
   assert.equal(history.nodeReplays.length, 9);
   for (const entry of history.evidence) assert.deepEqual(evidence.get(entry.path), entry, entry.path);
@@ -58,7 +64,7 @@ test('pre-migration ledger snapshot retains the last manual receipt and every ea
   const { fork, qualification, evidence } = committedLedger();
   assert.ok(evidence.has(preMigrationLedger), 'snapshot must be verified evidence');
   const snapshotBytes = gunzipSync(readFileSync(join(fork.folder, preMigrationLedger)));
-  assert.equal(sha256(snapshotBytes), evidence.get(preMigrationLedger).rawSha256);
+  assert.equal(digest(snapshotBytes), evidence.get(preMigrationLedger).rawSha256);
   const snapshot = JSON.parse(snapshotBytes);
   assert.equal(snapshot.currentReplay.measuredBase, '180a4091943c97724b03f0a70b69128cb4cacac4');
   assert.ok(evidence.has(snapshot.currentReplay.log), snapshot.currentReplay.log);

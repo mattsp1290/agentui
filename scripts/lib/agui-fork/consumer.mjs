@@ -3,7 +3,7 @@ import { readFileSync, readdirSync, existsSync, lstatSync } from 'node:fs';
 import { join, relative } from 'node:path';
 import { digest, parseJson, readJson } from './bytes.mjs';
 
-const nativeVersions = {
+export const nativeVersions = {
   '@openai/codex-sdk': '0.167.1', '@openai/codex': '0.167.1',
   '@earendil-works/pi-agent-core': '1.5.0', '@earendil-works/pi-ai': '1.5.0',
   '@earendil-works/pi-coding-agent': '1.5.0', zod: '3.25.76',

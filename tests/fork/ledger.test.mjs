@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
-import { createHash } from 'node:crypto';
 import { mkdtempSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { test } from 'node:test';
 import { gzipSync } from 'node:zlib';
+import { digest } from '../../scripts/lib/agui-fork/bytes.mjs';
 import { verifyEvidence, verifyLedger } from '../../scripts/lib/agui-fork/ledger.mjs';
 
 const revision = 'a'.repeat(40);
 const historicalLog = Buffer.from('historical output without a scoped record');
-const digest = (body) => createHash('sha256').update(body).digest('hex');
 
 function evidenceFixture(context) {
   const folder = mkdtempSync(join(tmpdir(), 'agentui-ledger-test-'));
