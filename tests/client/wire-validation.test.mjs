@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { readFileSync } from 'node:fs';
 import { connected, events, projection, receipt, scope, snapshot } from './support.mjs';
 
 const validDecision = { pendingId: 'pending', runId: 'run', choices: ['allow'], prompt: 'Allow?' };
@@ -122,6 +123,44 @@ test('the client keeps an over-limit extension input local and refuses malformed
   assert.equal(sent, 0);
   assert.deepEqual(await connection.extensionCall({ namespace: 'fixture', installationId: 'i', operation: 'echo', input: {} }), { kind: 'ok', output: 1 });
   assert.equal(sent, 1);
+});
+
+const nest = depth => { let value = 0; for (let index = 0; index < depth; index++) value = [value]; return value; };
+
+test('TypeScript and Rust share the extension-call and catalog-filter request golden cases', async () => {
+  const { parseServiceRequest } = await import('@agentui/contracts/service');
+  const cases = JSON.parse(readFileSync(new URL('./fixtures/extension-requests.json', import.meta.url)));
+  assert.ok(cases.some(row => row.valid) && cases.some(row => !row.valid));
+  for (const row of cases) {
+    if (row.valid) assert.deepEqual(parseServiceRequest(row.request), row.request);
+    else assert.throws(() => parseServiceRequest(row.request), undefined, JSON.stringify(row.request).slice(0, 120));
+  }
+});
+
+test('an extension call resolves too-large exactly where the request envelope would exceed its structural limit', async () => {
+  const { canonicalJson } = await import('@agentui/contracts');
+  const { parseServiceRequest, parseServiceResponse, parseExtensionCallValue, ExtensionCallTooLarge } = await import('@agentui/contracts/service');
+  const { createServiceConnection } = await import('../../packages/client/dist/service-engine.js');
+  const { transcriptProjection } = await import('@agentui/contracts/conversation');
+  const bodies = [];
+  const connection = createServiceConnection(async body => { bodies.push(body); return new Response(JSON.stringify({ ok: true, value: { kind: 'ok', output: 1 } }), { headers: { 'content-type': 'application/json' } }); }, transcriptProjection);
+  const call = input => ({ namespace: 'fixture', installationId: 'i', operation: 'echo', input });
+  // Depth: the deepest input the envelope can carry is sent; one level more stays local as too-large instead of rejecting.
+  assert.deepEqual(await connection.extensionCall(call(nest(63))), { kind: 'ok', output: 1 });
+  assert.deepEqual(await connection.extensionCall(call(nest(64))), { kind: 'failed', cause: 'too-large' });
+  assert.equal(bodies.length, 1);
+  for (const body of bodies) canonicalJson(JSON.parse(body));
+  assert.throws(() => parseServiceRequest({ op: 'extension-call', ...call(nest(64)) }));
+  // Output sits two levels below the response root and shares its node budget with ok, value and kind. The host parses a
+  // handler result with parseExtensionCallValue, so an output the response envelope cannot carry must fail there.
+  // (The input's 64,000-byte limit is reached long before its node budget, so only the output's node edge is reachable.)
+  const items = count => Array.from({ length: count - 1 }, () => 0);
+  const request = { op: 'extension-call', ...call({}) };
+  for (const output of [nest(62), items(99_996)]) {
+    assert.deepEqual(parseExtensionCallValue({ kind: 'ok', output }), { kind: 'ok', output });
+    assert.deepEqual(parseServiceResponse(request, { ok: true, value: { kind: 'ok', output } }).value, { kind: 'ok', output });
+  }
+  for (const output of [nest(63), items(99_997)]) assert.throws(() => parseExtensionCallValue({ kind: 'ok', output }), ExtensionCallTooLarge);
 });
 
 test('catalog filters and provider identities round-trip; unknown filter kinds and missing fields are rejected', async () => {

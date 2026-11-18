@@ -21,7 +21,9 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const theme = useTheme();
   const installation = props.installations.find(item => item.status === 'available') ?? props.installations[0];
   const available = installation?.status === 'available';
-  const coworkers = props.agents.filter((agent): agent is Coworker => agent.providerAgentId !== null);
+  // The view shows one installation: its coworkers, chats and operations. Coworker IDs are only unique within one.
+  const coworkers = props.agents.filter((agent): agent is Coworker => agent.providerAgentId !== null && agent.installationId === installation?.installationId);
+  const entries = props.conversations.entries.filter(entry => entry.provider.installationId === installation?.installationId);
   const [details, setDetails] = useState<ReadonlyMap<string, CoworkerSummary>>(new Map());
   const [management, setManagement] = useState(false);
   const [truncated, setTruncated] = useState(false);
@@ -67,10 +69,10 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
     </div>;
   }
   const byId = new Map(coworkers.map(item => [item.providerAgentId, item]));
-  const selectedEntry = props.selected ? props.conversations.entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
+  const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
   const current = selectedEntry ? byId.get(selectedEntry.provider.providerAgentId) : filter ? byId.get(filter) : undefined;
   const detail = current ? details.get(current.providerAgentId) : undefined;
-  const chats = props.conversations.entries.filter(entry => !filter || entry.provider.providerAgentId === filter);
+  const chats = entries.filter(entry => !filter || entry.provider.providerAgentId === filter);
   /** Opens or creates a chat. A rejection is shown here; any other failure is in the host status strip. */
   async function attempt(action: () => Promise<void>) {
     setNotice(''); setAwaiting({ before: selectedKey });
@@ -83,7 +85,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   }
   function chatWith(coworker: Coworker) {
     setTab('chat'); setFilter(coworker.providerAgentId); setPill('chat');
-    const first = props.conversations.entries.find(entry => entry.provider.providerAgentId === coworker.providerAgentId);
+    const first = entries.find(entry => entry.provider.providerAgentId === coworker.providerAgentId);
     if (first) openChat(first.scope); else void attempt(() => props.create(coworker.id));
   }
   const target = current ?? (filter ? byId.get(filter) : coworkers[0]);

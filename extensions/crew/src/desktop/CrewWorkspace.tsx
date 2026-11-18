@@ -23,9 +23,17 @@ function status(agent: WorkspaceAgent): 'ready' | 'unavailable' {
 export function CrewWorkspace(props: WorkspaceViewProps) {
   const theme = useTheme();
   const installation = props.installations.find(item => item.status === 'available') ?? props.installations[0];
-  const members = props.agents.filter((agent): agent is WorkspaceAgent & { readonly providerAgentId: string } => agent.providerAgentId !== null);
+  // The view shows one installation: its members, conversations and operations. Member IDs are only unique within one.
+  const members = props.agents.filter((agent): agent is WorkspaceAgent & { readonly providerAgentId: string } =>
+    agent.providerAgentId !== null && agent.installationId === installation?.installationId);
+  const entries = useMemo(() => props.conversations.entries.filter(entry => entry.provider.installationId === installation?.installationId),
+    [props.conversations.entries, installation?.installationId]);
   const [details, setDetails] = useState<ReadonlyMap<string, MemberDetail>>(new Map());
   const [chosen, setChosen] = useState<string | null>(null);
+  const selectedKey = props.selected ? `${props.selected.hostId}/${props.selected.conversationId}` : null;
+  // A new selection (opened here, started from the composer's agent control, or opened in Chats) shows its own member,
+  // so an earlier member click must not hide it. Clicking a member row after that chooses again.
+  useEffect(() => { setChosen(null); }, [selectedKey]);
   const [adding, setAdding] = useState(false);
   const [panel, setPanel] = useState(false);
   const [drawer, setDrawer] = useState(false);
@@ -46,11 +54,10 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     return () => { current = false; };
     // Re-read details when the member set changes.
   }, [available, installation?.installationId, memberKey]);
-  const selectedEntry = props.selected ? props.conversations.entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
+  const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
   const activeMember = chosen ?? selectedEntry?.provider.providerAgentId ?? members[0]?.providerAgentId ?? null;
   const member = members.find(item => item.providerAgentId === activeMember) ?? null;
-  const conversations = useMemo(() => props.conversations.entries.filter(entry => entry.provider.providerAgentId === activeMember),
-    [props.conversations.entries, activeMember]);
+  const conversations = useMemo(() => entries.filter(entry => entry.provider.providerAgentId === activeMember), [entries, activeMember]);
   const showing = selectedEntry && selectedEntry.provider.providerAgentId === activeMember;
   const detail = member ? details.get(member.providerAgentId) : undefined;
   const palette = SIDEBAR[theme.appearance];
@@ -86,7 +93,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
         <h3 className="crew-section-title">Members</h3>
         <ul className="crew-member-list">
           {members.map(item => {
-            const own = props.conversations.entries.filter(entry => entry.provider.providerAgentId === item.providerAgentId);
+            const own = entries.filter(entry => entry.provider.providerAgentId === item.providerAgentId);
             const selected = item.providerAgentId === activeMember;
             return <li key={item.id}>
               <button type="button" className="crew-member-row" aria-current={selected ? 'true' : undefined}

@@ -224,6 +224,41 @@ test('agentsChanged waits for a running discovery, then rediscovers before reply
   assert.deepEqual((await f.client.metadata()).agents.map(agent => agent.label).sort(), ['first', 'second', 'third']);
 });
 
+test('an agentsChanged result is the reply even when the rediscovery outlasts the deadline', async t => {
+  const a = await service(t, ['first']);
+  const gate = Promise.withResolvers();
+  t.after(() => gate.resolve());
+  const ext = extension({ services: [a], operations: {
+    async add({ input }) {
+      a.agents.push(input);
+      // The change is made; the rediscovery that follows now stalls past the deadline.
+      a.gate = gate.promise;
+      return { kind: 'ok', output: 'created', agentsChanged: true };
+    },
+  } });
+  const f = await open(t, [ext], { operationDeadlineMs: 300 });
+  const started = Date.now();
+  assert.deepEqual(await call(f.client, 'add', 'second'), { kind: 'ok', output: 'created' });
+  assert.ok(Date.now() - started >= 250, 'the reply came before the deadline, so the stall was not exercised');
+  a.gate = null;
+  gate.resolve();
+  assert.equal((await f.client.metadata()).extensions[0].operations.includes('add'), true);
+});
+
+test('calls and metadata choose the same grant when two grants share an installation ID', async t => {
+  const a = await service(t, []);
+  const generations = [];
+  const ext = extension({ services: [a, { origin: 'http://127.0.0.1:1' }], operations: {
+    echo: async ({ installation, input }) => { generations.push(installation.instance.generation); return { kind: 'ok', output: input }; },
+  } });
+  // The second grant is the same installation at a later generation whose service cannot be reached.
+  ext.value.installations[1] = { ...ext.value.installations[1], instance: { ...ext.value.installations[0].instance, generation: '2' } };
+  const f = await open(t, [ext]);
+  assert.deepEqual((await f.client.metadata()).extensions[0].installations, [{ installationId: 'install-0', status: 'available' }]);
+  assert.deepEqual(await call(f.client, 'echo', 7), { kind: 'ok', output: 7 });
+  assert.deepEqual(generations, ['1']);
+});
+
 test('a failed generation reports failed descriptors and a closed host refuses calls as unavailable', async t => {
   const a = await service(t, []);
   const good = extension({ services: [a], operations: { echo: async ({ input }) => ({ kind: 'ok', output: input }) } });

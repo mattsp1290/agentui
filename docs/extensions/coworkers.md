@@ -1,6 +1,6 @@
 # Coworkers extension
 
-`extensions/coworkers` (package `agentui-extension-coworkers`, namespace `coworkers`) connects AgentUI to a crabber-coworkers service through its v1 HTTP API. It lists the coworkers configured in that service's `config.json`, creates conversations with them and shows their replies inside a workspace in the Extensions view.
+`extensions/coworkers` (package `agentui-extension-coworkers`, namespace `coworkers`) connects AgentUI to a crabber-coworkers service through its v1 HTTP API. It lists the coworkers configured in that service's `config.json`, creates conversations with them and shows their replies inside a workspace in the Extensions view. The workspace shows one installation, the available one with the first installation ID in sort order; coworkers and chats of other installations stay reachable from Chats.
 
 ## Set up
 

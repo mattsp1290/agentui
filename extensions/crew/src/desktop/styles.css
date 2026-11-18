@@ -1,4 +1,5 @@
-/* Crew workspace: a Slack-style idiom (dark sidebar, flat message rows). Every selector is scoped to this workspace. */
+/* Crew workspace: a Slack-style idiom (dark sidebar, flat message rows). Every selector is scoped to this workspace and
+   to Crew's own elements; the host-rendered conversation, composer and approvals inside it keep the host styles. */
 [data-extension-workspace="crew"] .crew-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: 100%; min-height: 0; position: relative; }
 [data-extension-workspace="crew"] .crew-sidebar { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--aui-color-surface); color: var(--aui-color-text); }
 [data-extension-workspace="crew"] .crew-sidebar nav { display: flex; flex-direction: column; padding: 12px 8px; gap: 4px; }
@@ -24,8 +25,9 @@
 [data-extension-workspace="crew"] .crew-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 20px; padding-right: 128px; border-bottom: 1px solid var(--aui-color-border); }
 [data-extension-workspace="crew"] .crew-header-title { margin: 0; font-size: 17px; font-weight: 700; }
 [data-extension-workspace="crew"] .crew-header-meta { color: var(--aui-color-muted); font-size: 13px; }
-[data-extension-workspace="crew"] .crew-main button, [data-extension-workspace="crew"] .crew-setup button { padding: 6px 12px; border: 1px solid var(--aui-color-border); border-radius: 6px; background: var(--aui-color-surface); color: inherit; font: inherit; cursor: pointer; }
-[data-extension-workspace="crew"] .crew-main button:disabled { opacity: .5; cursor: default; }
+/* Only Crew's own containers: `.crew-conversation` also holds the host-rendered conversation and composer, which keep host styles. */
+[data-extension-workspace="crew"] :is(.crew-header, .crew-empty-state, .crew-member-form, .crew-details, .crew-setup) button { padding: 6px 12px; border: 1px solid var(--aui-color-border); border-radius: 6px; background: var(--aui-color-surface); color: inherit; font: inherit; cursor: pointer; }
+[data-extension-workspace="crew"] :is(.crew-header, .crew-empty-state, .crew-member-form, .crew-details, .crew-setup) button:disabled { opacity: .5; cursor: default; }
 [data-extension-workspace="crew"] .crew-details-toggle { margin-left: auto; }
 [data-extension-workspace="crew"] .crew-drawer-toggle { display: none; }
 [data-extension-workspace="crew"] .crew-body { flex: 1; min-height: 0; display: flex; }

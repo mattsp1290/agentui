@@ -61,4 +61,35 @@ test('every fake response the tests use matches the vendored OpenAPI document', 
   }
   const unauthorized = await fetch(`${remote.origin}/v1/coworkers`);
   check('/v1/coworkers', 'get', String(unauthorized.status), await unauthorized.json());
+
+  // The responses the provider and browser tests rely on beyond the success paths.
+  const receiptTemplate = '/v1/conversations/{conversationId}/requests/{requestId}', submitTemplate = '/v1/conversations/{conversationId}/requests';
+  const receiptOf = id => call('GET', `/v1/conversations/${conversationId}/requests/${id}`);
+  const submit = (id, text) => call('POST', `/v1/conversations/${conversationId}/requests`, { requestId: id, text });
+  const failed = '3a2b3c4d-1111-4222-8333-444455556666', uncertain = '4a2b3c4d-1111-4222-8333-444455556666', hidden = '5a2b3c4d-1111-4222-8333-444455556666';
+  for (const id of [failed, uncertain, hidden]) check(submitTemplate, 'post', ...Object.values(await submit(id, `Text ${id}`)));
+  remote.fail(failed); remote.markUncertain(uncertain);
+  for (const id of [failed, uncertain]) {
+    const result = await receiptOf(id);
+    assert.equal(typeof result.body.reason, 'string', `${id} carries a reason`);
+    check(receiptTemplate, 'get', result.status, result.body);
+  }
+  remote.hideReceipt(hidden);
+  const missingReceipt = await receiptOf(hidden);
+  assert.equal(missingReceipt.status, '404');
+  check(receiptTemplate, 'get', missingReceipt.status, missingReceipt.body);
+  remote.invisible(hidden);
+  const invisible = await receiptOf(hidden);
+  assert.equal(invisible.status, '404');
+  check(receiptTemplate, 'get', invisible.status, invisible.body);
+  const full = await coworkersService(t, { maxQueued: 1 });
+  const fullCall = async (path, body) => {
+    const response = await fetch(full.origin + path, { method: 'POST', headers: { authorization: `Bearer ${full.token}`, 'content-type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: String(response.status), body: await response.json() };
+  };
+  await fullCall('/v1/conversations', { conversationId, coworkerId: 'ada' });
+  await fullCall(`/v1/conversations/${conversationId}/requests`, { requestId, text: 'First' });
+  const queueFull = await fullCall(`/v1/conversations/${conversationId}/requests`, { requestId: failed, text: 'Second' });
+  assert.deepEqual([queueFull.status, queueFull.body.error], ['409', 'queue_full']);
+  check(submitTemplate, 'post', queueFull.status, queueFull.body);
 });

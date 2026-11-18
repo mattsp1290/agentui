@@ -1,8 +1,9 @@
-/* Coworkers workspace: a Teams-style idiom (inner app bar, chat cards, bubbles). Every selector is scoped to this workspace. */
+/* Coworkers workspace: a Teams-style idiom (inner app bar, chat cards, bubbles). Every selector is scoped to this workspace,
+   and generic element rules to Coworkers' own containers: the host-rendered conversation and composer keep the host styles. */
 [data-extension-workspace="coworkers"] .coworkers-workspace { display: grid; grid-template-columns: 72px 300px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--aui-color-canvas); color: var(--aui-color-text); }
-[data-extension-workspace="coworkers"] .coworkers-workspace button { font: inherit; color: inherit; cursor: pointer; }
-[data-extension-workspace="coworkers"] .coworkers-workspace button:disabled { opacity: .5; cursor: default; }
-[data-extension-workspace="coworkers"] .coworkers-workspace button:focus-visible { outline: 2px solid var(--aui-color-focus); outline-offset: 2px; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button { font: inherit; color: inherit; cursor: pointer; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button:disabled { opacity: .5; cursor: default; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button:focus-visible { outline: 2px solid var(--aui-color-focus); outline-offset: 2px; }
 [data-extension-workspace="coworkers"] .coworkers-app-bar { background: var(--aui-color-raised); border-right: 1px solid var(--aui-color-border); padding: 8px 4px; }
 [data-extension-workspace="coworkers"] .coworkers-sections { display: flex; flex-direction: column; gap: 4px; }
 [data-extension-workspace="coworkers"] .coworkers-sections button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: 0; border-radius: 6px; background: transparent; font-size: 11px; color: var(--aui-color-muted); }
@@ -10,7 +11,7 @@
 [data-extension-workspace="coworkers"] .coworkers-app-bar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 [data-extension-workspace="coworkers"] .coworkers-chat-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--aui-color-surface); border-right: 1px solid var(--aui-color-border); padding: 12px; gap: 6px; }
 [data-extension-workspace="coworkers"] .coworkers-chat-list-header, [data-extension-workspace="coworkers"] .coworkers-directory-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-[data-extension-workspace="coworkers"] h2 { margin: 0; font-size: 18px; font-weight: 700; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) h2 { margin: 0; font-size: 18px; font-weight: 700; }
 [data-extension-workspace="coworkers"] .coworkers-chat-list-header button, [data-extension-workspace="coworkers"] .coworkers-directory-header button,
 [data-extension-workspace="coworkers"] .coworkers-card-actions button, [data-extension-workspace="coworkers"] .coworkers-empty-state button, [data-extension-workspace="coworkers"] .coworkers-setup button { padding: 5px 12px; border: 1px solid var(--aui-color-border); border-radius: 4px; background: var(--aui-color-surface); }
 [data-extension-workspace="coworkers"] .coworkers-filter, [data-extension-workspace="coworkers"] .coworkers-more { align-self: flex-start; padding: 2px 8px; border: 0; border-radius: 12px; background: var(--aui-color-raised); font-size: 12px; }

@@ -124,6 +124,27 @@ test('the Extensions view lists namespaces, opens a workspace, creates, chats an
   assert.deepEqual(await f.page.evaluate(() => window.workspace.call('books', 'echo', {})), { kind: 'failed', cause: 'unavailable' });
 });
 
+test('the active conversation stays in the workspace entries when it is not on a loaded catalog page', { timeout: 60_000 }, async t => {
+  const f = await open(t);
+  await openWorkspace(f);
+  const workspace = f.page.getByRole('region', { name: 'Ledger workspace' });
+  await workspace.getByRole('button', { name: 'Start with Ledger desk' }).click();
+  await workspace.locator('#message').waitFor();
+  const selected = await f.page.evaluate(() => window.workspace.selected?.conversationId);
+  assert.ok(selected);
+  // As with a namespace of more than one page, the reloaded catalog page no longer holds the active conversation.
+  await f.page.route('**/api/v1', async route => {
+    const body = route.request().postDataJSON();
+    if (body?.op !== 'catalog' || !body.filter) return route.continue();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, value: [] }) });
+  });
+  await f.page.evaluate(() => window.workspace.refresh());
+  await wait(() => f.page.evaluate(() => !window.workspace.conversations.loading), 'workspace reloaded');
+  assert.deepEqual(await f.page.evaluate(() => window.workspace.conversations.entries.map(entry => [entry.scope.conversationId, entry.preview, entry.provider])),
+    [[selected, null, { installationId: 'books', providerAgentId: 'desk-1' }]]);
+  await workspace.getByRole('button', { name: `Open ${selected}` }).waitFor();
+});
+
 test('an uncertain creation started in a workspace shows the recovery control while the workspace is open', { timeout: 60_000 }, async t => {
   const f = await open(t);
   f.ledger.service.loseRepliesTo('/open');

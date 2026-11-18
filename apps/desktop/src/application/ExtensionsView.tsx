@@ -97,9 +97,15 @@ export function ExtensionWorkspace({ row, metadata, workspaces, active, controll
   const agents: readonly WorkspaceAgent[] = namespaceAgents(metadata, namespace).map(agent => ({ id: agent.id, label: agent.label,
     installationId: agent.installationId, providerAgentId: agent.providerAgentId, availability: agent.availability }));
   const listed = workspaces[namespace];
-  const entries: readonly WorkspaceConversation[] = (listed?.entries ?? []).flatMap(entry => entry.provider?.namespace === namespace
+  const loaded: readonly WorkspaceConversation[] = (listed?.entries ?? []).flatMap(entry => entry.provider?.namespace === namespace
     ? [{ scope: entry.scope, preview: entry.preview, provider: { installationId: entry.provider.installationId, providerAgentId: entry.provider.providerAgentId } }] : []);
-  const selected = active && 'kind' in active.agent && active.agent.namespace === namespace ? active.scope : null;
+  const activeAgent = active && 'kind' in active.agent && active.agent.namespace === namespace ? active.agent : null;
+  const selected = active && activeAgent ? active.scope : null;
+  // The catalog is paged in conversation-ID order, so the active conversation may sit on a page not loaded yet. The
+  // workspace finds it in `entries`, so add it from the active agent rather than leave it mounted nowhere.
+  const entries: readonly WorkspaceConversation[] = selected && activeAgent?.providerAgentId && !loaded.some(entry => sameScope(entry.scope, selected))
+    ? [...loaded, { scope: selected, preview: null, provider: { installationId: activeAgent.installationId, providerAgentId: activeAgent.providerAgentId } }]
+    : loaded;
   const props: WorkspaceViewProps = {
     namespace,
     installations: metadata?.extensions.find(item => item.namespace === namespace)?.installations ?? [],

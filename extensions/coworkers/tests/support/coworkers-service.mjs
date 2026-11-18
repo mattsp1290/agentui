@@ -6,16 +6,17 @@ const sha = text => createHash('sha256').update(text).digest('hex');
 /**
  * A controlled crabber-coworkers v1 service over real HTTP. Requests stay `accepted` until a control moves them:
  * `run`, `complete`, `fail`, `markUncertain`. With `autoReply` every submission completes at once with `Reply: <text>`.
- * `down()` resets every connection until `up()`. `loseNext(route)` commits the next matching command and drops its reply.
+ * `down()` resets every connection until `up()`; `downHits()` counts the requests it refused. `loseNext(route)` commits the next matching command and drops its reply.
  * `invisible(requestId)` hides a request from snapshots and receipts (a read that returns 404 for a committed send).
+ * `hideReceipt(requestId)` keeps the request in its conversation but makes its receipt read 404.
  * `holdConversations()` holds conversation creation until the returned function releases it.
  */
 export async function coworkersService(t, { token = 'coworkers-test-token', coworkers = [
   { coworkerId: 'ada', name: 'Ada', role: 'Researcher', workspace: 'read_only', slack: false, instructions: 'Research carefully.' },
   { coworkerId: 'grace', name: 'Grace', role: 'Engineer', workspace: 'read_write', slack: true, instructions: 'Ship small changes.' },
 ], autoReply = false, requestContract = 'sqlite-outbox-keyed-admission-v1', maxPromptBytes = 16384, maxQueued = 4 } = {}) {
-  const conversations = new Map(), requests = new Map(), hidden = new Set(), calls = [];
-  let isDown = false, lose = null, loseSends = false, conversationHold = null;
+  const conversations = new Map(), requests = new Map(), hidden = new Set(), hiddenReceipts = new Set(), calls = [];
+  let isDown = false, downHits = 0, lose = null, loseSends = false, conversationHold = null;
   const coworkerView = coworker => ({ coworkerId: coworker.coworkerId, name: coworker.name, role: coworker.role, workspace: coworker.workspace,
     slack: coworker.slack, instructions: { bytes: Buffer.byteLength(coworker.instructions), digest: sha(coworker.instructions) } });
   const receipt = request => ({ apiVersion: '1', conversationId: request.conversationId, requestId: request.requestId,
@@ -33,7 +34,7 @@ export async function coworkersService(t, { token = 'coworkers-test-token', cowo
       truncated: own.length > 100 };
   };
   const server = createServer(async (incoming, response) => {
-    if (isDown) { incoming.socket.destroy(); return; }
+    if (isDown) { downHits++; incoming.socket.destroy(); return; }
     let text = ''; for await (const chunk of incoming) text += chunk;
     const url = new URL(incoming.url, 'http://localhost'), parts = url.pathname.split('/'), method = incoming.method;
     calls.push({ method, path: url.pathname });
@@ -75,7 +76,7 @@ export async function coworkersService(t, { token = 'coworkers-test-token', cowo
     }
     const request = requests.get(parts[5]);
     if (!request || request.conversationId !== conversation.conversationId || hidden.has(request.requestId)) return json(404, { error: 'not_found' });
-    if (method === 'GET' && parts.length === 6) return json(200, receipt(request));
+    if (method === 'GET' && parts.length === 6) return hiddenReceipts.has(request.requestId) ? json(404, { error: 'not_found' }) : json(200, receipt(request));
     if (method === 'POST' && parts[6] === 'cancel') {
       if (!TERMINAL.has(request.status)) Object.assign(request, { status: 'cancelled', cancelledAt: new Date().toISOString() });
       return json(202, receipt(request));
@@ -94,10 +95,13 @@ export async function coworkersService(t, { token = 'coworkers-test-token', cowo
     fail: (requestId, reason = 'model_failed') => move(requestId, { status: 'failed', reason }),
     markUncertain: (requestId, reason = 'interrupted') => move(requestId, { status: 'uncertain', reason }),
     invisible: requestId => hidden.add(requestId), visible: requestId => hidden.delete(requestId),
+    hideReceipt: requestId => hiddenReceipts.add(requestId),
     loseNext(method, match) { lose = { method, match }; },
     loseReplies(on) { loseSends = on; },
     holdConversations() { const hold = Promise.withResolvers(); conversationHold = hold.promise; return () => { conversationHold = null; hold.resolve(); }; },
     down() { isDown = true; server.closeAllConnections(); }, up() { isDown = false; },
+    /** Requests refused while the service was down. */
+    downHits: () => downHits,
     addRequest(conversationId, request) { requests.set(request.requestId, { conversationId, ...request }); conversations.get(conversationId).requests.push(request.requestId); },
   };
 }

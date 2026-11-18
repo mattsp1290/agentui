@@ -74,7 +74,7 @@ React module props carry conversation scope, activity snapshots, and model-neutr
 The shell retains recovery and compatibility controls.
 
 In-repo extensions live in the top-level `extensions/` directory: [`extensions/crew`](../extensions/crew.md) and [`extensions/coworkers`](../extensions/coworkers.md). Service-specific code (transport, authentication, cursors, operations and workspace views) lives there and nowhere else.
-Core stays generic: `apps`, `packages`, `scripts` and `templates` name no service. The boundary test `tests/extensions/providers/conformance/boundaries.test.mjs` enforces this for Crew, and new core code must follow the same rule for every service.
+Core stays generic: `apps`, `packages`, `scripts` and `templates` name no service. The boundary test `tests/extensions/providers/conformance/boundaries.test.mjs` enforces this for Crew and Coworkers (`crew`, `coworker` and `crabber`), and new core code must follow the same rule for every service.
 Core host code uses generic provider identities.
 The SDK exports [backend provider contracts](provider-contracts.md) and [extension authoring contracts](extension-sdk.md).
 Typed frontend-tool registration is a contract only. Provider lifecycle runtime, frontend-tool registration runtime, and frontend-tool delivery remain downstream tasks.

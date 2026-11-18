@@ -24,15 +24,19 @@ export function operationResult(value: unknown): { readonly value: ExtensionCall
 /**
  * Runs one admitted operation under a deadline. Its controller stays in `live` until the reply, so a caller can abort
  * every admitted call. An abort ends the call at once: `timeout` when the deadline fired, `unavailable` otherwise.
- * The signal keeps the default abort reason, so handlers observe the same abort they always did.
+ * Once `run` commits a value, the operation has taken effect, so an abort after that replies with the committed value
+ * rather than reporting a failure for work that was done. The signal keeps the default abort reason, so handlers
+ * observe the same abort they always did.
  */
-export function runAdmitted(run: (signal: AbortSignal) => Promise<ExtensionCallValue>, deadlineMs: number,
-  live: Set<AbortController>): Promise<ExtensionCallValue> {
+export function runAdmitted(run: (signal: AbortSignal, commit: (value: ExtensionCallValue) => void) => Promise<ExtensionCallValue>,
+  deadlineMs: number, live: Set<AbortController>): Promise<ExtensionCallValue> {
   const controller = new AbortController();
   let timedOut = false;
+  let committed: ExtensionCallValue | undefined;
   const ended = new Promise<ExtensionCallValue>(resolve => controller.signal.addEventListener('abort',
-    () => resolve(failedCall(timedOut ? 'timeout' : 'unavailable')), { once: true }));
+    () => resolve(committed ?? failedCall(timedOut ? 'timeout' : 'unavailable')), { once: true }));
   live.add(controller);
   const timer = setTimeout(() => { timedOut = true; controller.abort(); }, deadlineMs);
-  return Promise.race([run(controller.signal), ended]).finally(() => { clearTimeout(timer); live.delete(controller); });
+  return Promise.race([run(controller.signal, value => { committed = value; }), ended])
+    .finally(() => { clearTimeout(timer); live.delete(controller); });
 }

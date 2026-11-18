@@ -566,6 +566,18 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     return found?.kind === 'available' ? 'available' : 'unavailable';
   }
   /**
+   * The grant an operation for `installationId` runs with. Grants may share an installation ID and differ in generation
+   * or protocol version; then the call runs with the one available grant, and with none when zero or several are
+   * available. Metadata reports an installation's status from the same choice, so it never shows one available that
+   * every call would refuse.
+   */
+  function operationInstallation(installations: readonly ServerExtensionInstallation[], installationId: string): ServerExtensionInstallation | undefined {
+    const matches = installations.filter(installation => installation.instance.installationId === installationId);
+    if (matches.length === 1) return matches[0];
+    const available = matches.filter(installation => installationStatus(installation) === 'available');
+    return available.length === 1 ? available[0] : undefined;
+  }
+  /**
    * Admits one operation call. The admission ends at the reply, so a handler that outlives the deadline does not defer
    * replacement. Registry close aborts every admitted call and replies `unavailable` at once.
    * A malformed request rejects as a caller error; an over-limit input resolves as `too-large`.
@@ -579,13 +591,12 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     if (phase !== 'active') return failedCall('unavailable');
     const namespace = contributed.get(request.namespace);
     if (!namespace) return failedCall('unknown-extension');
-    const matches = namespace.installations.filter(installation => installation.instance.installationId === request.installationId);
-    const installation = matches.length === 1 ? matches[0] : undefined;
+    const installation = operationInstallation(namespace.installations, request.installationId);
     if (!installation) return failedCall('unknown-installation');
     const operation = namespace.operations.get(request.operation);
     if (!operation) return failedCall('unknown-operation');
     const { input } = request;
-    const reply = runAdmitted(async (signal): Promise<ExtensionCallValue> => {
+    const reply = runAdmitted(async (signal, commit): Promise<ExtensionCallValue> => {
       let credential: CredentialHandle<string> | null;
       try { credential = namespace.authority.issue(installation.id, installation.instance).credential; }
       catch { return failedCall('unavailable'); }
@@ -596,6 +607,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
       try { result = operationResult(raw); }
       catch (error) { return failedCall(error instanceof ExtensionCallTooLarge ? 'too-large' : 'invalid-result'); }
       if (result.agentsChanged && phase === 'active') {
+        // The handler has made its change, so a deadline or close during the rediscovery still replies with its result.
+        commit(result.value);
         // A discovery that is already running may predate the change, so wait for it before starting a fresh one.
         // runAdmitted bounds this wait: the reply ends at the deadline or on close.
         await (async () => {
@@ -720,11 +733,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     extensions(): readonly ExtensionDescriptor[] {
       if (phase !== 'active') return [];
       return [...contributed.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([namespace, value]) => {
-        // An installation is available when any of its grants is available.
+        // An installation is available when the grant its operations would run with is available.
         const status = new Map<string, 'available' | 'unavailable'>();
-        for (const installation of value.installations) {
-          const id = installation.instance.installationId;
-          if (status.get(id) !== 'available') status.set(id, installationStatus(installation));
+        for (const id of new Set(value.installations.map(installation => installation.instance.installationId))) {
+          const grant = operationInstallation(value.installations, id);
+          status.set(id, grant ? installationStatus(grant) : 'unavailable');
         }
         return { namespace, state: 'active' as const, operations: [...value.operations.keys()].sort(),
           installations: [...status].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([installationId, available]) => ({ installationId, status: available })) };

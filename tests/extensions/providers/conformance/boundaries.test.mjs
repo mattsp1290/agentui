@@ -15,9 +15,12 @@ const grep = (...args) => {
 
 // Lexical: a Crew-shaped branch that never names Crew passes. Vendored `.tgz` archives are opaque to git grep and out
 // of scope; their declared dependencies are still covered through package-lock.json.
-test('core apps, packages, scripts and templates carry no Crew reference and the repository carries no OpenBot code or dependency', () => {
-  assert.equal(grep('crew', '--', 'apps', 'packages', 'scripts', 'templates',
-    ':(exclude)packages/adapter-tests/tests/types.test.mjs'), '');
+test('core apps, packages, scripts and templates name no bundled service and the repository carries no OpenBot code or dependency', () => {
+  // Core names no service (docs/architecture/boundaries.md); each bundled extension's service stays under extensions/.
+  for (const service of ['crew', 'coworker', 'crabber']) {
+    assert.equal(grep(service, '--', 'apps', 'packages', 'scripts', 'templates',
+      ':(exclude)packages/adapter-tests/tests/types.test.mjs'), '', service);
+  }
   assert.match(grep('crew', '--', 'packages/adapter-tests/tests/types.test.mjs'), /example\.crew/, 'the search finds the one excluded fixture');
   assert.equal(grep('openbot', '--', '.', ':(exclude)docs/extensions/provider-contract.md',
     ':(exclude)tests/extensions/providers/conformance/boundaries.test.mjs'), '');

@@ -55,3 +55,21 @@ fn extension_calls_are_bounded_and_patterned() {
         json!({"op":"extension-call", "namespace":"fixture", "installation_id":"i", "operation":"echo", "input":{}}),
     );
 }
+
+#[test]
+fn extension_requests_share_the_typescript_golden_cases() {
+    let cases: Vec<Value> = serde_json::from_str(include_str!(
+        "../../../../tests/client/fixtures/extension-requests.json"
+    ))
+    .unwrap();
+    assert!(cases.iter().any(|case| case["valid"] == true));
+    assert!(cases.iter().any(|case| case["valid"] == false));
+    for case in cases {
+        let value = case["request"].clone();
+        let result = request(value.clone(), "host");
+        assert_eq!(result.is_ok(), case["valid"].as_bool().unwrap(), "{value}");
+        if let Ok(output) = result {
+            assert_eq!(output, value);
+        }
+    }
+}

@@ -1,0 +1,617 @@
+[
+  {
+    "valid": true,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "echo",
+      "input": {
+        "nested": [
+          1,
+          "two",
+          null,
+          true
+        ]
+      }
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "extension-call",
+      "namespace": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      "installationId": "personal",
+      "operation": "oooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+      "input": {}
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "extension-call",
+      "namespace": "a-1",
+      "installationId": "personal",
+      "operation": "a.b-c.1",
+      "input": {}
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          [
+                                            [
+                                              [
+                                                [
+                                                  [
+                                                    [
+                                                      [
+                                                        [
+                                                          [
+                                                            [
+                                                              [
+                                                                [
+                                                                  [
+                                                                    [
+                                                                      [
+                                                                        [
+                                                                          [
+                                                                            [
+                                                                              [
+                                                                                [
+                                                                                  [
+                                                                                    [
+                                                                                      [
+                                                                                        [
+                                                                                          [
+                                                                                            [
+                                                                                              [
+                                                                                                [
+                                                                                                  [
+                                                                                                    [
+                                                                                                      [
+                                                                                                        [
+                                                                                                          [
+                                                                                                            [
+                                                                                                              [
+                                                                                                                [
+                                                                                                                  [
+                                                                                                                    [
+                                                                                                                      [
+                                                                                                                        [
+                                                                                                                          [
+                                                                                                                            [
+                                                                                                                              [
+                                                                                                                                [
+                                                                                                                                  [
+                                                                                                                                    0
+                                                                                                                                  ]
+                                                                                                                                ]
+                                                                                                                              ]
+                                                                                                                            ]
+                                                                                                                          ]
+                                                                                                                        ]
+                                                                                                                      ]
+                                                                                                                    ]
+                                                                                                                  ]
+                                                                                                                ]
+                                                                                                              ]
+                                                                                                            ]
+                                                                                                          ]
+                                                                                                        ]
+                                                                                                      ]
+                                                                                                    ]
+                                                                                                  ]
+                                                                                                ]
+                                                                                              ]
+                                                                                            ]
+                                                                                          ]
+                                                                                        ]
+                                                                                      ]
+                                                                                    ]
+                                                                                  ]
+                                                                                ]
+                                                                              ]
+                                                                            ]
+                                                                          ]
+                                                                        ]
+                                                                      ]
+                                                                    ]
+                                                                  ]
+                                                                ]
+                                                              ]
+                                                            ]
+                                                          ]
+                                                        ]
+                                                      ]
+                                                    ]
+                                                  ]
+                                                ]
+                                              ]
+                                            ]
+                                          ]
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": [
+        [
+          [
+            [
+              [
+                [
+                  [
+                    [
+                      [
+                        [
+                          [
+                            [
+                              [
+                                [
+                                  [
+                                    [
+                                      [
+                                        [
+                                          [
+                                            [
+                                              [
+                                                [
+                                                  [
+                                                    [
+                                                      [
+                                                        [
+                                                          [
+                                                            [
+                                                              [
+                                                                [
+                                                                  [
+                                                                    [
+                                                                      [
+                                                                        [
+                                                                          [
+                                                                            [
+                                                                              [
+                                                                                [
+                                                                                  [
+                                                                                    [
+                                                                                      [
+                                                                                        [
+                                                                                          [
+                                                                                            [
+                                                                                              [
+                                                                                                [
+                                                                                                  [
+                                                                                                    [
+                                                                                                      [
+                                                                                                        [
+                                                                                                          [
+                                                                                                            [
+                                                                                                              [
+                                                                                                                [
+                                                                                                                  [
+                                                                                                                    [
+                                                                                                                      [
+                                                                                                                        [
+                                                                                                                          [
+                                                                                                                            [
+                                                                                                                              [
+                                                                                                                                [
+                                                                                                                                  [
+                                                                                                                                    [
+                                                                                                                                      0
+                                                                                                                                    ]
+                                                                                                                                  ]
+                                                                                                                                ]
+                                                                                                                              ]
+                                                                                                                            ]
+                                                                                                                          ]
+                                                                                                                        ]
+                                                                                                                      ]
+                                                                                                                    ]
+                                                                                                                  ]
+                                                                                                                ]
+                                                                                                              ]
+                                                                                                            ]
+                                                                                                          ]
+                                                                                                        ]
+                                                                                                      ]
+                                                                                                    ]
+                                                                                                  ]
+                                                                                                ]
+                                                                                              ]
+                                                                                            ]
+                                                                                          ]
+                                                                                        ]
+                                                                                      ]
+                                                                                    ]
+                                                                                  ]
+                                                                                ]
+                                                                              ]
+                                                                            ]
+                                                                          ]
+                                                                        ]
+                                                                      ]
+                                                                    ]
+                                                                  ]
+                                                                ]
+                                                              ]
+                                                            ]
+                                                          ]
+                                                        ]
+                                                      ]
+                                                    ]
+                                                  ]
+                                                ]
+                                              ]
+                                            ]
+                                          ]
+                                        ]
+                                      ]
+                                    ]
+                                  ]
+                                ]
+                              ]
+                            ]
+                          ]
+                        ]
+                      ]
+                    ]
+                  ]
+                ]
+              ]
+            ]
+          ]
+        ]
+      ]
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "Fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "1fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fix.ture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "nnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnnn",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "Echo",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": ".echo",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "echo_x",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "ooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooooo",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "members.list",
+      "input": {},
+      "extra": true
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "operation": "members.list",
+      "input": {}
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "installationId": "personal",
+      "operation": "members.list"
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "extension-call",
+      "namespace": "fixture",
+      "operation": "members.list",
+      "input": {},
+      "installation_id": "personal"
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "namespace",
+        "namespace": "fixture"
+      }
+    }
+  },
+  {
+    "valid": true,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "provider-agent",
+        "namespace": "fixture",
+        "installationId": "personal",
+        "providerAgentId": "agent-1"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": null
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "agent",
+        "namespace": "fixture"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "namespace"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "namespace",
+        "namespace": "Fixture"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "namespace",
+        "namespace": "fix.ture"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "namespace",
+        "namespace": "fixture",
+        "installationId": "personal"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "provider-agent",
+        "namespace": "fixture",
+        "installationId": "personal"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "provider-agent",
+        "namespace": "fixture",
+        "installationId": "",
+        "providerAgentId": "agent-1"
+      }
+    }
+  },
+  {
+    "valid": false,
+    "request": {
+      "op": "catalog",
+      "after": null,
+      "limit": 5,
+      "filter": {
+        "kind": "provider-agent",
+        "namespace": "fixture",
+        "installationId": "personal",
+        "providerAgentId": "agent-1",
+        "extra": 1
+      }
+    }
+  }
+]

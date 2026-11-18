@@ -15,7 +15,7 @@ import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
 import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
-import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
+import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_DEPTH, JSON_MAX_NODES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
@@ -73,9 +73,17 @@ function patterned(value: unknown, pattern: RegExp, name: string): string {
 }
 /** An extension call input or output over its byte or structural limit. */
 export class ExtensionCallTooLarge extends Error {}
-function boundedJson(value: unknown, limit: number): Json {
+/**
+ * Structural budgets for a call's input and output as they sit inside the wire envelope. Each value shares the
+ * envelope's depth and node limits: the input sits one level below `{ op, namespace, installationId, operation, input }`
+ * (four sibling nodes plus the root), the output two levels below `{ ok, value: { kind, output } }` (three other nodes
+ * plus the root). Measuring them alone would accept a value that the whole-request or whole-response bound then rejects.
+ */
+const EXTENSION_CALL_INPUT_BUDGET = { maxDepth: JSON_MAX_DEPTH - 1, maxNodes: JSON_MAX_NODES - 5 } as const;
+const EXTENSION_CALL_OUTPUT_BUDGET = { maxDepth: JSON_MAX_DEPTH - 2, maxNodes: JSON_MAX_NODES - 4 } as const;
+function boundedJson(value: unknown, limit: number, budget: { readonly maxDepth: number; readonly maxNodes: number }): Json {
   let copy: Json;
-  try { copy = copyJson(value); }
+  try { copy = copyJson(value, budget); }
   catch (error) { throw error instanceof JsonLimitError ? new ExtensionCallTooLarge('Extension call value exceeds limit') : error; }
   if (utf8Bytes(canonicalJson(copy)) > limit) throw new ExtensionCallTooLarge('Extension call value exceeds byte limit');
   return copy;
@@ -83,7 +91,7 @@ function boundedJson(value: unknown, limit: number): Json {
 export function parseExtensionCallRequest(value: unknown): ExtensionCallRequest {
   const input = record(value, ['namespace', 'installationId', 'operation', 'input']);
   return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
-    operation: patterned(input.operation, EXTENSION_OPERATION, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES) };
+    operation: patterned(input.operation, EXTENSION_OPERATION, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES, EXTENSION_CALL_INPUT_BUDGET) };
 }
 /**
  * Parses an extension call, mapping an over-limit call to the `too-large` failure every layer replies with. Any other
@@ -100,7 +108,7 @@ export function classifyExtensionCall(value: unknown):
 export function parseExtensionCallValue(value: unknown): ExtensionCallValue {
   const input = record(value);
   switch (input.kind) {
-    case 'ok': exact(input, ['kind', 'output']); return { kind: 'ok', output: boundedJson(input.output, EXTENSION_CALL_OUTPUT_BYTES) };
+    case 'ok': exact(input, ['kind', 'output']); return { kind: 'ok', output: boundedJson(input.output, EXTENSION_CALL_OUTPUT_BYTES, EXTENSION_CALL_OUTPUT_BUDGET) };
     case 'refused': exact(input, ['kind', 'code']); return { kind: 'refused', code: patterned(input.code, EXTENSION_REFUSAL, 'refusal') };
     case 'failed': {
       exact(input, ['kind', 'cause']);

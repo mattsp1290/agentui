@@ -14,6 +14,13 @@ const REFUSALS: Readonly<Record<string, string>> = {
 const UNKNOWN = new Set(['unreachable', 'unknown-outcome']);
 const UNCONFIRMED = 'Crew may already have created this member. Retry to confirm it; the retry sends the same request and cannot create a second member. Cancel stops retrying; Crew may still have created the member, so check the member list.';
 const NO_ID = 'Crew created the member but did not return its ID. Find it in the member list.';
+/** Host failures that prove the request never reached the operation, so Crew cannot have created the member. */
+const NOT_SENT: Readonly<Record<string, string>> = {
+  'unknown-extension': 'AgentUI could not reach the Crew extension. Refresh and try again.',
+  'unknown-installation': 'This Crew installation is no longer configured. Refresh and try again.',
+  'unknown-operation': 'This Crew installation cannot add members. Refresh and try again.',
+  'too-large': 'The instructions are too long for Crew. Shorten them and try again.',
+};
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
 
@@ -53,6 +60,12 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
     }
     if (!active.current) return;
     setPending(false);
+    const notSent = result.kind === 'failed' ? NOT_SENT[result.cause] : undefined;
+    if (notSent) {
+      setUnconfirmed(null);
+      setMessage(notSent);
+      return;
+    }
     if (result.kind === 'refused' && !UNKNOWN.has(result.code)) {
       setUnconfirmed(null);
       setMessage(REFUSALS[result.code] ?? REFUSALS.rejected!);

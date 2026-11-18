@@ -85,7 +85,12 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       return uncertain();
     }
     /** One read of the conversation plus the receipts of requests whose status is not yet terminal. */
-    async function build(binding: ProviderConversation<string>, previous: CoworkersState | null): Promise<{ kind: 'ok'; state: CoworkersState } | { kind: 'gone' } | { kind: 'failed' }> {
+    /**
+     * `progressing` is true when some request is not terminal and its receipt could be read. A request the conversation
+     * lists but whose receipt reads 404 keeps its last status, but cannot move on its own, so it does not keep the
+     * conversation on the one-second active schedule.
+     */
+    async function build(binding: ProviderConversation<string>, previous: CoworkersState | null): Promise<{ kind: 'ok'; state: CoworkersState; progressing: boolean } | { kind: 'gone' } | { kind: 'failed' }> {
       const conversationId = conversationOf(binding);
       const read = await use(client => client.conversation(conversationId));
       if (read.kind === 'http' && read.status === 404) return { kind: 'gone' };
@@ -98,6 +103,7 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       const known = new Map((previous?.requests ?? []).map(request => [request.requestId, request]));
       const window = order.slice(-MAX_REQUESTS);
       const requests: CoworkersRequest[] = [];
+      let progressing = false;
       for (const requestId of window) {
         const before = known.get(requestId), reply = replies.get(requestId);
         let status = before?.status ?? (reply !== undefined ? 'completed' : 'accepted');
@@ -109,6 +115,7 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
           if (receipt.kind === 'ok') {
             status = receipt.value.status;
             assistantText = assistantText ?? receipt.value.result?.text ?? null;
+            if (!isTerminal(status)) progressing = true;
           } else if (!(receipt.kind === 'http' && receipt.status === 404)) return { kind: 'failed' };
         }
         requests.push({ requestId, userText: capText(users.get(requestId) ?? ''), assistantText: assistantText === null ? null : capText(assistantText), status });
@@ -116,7 +123,7 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       let truncated = read.value.truncated || order.length > MAX_REQUESTS || (previous?.truncated ?? false);
       const state = { binding: bindingSchema.parse(binding), requests, truncated };
       while (requests.length > 1 && Buffer.byteLength(canonicalJson(state)) > STATE_BUDGET_BYTES) { requests.shift(); truncated = true; }
-      return { kind: 'ok', state: { ...state, truncated } };
+      return { kind: 'ok', state: { ...state, truncated }, progressing };
     }
     function snapshotOf(binding: ProviderConversation<string>, state: CoworkersState): ProviderSnapshot<CoworkersModel, string> {
       const cursor: ProviderCursor<CoworkersModel, string> = { binding, kind: 'provider-cursor', opaque: stateCursor(state) };
@@ -202,7 +209,7 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
             if (stopped) return 'idle';
             delivered = snapshot.cursor.opaque; acknowledged = snapshot.cursor;
           }
-          return built.state.requests.some(request => !isTerminal(request.status)) ? 'active' : 'idle';
+          return built.progressing ? 'active' : 'idle';
         });
         const feed = { close: () => finish('closed', 'Closed by host.'), ended: ended.promise };
         feeds.add(feed);

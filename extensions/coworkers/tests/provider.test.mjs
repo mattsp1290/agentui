@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { host, until, view, assistantTexts, runOf } from '../../../tests/extensions/providers/conformance/harness.mjs';
 import { coworkersService } from './support/coworkers-service.mjs';
 import { MAX_REQUESTS, MAX_TEXT_BYTES } from '../dist/presentation.js';
+import { IDLE_DELAYS_MS } from '../dist/poller.js';
 
 const directory = fileURLToPath(new URL('../', import.meta.url));
 const manifest = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')).agentui.extension;
@@ -104,15 +105,33 @@ test('a reply that completes while the service is down arrives after it returns,
   await until(() => runOf(store)?.kind === 'running', 'running');
   remote.down();
   remote.complete('Done while you were away');
-  await new Promise(resolve => setTimeout(resolve, 2500));
+  // At least one poll must meet the outage, or the test would not show that a failed poll neither retries nor ends the feed.
+  await until(() => remote.downHits() > 0, 'a poll during the outage', 10_000);
   remote.up();
   await until(() => assistantTexts(store).includes('Done while you were away'), 'reply after the outage', 30_000);
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 1);
   assert.equal(store.getSnapshot().connection.kind, 'connected');
   await f.close();
   const before = remote.calls.length;
-  await new Promise(resolve => setTimeout(resolve, 2500));
+  // The conversation is idle now, so a feed that outlived close would next poll after the first idle delay.
+  await new Promise(resolve => setTimeout(resolve, IDLE_DELAYS_MS[0] + 1_000));
   assert.equal(remote.calls.length, before, 'no polls after close');
+});
+
+test('a listed request whose receipt reads 404 backs off instead of polling every second', { timeout: 60_000 }, async t => {
+  const remote = await coworkersService(t), f = await host(t, [installed(remote)]);
+  const scope = await create(f, 'Ada'), store = await f.store(scope);
+  await store.send('Receipt goes missing');
+  await until(() => runOf(store)?.kind === 'running', 'running');
+  const [requestId] = [...remote.requests.keys()];
+  remote.hideReceipt(requestId);
+  const path = `/v1/conversations/${[...remote.conversations.keys()][0]}/requests/${requestId}`;
+  await until(() => remote.reads(path) > 0, 'a receipt read', 10_000);
+  const start = remote.reads(path);
+  await new Promise(resolve => setTimeout(resolve, 4_000));
+  // On the active schedule this would be about four reads; the idle schedule's first step is five seconds.
+  assert.ok(remote.reads(path) - start <= 1, `receipt reads in four seconds: ${remote.reads(path) - start}`);
+  assert.equal(runOf(store)?.kind, 'running', 'the run keeps its last known state');
 });
 
 test('a window of 100 requests at the maximum text size stays under the state budget and observation continues', { timeout: 60_000 }, async t => {

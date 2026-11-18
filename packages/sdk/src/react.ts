@@ -59,6 +59,7 @@ export interface WorkspaceViewProps {
   readonly installations: readonly { readonly installationId: string; readonly status: 'available' | 'unavailable' }[];
   readonly agents: readonly WorkspaceAgent[];
   readonly conversations: {
+    /** Loaded pages in catalog order. The selected conversation is always included, after the pages when it is not on one yet. */
     readonly entries: readonly WorkspaceConversation[];
     /** The last page length equalled the page limit, so more may exist. Order is catalog order, not recency. */
     readonly hasMore: boolean;
@@ -72,14 +73,16 @@ export interface WorkspaceViewProps {
   /**
    * Opens a conversation from this namespace's list. It becomes the application's active conversation.
    * Rejects only for a scope outside this namespace. Otherwise it resolves once the attempt ends, also when the attempt
-   * did not open the conversation (the application is busy, or the host refused): the host shows the reason in its status
-   * strip and `selected` stays unchanged. Watch `selected`, not the promise, to learn what opened.
+   * did not open the conversation, and `selected` stays unchanged. A host refusal is shown in the host status strip. While
+   * the application is busy with another operation the attempt is ignored and nothing is shown, so disable or retry the
+   * control yourself. Watch `selected`, not the promise, to learn what opened.
    */
   open(scope: ConversationScope): Promise<void>;
   /**
    * Creates a conversation with one of this namespace's agents and makes it the active conversation.
    * Rejects only for an agent outside this namespace. Like `open`, it resolves when the attempt ends, also without a new
    * conversation (busy, pending creation to recover, agent unavailable, host refusal); `selected` changes only on success.
+   * As with `open`, a busy application ignores the attempt without a notice; the other reasons appear in the status strip.
    */
   create(agentId: string): Promise<void>;
   /** Calls one of this extension's server operations. It never rejects: transport failures resolve as `unavailable`. */

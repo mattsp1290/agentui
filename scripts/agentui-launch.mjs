@@ -73,8 +73,21 @@ function tokenVariables(configuration) {
   return [...names].sort();
 }
 /**
- * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when every named token
- * variable is set; otherwise it prints one warning naming every missing variable (never a value) and starts with native agents only.
+ * Whether the launcher can hand this configuration to the host. The host refuses to start on an invalid file, so the
+ * launcher checks the parts that go stale: the version and each selected directory. The host still validates the rest.
+ */
+function loadableConfiguration(configuration, base) {
+  if (configuration?.version !== 2 || !Array.isArray(configuration.extensions)) return false;
+  return configuration.extensions.every(extension => {
+    if (typeof extension?.directory !== 'string' || !extension.directory) return false;
+    const directory = resolve(base, extension.directory);
+    return existsSync(extension.kind === 'artifact' ? directory : join(directory, 'package.json'));
+  });
+}
+/**
+ * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when the file names
+ * version 2 and existing extension directories and every named token variable is set. Otherwise it prints one warning
+ * (naming every missing variable, never a value) and starts with native agents only.
  * A remote profile never loads bundled server extensions (decision D13).
  */
 export function extensionArguments({ setupRoot, kind, env = process.env, warn = line => process.stderr.write(`${line}\n`) }) {
@@ -87,6 +100,10 @@ export function extensionArguments({ setupRoot, kind, env = process.env, warn = 
   let configuration;
   try { configuration = JSON.parse(readFileSync(file, 'utf8')); }
   catch { warn('extensions.json is not valid JSON. Starting without server extensions.'); return []; }
+  if (!loadableConfiguration(configuration, setupRoot)) {
+    warn('extensions.json is not a usable extension configuration (version 2 with existing extension directories). Starting without server extensions.');
+    return [];
+  }
   const missing = tokenVariables(configuration).filter(name => !env[name]?.trim());
   if (missing.length) warn(`Set ${missing.join(', ')} to load server extensions. Starting without server extensions.`);
   return missing.length ? [] : ['--extensions', file];

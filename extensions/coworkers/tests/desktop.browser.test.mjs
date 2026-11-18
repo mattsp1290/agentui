@@ -197,6 +197,29 @@ for (const navigation of narrowNavigations) {
   });
 }
 
+test('with two Coworkers installations the workspace shows only the first available one, even for a shared coworker ID', { timeout: 90_000 }, async t => {
+  const team = await coworkersService(t);
+  const other = await coworkersService(t, { token: 'other-coworkers-token', coworkers: [
+    { coworkerId: 'ada', name: 'Other Ada', role: 'Elsewhere', workspace: 'disabled', slack: false, instructions: 'Other.' },
+    { coworkerId: 'linus', name: 'Linus', role: 'Kernel', workspace: 'disabled', slack: false, instructions: 'Other.' }] });
+  const entry = await coworkersEntry(team);
+  const otherInstance = { ...coworkersInstance, installationId: 'zeta' };
+  entry.installations.push({ id: 'zeta', instance: otherInstance, service: other.origin, expectedAuthority: 'remote-provider',
+    authentication: { kind: 'secret', revision: '1', resolve: async () => other.token } });
+  const host = await extensionFixture(t, { extensions: [entry] });
+  const view = await page(t, host);
+  await view.rail.getByRole('button', { name: 'Extensions', exact: true }).click();
+  await wait(async () => (await view.page.evaluate(() => fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })
+    .then(response => response.json()).then(body => body.value.agents.filter(agent => agent.namespace === 'coworkers').length))) === 4, 'both installations discovered');
+  await view.page.getByRole('button', { name: 'Open Coworkers' }).click();
+  const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+  const directory = workspace.getByRole('region', { name: 'Coworker directory' });
+  await directory.getByText('Grace').waitFor();
+  assert.deepEqual((await directory.locator('.coworkers-card strong').allTextContents()).sort(), ['Ada', 'Grace']);
+  assert.equal(await directory.getByText('Researcher').count(), 1, 'Ada keeps the details of her own installation');
+});
+
 test('without a Coworkers installation the workspace names the configuration and token variable', { timeout: 60_000 }, async t => {
   const host = await extensionFixture(t, { extensions: [] });
   const view = await page(t, host);
@@ -223,10 +246,17 @@ test('with both extensions each workspace renders its own transcript style and C
   await view.page.getByRole('button', { name: 'New recorded conversation' }).click();
   await view.page.locator('.chat-view #message').waitFor();
   const before = await chatsComposer();
+  // The host owns the composer: a workspace stylesheet must not restyle its controls.
+  const controlStyle = (locator, keys) => locator.evaluate((node, keys) => { const style = getComputedStyle(node); return keys.map(key => style[key]).join('|'); }, keys);
+  const shape = ['fontSize', 'fontWeight', 'paddingTop', 'paddingLeft', 'borderTopWidth', 'borderTopLeftRadius'];
+  const send = scope => scope.getByRole('button', { name: 'Send', exact: true });
+  const chatsSend = await controlStyle(send(view.page.locator('.chat-view')), [...shape, 'color', 'backgroundColor']);
 
   await openWorkspace(view, 'Crew');
   const crewSpace = view.page.locator('[data-extension-workspace="crew"]');
   await crewSpace.getByRole('button', { name: 'Start conversation' }).click();
+  await crewSpace.locator('#message').waitFor();
+  assert.equal(await controlStyle(send(crewSpace), [...shape, 'color', 'backgroundColor']), chatsSend, 'the Crew stylesheet leaves the host Send button alone');
   await crewSpace.locator('#message').fill('Hello crew');
   await wait(() => crewSpace.getByRole('button', { name: 'Send', exact: true }).isEnabled(), 'crew send');
   await crewSpace.getByRole('button', { name: 'Send', exact: true }).click();
@@ -239,6 +269,12 @@ test('with both extensions each workspace renders its own transcript style and C
   const coworkers = view.page.locator('[data-extension-workspace="coworkers"]');
   await coworkers.getByRole('button', { name: 'Coworkers', exact: true }).click();
   await coworkers.getByRole('button', { name: 'Chat with Ada' }).click();
+  await coworkers.locator('#message').waitFor();
+  // The Coworkers palette re-themes the accent for its whole workspace, so the Send button follows that accent and its
+  // on-accent text (as the avatar does) while keeping the host's own shape.
+  assert.equal(await controlStyle(send(coworkers), shape), chatsSend.split('|').slice(0, shape.length).join('|'), 'the Coworkers stylesheet keeps the host Send shape');
+  assert.equal(await controlStyle(send(coworkers), ['color', 'backgroundColor']), await controlStyle(coworkers.locator('.coworkers-header .coworkers-avatar'), ['color', 'backgroundColor']),
+    'the Send button keeps on-accent text on the accent');
   await coworkers.locator('#message').fill('Hello coworker');
   await wait(() => coworkers.getByRole('button', { name: 'Send', exact: true }).isEnabled(), 'coworkers send');
   await coworkers.getByRole('button', { name: 'Send', exact: true }).click();
