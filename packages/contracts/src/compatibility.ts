@@ -29,8 +29,8 @@ export type CompatibilityResult =
   | { readonly kind: 'compatible' }
   | { readonly kind: 'incompatible'; readonly issues: readonly CompatibilityIssue[] };
 
-export const SERVICE_WIRE_VERSION = 14;
-export const EXTENSION_SDK_VERSION = '0.11.0';
+export const SERVICE_WIRE_VERSION = 15;
+export const EXTENSION_SDK_VERSION = '0.12.0';
 export const RECORDED_RUNTIME = Object.freeze({ engine: 'agentui-recorded', version: 'recorded-v1', format: 'agentui-recorded-v1' });
 export const CODEX_RUNTIME = Object.freeze({ engine: 'codex', version: '0.167.2', format: 'codex-app-server-v2' });
 export const CODEX_SDK_MODEL = Object.freeze({ id: 'gpt-6.1-sol', label: 'GPT-6.1 Sol' });

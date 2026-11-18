@@ -7,7 +7,7 @@ import { manifestPayload, BROWSER_RUNTIME } from '@agentui/contracts/artifact';
 
 const compatibility = { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: null,
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } };
-const metadata = { hostId: 'host', principalId: 'principal', compatibility, agents: [], defaultAgentId: null };
+const metadata = { hostId: 'host', principalId: 'principal', compatibility, agents: [], defaultAgentId: null, extensions: [] };
 const agent = { kind: 'provider', id: 'provider', label: 'Provider', namespace: 'example', protocolVersion: '1',
   imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'unavailable', reason: 'Creation unsupported' } };
 const parse = value => parseServiceResponse({ op: 'metadata' }, { ok: true, value });
@@ -24,8 +24,8 @@ test('metadata represents empty and unavailable provider catalogs without synthe
   }
 });
 
-test('extension-only compatibility skips native runtime while retaining every other dimension and wire fourteen', () => {
-  assert.equal(SERVICE_WIRE_VERSION, 14);
+test('extension-only compatibility skips native runtime while retaining every other dimension and wire fifteen', () => {
+  assert.equal(SERVICE_WIRE_VERSION, 15);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, compatibility), { kind: 'compatible' });
   assert.deepEqual(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [6] }, compatibility).issues.map(issue => issue.dimension), ['wire']);
   const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, expectedArtifactId: 'expected' }, {

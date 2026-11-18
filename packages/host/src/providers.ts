@@ -7,13 +7,15 @@ import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson, isOutputId, parseContinuationCarried, parseContinuationRefusal, parseConversationClosure, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
-import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
+import { backendProviderContractVersion, checkExtensionEntrypoint, EXTENSION_OPERATION_PATTERN, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
+import { ExtensionCallTooLarge, parseExtensionCallRequest, parseExtensionCallValue } from '@agentui/contracts/service';
+import type { ExtensionCallRequest, ExtensionCallValue, ExtensionCallFailure, ExtensionDescriptor } from '@agentui/contracts/service';
 import type { ContinuationCarried, ContinuationRefusal, ConversationClosure, ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
 import type { CreationPredecessor, ProviderCreation, ProviderInstallation, CreationObservation, StoredCreation } from './provider-creation.js';
-import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest,
+import type { BackendProvider, ConnectedProvider, CredentialHandle, ExtensionLifetime, ExtensionManifest, ExtensionOperation, ServerExtensionInstallation,
   ProviderCommand, ProviderInstance, ProviderModel, ProviderOutputs, ProviderPresentation, ServerExtensionEntry, ServerProviderCredentials } from '@agentui/sdk';
 
 export { providerIdentity } from './provider-creation.js';
@@ -33,7 +35,30 @@ export interface ProviderExtension {
   readonly manifest: ExtensionManifest;
   readonly entry: ServerExtensionEntry;
   readonly authority: ProviderAuthority;
+  /** The secret-free grants the authority holds, exposed to activation as `context.installations`. */
+  readonly installations?: readonly ServerExtensionInstallation[];
   readonly dispose?: () => Promise<void>;
+}
+/** The host replies to an extension operation within this many milliseconds of admission. */
+export const EXTENSION_OPERATION_DEADLINE_MS = 15_000;
+const failedCall = (cause: ExtensionCallFailure): ExtensionCallValue => ({ kind: 'failed', cause });
+function installationCopy(value: ServerExtensionInstallation): ServerExtensionInstallation {
+  const instance = providerIdentity(value.instance);
+  if (value.expectedAuthority !== 'agentui-host' && value.expectedAuthority !== 'remote-provider') throw new Error('Invalid installation');
+  return Object.freeze({ id: text(value.id), instance: Object.freeze({ ...instance }), service: text(value.service), expectedAuthority: value.expectedAuthority });
+}
+/** Reads a handler result. Thrown errors classify it: ExtensionCallTooLarge is too-large, anything else invalid-result. */
+function operationResult(value: unknown): { readonly value: ExtensionCallValue; readonly agentsChanged: boolean } {
+  const input = record(value);
+  if (input.kind === 'refused') {
+    record(value, ['kind', 'code']);
+    return { value: parseExtensionCallValue({ kind: 'refused', code: input.code }), agentsChanged: false };
+  }
+  if (input.kind !== 'ok') throw new Error('Invalid operation result');
+  const changed = Object.hasOwn(input, 'agentsChanged');
+  record(value, changed ? ['kind', 'output', 'agentsChanged'] : ['kind', 'output']);
+  if (changed && input.agentsChanged !== true) throw new Error('Invalid operation result');
+  return { value: parseExtensionCallValue({ kind: 'ok', output: input.output }), agentsChanged: changed };
 }
 export interface DiscoveredProvider {
   readonly kind: 'available';
@@ -490,8 +515,12 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
 }
 
 /** Imported entries are full-trust server code; this registry is not a sandbox. */
-export function createProviderRegistry(extensions: readonly ProviderExtension[]) {
+export function createProviderRegistry(extensions: readonly ProviderExtension[], options: { readonly operationDeadlineMs?: number } = {}) {
+  const operationDeadlineMs = options.operationDeadlineMs ?? EXTENSION_OPERATION_DEADLINE_MS;
   const bindings: BoundProvider[] = [], lifetimes: ExtensionLifetime[] = [];
+  const contributed = new Map<string, { readonly installations: readonly ServerExtensionInstallation[]; readonly authority: ProviderAuthority;
+    readonly operations: Map<string, ExtensionOperation> }>();
+  let refreshing: Promise<unknown> | undefined;
   const pending = new Set<Promise<unknown>>();
   let outputOperations = 0;
   const streams = new Set<ProviderStream>();
@@ -532,12 +561,65 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
       finally { outputOperations--; }
     });
   }
-  async function refresh(): Promise<readonly ProviderStatus[]> {
-    discoveredAt = Date.now();
-    const results = await Promise.all(bindings.map(binding => binding.discover()));
-    if (phase !== 'active') throw new Error('Provider discovery failed');
-    catalog = results;
-    return structuredClone(catalog);
+  function refresh(): Promise<readonly ProviderStatus[]> {
+    const run = (async () => {
+      discoveredAt = Date.now();
+      const results = await Promise.all(bindings.map(binding => binding.discover()));
+      if (phase !== 'active') throw new Error('Provider discovery failed');
+      catalog = results;
+      return structuredClone(catalog);
+    })();
+    refreshing = run;
+    void run.catch(() => {}).finally(() => { if (refreshing === run) refreshing = undefined; });
+    return run;
+  }
+  function installationStatus(grant: ServerExtensionInstallation): 'available' | 'unavailable' {
+    const found = catalog.find(provider => provider.contributionId === grant.id && identityKey(provider.instance) === identityKey(grant.instance));
+    return found?.kind === 'available' ? 'available' : 'unavailable';
+  }
+  /** Admits one operation call. The admission ends at the reply, so a handler that outlives the deadline does not defer replacement. */
+  async function callOperation(request: ExtensionCallRequest): Promise<ExtensionCallValue> {
+    if (phase !== 'active') return failedCall('unavailable');
+    const namespace = contributed.get(request.namespace);
+    if (!namespace) return failedCall('unknown-extension');
+    const matches = namespace.installations.filter(installation => installation.instance.installationId === request.installationId);
+    const installation = matches.length === 1 ? matches[0] : undefined;
+    if (!installation) return failedCall('unknown-installation');
+    const operation = namespace.operations.get(request.operation);
+    if (!operation) return failedCall('unknown-operation');
+    let input: ExtensionCallRequest['input'];
+    try { input = parseExtensionCallRequest(request).input; }
+    catch (error) { return failedCall(error instanceof ExtensionCallTooLarge ? 'too-large' : 'invalid-result'); }
+    const controller = new AbortController();
+    let release = (): void => {}, timer: ReturnType<typeof setTimeout> | undefined;
+    const admission = new Promise<void>(resolve => { release = resolve; });
+    pending.add(admission);
+    void admission.then(() => pending.delete(admission));
+    const expired = new Promise<ExtensionCallValue>(resolve => {
+      timer = setTimeout(() => { controller.abort(); resolve(failedCall('timeout')); }, operationDeadlineMs);
+    });
+    const work = (async (): Promise<ExtensionCallValue> => {
+      let credential: CredentialHandle<string> | null;
+      try { credential = namespace.authority.issue(installation.id, installation.instance).credential; }
+      catch { return failedCall('unavailable'); }
+      let raw: unknown;
+      try { raw = await operation.run(Object.freeze({ installation, credential, input, signal: controller.signal })); }
+      catch { return failedCall('threw'); }
+      let result: ReturnType<typeof operationResult>;
+      try { result = operationResult(raw); }
+      catch (error) { return failedCall(error instanceof ExtensionCallTooLarge ? 'too-large' : 'invalid-result'); }
+      if (result.agentsChanged && phase === 'active') {
+        // A discovery that is already running may predate the change, so wait for it before starting a fresh one.
+        const fresh = (async () => {
+          await refreshing?.catch(() => {});
+          if (phase === 'active' && !controller.signal.aborted) await track(refresh);
+        })().catch(() => {});
+        await Promise.race([fresh, expired]);
+      }
+      return result.value;
+    })();
+    try { return await Promise.race([work, expired]); }
+    finally { clearTimeout(timer); release(); }
   }
   function rediscover(): void {
     if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
@@ -607,9 +689,25 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
                   bindings.push(bindProvider(id, backend, presentation, extension.authority, mode, observations));
                 } catch { invalid = true; throw new Error('Invalid provider registration'); }
               };
-              lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials,
+              const installations = Object.freeze((extension.installations ?? []).map(installationCopy));
+              if (installations.some(installation => installation.instance.namespace !== manifest.namespace)) throw new Error('Invalid installation');
+              const operations = new Map<string, ExtensionOperation>();
+              contributed.set(manifest.namespace, { installations, authority: extension.authority, operations });
+              const addOperation = (id: string, operation: ExtensionOperation): void => {
+                try {
+                  if (!registering || phase !== 'activating') throw new Error('Registration closed');
+                  if (typeof id !== 'string' || !EXTENSION_OPERATION_PATTERN.test(id) || operations.has(id) ||
+                    (typeof operation !== 'object' && typeof operation !== 'function') || operation === null || typeof operation.run !== 'function') {
+                    throw new Error('Invalid operation registration');
+                  }
+                  const run = operation.run;
+                  operations.set(id, { run: call => run.call(operation, call) });
+                } catch { invalid = true; throw new Error('Invalid operation registration'); }
+              };
+              lifetime = await extension.entry.activate({ namespace: manifest.namespace, credentials: extension.authority.credentials, installations,
                 providers: { add: (id, backend, presentation) => register('generic', id, backend, presentation),
                   addAgui: (id, backend, presentation, observations) => register('ag-ui', id, backend, presentation, observations) },
+                operations: { add: addOperation },
               });
             } finally { registering = false; }
             validateExtensionLifetime(lifetime);
@@ -626,6 +724,17 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     discover(): Promise<readonly ProviderStatus[]> {
       if (phase !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
       return track(refresh);
+    },
+    callOperation,
+    /** Active namespaces in namespace order, each with its operations and installation status. No secrets or origins. */
+    extensions(): readonly ExtensionDescriptor[] {
+      if (phase !== 'active') return [];
+      return [...contributed.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([namespace, value]) => ({
+        namespace, state: 'active' as const, operations: [...value.operations.keys()].sort(),
+        installations: [...new Set(value.installations.map(installation => installation.instance.installationId))].sort().map(installationId => ({
+          installationId, status: value.installations.some(installation => installation.instance.installationId === installationId &&
+            installationStatus(installation) === 'available') ? 'available' as const : 'unavailable' as const })),
+      }));
     },
     catalog(): readonly ProviderStatus[] {
       if (phase !== 'active') return [];

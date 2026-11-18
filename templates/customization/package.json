@@ -9,7 +9,7 @@
     "extension": {
       "namespace": "personal",
       "trust": "full",
-      "sdkVersion": "0.11.0",
+      "sdkVersion": "0.12.0",
       "entries": [{ "kind": "desktop", "module": "./dist/desktop.js" }]
     },
     "sources": { "./dist/desktop.js": "./desktop/index.tsx" },

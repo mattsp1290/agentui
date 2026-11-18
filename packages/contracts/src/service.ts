@@ -15,8 +15,8 @@ import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
 import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
-import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
-import type { ClientCommand, ConversationPort, FeedEnd, Receipt, SubmitResult } from './durable.js';
+import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
+import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -36,6 +36,82 @@ export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
 }
 export type ContinuationAction = 'read' | 'check' | 'start';
+/** Canonical JSON byte limits for one extension operation call. */
+export const EXTENSION_CALL_INPUT_BYTES = DEFAULT_MAX_COMMAND_BYTES;
+export const EXTENSION_CALL_OUTPUT_BYTES = 256_000;
+export const EXTENSION_CALL_FAILURES = ['unknown-extension', 'unknown-installation', 'unknown-operation',
+  'unavailable', 'too-large', 'invalid-result', 'threw', 'timeout'] as const;
+export type ExtensionCallFailure = typeof EXTENSION_CALL_FAILURES[number];
+export interface ExtensionCallRequest {
+  readonly namespace: string;
+  /** `ProviderInstance.installationId` of the installation the operation runs for. */
+  readonly installationId: string;
+  readonly operation: string;
+  readonly input: Json;
+}
+export type ExtensionCallValue =
+  | { readonly kind: 'ok'; readonly output: Json }
+  | { readonly kind: 'refused'; readonly code: string }
+  | { readonly kind: 'failed'; readonly cause: ExtensionCallFailure };
+export interface ExtensionInstallationStatus {
+  readonly installationId: string;
+  readonly status: 'available' | 'unavailable';
+}
+/** A configured server extension namespace. It never carries a credential, handle or service origin. */
+export interface ExtensionDescriptor {
+  readonly namespace: string;
+  readonly state: 'active' | 'failed';
+  readonly operations: readonly string[];
+  readonly installations: readonly ExtensionInstallationStatus[];
+}
+const EXTENSION_NAMESPACE = /^[a-z][a-z0-9-]{0,31}$/u;
+const EXTENSION_OPERATION = /^[a-z][a-z0-9.-]{0,63}$/u;
+const EXTENSION_REFUSAL = /^[a-z][a-z0-9-]{0,63}$/u;
+function patterned(value: unknown, pattern: RegExp, name: string): string {
+  if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`Invalid extension ${name}`);
+  return value;
+}
+/** An extension call input or output over its byte or structural limit. */
+export class ExtensionCallTooLarge extends Error {}
+function boundedJson(value: unknown, limit: number): Json {
+  let copy: Json;
+  try { copy = copyJson(value); }
+  catch (error) { throw error instanceof JsonLimitError ? new ExtensionCallTooLarge('Extension call value exceeds limit') : error; }
+  if (utf8Bytes(canonicalJson(copy)) > limit) throw new ExtensionCallTooLarge('Extension call value exceeds byte limit');
+  return copy;
+}
+export function parseExtensionCallRequest(value: unknown): ExtensionCallRequest {
+  const input = record(value, ['namespace', 'installationId', 'operation', 'input']);
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
+    operation: patterned(input.operation, EXTENSION_OPERATION, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES) };
+}
+export function parseExtensionCallValue(value: unknown): ExtensionCallValue {
+  const input = record(value);
+  switch (input.kind) {
+    case 'ok': exact(input, ['kind', 'output']); return { kind: 'ok', output: boundedJson(input.output, EXTENSION_CALL_OUTPUT_BYTES) };
+    case 'refused': exact(input, ['kind', 'code']); return { kind: 'refused', code: patterned(input.code, EXTENSION_REFUSAL, 'refusal') };
+    case 'failed': {
+      exact(input, ['kind', 'cause']);
+      const cause = EXTENSION_CALL_FAILURES.find(cause => cause === input.cause);
+      if (!cause) throw new Error('Invalid extension call failure');
+      return { kind: 'failed', cause };
+    }
+    default: throw new Error('Invalid extension call result');
+  }
+}
+function extensionDescriptor(value: unknown): ExtensionDescriptor {
+  const input = record(value, ['namespace', 'state', 'operations', 'installations']);
+  if (input.state !== 'active' && input.state !== 'failed') throw new Error('Invalid extension state');
+  if (!Array.isArray(input.operations) || !Array.isArray(input.installations)) throw new Error('Invalid extension descriptor');
+  const operations = input.operations.map(operation => patterned(operation, EXTENSION_OPERATION, 'operation'));
+  if (new Set(operations).size !== operations.length || (input.state === 'failed' && operations.length)) throw new Error('Invalid extension operations');
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), state: input.state, operations,
+    installations: input.installations.map(item => {
+      const installation = record(item, ['installationId', 'status']);
+      if (installation.status !== 'available' && installation.status !== 'unavailable') throw new Error('Invalid extension installation status');
+      return { installationId: identifier(installation.installationId), status: installation.status };
+    }) };
+}
 export interface ContinuationView {
   readonly predecessor: ConversationScope | null;
   readonly carried: ContinuationCarried | null;
@@ -63,7 +139,8 @@ export type ServiceRequest =
   | { readonly op: 'receipt' | 'reconcile' | 'abandon'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
-  | { readonly op: 'close'; readonly feedId: string };
+  | { readonly op: 'close'; readonly feedId: string }
+  | ({ readonly op: 'extension-call' } & ExtensionCallRequest);
 interface AgentDescription {
   readonly imageInput: ImageInputCapability;
   readonly frontendOffers: FrontendEligibility;
@@ -85,6 +162,8 @@ export interface ServiceMetadata {
   readonly hostId: string;
   readonly principalId: string;
   readonly compatibility: HostCompatibility;
+  /** Sorted by namespace; each installation list is sorted by installation ID. */
+  readonly extensions: readonly ExtensionDescriptor[];
 }
 export type ServicePull =
   | { readonly kind: 'page'; readonly page: number; readonly item: unknown }
@@ -122,6 +201,7 @@ export interface ServiceValueMap {
   readonly watch: { readonly feedId: string };
   readonly pull: ServicePull;
   readonly close: null;
+  readonly 'extension-call': ExtensionCallValue;
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
@@ -148,6 +228,8 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
   /** Stop waiting on a provider send that blocks its conversation. The result says nothing about whether the send took effect. */
   abandon(scope: ConversationScope, id: string): Promise<Receipt | null>;
+  /** Calls a server extension operation once. No retry and no outbox entry: a lost reply leaves the outcome unknown. */
+  extensionCall(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }
 function nil(value: unknown): null {
@@ -214,6 +296,10 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       exact(input, ['op', 'feedId', 'ack']);
       return { op: 'pull', feedId: identifier(input.feedId), ack: cursor(input.ack) };
     case 'close': exact(input, ['op', 'feedId']); return { op: 'close', feedId: identifier(input.feedId) };
+    case 'extension-call': {
+      const { op: _op, ...fields } = input;
+      return { op: 'extension-call', ...parseExtensionCallRequest(fields) };
+    }
     default: throw new Error('Unknown service operation');
   }
 }
@@ -341,11 +427,15 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   },
   close: nil,
   metadata(value) {
-    const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
-    if (!Array.isArray(input.agents)) throw new Error('Invalid agents');
+    const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId', 'extensions']);
+    if (!Array.isArray(input.agents) || !Array.isArray(input.extensions)) throw new Error('Invalid agents');
+    const extensions = input.extensions.map(extensionDescriptor);
+    if (extensions.some((extension, index) => index > 0 && extensions[index - 1]!.namespace >= extension.namespace) ||
+      extensions.some(extension => extension.installations.some((installation, index) =>
+        index > 0 && extension.installations[index - 1]!.installationId >= installation.installationId))) throw new Error('Unsorted extensions');
     const agents = input.agents.map(agentDescriptor), defaultAgentId = input.defaultAgentId === null ? null : identifier(input.defaultAgentId);
     if (defaultAgentId === null ? agents.some(agent => agent.availability.kind === 'ready') : !agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
-    return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
+    return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility), extensions };
   },
   catalog: catalogEntries,
   search(value) {
@@ -378,6 +468,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   abandon: value => value === null ? null : parseReceipt(value),
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
+  'extension-call': parseExtensionCallValue,
 };
 export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);

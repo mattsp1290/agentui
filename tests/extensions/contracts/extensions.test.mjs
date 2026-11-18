@@ -13,7 +13,7 @@ const module = { id: 'notes', label: 'Notes', component: () => null };
 
 test('provider-free nested module activates, renders changing activity and preserves scoped command results', async () => {
   let disposals = 0;
-  assert.equal(EXTENSION_SDK_VERSION, '0.11.0');
+  assert.equal(EXTENSION_SDK_VERSION, '0.12.0');
   const fixture = createNotesFixture(() => { disposals++; });
   const metadata = parseExtensionManifest(manifest);
   assert.deepEqual(checkExtensionEntrypoint(metadata, 'desktop', fixture), { kind: 'compatible' });
@@ -72,8 +72,8 @@ test('compatibility rejects undeclared targets and invalid exports before activa
   const valid = { ...entry, activate() { activations++; } };
   for (const [metadata, target, loaded, code] of [
     [{ ...manifest, sdkVersion: 'future' }, 'desktop', valid, 'sdk-version'],
-    [{ ...manifest, sdkVersion: '0.10.0' }, 'desktop', valid, 'sdk-version'],
-    [manifest, 'desktop', { ...valid, sdkVersion: '0.10.0' }, 'sdk-version'],
+    [{ ...manifest, sdkVersion: '0.11.0' }, 'desktop', valid, 'sdk-version'],
+    [manifest, 'desktop', { ...valid, sdkVersion: '0.11.0' }, 'sdk-version'],
     [{ ...manifest, sdkVersion: '0.9.0' }, 'desktop', valid, 'sdk-version'],
     [manifest, 'desktop', { ...valid, sdkVersion: '0.9.0' }, 'sdk-version'],
     [{ ...manifest, sdkVersion: '0.8.0' }, 'desktop', valid, 'sdk-version'],
@@ -172,4 +172,34 @@ test('transcript slot validates known override shapes and shares module componen
     assert.throws(() => validateUiExtensionContributions({ modules: [], overrides, dispose() {} }));
   }
   validateUiExtensionContributions({ modules: [], overrides: {}, dispose() {} });
+});
+
+test('operation registration rejects invalid, duplicate and late ids and fails the activation', async () => {
+  const { createProviderRegistry } = await import('@agentui/host');
+  const authority = { credentials: {}, issue: () => ({ credential: null, expectedAuthority: 'remote-provider', assertAuthorized() {} }), async close() {} };
+  const operation = { async run() { return { kind: 'ok', output: null }; } };
+  const activateWith = async body => {
+    let context;
+    const registry = createProviderRegistry([{ manifest: { namespace: 'ops', trust: 'full', sdkVersion: EXTENSION_SDK_VERSION, entries: [{ kind: 'server', module: './server.js' }] },
+      authority, entry: { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(value) { context = value; body(value); return { dispose() {} }; } } }]);
+    const result = await registry.activate().then(() => 'active', () => 'failed');
+    return { result, context, registry };
+  };
+  const good = await activateWith(context => { context.operations.add('members.list', operation); context.operations.add('a-b.c', operation); });
+  assert.equal(good.result, 'active');
+  assert.deepEqual(good.registry.extensions(), [{ namespace: 'ops', state: 'active', operations: ['a-b.c', 'members.list'], installations: [] }]);
+  assert.throws(() => good.context.operations.add('late', operation), /Invalid operation registration/);
+  assert.deepEqual(good.context.installations, []);
+  for (const body of [
+    context => { context.operations.add('dup', operation); context.operations.add('dup', operation); },
+    context => context.operations.add('Upper', operation),
+    context => context.operations.add('.dot', operation),
+    context => context.operations.add('x'.repeat(65), operation),
+    context => context.operations.add('fine', {}),
+  ]) {
+    let thrown = false;
+    const { result } = await activateWith(context => { try { body(context); } catch { thrown = true; } });
+    assert.equal(thrown, true);
+    assert.equal(result, 'failed');
+  }
 });

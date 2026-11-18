@@ -30,16 +30,17 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.11.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.12.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.11.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.12.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
 SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
 SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It reads a provider-confirmed end of the conversation from saved state without I/O and returns `{ cause }` or `null`. Hosts report such a conversation as `concluded`, start no observation for it and refuse its sends. Existing presentations may omit the hook. The new observation status requires wire 12; backend contract 1, core DB 7 and transcript 4 are unchanged.
 SDK 0.11.0 adds the optional `CreationIntent.from`, which names the confirmed conversation a new creation continues, and the optional `ProviderPresentation.continuation(evidence)` hook. The host copies `from` from its own record of that conversation: the scope must be on the same host and the binding must belong to the same provider installation. A presentation opts its provider in to continuation by declaring `continuation`. A presentation may omit it; the host then refuses a successor for that provider and never passes it `from`. A provider that receives `from` must continue that predecessor or refuse the creation. It derives the binding of a `from` creation from its intent except for what the provider service assigns: the session and, optionally, `carryingTurn`, the provider's ID for the turn that carried the predecessor. The host refuses a successor whose session equals the predecessor's and any other binding that names `carryingTurn`. `continuation(evidence)` reads the creation's saved evidence without I/O and returns the carried turn and byte counts, `{ refused }` or `null`. Core DB 8 adds an index of creations by predecessor, and format 7 hosts refuse it. Wire 12, backend contract 1 and transcript 4 are unchanged.
-Wire 13 later adds the `abandon` service operation and wire 14 the `continuation` operation, both without an SDK change, so SDK 0.11.0 stays current.
+Wire 13 later adds the `abandon` service operation and wire 14 the `continuation` operation, both without an SDK change.
+SDK 0.12.0 adds `ServerExtensionContext.installations` and `ServerExtensionContext.operations`, and wire 15 adds the `extension-call` service operation and `ServiceMetadata.extensions`. See [Call server operations from the client](#call-server-operations-from-the-client).
 
 SDK 0.8.0 adds an optional fourth `providers.addAgui` argument, `AguiObservations<Model, Installation>`.
 Its `event(event)` callback returns ordered `AguiRunBatch` values. Its `snapshot(state, originals)` callback returns complete prefixes or explicit unavailable histories for the supplied original operations.
@@ -53,7 +54,7 @@ This contract does not add browser consent, execution or continuation. Existing 
 
 SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 14, and transcript projection version is 4.
+Workspace package versions are `0.0.0`, service wire version is 15, and transcript projection version is 4.
 
 Desktop contributions may arrange transcript and module presentation with `contentLayout`.
 The composer, approvals, Stop, recovery, agent selection and protected navigation remain host-owned.
@@ -244,7 +245,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.11.0",
+			"sdkVersion": "0.12.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -280,6 +281,27 @@ Installed entries are trusted ordinary filesystem modules with host process priv
 
 Artifact entries also run with full host process privileges. The host imports the verified retained bytes, so later changes to artifact files do not change the loaded catalog. Under transient ownership, the programmatic server replacement method accepts artifact, installed, and empty selections through the same lifecycle owner.
 CLI hosts configured with durable ownership use [durable selection](#durable-selection-and-explicit-live-application), followed by explicit live application or a restart. Admitted provider work defers replacement before candidate preparation; retry explicitly after the work settles. Replacement retires the old generation before verifying and importing the requested selection. Each artifact activation uses a fresh module generation, including repeated selection of the same bytes. A failed candidate leaves the old generation retired and reports the existing replacement or restart recovery classification. The host does not restore old code automatically.
+
+## Call server operations from the client
+
+A server entry reads its configured installations from `context.installations`. Each `ServerExtensionInstallation` has the grant `id`, the provider `instance`, the `service` origin and `expectedAuthority`. It holds no secret.
+A provider contribution ID must equal the grant `id` of the installation it serves. An entry that serves every configured installation registers one provider per installation with `providers.add(installation.id, …)`.
+
+`context.operations.add(id, operation)` registers a named operation. The ID matches `[a-z][a-z0-9.-]{0,63}`. A duplicate ID, an invalid ID or a registration after activation throws and fails the activation.
+`operation.run({ installation, credential, input, signal })` receives the installation the client named, a credential handle the host issued for it (`null` when unauthenticated), a bounded copy of the input and an `AbortSignal`.
+It returns `{ kind: 'ok', output, agentsChanged? }` or `{ kind: 'refused', code }`, where `code` matches `[a-z][a-z0-9-]{0,63}`.
+
+Clients call an operation through the `extension-call` service operation with `namespace`, `installationId` (the `ProviderInstance.installationId`), `operation` and `input`.
+The host replies `{ kind: 'ok', output }`, `{ kind: 'refused', code }` or `{ kind: 'failed', cause }`. The causes are `unknown-extension`, `unknown-installation`, `unknown-operation`, `unavailable`, `too-large`, `invalid-result`, `threw` and `timeout`.
+Input is limited to 64,000 bytes of canonical JSON and output to 256,000 bytes. A thrown handler, malformed result or exception text never reaches the client.
+The host replies within 15 seconds of admission, below the 20-second native transport deadline. At the deadline it aborts `signal`, replies `timeout`, releases the call's admission so replacement is not deferred, and discards a late result.
+`agentsChanged: true` makes the host wait for any discovery that is already running, then start a fresh discovery, before it replies; a slow or failed discovery does not change the reply.
+The channel gives no idempotency. An operation that changes remote state carries its own idempotency key inside `input`; after `timeout` or a lost reply the outcome is unknown, and the caller retries with the same key.
+
+An error thrown inside a `credentials.use` action reaches the caller as one fixed opaque error. Code that needs to classify a failure catches inside the action and returns a typed value.
+Operation code must pass `call.signal` to every request it makes. A request that ignores the signal keeps its `credentials.use` task pending and holds generation close.
+`ServiceMetadata.extensions` lists each configured namespace with `state` (`active` or `failed`), its operation IDs and each installation's `available` or `unavailable` status. It contains no credential, handle or service origin.
+Full-trust extensions share one realm. The host's namespace and installation checks are the only enforcement.
 
 ## Contribute conversation views and actions
 

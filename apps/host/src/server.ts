@@ -42,7 +42,8 @@ import type { ExtensionStartup } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import type { ServerExtensionReplacement } from '@agentui/host/extensions';
 import type { SelectionControl } from './selection-protocol.js';
-import { providerExtensionSource } from './provider-extensions.js';
+import { providerExtensionSource, selectedNamespaces } from './provider-extensions.js';
+import type { ExtensionDescriptor } from '@agentui/contracts/service';
 import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
 export type { BrowserProviderExtension } from './provider-extensions.js';
 
@@ -57,6 +58,8 @@ export interface BrowserHostOptions {
   readonly extensions?: ExtensionStartup;
   readonly refreshBuilder?: string;
   readonly setupCapability?: string;
+  /** Test-only override of the 15-second extension operation deadline. */
+  readonly operationDeadlineMs?: number;
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -98,7 +101,15 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
-  const providers = createServerExtensions();
+  const providers = createServerExtensions(options.operationDeadlineMs === undefined ? {} : { operationDeadlineMs: options.operationDeadlineMs });
+  let configuredNamespaces: readonly string[] = [];
+  /** Active namespaces come from the registry. A failed generation reports each configured namespace without detail. */
+  const extensionDescriptors = (): readonly ExtensionDescriptor[] => {
+    const status = providers.status();
+    if (status.kind === 'active') return providers.extensions();
+    if (status.kind !== 'failed') return [];
+    return configuredNamespaces.map(namespace => ({ namespace, state: 'failed' as const, operations: [], installations: [] }));
+  };
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let refresh: RefreshController | undefined;
   let resolveFatal!: () => void;
@@ -144,6 +155,11 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
       const replacement = await providers.replace(providerExtensionSource(database, selected));
+      // Read the selection only after it was admitted: a deferred replacement must not inspect its candidate.
+      if (replacement.kind === 'replaced' || replacement.kind === 'failed') {
+        try { configuredNamespaces = replacement.kind === 'replaced' && replacement.generation === null ? [] : selectedNamespaces(selected); }
+        catch { configuredNamespaces = []; }
+      }
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
       const generation = replacement.generation;
       const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
@@ -314,7 +330,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
-    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing });
+    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing,
+      extensions: { describe: extensionDescriptors, call: providers.callOperation } });
     const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
     const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
@@ -339,7 +356,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover, refresh);
     return { origin, hostId, close, fatal, discoverProviders: providers.discover,
-      extensionStatus: providers.status,
+      extensionStatus: providers.status, callOperation: providers.callOperation,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);
       },

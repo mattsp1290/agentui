@@ -1,3 +1,4 @@
+import type { ExtensionCallRequest, ExtensionCallValue, ExtensionDescriptor } from '@agentui/contracts/service';
 import { createProviderRegistry } from '../providers.js';
 import type { ProviderStatus, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
@@ -40,7 +41,7 @@ type State =
   | ServerExtensionFailure;
 const cleanupFailure: ServerExtensionFailure = { kind: 'failed', failure: 'cleanup', recovery: 'restart' };
 
-export function createServerExtensions() {
+export function createServerExtensions(options: { readonly operationDeadlineMs?: number } = {}) {
   const inactive = createProviderRegistry([]);
   let state: State = { kind: 'empty' };
   let nextGeneration = 0;
@@ -69,7 +70,7 @@ export function createServerExtensions() {
       state = { kind: 'empty' };
       return { kind: 'replaced', generation: null };
     }
-    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions) };
+    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions, options) };
     change.generation = generation;
     try {
       if (state === change) await generation.registry.activate();
@@ -104,6 +105,14 @@ export function createServerExtensions() {
     if (state.kind === 'empty') return Promise.resolve([]);
     if (state.kind !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
     return state.generation.registry.discover();
+  }
+  /** Changing, failed, closing and empty states refuse every call as unavailable. */
+  function callOperation(request: ExtensionCallRequest): Promise<ExtensionCallValue> {
+    if (state.kind !== 'active') return Promise.resolve({ kind: 'failed', cause: 'unavailable' });
+    return state.generation.registry.callOperation(request);
+  }
+  function extensions(): readonly ExtensionDescriptor[] {
+    return state.kind === 'active' ? state.generation.registry.extensions() : [];
   }
   function catalog(): readonly ProviderStatus[] {
     return current().catalog();
@@ -157,5 +166,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, continuation, status, close };
+  return { replace, discover, callOperation, extensions, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, continuation, status, close };
 }

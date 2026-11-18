@@ -4,7 +4,7 @@ import type { ConversationScope } from '@agentui/contracts';
 import type { HostCompatibility } from '@agentui/contracts/compatibility';
 import { conversationPreview } from '@agentui/contracts/conversation';
 import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversation';
-import type { ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
+import type { ExtensionCallRequest, ExtensionCallValue, ExtensionDescriptor, ServiceRequest, ServiceValueMap } from '@agentui/contracts/service';
 import type { Installation, LocalHost, ConversationInstallation, ProviderInstallation, ProviderStatus, DiscoveredProvider, ProviderCreationOperations, UnavailableProvider } from '@agentui/host';
 import type { Principal } from './principal.js';
 import { ServiceError } from '@agentui/contracts/service';
@@ -23,6 +23,10 @@ export function createApi(options: {
   readonly agentSelection: ApiAgentSelection;
   readonly providers?: ProviderCreationOperations & { catalog(): readonly ProviderStatus[]; statusOf(installation: ProviderInstallation): ProviderStatus | undefined };
   readonly isClosing: () => boolean;
+  readonly extensions?: {
+    describe(): readonly ExtensionDescriptor[];
+    call(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
+  };
 }) {
   const { host, feeds } = options;
   const selection = options.agentSelection;
@@ -38,7 +42,7 @@ export function createApi(options: {
     switch (request.op) {
       case 'submit': return request.command.scope;
       case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'continuation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'abandon': case 'watch': return request.scope;
-      case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': return null;
+      case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': case 'extension-call': return null;
     }
   }
   function providerCatalog() {
@@ -89,7 +93,8 @@ export function createApi(options: {
         const { choices: providerAgents, unavailable } = providerCatalog();
         const defaultAgentId = nativeDefault ?? [...providerAgents.values()].reduce<string | null>((selected, { descriptor }) =>
           descriptor.availability.kind === 'ready' && (selected === null || descriptor.id < selected) ? descriptor.id : selected, null);
-        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(provider => describeUnavailableProvider(provider, host.imageInput(null)))], defaultAgentId } satisfies ServiceValueMap['metadata'];
+        return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(provider => describeUnavailableProvider(provider, host.imageInput(null)))], defaultAgentId,
+          extensions: options.extensions?.describe() ?? [] } satisfies ServiceValueMap['metadata'];
       }
       case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
         scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
@@ -152,6 +157,11 @@ export function createApi(options: {
       case 'watch': return { feedId: feeds.open(principal.id, host.conversation(request.scope), request) } satisfies ServiceValueMap['watch'];
       case 'pull': return feeds.pull(principal.id, request.feedId, request.ack) satisfies Promise<ServiceValueMap['pull']>;
       case 'close': feeds.close(principal.id, request.feedId); return null satisfies ServiceValueMap['close'];
+      case 'extension-call': {
+        if (!options.extensions) return { kind: 'failed', cause: 'unknown-extension' } satisfies ServiceValueMap['extension-call'];
+        const { op: _op, ...call } = request;
+        return options.extensions.call(call).catch((): ExtensionCallValue => ({ kind: 'failed', cause: 'unavailable' }));
+      }
     }
   }
   return async (principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> => {

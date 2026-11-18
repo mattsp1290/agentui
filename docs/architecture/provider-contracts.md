@@ -121,7 +121,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 14, SDK compatibility 0.11.0, package versions 0.0 and transcript projection 4.
+The current integration uses wire version 15, SDK compatibility 0.12.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Captured frontend offers
@@ -262,7 +262,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 14, transcript projection 4, SDK compatibility 0.11.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 15, transcript projection 4, SDK compatibility 0.12.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -412,7 +412,7 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.11.0 and wire 14 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.12.0 and wire 15 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.
 

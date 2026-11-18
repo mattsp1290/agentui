@@ -2,7 +2,8 @@ import type { AguiObservations } from './agui-observations.js';
 import type { RunAgentInput } from '@agentui/protocol';
 import { EXTENSION_SDK_VERSION } from '@agentui/contracts/compatibility';
 import { nonempty, record } from '@agentui/contracts/decode';
-import type { BackendProvider, ProviderModel } from './providers.js';
+import type { Json } from '@agentui/contracts';
+import type { BackendProvider, CredentialHandle, ProviderInstance, ProviderModel } from './providers.js';
 import type { ProviderPresentation, ServerProviderCredentials } from './provider-presentation.js';
 
 export { EXTENSION_SDK_VERSION };
@@ -30,9 +31,44 @@ export interface ProviderContributions {
   addAgui<M extends AguiModel, I extends string>(id: string, provider: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>, observations?: AguiObservations<M, I>): void;
   add<M extends ProviderModel, I extends string>(id: string, provider: BackendProvider<M, I>, presentation: ProviderPresentation<M, I>): void;
 }
+/** One configured installation of this namespace. It holds no secret. `id` is the grant id from the host configuration. */
+export interface ServerExtensionInstallation {
+  readonly id: string;
+  readonly instance: ProviderInstance<string>;
+  readonly service: string;
+  readonly expectedAuthority: 'agentui-host' | 'remote-provider';
+}
+export const EXTENSION_OPERATION_PATTERN = /^[a-z][a-z0-9.-]{0,63}$/u;
+export const EXTENSION_REFUSAL_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
+/** The runtime `AbortSignal`, read from the consumer's global types so the SDK root needs no DOM or Node types. */
+export type ExtensionAbortSignal = typeof globalThis extends { readonly AbortSignal: { readonly prototype: infer Signal } }
+  ? Signal : { readonly aborted: boolean };
+export interface ExtensionOperationCall {
+  /** The installation the client named. */
+  readonly installation: ServerExtensionInstallation;
+  /** Issued by the host for that installation; `null` for an unauthenticated installation. */
+  readonly credential: CredentialHandle<string> | null;
+  /** A bounded copy of the client input. */
+  readonly input: Json;
+  /** Aborted at the host deadline. Pass it to every request the operation makes. */
+  readonly signal: ExtensionAbortSignal;
+}
+export type ExtensionOperationResult =
+  | { readonly kind: 'ok'; readonly output: Json; readonly agentsChanged?: true }
+  | { readonly kind: 'refused'; readonly code: string };
+export interface ExtensionOperation {
+  run(call: ExtensionOperationCall): Promise<ExtensionOperationResult>;
+}
+export interface OperationContributions {
+  /** `id` matches `EXTENSION_OPERATION_PATTERN`. Duplicate ids and registration after activation throw. */
+  add(id: string, operation: ExtensionOperation): void;
+}
 export interface ServerExtensionContext {
   readonly namespace: string;
+  /** The configured installations of this namespace. A provider contribution id must equal the grant id it serves. */
+  readonly installations: readonly ServerExtensionInstallation[];
   readonly providers: ProviderContributions;
+  readonly operations: OperationContributions;
   readonly credentials: ServerProviderCredentials;
 }
 export interface ServerExtensionEntry {

@@ -278,6 +278,21 @@ enum Request {
     Close {
         feed_id: Id,
     },
+    ExtensionCall {
+        namespace: String,
+        installation_id: Id,
+        operation: String,
+        input: Value,
+    },
+}
+fn extension_name(value: &str, max: usize, dot: bool) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= max
+        && bytes[0].is_ascii_lowercase()
+        && bytes.iter().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || (dot && *c == b'.')
+        })
 }
 fn js_space(character: char) -> bool {
     matches!(character, '\t'..='\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' |
@@ -458,6 +473,20 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
             }
             None
         }
+        Request::ExtensionCall {
+            namespace,
+            operation,
+            input,
+            ..
+        } => {
+            if !extension_name(namespace, 32, false)
+                || !extension_name(operation, 64, true)
+                || encoded_bytes(input)? > MAX_COMMAND_BYTES
+            {
+                return Err(INVALID);
+            }
+            None
+        }
         Request::Metadata {} | Request::Pull { .. } | Request::Close { .. } => None,
     };
     if scope.is_some_and(|scope| scope.host_id.0 != host_id) {
@@ -583,9 +612,54 @@ mod tests {
             json!({"op":"pull", "feedId":"feed", "ack":null}),
             json!({"op":"pull", "feedId":"feed", "ack":9_007_199_254_740_991_u64}),
             json!({"op":"close", "feedId":"feed"}),
+            json!({"op":"extension-call", "namespace":"fixture", "installationId":"personal", "operation":"members.list", "input":{}}),
+            json!({"op":"extension-call", "namespace":"a", "installationId":"i", "operation":"echo-2", "input":[1, "two", null, {"x":true}]}),
         ] {
             valid(value);
         }
+    }
+
+    #[test]
+    fn extension_calls_are_bounded_and_patterned() {
+        let call = |namespace: &str, operation: &str, input: Value| json!({"op":"extension-call", "namespace":namespace, "installationId":"personal", "operation":operation, "input":input});
+        let overhead = serde_json::to_vec(&json!("")).unwrap().len();
+        valid(call(
+            "fixture",
+            "echo",
+            json!("x".repeat(MAX_COMMAND_BYTES - overhead)),
+        ));
+        invalid(call(
+            "fixture",
+            "echo",
+            json!("x".repeat(MAX_COMMAND_BYTES - overhead + 1)),
+        ));
+        for (namespace, operation) in [
+            ("Fixture", "echo"),
+            ("1fixture", "echo"),
+            ("fix.ture", "echo"),
+            (&"n".repeat(33) as &str, "echo"),
+            ("", "echo"),
+            ("fixture", "Echo"),
+            ("fixture", ".echo"),
+            ("fixture", "echo_x"),
+            ("fixture", ""),
+            ("fixture", &"o".repeat(65) as &str),
+        ] {
+            invalid(call(namespace, operation, json!({})));
+        }
+        valid(call(&"n".repeat(32), &"o".repeat(64), json!({})));
+        invalid(
+            json!({"op":"extension-call", "namespace":"fixture", "installationId":"", "operation":"echo", "input":{}}),
+        );
+        invalid(
+            json!({"op":"extension-call", "namespace":"fixture", "operation":"echo", "input":{}}),
+        );
+        invalid(
+            json!({"op":"extension-call", "namespace":"fixture", "installationId":"i", "operation":"echo"}),
+        );
+        invalid(
+            json!({"op":"extension-call", "namespace":"fixture", "installation_id":"i", "operation":"echo", "input":{}}),
+        );
     }
 
     #[test]
@@ -624,6 +698,7 @@ mod tests {
         for value in [
             json!({"op":"pair", "code":"code"}),
             json!({"op":"fetch"}),
+            json!({"op":"extensionCall", "namespace":"fixture", "installationId":"i", "operation":"echo", "input":{}}),
             json!({"op":"conversationAgent", "scope":scope()}),
             json!({"op":"create", "scope":scope()}),
             json!({"op":"create", "scope":scope(), "agent_id":"agent"}),

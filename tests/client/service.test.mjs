@@ -8,7 +8,7 @@ const scope = { hostId: 'host', conversationId: 'conversation' };
 const snapshot = { kind: 'snapshot', snapshot: { scope, projectionVersion: 4, cursor: 0,
   document: { domain: { messages: [] }, receipts: {}, decisions: {} } } };
 const agent = { id: 'agent', label: 'Test agent', runtime: { engine: 'engine', version: '1', format: '1' }, imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: ['send'], availability: { kind: 'ready' } };
-const metadata = { agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
+const metadata = { extensions: [], agents: [agent], defaultAgentId: agent.id, hostId: 'host', principalId: 'principal', compatibility: { wireVersion: 1,
   extensionSdkVersion: '1', nativeRuntime: { engine: 'engine', version: '1', format: '1' },
   desiredGitRevision: 'revision', appliedArtifact: { artifactId: 'artifact', gitRevision: 'revision' } } };
 const reply = value => Response.json({ ok: true, value });

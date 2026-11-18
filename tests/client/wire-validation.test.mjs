@@ -75,3 +75,51 @@ test('only the latest 256 sequence identities can be recognized as duplicates', 
   assert.equal(store.getSnapshot().connection.kind, 'resync');
   assert.equal(store.getSnapshot().document.domain.text.length, 257);
 });
+
+test('extension-call requests and every result kind round-trip with exact keys and patterns', async () => {
+  const { parseServiceRequest, parseServiceResponse, EXTENSION_CALL_FAILURES } = await import('@agentui/contracts/service');
+  const request = { op: 'extension-call', namespace: 'fixture', installationId: 'personal', operation: 'members.list', input: { nested: [1, 'two', null] } };
+  assert.deepEqual(parseServiceRequest(request), request);
+  for (const changed of [{ extra: true }, { operation: 'Members' }, { operation: '.list' }, { operation: 'o'.repeat(65) }, { namespace: 'Fixture' },
+    { namespace: 'fix.ture' }, { installationId: '' }, { input: 'x'.repeat(64_000) }]) {
+    assert.throws(() => parseServiceRequest({ ...request, ...changed }), `accepted ${Object.keys(changed)[0]}`);
+  }
+  const { input: _input, ...missing } = request;
+  assert.throws(() => parseServiceRequest(missing));
+  const values = [{ kind: 'ok', output: { members: [] } }, { kind: 'refused', code: 'unknown-profile' },
+    ...EXTENSION_CALL_FAILURES.map(cause => ({ kind: 'failed', cause }))];
+  for (const value of values) assert.deepEqual(parseServiceResponse(request, { ok: true, value }), { ok: true, value });
+  for (const value of [{ kind: 'ok', output: {}, agentsChanged: true }, { kind: 'refused', code: 'Bad code' }, { kind: 'failed', cause: 'secret' },
+    { kind: 'ok' }, { kind: 'ok', output: 'x'.repeat(256_000) }, { kind: 'other' }]) {
+    assert.throws(() => parseServiceResponse(request, { ok: true, value }), JSON.stringify(value).slice(0, 60));
+  }
+});
+
+test('metadata requires sorted extension descriptors without origins or credentials', async () => {
+  const { parseServiceResponse } = await import('@agentui/contracts/service');
+  const { SERVICE_WIRE_VERSION, EXTENSION_SDK_VERSION } = await import('@agentui/contracts/compatibility');
+  const metadata = extensions => ({ hostId: 'host', principalId: 'principal', agents: [], defaultAgentId: null, extensions,
+    compatibility: { wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: null,
+      desiredGitRevision: 'r', appliedArtifact: { artifactId: 'a', gitRevision: 'r' } } });
+  const valid = [{ namespace: 'alpha', state: 'active', operations: ['echo'], installations: [{ installationId: 'a', status: 'available' }, { installationId: 'b', status: 'unavailable' }] },
+    { namespace: 'beta', state: 'failed', operations: [], installations: [] }];
+  assert.deepEqual(parseServiceResponse({ op: 'metadata' }, { ok: true, value: metadata(valid) }).value.extensions, valid);
+  const { extensions: _extensions, ...missing } = metadata([]);
+  for (const value of [missing, metadata([...valid].reverse()), metadata([{ ...valid[0], service: 'http://127.0.0.1' }]),
+    metadata([{ ...valid[0], installations: [...valid[0].installations].reverse() }]), metadata([{ ...valid[1], operations: ['echo'] }]),
+    metadata([{ ...valid[0], installations: [{ installationId: 'a', status: 'available', credential: 'x' }] }])]) {
+    assert.throws(() => parseServiceResponse({ op: 'metadata' }, { ok: true, value }));
+  }
+});
+
+test('the client keeps an over-limit extension input local and refuses malformed calls without sending', async () => {
+  const { createServiceConnection } = await import('../../packages/client/dist/service-engine.js');
+  const { transcriptProjection } = await import('@agentui/contracts/conversation');
+  let sent = 0;
+  const connection = createServiceConnection(async () => { sent++; return new Response(JSON.stringify({ ok: true, value: { kind: 'ok', output: 1 } }), { headers: { 'content-type': 'application/json' } }); }, transcriptProjection);
+  assert.deepEqual(await connection.extensionCall({ namespace: 'fixture', installationId: 'i', operation: 'echo', input: 'x'.repeat(64_000) }), { kind: 'failed', cause: 'too-large' });
+  await assert.rejects(connection.extensionCall({ namespace: 'fixture', installationId: 'i', operation: 'Echo', input: {} }));
+  assert.equal(sent, 0);
+  assert.deepEqual(await connection.extensionCall({ namespace: 'fixture', installationId: 'i', operation: 'echo', input: {} }), { kind: 'ok', output: 1 });
+  assert.equal(sent, 1);
+});
