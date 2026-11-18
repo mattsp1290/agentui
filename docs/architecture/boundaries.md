@@ -73,8 +73,8 @@ The SDK declares full-trust server, desktop, and iOS entries.
 React module props carry conversation scope, activity snapshots, and model-neutral commands.
 The shell retains recovery and compatibility controls.
 
-Pets, MCP control, and Crew are the three planned example extensions.
-Crew transport, authentication, and cursors belong in `extensions/crew` when implemented.
+In-repo extensions live in the top-level `extensions/` directory: [`extensions/crew`](../extensions/crew.md) and [`extensions/coworkers`](../extensions/coworkers.md). Service-specific code (transport, authentication, cursors, operations and workspace views) lives there and nowhere else.
+Core stays generic: `apps`, `packages`, `scripts` and `templates` name no service. The boundary test `tests/extensions/providers/conformance/boundaries.test.mjs` enforces this for Crew, and new core code must follow the same rule for every service.
 Core host code uses generic provider identities.
 The SDK exports [backend provider contracts](provider-contracts.md) and [extension authoring contracts](extension-sdk.md).
 Typed frontend-tool registration is a contract only. Provider lifecycle runtime, frontend-tool registration runtime, and frontend-tool delivery remain downstream tasks.

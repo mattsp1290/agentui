@@ -112,6 +112,16 @@ Items and saved state are limited to one million encoded bytes.
 `close()` is idempotent and ends the feed with `closed`. `ended` never rejects.
 An expired or unbridgeable cursor ends the feed with `resync`.
 
+### Polling providers
+
+A service without an event stream can still implement `observe` by polling, as the [Coworkers provider](../../extensions/coworkers/src/provider.ts) does:
+
+- Run one scheduler per installation ([`poller.ts`](../../extensions/coworkers/src/poller.ts)) with an in-flight request limit, a short interval for conversations with unfinished work, a growing interval for idle ones, and a doubling backoff after failed polls. Wake a conversation's feed when the provider submits to it.
+- Deliver whole `snapshot` items and make the cursor a digest of the state, so `after` equal to the current cursor delivers nothing until something changes.
+- Do not end the feed on a failed poll: the host leaves a `disconnected` feed stopped until an explicit retry. End it only on `close()` or with `resync` when the service reports that the conversation is gone.
+- Keep terminal statuses in state so they are never fetched again, and bound the state well under the one-million-byte limit above.
+- Present the newest request as `currentRun`. When it ends, the host's automatic run-end read settles the blocking send.
+
 ## What providers must never do
 
 - Read or send a secret outside `context.credentials.use({ credential, service }, action)`.

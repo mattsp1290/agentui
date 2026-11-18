@@ -378,6 +378,10 @@ The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.
 
+## Bundled in-repo extensions
+
+Every package under the repository's `extensions/` directory is first-party. Its `package.json.agentui.extension` is its canonical manifest, its package name stays outside the `@agentui/` scope, and the default desktop build bundles its `desktop` entry through `agentui.sources` (`scripts/bundled-extensions.mjs`). Its server entry loads as an installed entry from the working tree through `serve --extensions` or `desktop --extensions`; the [launcher](../development/launcher.md#load-server-extensions-on-a-local-host) passes the file when every token variable is set. Restart the host after rebuilding an extension: Node keeps the module it imported.
+
 ## Contribute a workspace view
 
 SDK 0.13.0 adds the optional `workspace` contribution: `{ label, component, transcript? }`. The label has 1 to 40 characters and names the extension in the Extensions view. `component` and the optional `transcript` follow the same function, memo, forwardRef and lazy rules as transcript overrides. Unknown keys are rejected.
