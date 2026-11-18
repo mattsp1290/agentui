@@ -12,7 +12,12 @@ export const acknowledgement = 'I have read the earlier conversation.';
  * per-POST outcomes, `holdHandoffs` holds POSTs until released, `failHandoffLookups` fails the next handoff reads, and
  * `commitHandoff`/`admit` drive the row directly.
  */
-export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept } = {}) {
+export async function crewService(t, { memberId, token, instance, approvalDetails, standingGrants, subagents, decisionReceipts, intercept,
+  members: extraMembers = [], pageSize = 50, profiles = ['test', 'research'] } = {}) {
+  // Members in list order. `members` adds more after the configured one; POST /v1/members appends, keyed by requestId.
+  const members = [...(memberId ? [{ memberId, engine: 'codex', profile: 'test' }] : []), ...extraMembers];
+  const memberRequests = new Map();
+  let memberHold = null;
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
   const grants = [];
@@ -55,7 +60,7 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
       observation: { protocol: 'AG-UI', mode: 'snapshot-and-bounded-tail' }, initiatorKinds: ['owner'],
       ...(approvalDetails && { approvalDetails }), ...(standingGrants && { standingGrants }), ...(decisionReceipts && { decisionReceipts }) });
     if (parts[2] === 'members' && parts[4] === 'grants') {
-      if (request.method === 'GET') return json(200, grantHandler ? await grantHandler() : { apiVersion: '1', memberId,
+      if (request.method === 'GET') return json(200, grantHandler ? await grantHandler() : { apiVersion: '1', memberId: parts[3],
         active: grants.filter(row => row.status === 'active'), inactive: grants.filter(row => row.status !== 'active').slice(-20) });
       const grant = grants.find(row => row.grantId === parts[5]);
       if (!grant) return json(404, { error: 'not_found' });
@@ -64,11 +69,31 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
       if (lost) { response.destroy(); return; }
       return json(200, { apiVersion: '1', grant: revokeHandler ? await revokeHandler(grant) : grant });
     }
-    if (path === '/v1/members') return json(200, { apiVersion: '1', members: [{ memberId, engine: 'codex', profile: 'test', ...(subagents && { subagents }) }], next: null });
+    if (path === '/v1/members' && request.method === 'POST') {
+      if (memberHold) await memberHold;
+      const prior = memberRequests.get(input.requestId);
+      if (prior) return json(201, prior);
+      if (!profiles.includes(input.profile)) return json(409, { error: 'unknown_profile' });
+      const created = { memberId: randomUUID(), engine: input.engine, profile: input.profile, subagents: { mode: 'legacy', targets: [] },
+        ...(input.instructions && { instructions: { bytes: Buffer.byteLength(input.instructions), digest: createHash('sha256').update(input.instructions).digest('hex') } }) };
+      memberRequests.set(input.requestId, created);
+      members.push({ memberId: created.memberId, engine: created.engine, profile: created.profile });
+      return json(201, created);
+    }
+    if (path === '/v1/members') {
+      const start = url.searchParams.get('after') ? Number(url.searchParams.get('after')) : 0;
+      const page = members.slice(start, start + pageSize);
+      return json(200, { apiVersion: '1', members: page.map(member => ({ ...member, ...(subagents && { subagents }) })),
+        next: start + pageSize < members.length ? String(start + pageSize) : null });
+    }
     if (request.method === 'GET' && path === '/v1/conversations') return json(200, { apiVersion: '1',
       conversations: [...conversations.values()].map(row => row.state), next: null });
     if (request.method === 'POST' && path === '/v1/conversations') {
-      conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId, engine: 'codex', profile: 'test',
+      const owner = members.find(row => row.memberId === input.memberId);
+      if (!owner) return json(404, { error: 'not_found' });
+      const existing = conversations.get(input.conversationId);
+      if (existing) return existing.state.memberId === input.memberId ? json(201, { apiVersion: '1', ...existing }) : json(409, { error: 'conflict' });
+      conversations.set(input.conversationId, { state: { conversationId: input.conversationId, memberId: input.memberId, engine: owner.engine, profile: owner.profile,
         phase: 'idle', openStep: null, pendingApprovals: [] }, messages: [], cursor: 0, openTools: {}, openText: null, childText: {} });
       return json(201, { apiVersion: '1', ...conversations.get(input.conversationId) });
     }
@@ -188,10 +213,10 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
     emit(conversationId);
   }
   const origin = `http://127.0.0.1:${server.address().port}`;
-  const extension = () => ({ value: { ...crewProvider({ service: origin, memberId, instance }), installations: [
+  const extension = ({ every = false } = {}) => ({ value: { ...crewProvider({ service: origin, ...(every ? {} : { memberId }), instance }), installations: [
     { id: 'member', instance, service: origin, expectedAuthority: 'remote-provider', authentication: {
       kind: 'secret', revision: 'one', resolve: async () => token } }] } });
-  return { origin, token, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants, handoffs, commitHandoff, admit,
+  return { origin, token, members, holdMembers(promise) { memberHold = promise; }, calls, streams, conversations, receipts, details, emit, end, reply, pend, withdraw, extension, grants, handoffs, commitHandoff, admit,
     replyHandoffs(...replies) { handoffReplies.push(...replies); }, failHandoffLookups(count = 1) { handoffLookupFailures = count; },
     holdHandoffs() { const hold = Promise.withResolvers(); handoffHold = hold.promise; return () => { handoffHold = null; hold.resolve(); }; },
     setGrantHandler(value) { grantHandler = value; }, setRevokeHandler(value) { revokeHandler = value; },
@@ -201,8 +226,8 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
 }
 
 /** Activates the extension the way the host would and connects one backend directly, outside any host. */
-export async function connected(remote) {
-  const { value } = remote.extension(), installation = value.installations[0];
+export async function connected(remote, options) {
+  const { value } = remote.extension(options), installation = value.installations[0];
   let provider, presentation;
   await value.entry.activate({ namespace: 'crew', providers: { add(_id, backend, renderer) { provider = backend; presentation = renderer; } },
     credentials: { use: (_request, action) => action(remote.token) } });

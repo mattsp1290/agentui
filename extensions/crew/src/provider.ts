@@ -80,8 +80,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
     service.search || service.hash) throw new Error('Crew requires a service origin');
   if (options.instance.protocolVersion !== '1') throw new Error('Unsupported Crew protocol version');
   const fixed = options.memberId === undefined ? null : z.uuid().parse(options.memberId), instance = Object.freeze({ ...options.instance });
-  // Until every path derives its member from its own binding, a provider without a fixed member serves discovery only.
-  const memberId = fixed ?? '';
+  const memberOf = (binding: ProviderConversation<string>) => binding.creation.agent.opaqueId;
   {
     const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
       if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
@@ -98,9 +97,11 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
       };
       const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean, submit = false): Promise<ProviderOutcome<T>> =>
         use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error, submit) : uncertain(); } }).catch(() => uncertain());
-      function member(operation: CreationIntent<string>) {
-        if (operation.agent.opaqueId !== memberId || operation.agent.kind !== 'agent' ||
-          canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
+      // Structural only: Crew rejects an unknown member when the call is made.
+      function member(operation: CreationIntent<string>): string {
+        if (!z.uuid().safeParse(operation.agent.opaqueId).success || (fixed !== null && operation.agent.opaqueId !== fixed) ||
+          operation.agent.kind !== 'agent' || canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
+        return operation.agent.opaqueId;
       }
       function predecessor(from: NonNullable<CreationIntent<string>['from']>): string {
         if (from.binding.namespace !== instance.namespace || from.binding.installationId !== instance.installationId) throw new Error('Foreign Crew predecessor');
@@ -125,7 +126,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
       function settle(operation: CreationIntent<string>, source: string, record: HandoffRecord | null): ProviderOutcome<ProviderConversation<string>> {
         if (!record || record.source.conversationId !== source) return uncertain();
         if (record.requestId !== operation.operationId) return refused('continued-elsewhere', 'handed_off');
-        if (record.target.memberId !== memberId) return uncertain();
+        if (record.target.memberId !== operation.agent.opaqueId) return uncertain();
         const evidence = { handoffId: record.handoffId, firstRequestId: record.firstRequestId, carriedTurns: record.carriedTurns,
           omittedTurns: record.omittedTurns, uncertainTurns: record.uncertainTurns, transcriptBytes: record.transcriptBytes };
         return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId, record.firstRequestId), evidence }
@@ -134,7 +135,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
       // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.
       const post = (operation: CreationIntent<string>, source: string): Promise<Posted> => use<Posted>(async client => {
         try {
-          return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId },
+          return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId: member(operation) },
             { signal: AbortSignal.timeout(15000) }) };
         } catch (error) { return { error }; }
       });
@@ -166,7 +167,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
           member(operation);
           return handoff(operation, predecessor(operation.from), fresh);
         }
-        const binding = creation(operation);
+        const binding = creation(operation), memberId = member(operation);
         return call(async client => {
           const remote = fresh ? await client.openConversation({ conversationId: operation.operationId, memberId }, { signal: AbortSignal.timeout(15000) })
             : await client.conversation({ conversationId: operation.operationId }, { signal: AbortSignal.timeout(10000) });
@@ -187,7 +188,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
             const [key, choice] = z.tuple([z.string(), choiceSchema]).parse(JSON.parse(operation.choice.ref.opaqueId));
             if (key !== operation.decision.ref.opaqueId) throw new Error('Foreign Crew choice');
             const decisionId = naming?.(choice) ? z.uuid().parse(operation.operationId).toLowerCase() : null;
-            return decide(client, { conversationId, memberId, requestId, invocationId, approvalId, version, choice, decisionId }, fresh);
+            return decide(client, { conversationId, memberId: memberOf(operation.binding), requestId, invocationId, approvalId, version, choice, decisionId }, fresh);
           }
           const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
           if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
@@ -210,7 +211,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
         const id = binding.authority.binding.opaqueSessionId;
         let current = observations.get(id);
         if (!current) {
-          current = observation(binding, memberId, use, service.origin, after,
+          current = observation(binding, memberOf(binding), use, service.origin, after,
             capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'), supportsStanding);
           observations.set(id, current);
           const captured = current;
@@ -230,7 +231,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
       naming = decisionReceipts(capabilities);
       const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
         validate(binding);
-        const list = await client.listGrants({ memberId }, { signal: AbortSignal.timeout(10000) });
+        const list = await client.listGrants({ memberId: memberOf(binding) }, { signal: AbortSignal.timeout(10000) });
         return list.active.filter(grant => grant.toolName === 'record_work_item' && grant.policyVersion === 1 &&
           (grant.scope === 'member' || grant.conversationId === binding.authority.binding.opaqueSessionId));
       };
@@ -255,6 +256,7 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
             if (!grant || operation.scope !== (grant.scope === 'member' ? 'agent' : 'conversation')) {
               return { kind: 'rejected', reason: 'Refresh permissions and confirm the active permission’s scope.', evidence: null };
             }
+            const memberId = memberOf(operation.binding);
             const { grant: revoked } = await client.revokeGrant({ memberId, grantId }, { signal: AbortSignal.timeout(15000) });
             if (revoked.grantId !== grantId || revoked.memberId !== memberId || revoked.scope !== grant.scope ||
               revoked.conversationId !== grant.conversationId || revoked.status !== 'revoked') return uncertain();

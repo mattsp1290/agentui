@@ -85,3 +85,13 @@ npm test
 `node --test extensions/crew/tests/provider.test.mjs` passed 94 of 94 tests. `npm test` passed 3225 of 3230 tests, with 5 skipped and none failed.
 
 The real run above is the live evidence. It is recorded in the `agentui-osyo` log. No logs from it are committed.
+
+## Extension entry, member list and member creation (WP5)
+
+The installed `extensions/crew` server entry registers one provider per configured installation and the operations `members.list` and `members.create`. Without a fixed member the provider discovers every member, up to 1000.
+
+Controlled evidence: `extensions/crew/tests/operations.test.mjs` runs both operations through the host's real credential authority against the fake Crew service, including a repeated `requestId`, an `unknown_profile` refusal, an unreachable service and a service that never answers. `extensions/crew/tests/contract.test.mjs` validates the fake's member and conversation responses against the vendored client's `openapi.json`. `extensions/crew/tests/provider.test.mjs` covers discovery of several members, an empty owner, the 1000-member bound, and create, send, observe and a permission read on a second member of one installation.
+
+Live qualification against a real Crew service did not happen. No Crew service and owner token were available to the implementing session, so create, list and one chat turn against Crew `origin/main` (`775fd7299d186c2c75d9c59e9285ad66b2631c05`) remain unverified live.
+
+The vendored client stays at `dfe1c288bc4f0e338011389e10ad35656d6e4154`. `git diff dfe1c288bc4f0e338011389e10ad35656d6e4154 775fd7299d186c2c75d9c59e9285ad66b2631c05 -- packages/client` is empty, so a repacked client at `origin/main` would carry the same client source.

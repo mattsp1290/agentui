@@ -44,7 +44,7 @@ test('built desktop host loads the installed Crew extension from a version 2 fil
   assert.ok(native.some(agent => agent.runtime.engine === 'pi'), 'the native Pi agent stays listed');
   assert.equal(metadata.defaultAgentId, native.find(agent => agent.runtime.engine === 'pi').id, 'the native default stays selected');
   assert.deepEqual(provider.map(agent => [agent.namespace, agent.installationId, agent.providerAgentId, agent.label]), [['crew', 'personal', memberId, 'codex · test']]);
-  assert.deepEqual(metadata.extensions, [{ namespace: 'crew', state: 'active', operations: [], installations: [{ installationId: 'personal', status: 'available' }] }]);
+  assert.deepEqual(metadata.extensions, [{ namespace: 'crew', state: 'active', operations: ['members.create', 'members.list'], installations: [{ installationId: 'personal', status: 'available' }] }]);
   assert.equal(JSON.stringify(metadata).includes(token), false);
   assert.equal(JSON.stringify(metadata).includes(remote.origin), false);
   child.kill('SIGTERM');

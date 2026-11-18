@@ -1299,3 +1299,46 @@ test('browser shows a closed Crew conversation without Stop or an update check, 
   assert.equal(remote.calls.filter(call => call.method === 'POST' && call.path.endsWith('/requests')).length, 2);
   assert.equal(remote.calls.filter(call => call.path.endsWith('/cancel')).length, 0);
 });
+
+test('without a fixed member, discovery lists every member, an empty owner is available, and 1001 members give 1000 agents', async t => {
+  const extra = [{ memberId: randomUUID(), engine: 'pi', profile: 'research' }, { memberId: randomUUID(), engine: 'claude', profile: 'review' }];
+  const remote = await service(t, { members: extra, pageSize: 2 });
+  const { backend, installation } = await connected(remote, { every: true });
+  t.after(() => backend.close());
+  assert.deepEqual(await backend.discover(), { kind: 'available', agents: [memberId, ...extra.map(member => member.memberId)].map((id, index) => ({
+    ref: { instance: installation.instance, kind: 'agent', opaqueId: id }, name: ['codex · test', 'pi · research', 'claude · review'][index] })) });
+  const empty = await crewService(t, { token: 'private-crew-test', instance });
+  const emptied = await connected(empty, { every: true });
+  t.after(() => emptied.backend.close());
+  assert.deepEqual(await emptied.backend.discover(), { kind: 'available', agents: [] });
+  const many = await crewService(t, { token: 'private-crew-test', instance, pageSize: 100,
+    members: Array.from({ length: 1001 }, () => ({ memberId: randomUUID(), engine: 'codex', profile: 'test' })) });
+  const crowded = await connected(many, { every: true });
+  t.after(() => crowded.backend.close());
+  const result = await crowded.backend.discover();
+  assert.equal(result.kind, 'available');
+  assert.equal(result.agents.length, 1000);
+  assert.equal(result.agents.at(-1).ref.opaqueId, many.members[999].memberId);
+});
+
+test('a second member in the same installation creates, sends, observes and reads permissions with its own member ID', async t => {
+  const second = randomUUID();
+  const remote = await service(t, { members: [{ memberId: second, engine: 'pi', profile: 'research' }],
+    standingGrants: standingCapability });
+  const f = await fixture(t, [remote.extension({ every: true })]);
+  const agent = (await f.client.metadata()).agents.find(value => value.kind === 'provider' && value.label === 'pi · research');
+  assert.ok(agent);
+  const scope = { hostId: f.running.hostId, conversationId: 'second-member' };
+  await f.client.create(scope, agent.id);
+  const conversationId = [...remote.conversations.keys()][0];
+  assert.equal(remote.conversations.get(conversationId).state.memberId, second);
+  assert.equal(remote.calls.find(call => call.method === 'POST' && call.path === '/v1/conversations').input.memberId, second);
+  await until(() => remote.streams.size === 1);
+  assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
+  remote.reply(conversationId, 'Second member reply');
+  await until(() => JSON.parse(saved(f, 'second-member').conversation.document).domain.messages.at(-1)?.text === 'Second member reply');
+  const permissions = await f.client.conversationPermissions(scope);
+  assert.equal(permissions.kind, 'available');
+  assert.ok(remote.calls.some(call => call.method === 'GET' && call.path === `/v1/members/${second}/grants`));
+  assert.equal(remote.calls.some(call => call.path === `/v1/members/${memberId}/grants`), false);
+});
