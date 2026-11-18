@@ -154,8 +154,8 @@ remain module-owned definitions. The report's write command, `--check` command a
 freshness test all use the same loader. The loader and installation-pin test import
 the built host descriptor, so run `npm run build` before invoking them directly.
 The shared `scripts/lib/agui-fork/identity.mjs` belongs to the measured fork-verifier
-closure. Changing it invalidates the committed receipt until the full fork
-qualification is rerun and its receipt recorded, as described in the vendor README.
+closure. A change to it is qualified by the CI full fork qualification run, whose
+complete log is retained as a workflow artifact, as described in the vendor README.
 Importing body definitions invokes no
 fixture callback or compiler process. `npm test` and `npm run verify` also run the named
 installation-pin test. `protocol:check` verifies retained inputs and report freshness. Generating the
@@ -195,10 +195,10 @@ The original [Mac package record](../qualification/switchboard-macos/58c7922d8fa
 continues to describe its measured source `54065e2` and five focused tests.
 
 The report binds the frozen fork acquisition identity with
-`installedSdk.provenanceSha256`. Later verifier replay records and evidence live in
-the sibling `qualification.json`, which binds back to that identity. Adding a
-qualification record does not change the protocol report. Changes to the frozen
-identity still require matrix regeneration.
+`installedSdk.provenanceSha256`. Retained verifier replay records and evidence live in
+the sibling `qualification.json`, which binds back to that identity. Current
+qualification runs in CI and does not change the protocol report. Changes to the
+frozen identity still require matrix regeneration.
 
 The active [Switchboard pin](../../vendor/switchboard.json) now records the
 observability-capable runtime. The retained canonical fixtures and their original
