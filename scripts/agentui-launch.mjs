@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, realpathSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrapScript, distribution, profileFor, shellQuote } from './agentui-runtime.mjs';
@@ -60,6 +60,36 @@ export function parseLaunchArgs(args, cwd = process.cwd()) {
   return destination
     ? { kind: 'ssh', destination, workspace: workspace ?? null, agent, port, ...common }
     : { kind: 'local', workspace: resolve(cwd, workspace ?? '.'), agent, port, ...common };
+}
+
+/** Names of the environment variables an extension configuration reads its tokens from. */
+function tokenVariables(configuration) {
+  const names = new Set();
+  for (const extension of Array.isArray(configuration?.extensions) ? configuration.extensions : []) {
+    for (const installation of Array.isArray(extension?.installations) ? extension.installations : []) {
+      if (installation?.authentication?.kind === 'environment' && typeof installation.authentication.variable === 'string') names.add(installation.authentication.variable);
+    }
+  }
+  return [...names].sort();
+}
+/**
+ * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when every named token
+ * variable is set; otherwise it warns once per missing name (never a value) and starts with native agents only.
+ * A remote profile never loads bundled server extensions (decision D13).
+ */
+export function extensionArguments({ setupRoot, kind, env = process.env, warn = line => process.stderr.write(`${line}\n`) }) {
+  const file = join(setupRoot, 'extensions.json');
+  if (kind === 'ssh') {
+    if (existsSync(file)) warn('Server extensions run only with a local host. Ignoring extensions.json for this remote session.');
+    return [];
+  }
+  if (!existsSync(file)) return [];
+  let configuration;
+  try { configuration = JSON.parse(readFileSync(file, 'utf8')); }
+  catch { warn('extensions.json is not valid JSON. Starting without server extensions.'); return []; }
+  const missing = tokenVariables(configuration).filter(name => !env[name]?.trim());
+  for (const name of missing) warn(`Set ${name} to load server extensions. Starting without server extensions.`);
+  return missing.length ? [] : ['--extensions', file];
 }
 
 export async function assertPortAvailable(port) {
@@ -235,6 +265,7 @@ export async function launch(options) {
     const origin = `http://127.0.0.1:${port}`;
     let session;
     if (options.kind === 'ssh') {
+      extensionArguments({ setupRoot: join(homedir(), '.local/share/agentui'), kind: 'ssh' });
       const deploymentHash = createHash('sha256').update(await readFile(join(root, 'scripts/agentui-launch-session.mjs')))
         .update('\0').update(await readFile(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
       const release = await deploy(options.destination, setup, `${host.artifactId.slice(0, 16)}-${browser.artifactId.slice(0, 16)}-${deploymentHash}`, lifecycle);
@@ -245,7 +276,7 @@ export async function launch(options) {
     } else {
       const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--workspace', workspace,
         '--data-dir', dataDir, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port),
-        ...(options.agent === 'codex' ? ['--executable', setup.codex] : [])];
+        ...(options.agent === 'codex' ? ['--executable', setup.codex] : []), ...extensionArguments({ setupRoot: setup.root, kind: 'local' })];
       session = command(setup.node, [join(root, 'scripts/agentui-launch-session.mjs'), ...args],
         { ...lifecycle, lease: true, env: { ...process.env, PATH: `${dirname(setup.node)}:${process.env.PATH}` } });
     }

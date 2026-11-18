@@ -46,6 +46,19 @@ To choose a different workspace, pass its absolute path:
 
 Codex is the default agent. It uses the selected host user's existing Codex login. The launcher provisions a private compatible Codex CLI without replacing the global installation. Pi also appears in the harness picker, with setup guidance when its key is missing. If Codex reports missing credentials, sign in to Codex on that machine and launch again.
 
+## Load server extensions on a local host
+
+The launcher reads `~/.local/share/agentui/extensions.json` on a local host. The file uses the [version 2 extension configuration](../architecture/extension-sdk.md#select-server-extensions-with-the-cli); point each `directory` at an in-repo extension such as `extensions/crew` (absolute path).
+Tokens never go in the file. Each installation names an environment variable, for example `AGENTUI_EXTENSION_CREW_TOKEN` or `AGENTUI_EXTENSION_COWORKERS_TOKEN`. Export it in the launcher's shell.
+
+- No file: the host starts with native agents only.
+- Every named variable set and nonblank: the launcher passes `--extensions <file>` to `desktop`.
+- A missing or blank variable: the launcher prints one line naming each missing variable (never a value) and starts without server extensions. The Extensions view then shows `Not configured`.
+- A file that is not valid JSON: one warning, and no server extensions.
+- A remote (`--ssh`) session ignores the file and prints one line that says so. Server extensions and their tokens are supported for a local host only.
+
+Bundled server entries load from the working tree. After rebuilding an extension, restart the launcher: a running host keeps the module it imported.
+
 ## Start a remote workspace
 
 Check that SSH can connect without an interactive password prompt:

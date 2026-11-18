@@ -6,7 +6,8 @@ import { parseArgs } from 'node:util';
 import { build } from 'vite';
 import { readArtifactBytes } from '../apps/host/build/tsc/artifact.js';
 import { prepareCustomizationSources } from './prepare-customization-sources.mjs';
-import { customizationPlugin, desktopPlan } from './local-customization.mjs';
+import { desktopPlan, mergePlans } from './local-customization.mjs';
+import { bundledPlan } from './bundled-extensions.mjs';
 import { qualifyDesktopArtifact } from './desktop-customization-qualifier.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
@@ -24,8 +25,20 @@ try {
     ...(values.subdirectory ? { subdirectory: values.subdirectory } : {}) }, scratchParent: scratch });
   const plan = desktopPlan(prepared.root);
   const stage = join(scratch, 'browser');
-  const result = await build({ root: join(root, 'apps/desktop'), configFile: join(root, 'apps/desktop/vite.config.mjs'), mode: 'browser',
-    plugins: [customizationPlugin(plan)], build: { outDir: stage, emptyOutDir: true } });
+  // The desktop Vite configuration adds the only customization plugin. It reads this external plan from the named file
+  // and merges it with the bundled first-party plan; a namespace in both fails the build.
+  const merged = mergePlans(bundledPlan(root), plan);
+  const planFile = join(scratch, 'external-plan.json');
+  await writeFile(planFile, JSON.stringify(plan));
+  const previousPlan = process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN;
+  process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN = planFile;
+  let result;
+  try {
+    result = await build({ root: join(root, 'apps/desktop'), configFile: join(root, 'apps/desktop/vite.config.mjs'), mode: 'browser',
+      build: { outDir: stage, emptyOutDir: true } });
+  } finally {
+    if (previousPlan === undefined) delete process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN; else process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN = previousPlan;
+  }
   const builds = Array.isArray(result) ? result : [result];
   const outputs = builds.flatMap(item => item.output);
   const paths = new Set(outputs.map(item => item.fileName));
@@ -35,7 +48,7 @@ try {
   await writeFile(join(stage, 'customization-identity.json'), JSON.stringify(plan.identity) + '\n');
   execFileSync(process.execPath, [join(root, 'scripts/artifact-manifest.mjs'), 'browser-development', '--directory', stage], { cwd: root, stdio: 'inherit' });
   const verified = readArtifactBytes(stage, 'browser-development');
-  await qualifyDesktopArtifact({ files: verified.files, namespaces: plan.entries.map(entry => entry.manifest.namespace) });
+  await qualifyDesktopArtifact({ files: verified.files, namespaces: merged.entries.map(entry => entry.manifest.namespace) });
   const final = readArtifactBytes(stage, 'browser-development');
   if (verified.manifest.artifactId !== final.manifest.artifactId) throw new Error('Desktop artifact changed during qualification');
   await rename(stage, out);

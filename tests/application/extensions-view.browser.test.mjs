@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import axe from 'axe-core';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import { customRuntime, draft, extensionFixture, revealRecovery, wait } from './browser-support.mjs';
+import { customRuntime, draft, extensionFixture, fixture, revealRecovery, wait } from './browser-support.mjs';
 import { ledgerExtension, ledgerService } from '../extensions/providers/conformance/ledger.mjs';
 
 /** The ledger conformance provider plus one echo operation. Its namespace is `ledger`, so the UI entry uses it too. */
@@ -142,4 +142,26 @@ test('a throwing workspace fails its row and leaves Chats usable; Restore defaul
     assert.equal(await row(f.page, namespace).locator('.extension-state').textContent(), 'Disabled');
   }
   assert.match(await row(f.page, 'ledger').textContent(), /Enable customizations in Settings/);
+});
+
+test('the real browser build bundles the in-repo Crew workspace, lists it Not configured and loads without CSP violations', { timeout: 60_000 }, async t => {
+  const host = await fixture(t);
+  const context = await host.browser.newContext();
+  const page = await context.newPage();
+  const violations = [], errors = [];
+  await page.exposeFunction('reportCspViolation', violation => { violations.push(violation); });
+  await page.addInitScript(() => document.addEventListener('securitypolicyviolation', event => { void window.reportCspViolation(`${event.effectiveDirective}: ${event.blockedURI}`); }));
+  page.on('pageerror', error => errors.push(error.message));
+  await page.goto(`${host.origin}/browser.html`);
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
+  const crew = row(page, 'crew');
+  await wait(async () => (await crew.locator('.extension-state').textContent().catch(() => '')) === 'Not configured', 'Crew row');
+  assert.match(await crew.textContent(), /Crew/);
+  await page.getByRole('button', { name: 'Open Crew' }).click();
+  await page.locator('[data-extension-workspace="crew"]').waitFor();
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Chats', exact: true }).click();
+  await page.getByRole('button', { name: 'New recorded conversation' }).click();
+  await page.locator('#message').waitFor();
+  assert.deepEqual(violations, []);
+  assert.deepEqual(errors, []);
 });

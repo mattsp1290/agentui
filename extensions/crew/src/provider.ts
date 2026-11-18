@@ -5,7 +5,7 @@ import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
 import { canonicalJson } from '@agentui/contracts';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, ContinuationRefusal, CreationIntent, ProviderCommand, ProviderCommandEffect,
-  ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
+  ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionContext, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';
 import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runOutcome, uncertain } from './provider-model.js';
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
@@ -13,9 +13,12 @@ import { decide, decisionReceipts } from './provider-decisions.js';
 
 export interface CrewProviderOptions {
   readonly service: string;
-  readonly memberId: string;
+  /** Restricts discovery to one member. Without it the provider discovers every member, up to MAX_CREW_MEMBERS. */
+  readonly memberId?: string;
   readonly instance: ProviderInstance<string>;
 }
+/** The host rejects a discovery with more agents than this. */
+export const MAX_CREW_MEMBERS = 1000;
 const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable.' } as const);
 type CrewError = 'credential' | 'forbidden' | 'invalid-request' | 'unsupported' | 'transient';
 function classify(error: unknown): CrewError {
@@ -61,14 +64,25 @@ const redrivable = (error: unknown) => error instanceof CrewUnknownOutcomeError 
   ((error.cause.status === 503 && error.cause.code === 'retry_same_request') || (error.cause.status === 409 && error.cause.code === 'update_rejected'));
 type Posted = { readonly record: HandoffRecord } | { readonly error: unknown };
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
+  const manifest: ExtensionManifest = { namespace: options.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION,
+    entries: [{ kind: 'server', module: './provider.js' }] };
+  const entry: ServerExtensionEntry = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
+    registerCrewProvider(context, 'member', options);
+    return { dispose() {} };
+  } };
+  return { manifest, entry };
+}
+
+/** Registers one Crew provider under the grant `id` of the installation it serves. */
+export function registerCrewProvider(context: ServerExtensionContext, id: string, options: CrewProviderOptions): void {
   const service = new URL(options.service);
   if (!['http:', 'https:'].includes(service.protocol) || service.username || service.password || service.pathname !== '/' ||
     service.search || service.hash) throw new Error('Crew requires a service origin');
   if (options.instance.protocolVersion !== '1') throw new Error('Unsupported Crew protocol version');
-  const memberId = z.uuid().parse(options.memberId), instance = Object.freeze({ ...options.instance });
-  const manifest: ExtensionManifest = { namespace: instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION,
-    entries: [{ kind: 'server', module: './provider.js' }] };
-  const entry: ServerExtensionEntry = { kind: 'server', sdkVersion: EXTENSION_SDK_VERSION, activate(context) {
+  const fixed = options.memberId === undefined ? null : z.uuid().parse(options.memberId), instance = Object.freeze({ ...options.instance });
+  // Until every path derives its member from its own binding, a provider without a fixed member serves discovery only.
+  const memberId = fixed ?? '';
+  {
     const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
       if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
       if (!request.credential || canonicalJson(request.instance) !== canonicalJson(instance) ||
@@ -260,12 +274,21 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
             try {
               let after: string | undefined;
               const seen = new Set<string>();
+              const agents: { ref: { instance: ProviderInstance<string>; kind: 'agent'; opaqueId: string }; name: string }[] = [];
               do {
                 const page = await client.listMembers(after ? { after } : {}, { signal: AbortSignal.timeout(10000) });
-                const member = page.members.find(member => member.memberId === memberId);
-                if (member) return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: memberId },
-                  name: `Crew · ${member.engine} · ${member.profile}` }] } as const;
-                if (!page.next) return null;
+                if (fixed !== null) {
+                  const member = page.members.find(member => member.memberId === fixed);
+                  if (member) return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: fixed },
+                    name: `Crew · ${member.engine} · ${member.profile}` }] } as const;
+                } else {
+                  for (const member of page.members) {
+                    if (agents.length >= MAX_CREW_MEMBERS) break;
+                    agents.push({ ref: { instance, kind: 'agent', opaqueId: member.memberId }, name: `${member.engine} · ${member.profile}` });
+                  }
+                  if (agents.length >= MAX_CREW_MEMBERS) return { kind: 'available', agents } as const;
+                }
+                if (!page.next) return fixed === null ? { kind: 'available', agents } as const : null;
                 if (seen.has(page.next) || seen.size >= 100) return { kind: 'version-unsupported', reason: 'Crew returned invalid member pagination.' } as const;
                 seen.add(page.next); after = page.next;
               } while (after);
@@ -292,8 +315,6 @@ export function crewProvider(options: CrewProviderOptions): { manifest: Extensio
       };
       return { kind: 'connected', backend };
     } };
-    context.providers.add('member', provider, presentation(instance));
-    return { dispose() {} };
-  } };
-  return { manifest, entry };
+    context.providers.add(id, provider, presentation(instance));
+  }
 }

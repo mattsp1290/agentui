@@ -178,7 +178,7 @@ UI refresh does not invoke server replacement.
 
 `serve --config ./agents.json --extensions ./extensions.json --data-dir ./state` selects server extensions alongside configured native agents.
 `serve --extensions ./extensions.json --data-dir ./state` runs providers without native agents or recorded playback.
-`--extensions` is valid only for `serve`.
+`--extensions` is valid for `serve` and `desktop`. With `desktop`, the configured native default stays selected and provider agents are listed beside the native agents.
 With both files, the configured native default remains selected. Without native configuration, the default is the ready provider with the smallest stable ID in the current catalog, independent of discovery order.
 Empty, changing, or failed catalogs remain readable with no default. Creation is disabled while saved conversations and their original agent identities remain available.
 Omitting `--extensions` preserves the existing native-agent behavior.
@@ -191,14 +191,14 @@ The version 2 extension configuration has this shape:
 	"version": 2,
 	"ownership": "transient",
 	"extensions": [{
-		"directory": "./installed/crew-v1",
+		"directory": "/absolute/path/to/agentui/extensions/crew",
 		"installations": [{
-			"id": "service",
+			"id": "personal",
 			"instance": {
-				"namespace": "example-crew",
+				"namespace": "crew",
 				"installationId": "personal",
 				"generation": "1",
-				"protocolVersion": "crew-v2"
+				"protocolVersion": "1"
 			},
 			"service": "https://crew.example",
 			"expectedAuthority": "remote-provider",
@@ -220,12 +220,12 @@ To select a [built server artifact](../customization/server-artifacts.md), use a
 	"directory": "./artifacts/crew-v1",
 	"artifactId": "<64-character artifact ID printed by the builder>",
 	"installations": [{
-		"id": "service",
+		"id": "personal",
 		"instance": {
-			"namespace": "example-crew",
+			"namespace": "crew",
 			"installationId": "personal",
 			"generation": "1",
-			"protocolVersion": "crew-v2"
+			"protocolVersion": "1"
 		},
 		"service": "https://crew.example",
 		"expectedAuthority": "remote-provider",
@@ -241,10 +241,10 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 
 ```json
 {
-	"name": "@example/crew",
+	"name": "agentui-extension-crew",
 	"agentui": {
 		"extension": {
-			"namespace": "example-crew",
+			"namespace": "crew",
 			"trust": "full",
 			"sdkVersion": "0.13.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
@@ -511,7 +511,7 @@ Duplicate local names and duplicate selected namespaces are rejected.
 Platform belongs to the activation generation, not individual tools.
 A mixed desktop and iOS generation list is intentionally filtered to the pin's platform.
 The `ag-ui` metadata key is reserved.
-Contributed provider instance namespaces must match their validated extension manifest namespace, such as `example-crew`.
+Contributed provider instance namespaces must match their validated extension manifest namespace, such as `crew`.
 
 Parameters use a bounded JSON copy and an object-root inline draft-07 JSON Schema.
 Schema-position `$ref`, `definitions`, `$id`, unknown keywords, nested or non-draft-07 `$schema`, and unsupported formats are rejected.
