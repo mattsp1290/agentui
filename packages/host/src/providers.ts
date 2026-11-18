@@ -567,15 +567,18 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
   }
   /**
    * The grant an operation for `installationId` runs with. Grants may share an installation ID and differ in generation
-   * or protocol version; then the call runs with the one available grant, and with none when zero or several are
-   * available. Metadata reports an installation's status from the same choice, so it never shows one available that
-   * every call would refuse.
+   * or protocol version; then the call runs with the one available grant. When zero or several are available the
+   * installation is configured but has no grant to run with, so the call fails `unavailable`; `unknown-installation` is
+   * only for an ID no grant has. Metadata reports an installation's status from the same choice, so it never shows one
+   * available that every call would refuse.
    */
-  function operationInstallation(installations: readonly ServerExtensionInstallation[], installationId: string): ServerExtensionInstallation | undefined {
+  function operationInstallation(installations: readonly ServerExtensionInstallation[], installationId: string):
+    ServerExtensionInstallation | 'unknown-installation' | 'unavailable' {
     const matches = installations.filter(installation => installation.instance.installationId === installationId);
-    if (matches.length === 1) return matches[0];
+    if (matches.length === 0) return 'unknown-installation';
+    if (matches.length === 1) return matches[0]!;
     const available = matches.filter(installation => installationStatus(installation) === 'available');
-    return available.length === 1 ? available[0] : undefined;
+    return available.length === 1 ? available[0]! : 'unavailable';
   }
   /**
    * Waits out a discovery that is already running, since it may predate an operation's change, then runs a fresh one.
@@ -602,7 +605,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     const namespace = contributed.get(request.namespace);
     if (!namespace) return failedCall('unknown-extension');
     const installation = operationInstallation(namespace.installations, request.installationId);
-    if (!installation) return failedCall('unknown-installation');
+    if (typeof installation === 'string') return failedCall(installation);
     const operation = namespace.operations.get(request.operation);
     if (!operation) return failedCall('unknown-operation');
     const { input } = request;
@@ -743,7 +746,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
         const status = new Map<string, 'available' | 'unavailable'>();
         for (const id of new Set(value.installations.map(installation => installation.instance.installationId))) {
           const grant = operationInstallation(value.installations, id);
-          status.set(id, grant ? installationStatus(grant) : 'unavailable');
+          status.set(id, typeof grant === 'string' ? 'unavailable' : installationStatus(grant));
         }
         return { namespace, state: 'active' as const, operations: [...value.operations.keys()].sort(),
           installations: [...status].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([installationId, available]) => ({ installationId, status: available })) };

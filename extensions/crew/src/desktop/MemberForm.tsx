@@ -14,12 +14,17 @@ const REFUSALS: Readonly<Record<string, string>> = {
 const UNKNOWN = new Set(['unreachable', 'unknown-outcome']);
 const UNCONFIRMED = 'Crew may already have created this member. Retry to confirm it; the retry sends the same request and cannot create a second member. Cancel stops retrying; Crew may still have created the member, so check the member list.';
 const NO_ID = 'Crew created the member but did not return its ID. Find it in the member list.';
-/** Host failures that prove the request never reached the operation, so Crew cannot have created the member. */
-const NOT_SENT: Readonly<Record<string, string>> = {
-  'unknown-extension': 'AgentUI could not reach the Crew extension. Refresh and try again.',
-  'unknown-installation': 'This Crew installation is no longer configured. Refresh and try again.',
-  'unknown-operation': 'This Crew installation cannot add members. Refresh and try again.',
-  'too-large': 'The instructions are too long for Crew. Shorten them and try again.',
+/**
+ * Host failures that prove this attempt never reached the operation. They settle a first attempt: Crew cannot have created
+ * the member. They do not settle a retry, because the earlier attempt with the same requestId may still have created it.
+ * Every other failure, including a host `unavailable` (it also answers an admitted call aborted mid-flight), leaves the
+ * outcome unknown.
+ */
+const NOT_SENT: Readonly<Record<string, { readonly first: string; readonly retry: string }>> = {
+  'unknown-extension': { first: 'AgentUI could not reach the Crew extension. Refresh and try again.', retry: 'AgentUI could not reach the Crew extension' },
+  'unknown-installation': { first: 'This Crew installation is no longer configured. Refresh and try again.', retry: 'this Crew installation is no longer configured' },
+  'unknown-operation': { first: 'This Crew installation cannot add members. Refresh and try again.', retry: 'this Crew installation cannot add members' },
+  'too-large': { first: 'The instructions are too long for Crew. Shorten them and try again.', retry: 'the request was too large for Crew' },
 };
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -46,6 +51,7 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
   async function submit(event: FormEvent) {
     event.preventDefault();
     if (pending || !profile.trim() || tooLong) return;
+    const retrying = unconfirmed !== null;
     const requestId = unconfirmed ?? crypto.randomUUID();
     setPending(true); setMessage(''); setUnconfirmed(requestId);
     const result = await call(installationId, 'members.create', { requestId, engine, profile: profile.trim(), ...(instructions.trim() ? { instructions } : {}) });
@@ -61,11 +67,13 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
     if (!active.current) return;
     setPending(false);
     const notSent = result.kind === 'failed' ? NOT_SENT[result.cause] : undefined;
-    if (notSent) {
+    if (notSent && !retrying) {
       setUnconfirmed(null);
-      setMessage(notSent);
+      setMessage(notSent.first);
       return;
     }
+    // A retry that was not sent leaves the earlier outcome unknown: keep its requestId and the locked fields.
+    if (notSent) { setMessage(`The retry was not sent: ${notSent.retry}. ${UNCONFIRMED}`); return; }
     if (result.kind === 'refused' && !UNKNOWN.has(result.code)) {
       setUnconfirmed(null);
       setMessage(REFUSALS[result.code] ?? REFUSALS.rejected!);

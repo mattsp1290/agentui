@@ -141,6 +141,46 @@ test('a member request the host refused before it reached Crew unlocks the form 
   assert.equal(f.remote.members.length, 2);
 });
 
+test('a retry the host refused before it reached Crew keeps the original request and the locked fields', { timeout: 90_000 }, async t => {
+  const f = await open(t);
+  const row = f.page.locator('[data-extension="crew"]');
+  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === 'Ready', 'Crew ready');
+  await f.page.getByRole('button', { name: 'Open Crew' }).click();
+  const sidebar = f.page.getByRole('navigation', { name: 'Crew members' });
+  await sidebar.getByText('pi · research').waitFor();
+  await sidebar.getByRole('button', { name: 'Add member', exact: true }).first().click();
+  const form = f.page.getByRole('form', { name: 'Add member' });
+  // The first attempt times out with an unknown outcome, the retry finds the installation gone, the third reaches Crew.
+  const answers = [{ kind: 'failed', cause: 'timeout' }, { kind: 'failed', cause: 'unknown-installation' }];
+  const sent = [];
+  await f.page.route('**/api/v1', async route => {
+    const body = route.request().postDataJSON();
+    if (body?.op !== 'extension-call' || body.operation !== 'members.create') return route.continue();
+    sent.push(body.input.requestId);
+    const answer = answers.shift();
+    if (!answer) return route.continue();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, value: answer }) });
+  });
+  await form.getByRole('textbox', { name: 'Profile' }).fill('research');
+  await form.getByRole('button', { name: 'Create member' }).click();
+  await form.getByRole('alert').getByText('Crew may already have created this member').waitFor();
+  await form.getByRole('button', { name: 'Retry' }).click();
+  await form.getByRole('alert').getByText('The retry was not sent: this Crew installation is no longer configured.', { exact: false }).waitFor();
+  const alert = await form.getByRole('alert').textContent();
+  assert.match(alert, /^The retry was not sent: this Crew installation is no longer configured\. Crew may already have created this member\./, 'the earlier outcome is still unknown');
+  assert.doesNotMatch(alert, /Refresh and try again/);
+  for (const field of [form.getByRole('textbox', { name: 'Profile' }), form.getByRole('combobox', { name: 'Engine' }), form.getByRole('textbox', { name: 'Instructions' })]) {
+    assert.equal(await field.isDisabled(), true, 'fields stay locked while the earlier outcome is unknown');
+  }
+  assert.equal(await form.getByRole('button', { name: 'Create member' }).count(), 0, 'not a new request');
+  await form.getByRole('button', { name: 'Retry' }).click();
+  await wait(() => sent.length === 3, 'third attempt sent');
+  assert.equal(sent[1], sent[0], 'the retry reused the original requestId');
+  assert.equal(sent[2], sent[0], 'the next attempt sent the original requestId');
+  await wait(async () => !(await form.isVisible()), 'the form closes once Crew confirms');
+  assert.equal(f.remote.members.length, 3);
+});
+
 test('a create request that settles after Cancel neither closes a newly opened member form nor changes the selection', { timeout: 90_000 }, async t => {
   const f = await open(t);
   const row = f.page.locator('[data-extension="crew"]');
@@ -196,11 +236,16 @@ test('a conversation started from the composer agent control shows its member ev
   assert.deepEqual(f.violations, []);
 });
 
-test('with two Crew installations the workspace shows only the first available one', { timeout: 90_000 }, async t => {
+/**
+ * Two Crew installations, `personal` then `second`. `shared` gives both one member ID. `prepare(page)` runs before the
+ * page loads, for routes.
+ */
+async function twoInstallations(t, { shared = false, prepare } = {}) {
   const otherToken = 'PRIVATE_CREW_BROWSER_TOKEN_20';
   const otherInstance = { ...instance, installationId: 'second' };
-  const personal = await crewService(t, { memberId: randomUUID(), token, instance });
-  const other = await crewService(t, { token: otherToken, instance: otherInstance, members: [{ memberId: randomUUID(), engine: 'claude', profile: 'other' }] });
+  const personalId = randomUUID();
+  const personal = await crewService(t, { memberId: personalId, token, instance });
+  const other = await crewService(t, { token: otherToken, instance: otherInstance, members: [{ memberId: shared ? personalId : randomUUID(), engine: 'claude', profile: 'other' }] });
   const grant = (id, value, remote, secret) => ({ id, instance: value, service: remote.origin, expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: '1', resolve: async () => secret } });
   const host = await extensionFixture(t, { extensions: [{ kind: 'installed', directory, manifest,
@@ -208,6 +253,7 @@ test('with two Crew installations the workspace shows only the first available o
   const context = await host.browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
+  await prepare?.(page);
   await page.goto(`${host.origin}/browser.html`);
   await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
   const row = page.locator('[data-extension="crew"]');
@@ -218,9 +264,77 @@ test('with two Crew installations the workspace shows only the first available o
   await page.getByRole('button', { name: 'Open Crew' }).click();
   const sidebar = page.getByRole('navigation', { name: 'Crew members' });
   await sidebar.getByText('codex · test').waitFor();
+  return { page, other, sidebar, workspace: page.locator('[data-extension-workspace="crew"]') };
+}
+/** Starts a conversation in the shown installation, then one with `label` from the composer's agent control. */
+async function startFromComposer(workspace, label) {
+  await workspace.getByRole('button', { name: 'Start conversation' }).click();
+  await workspace.locator('#message').waitFor();
+  await workspace.getByRole('button', { name: /^Model,/ }).click();
+  await workspace.getByRole('button', { name: new RegExp(`^Start new chat with .*${label}`) }).click();
+}
+
+test('with two Crew installations the workspace shows the first available one, or the one of a conversation started from the composer', { timeout: 90_000 }, async t => {
+  const { page, sidebar, workspace } = await twoInstallations(t);
   assert.equal(await sidebar.locator('header strong').textContent(), 'personal');
   assert.deepEqual((await sidebar.locator('.crew-member-label').allTextContents()).filter(label => label.includes('other')), [], 'no member of the second installation');
   assert.equal(await sidebar.locator('.crew-member-row:not(.crew-add-row)').count(), 1);
+
+  // The composer offers every agent of the namespace; a conversation with the second installation's member shows there.
+  await workspace.getByRole('button', { name: 'Start conversation' }).click();
+  await workspace.locator('#message').waitFor();
+  // A member clicked in the first installation must not leave a frame of the second without its member.
+  await sidebar.getByRole('button', { name: /codex · test/ }).click();
+  await page.evaluate(() => {
+    window.sawNoMembers = false;
+    new MutationObserver(() => { if (document.body.textContent.includes('This Crew owner has no members yet.')) window.sawNoMembers = true; })
+      .observe(document.body, { subtree: true, childList: true, characterData: true });
+  });
+  await workspace.getByRole('button', { name: /^Model,/ }).click();
+  await workspace.getByRole('button', { name: /^Start new chat with .*claude · other/ }).click();
+  await wait(async () => (await sidebar.locator('header strong').textContent()) === 'second', 'the second installation is shown');
+  await wait(async () => (await sidebar.locator('.crew-member-row[aria-current="true"]').textContent()).includes('claude · other'), 'its member is current');
+  await workspace.locator('#message').waitFor();
+  assert.equal(await workspace.locator('.crew-empty-state').count(), 0, 'the new conversation is shown, not an empty state');
+  assert.equal(await page.locator('#message').count(), 1);
+  assert.equal(await page.evaluate(() => window.sawNoMembers), false, 'no frame showed the second installation without its member');
+});
+
+test('member details listed for one Crew installation never show for a member of another with the same ID', { timeout: 90_000 }, async t => {
+  // The second installation's members.list fails, so only a stale map could supply its member's details.
+  const { sidebar, workspace } = await twoInstallations(t, { shared: true, prepare: page => page.route('**/api/v1', async route => {
+    const body = route.request().postDataJSON();
+    if (body?.op !== 'extension-call' || body.operation !== 'members.list' || body.installationId !== 'second') return route.continue();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, value: { kind: 'failed', cause: 'unavailable' } }) });
+  }) });
+  await workspace.getByRole('button', { name: 'Details', exact: true }).click();
+  const panel = workspace.getByRole('complementary', { name: 'Member details' });
+  await wait(async () => (await panel.locator('dd').nth(1).textContent()) === 'codex', 'the first installation\'s details loaded');
+  await startFromComposer(workspace, 'claude · other');
+  await wait(async () => (await sidebar.locator('header strong').textContent()) === 'second', 'the second installation is shown');
+  await wait(async () => (await workspace.locator('.crew-header-title').textContent()) === 'claude · other', 'its member is shown');
+  assert.equal(await panel.locator('dd').nth(1).textContent(), 'Unknown', 'no engine from the other installation');
+  assert.equal(await panel.locator('dd').nth(2).textContent(), 'Unknown', 'no profile from the other installation');
+  assert.equal(await workspace.locator('.crew-header-meta').count(), 0);
+});
+
+test('a conversation of an unavailable Crew installation does not hide the available one', { timeout: 90_000 }, async t => {
+  // The host reports `second` unavailable; its agent stays listed, so the composer can still start a conversation with it.
+  const { other, sidebar, workspace } = await twoInstallations(t, { prepare: page => page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const extension of body.value?.extensions ?? []) {
+      extension.installations = extension.installations.map(item => item.installationId === 'second' ? { ...item, status: 'unavailable' } : item);
+    }
+    await route.fulfill({ response, json: body });
+  }) });
+  await startFromComposer(workspace, 'claude · other');
+  await wait(() => other.conversations.size === 1, 'the conversation was created in the second installation');
+  await wait(async () => (await workspace.locator('.crew-empty-state').count()) === 1, 'the available installation is shown');
+  assert.equal(await sidebar.locator('header strong').textContent(), 'personal');
+  assert.equal(await workspace.getByRole('region', { name: 'Crew unavailable' }).count(), 0);
+  assert.deepEqual(await sidebar.locator('.crew-member-label').allTextContents(), ['codex · test']);
 });
 
 test('without a Crew installation the workspace shows setup guidance and calls nothing but the host', { timeout: 60_000 }, async t => {

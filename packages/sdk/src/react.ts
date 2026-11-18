@@ -59,7 +59,11 @@ export interface WorkspaceViewProps {
   readonly installations: readonly ExtensionInstallationStatus[];
   readonly agents: readonly WorkspaceAgent[];
   readonly conversations: {
-    /** Loaded pages in catalog order. The selected conversation is always included, after the pages when it is not on one yet. */
+    /**
+     * Loaded pages in catalog order. When the selected conversation's agent has a `providerAgentId`, the selected
+     * conversation is always included, after the pages when it is not on one yet. Otherwise it appears only if a loaded
+     * page lists it.
+     */
     readonly entries: readonly WorkspaceConversation[];
     /** The last page length equalled the page limit, so more may exist. Order is catalog order, not recency. */
     readonly hasMore: boolean;

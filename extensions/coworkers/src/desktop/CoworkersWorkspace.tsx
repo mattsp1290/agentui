@@ -16,20 +16,34 @@ const PALETTE = {
 } as const;
 const WORKSPACE_ACCESS: Readonly<Record<string, string>> = { disabled: 'No workspace', read_only: 'Read-only workspace', read_write: 'Read and write workspace' };
 type Coworker = WorkspaceAgent & { readonly providerAgentId: string };
+const NO_DETAILS: ReadonlyMap<string, CoworkerSummary> = new Map();
 
 export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const theme = useTheme();
-  const installation = props.installations.find(item => item.status === 'available') ?? props.installations[0];
+  // The composer's agent control offers every agent of the namespace, so the selected chat may belong to any
+  // installation: show that one while it is available. Otherwise show the first available installation, then the first.
+  const selectedInstallation = props.selected
+    ? props.conversations.entries.find(entry => entry.scope.conversationId === props.selected?.conversationId)?.provider.installationId
+    : undefined;
+  const installation = props.installations.find(item => item.installationId === selectedInstallation && item.status === 'available')
+    ?? props.installations.find(item => item.status === 'available') ?? props.installations[0];
+  const installationId = installation?.installationId;
   const available = installation?.status === 'available';
   // The view shows one installation: its coworkers, chats and operations. Coworker IDs are only unique within one.
   const coworkers = props.agents.filter((agent): agent is Coworker => agent.providerAgentId !== null && agent.installationId === installation?.installationId);
   const entries = props.conversations.entries.filter(entry => entry.provider.installationId === installation?.installationId);
-  const [details, setDetails] = useState<ReadonlyMap<string, CoworkerSummary>>(new Map());
-  const [management, setManagement] = useState(false);
-  const [truncated, setTruncated] = useState(false);
+  // The coworkers.list result and the coworker filter belong to one installation; another installation's never show.
+  const [listed, setListed] = useState<{ readonly installationId: string; readonly details: ReadonlyMap<string, CoworkerSummary>;
+    readonly management: boolean; readonly truncated: boolean } | null>(null);
+  const own = listed && listed.installationId === installationId ? listed : null;
+  const details = own?.details ?? NO_DETAILS;
+  const management = own?.management ?? false;
+  const truncated = own?.truncated ?? false;
   const [tab, setTab] = useState<'chat' | 'coworkers'>('chat');
   const [pill, setPill] = useState<'chat' | 'about'>('chat');
-  const [filter, setFilter] = useState<string | null>(null);
+  const [filtered, setFiltered] = useState<{ readonly installationId: string | undefined; readonly coworkerId: string | null }>({ installationId, coworkerId: null });
+  const filter = filtered.installationId === installationId ? filtered.coworkerId : null;
+  const setFilter = (coworkerId: string | null) => setFiltered({ installationId, coworkerId });
   const [narrowPane, setNarrowPane] = useState<'list' | 'conversation'>('list');
   // The narrow layout moves to the conversation only once `selected` changes: open and create resolve without one on failure.
   // Navigating elsewhere drops the wait, so a later unrelated selection does not move the pane.
@@ -41,17 +55,16 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   }, [awaiting, selectedKey]);
   const key = coworkers.map(item => item.providerAgentId).join(',');
   useEffect(() => {
-    if (!available || !installation) return;
+    if (!available || !installationId) return;
     let current = true;
-    void props.call(installation.installationId, 'coworkers.list', {}).then(result => {
+    void props.call(installationId, 'coworkers.list', {}).then(result => {
       if (!current || result.kind !== 'ok') return;
       const output = coworkersListOutput(result.output);
-      setDetails(new Map((output?.coworkers ?? []).map(item => [item.coworkerId, item])));
-      setManagement(output?.management === true);
-      setTruncated(output?.truncated === true);
+      setListed({ installationId, details: new Map((output?.coworkers ?? []).map(item => [item.coworkerId, item])),
+        management: output?.management === true, truncated: output?.truncated === true });
     });
     return () => { current = false; };
-  }, [available, installation?.installationId, key]);
+  }, [available, installationId, key]);
 
   if (!installation) {
     return <div className="coworkers-workspace coworkers-setup" role="region" aria-label="Coworkers setup">

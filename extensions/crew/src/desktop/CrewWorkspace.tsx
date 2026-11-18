@@ -15,6 +15,7 @@ const SIDEBAR = {
   dark: { surface: '#19171d', canvas: '#19171d', raised: '#2c2830', text: '#e8e8e8', muted: '#b9b7bd', border: '#34313a', controlBorder: '#8e8a93', accent: '#1d9bd1', onAccent: '#0b1a24', focus: '#e8e8e8' },
 } as const;
 type MemberDetail = { readonly engine: string; readonly profile: string };
+const NO_DETAILS: ReadonlyMap<string, MemberDetail> = new Map();
 
 function status(agent: WorkspaceAgent): 'ready' | 'unavailable' {
   return agent.availability.kind === 'ready' ? 'ready' : 'unavailable';
@@ -22,19 +23,35 @@ function status(agent: WorkspaceAgent): 'ready' | 'unavailable' {
 
 export function CrewWorkspace(props: WorkspaceViewProps) {
   const theme = useTheme();
-  const installation = props.installations.find(item => item.status === 'available') ?? props.installations[0];
+  // The composer's agent control offers every agent of the namespace, so the selected conversation may belong to any
+  // installation: show that one while it is available. Otherwise show the first available installation, then the first.
+  const selectedInstallation = props.selected
+    ? props.conversations.entries.find(entry => entry.scope.conversationId === props.selected?.conversationId)?.provider.installationId
+    : undefined;
+  const installation = props.installations.find(item => item.installationId === selectedInstallation && item.status === 'available')
+    ?? props.installations.find(item => item.status === 'available') ?? props.installations[0];
+  const installationId = installation?.installationId;
   // The view shows one installation: its members, conversations and operations. Member IDs are only unique within one.
   const members = props.agents.filter((agent): agent is WorkspaceAgent & { readonly providerAgentId: string } =>
     agent.providerAgentId !== null && agent.installationId === installation?.installationId);
   const entries = useMemo(() => props.conversations.entries.filter(entry => entry.provider.installationId === installation?.installationId),
     [props.conversations.entries, installation?.installationId]);
-  const [details, setDetails] = useState<ReadonlyMap<string, MemberDetail>>(new Map());
-  const [chosen, setChosen] = useState<string | null>(null);
+  // Member details belong to the installation they were listed for; another installation's never show.
+  const [listed, setListed] = useState<{ readonly installationId: string; readonly details: ReadonlyMap<string, MemberDetail> } | null>(null);
+  const details = listed && listed.installationId === installationId ? listed.details : NO_DETAILS;
   const selectedKey = props.selected ? `${props.selected.hostId}/${props.selected.conversationId}` : null;
-  // A new selection (opened here, started from the composer's agent control, or opened in Chats) shows its own member,
-  // so an earlier member click must not hide it. Clicking a member row after that chooses again.
-  useEffect(() => { setChosen(null); }, [selectedKey]);
-  const [adding, setAdding] = useState(false);
+  // A new selection (opened here, started from the composer's agent control, or opened in Chats) or installation shows its
+  // own member, so an earlier member click must not hide it. Clicking a member row after that chooses again.
+  const choiceKey = `${installationId ?? ''}|${selectedKey ?? ''}`;
+  const [choice, setChoice] = useState<{ readonly key: string; readonly memberId: string } | null>(null);
+  const chosen = choice?.key === choiceKey ? choice.memberId : null;
+  const setChosen = (memberId: string) => setChoice({ key: choiceKey, memberId });
+  // The form adds a member to the installation it opened for. It closes when the shown installation changes, so an
+  // unconfirmed request is never retried against another installation.
+  const [addingFor, setAddingFor] = useState<string | null>(null);
+  const adding = addingFor !== null && addingFor === installationId;
+  const setAdding = (open: boolean) => setAddingFor(open ? installationId ?? null : null);
+  useEffect(() => { setAddingFor(current => current === installationId ? current : null); }, [installationId]);
   const [panel, setPanel] = useState(false);
   const [drawer, setDrawer] = useState(false);
   const [notice, setNotice] = useState('');
@@ -44,16 +61,16 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   const available = installation?.status === 'available';
   const memberKey = members.map(member => member.providerAgentId).join(',');
   useEffect(() => {
-    if (!available || !installation) return;
+    if (!available || !installationId) return;
     let current = true;
-    void props.call(installation.installationId, 'members.list', {}).then(result => {
+    void props.call(installationId, 'members.list', {}).then(result => {
       if (!current || result.kind !== 'ok') return;
-      const listed = membersListOutput(result.output)?.members ?? [];
-      setDetails(new Map(listed.map(member => [member.memberId, { engine: member.engine, profile: member.profile }])));
+      const members = membersListOutput(result.output)?.members ?? [];
+      setListed({ installationId, details: new Map(members.map(member => [member.memberId, { engine: member.engine, profile: member.profile }])) });
     });
     return () => { current = false; };
     // Re-read details when the member set changes.
-  }, [available, installation?.installationId, memberKey]);
+  }, [available, installationId, memberKey]);
   const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
   const activeMember = chosen ?? selectedEntry?.provider.providerAgentId ?? members[0]?.providerAgentId ?? null;
   const member = members.find(item => item.providerAgentId === activeMember) ?? null;
@@ -128,7 +145,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
       {notice && <p role="alert" className="crew-notice">{notice}</p>}
       <div className="crew-body">
         <div className="crew-conversation">
-          {adding ? <MemberForm installationId={installation.installationId} call={props.call} refresh={props.refresh}
+          {adding ? <MemberForm key={installation.installationId} installationId={installation.installationId} call={props.call} refresh={props.refresh}
               onCreated={memberId => { setAdding(false); setChosen(memberId); }} onCancel={() => setAdding(false)} />
             : !member ? <div className="crew-empty-state"><p>This Crew owner has no members yet.</p>
                 <button type="button" onClick={() => setAdding(true)}>Add member</button></div>

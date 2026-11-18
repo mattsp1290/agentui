@@ -197,7 +197,8 @@ for (const navigation of narrowNavigations) {
   });
 }
 
-test('with two Coworkers installations the workspace shows only the first available one, even for a shared coworker ID', { timeout: 90_000 }, async t => {
+/** Two Coworkers installations, `team` then `zeta`, both with a coworker `ada`. `prepare(page)` runs before load, for routes. */
+async function twoInstallations(t, prepare) {
   const team = await coworkersService(t);
   const other = await coworkersService(t, { token: 'other-coworkers-token', coworkers: [
     { coworkerId: 'ada', name: 'Other Ada', role: 'Elsewhere', workspace: 'disabled', slack: false, instructions: 'Other.' },
@@ -207,17 +208,74 @@ test('with two Coworkers installations the workspace shows only the first availa
   entry.installations.push({ id: 'zeta', instance: otherInstance, service: other.origin, expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: '1', resolve: async () => other.token } });
   const host = await extensionFixture(t, { extensions: [entry] });
-  const view = await page(t, host);
+  const context = await host.browser.newContext({ viewport: { width: 1280, height: 800 } });
+  const view = { page: await context.newPage() };
+  view.page.setDefaultTimeout(20_000);
+  await prepare?.(view.page);
+  await view.page.goto(`${host.origin}/browser.html`);
+  view.rail = view.page.getByRole('navigation', { name: 'Workspace views' });
   await view.rail.getByRole('button', { name: 'Extensions', exact: true }).click();
   await wait(async () => (await view.page.evaluate(() => fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ op: 'metadata' }) })
     .then(response => response.json()).then(body => body.value.agents.filter(agent => agent.namespace === 'coworkers').length))) === 4, 'both installations discovered');
   await view.page.getByRole('button', { name: 'Open Coworkers' }).click();
   const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
+  return { view, other, workspace, directory: workspace.getByRole('region', { name: 'Coworker directory' }) };
+}
+
+test('with two Coworkers installations the workspace shows the first available one, even for a shared coworker ID, or the one of a chat started from the composer', { timeout: 90_000 }, async t => {
+  // The second installation's coworkers.list fails, so only a stale result could supply its coworkers' details.
+  const { view, workspace, directory } = await twoInstallations(t, page => page.route('**/api/v1', async route => {
+    const body = route.request().postDataJSON();
+    if (body?.op !== 'extension-call' || body.operation !== 'coworkers.list' || body.installationId !== 'zeta') return route.continue();
+    await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ ok: true, value: { kind: 'failed', cause: 'unavailable' } }) });
+  }));
   await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
-  const directory = workspace.getByRole('region', { name: 'Coworker directory' });
   await directory.getByText('Grace').waitFor();
   assert.deepEqual((await directory.locator('.coworkers-card strong').allTextContents()).sort(), ['Ada', 'Grace']);
+  await directory.getByText('Researcher').waitFor();
   assert.equal(await directory.getByText('Researcher').count(), 1, 'Ada keeps the details of her own installation');
+
+  // The composer offers every agent of the namespace; a chat with the second installation's coworker shows there.
+  await directory.getByRole('button', { name: 'Chat with Grace' }).click();
+  await workspace.locator('#message').waitFor();
+  await workspace.getByRole('button', { name: /^Model,/ }).click();
+  await workspace.getByRole('button', { name: /^Start new chat with .*Linus/ }).click();
+  await wait(async () => (await workspace.locator('.coworkers-header h2').textContent().catch(() => '')) === 'Linus', 'the second installation\'s coworker is shown');
+  await workspace.locator('#message').waitFor();
+  assert.equal(await workspace.locator('.coworkers-empty-state').count(), 0, 'the new chat is shown, not an empty state');
+  assert.equal(await view.page.locator('#message').count(), 1);
+  // The first installation's coworker filter does not carry over: the Linus chat is listed and no filter is offered.
+  const chats = workspace.getByRole('region', { name: 'Chats' });
+  await chats.locator('.coworkers-chat-card', { hasText: 'Linus' }).waitFor();
+  assert.equal(await chats.locator('.coworkers-filter').count(), 0, 'no filter from the other installation');
+  // Nor do its coworker details: Other Ada shares Ada's ID, but her role is unknown here.
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+  await directory.getByText('Other Ada').waitFor();
+  assert.equal(await directory.getByText('Researcher').count(), 0, 'no details from the other installation');
+  assert.equal(await directory.locator('.coworkers-role').count(), 0);
+});
+
+test('a chat of an unavailable Coworkers installation does not hide the available one', { timeout: 90_000 }, async t => {
+  // The host reports `zeta` unavailable; its agents stay listed, so the composer can still start a chat with one.
+  const { other, workspace, directory } = await twoInstallations(t, page => page.route('**/api/v1', async route => {
+    if (route.request().postDataJSON()?.op !== 'metadata') return route.continue();
+    const response = await route.fetch();
+    const body = await response.json();
+    for (const extension of body.value?.extensions ?? []) {
+      extension.installations = extension.installations.map(item => item.installationId === 'zeta' ? { ...item, status: 'unavailable' } : item);
+    }
+    await route.fulfill({ response, json: body });
+  }));
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+  await directory.getByRole('button', { name: 'Chat with Grace' }).click();
+  await workspace.locator('#message').waitFor();
+  await workspace.getByRole('button', { name: /^Model,/ }).click();
+  await workspace.getByRole('button', { name: /^Start new chat with .*Linus/ }).click();
+  await wait(() => other.conversations.size === 1, 'the chat was created in the second installation');
+  await workspace.getByText('No chat with Grace is open.').waitFor();
+  assert.equal(await workspace.getByRole('region', { name: 'Coworkers unavailable' }).count(), 0);
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+  assert.deepEqual((await directory.locator('.coworkers-card strong').allTextContents()).sort(), ['Ada', 'Grace']);
 });
 
 test('without a Coworkers installation the workspace names the configuration and token variable', { timeout: 60_000 }, async t => {

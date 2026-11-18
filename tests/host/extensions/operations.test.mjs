@@ -259,6 +259,25 @@ test('calls and metadata choose the same grant when two grants share an installa
   assert.deepEqual(generations, ['1']);
 });
 
+test('a configured installation with several available grants is unavailable to calls and metadata, not unknown', async t => {
+  const a = await service(t, ['first']), b = await service(t, ['second']);
+  let ran = 0;
+  const ext = extension({ services: [a, b], operations: { echo: async ({ input }) => { ran += 1; return { kind: 'ok', output: input }; } } });
+  // Both grants are the same installation and both services answer, so no single grant can be chosen.
+  ext.value.installations[1] = { ...ext.value.installations[1], instance: { ...ext.value.installations[0].instance, generation: '2' } };
+  const f = await open(t, [ext]);
+  const metadata = await f.client.metadata();
+  // Both grants' discoveries succeeded, so each lists its agent: the ambiguity is several available grants, not none.
+  // (Agent availability is about conversation creation, which this fixture does not support.)
+  assert.ok(a.requests.includes('/agents') && b.requests.includes('/agents'));
+  assert.deepEqual(metadata.agents.filter(agent => agent.namespace === namespace)
+    .map(agent => `${agent.installationId} ${agent.label}`).sort(), ['install-0 first', 'install-0 second']);
+  assert.deepEqual(metadata.extensions[0].installations, [{ installationId: 'install-0', status: 'unavailable' }]);
+  assert.deepEqual(await call(f.client, 'echo', 7), { kind: 'failed', cause: 'unavailable' });
+  assert.deepEqual(await call(f.client, 'echo', 7, 'other'), { kind: 'failed', cause: 'unknown-installation' });
+  assert.equal(ran, 0);
+});
+
 test('a failed generation reports failed descriptors and a closed host refuses calls as unavailable', async t => {
   const a = await service(t, []);
   const good = extension({ services: [a], operations: { echo: async ({ input }) => ({ kind: 'ok', output: input }) } });
