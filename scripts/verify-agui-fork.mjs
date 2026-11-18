@@ -5,10 +5,12 @@ import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { CONSUMER_RECORD_SCOPE, OFFLINE_RECORD_SCOPE, consumerScripts, measureVerifierSources, verifyFork, writeConsumerScripts } from './lib/agui-fork.mjs';
+import { OFFLINE_RECORD_SCOPE, consumerScripts, measureVerifierSources, verifyFork, writeConsumerScripts } from './lib/agui-fork.mjs';
 import { digest } from './lib/agui-fork/bytes.mjs';
 import { verifyConsumerLock, verifyInstalled } from './lib/agui-fork/consumer.mjs';
 import { tarVersion } from './lib/agui-fork/archives.mjs';
+
+const CONSUMER_RECORD_SCOPE = 'controlled package consumer; no native provider or Apple qualification';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--offline'), 'Usage: node scripts/verify-agui-fork.mjs [--offline]');

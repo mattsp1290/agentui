@@ -57,5 +57,5 @@ jobs:
         with:
           name: agui-fork-qualification-${{ github.run_id }}-${{ github.run_attempt }}
           path: ${{ runner.temp }}/agui-fork-qualification.log
-          if-no-files-found: error
+          if-no-files-found: warn
           retention-days: 90

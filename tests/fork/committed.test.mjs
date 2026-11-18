@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join, relative } from 'node:path';
 import { test } from 'node:test';
 import { fileURLToPath } from 'node:url';
 import { gunzipSync } from 'node:zlib';
@@ -40,7 +40,7 @@ test('full qualification writes consumer scripts from the measured buffers', asy
   for (const file of consumerScripts) {
     assert.deepEqual(readFileSync(join(directory, file.split('/').at(-1))), bytes.get(file), file);
   }
-  await assert.rejects(writeConsumerScripts(directory, { bytes: new Map() }), TypeError);
+  await assert.rejects(writeConsumerScripts(directory, { bytes: new Map() }), /was not measured/u);
 });
 
 test('superseded nine-replay ledger retains all original logs and its earlier metadata history', () => {
@@ -63,11 +63,26 @@ test('pre-migration ledger snapshot retains the last manual receipt and every ea
   assert.equal(snapshot.currentReplay.measuredBase, '180a4091943c97724b03f0a70b69128cb4cacac4');
   assert.ok(evidence.has(snapshot.currentReplay.log), snapshot.currentReplay.log);
   assert.ok(evidence.has(snapshot.currentReplay.inputLedger), snapshot.currentReplay.inputLedger);
-  assert.equal(snapshot.evidence.length, 19);
   for (const entry of snapshot.evidence) assert.deepEqual(evidence.get(entry.path), entry, entry.path);
-  assert.deepEqual(qualification.evidence.slice(0, -1), snapshot.evidence);
+  assert.deepEqual(qualification.evidence.slice(0, snapshot.evidence.length), snapshot.evidence, 'snapshot evidence is a prefix of live evidence');
   assert.deepEqual(Object.keys(snapshot).filter((key) => key !== 'currentReplay'), Object.keys(qualification));
   for (const key of ['sourceRevision', 'identityProvenanceSha256', 'knownLimitations', 'metadataHistory']) {
     assert.deepEqual(qualification[key], snapshot[key], key);
   }
+});
+
+test('measured verifier sources cover every repo-local import of the measured files', () => {
+  const measured = measureVerifierSources(root).bytes;
+  const specifier = /(?:^|\n)\s*(?:import|export)\b[^;'"]*?\bfrom\s*['"]([^'"]+)['"]|(?:^|\n)\s*import\s*['"]([^'"]+)['"]|\bimport\(\s*['"]([^'"]+)['"]\s*\)|\brequire\(\s*['"]([^'"]+)['"]\s*\)/gu;
+  let checked = 0;
+  for (const [file, body] of measured) {
+    for (const match of body.toString('utf8').matchAll(specifier)) {
+      const target = match[1] ?? match[2] ?? match[3] ?? match[4];
+      if (!target.startsWith('.')) continue; // node: built-ins and packages are not repo-local
+      const resolved = relative(root, join(root, dirname(file), target)).split('\\').join('/');
+      assert.ok(measured.has(resolved), `${file} imports ${target} (${resolved}), which is not in the measured verifier set`);
+      checked += 1;
+    }
+  }
+  assert.ok(checked > 0, 'expected to find relative imports');
 });

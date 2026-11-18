@@ -28,11 +28,9 @@ function evidenceFixture(context) {
   };
 }
 
-test('verified evidence returns raw bytes without parsing historical report formats', (context) => {
+test('verified evidence passes without parsing historical report formats', (context) => {
   const { fork, qualification } = evidenceFixture(context);
-  const raws = verifyEvidence(fork, qualification);
-  assert.ok(raws instanceof Map);
-  assert.deepEqual(raws.get('evidence/replay.gz'), historicalLog);
+  assert.doesNotThrow(() => verifyEvidence(fork, qualification));
 });
 
 for (const [label, mutate, error] of [

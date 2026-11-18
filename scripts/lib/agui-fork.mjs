@@ -10,7 +10,6 @@ import { verifyLedger } from './agui-fork/ledger.mjs';
 const aguiPackages = ['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => `@ag-ui/${name}`);
 
 export const OFFLINE_RECORD_SCOPE = 'retained archives, evidence, source lock, fixtures and frozen consumer lock; no install';
-export const CONSUMER_RECORD_SCOPE = 'controlled package consumer; no native provider or Apple qualification';
 
 export const consumerScripts = ['all-imports.mjs', 'codex-esm.mjs', 'codex-commonjs.cjs']
   .map((name) => `tests/dependencies/ag-ui/${name}`);
@@ -24,7 +23,10 @@ export function measureVerifierSources(root) {
 }
 
 export async function writeConsumerScripts(directory, sources) {
-  for (const file of consumerScripts) await writeFile(join(directory, basename(file)), sources.bytes.get(file));
+  for (const file of consumerScripts) {
+    assert.ok(sources.bytes.has(file), `consumer script ${file} was not measured`);
+    await writeFile(join(directory, basename(file)), sources.bytes.get(file));
+  }
 }
 
 function countByteLines(body) {

@@ -39,5 +39,4 @@ export function verifyEvidence({ folder, metadata }, qualification) {
       assert.ok(raws.has(limitation[field]), `${limitation[field]}: limitation ${field} must be verified evidence`);
     }
   }
-  return raws;
 }
