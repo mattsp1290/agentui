@@ -25,7 +25,7 @@ test('metadata represents empty and unavailable provider catalogs without synthe
 });
 
 test('extension-only compatibility skips native runtime while retaining every other dimension and wire sixteen', () => {
-  assert.equal(SERVICE_WIRE_VERSION, 16);
+  assert.equal(SERVICE_WIRE_VERSION, 17);
   assert.deepEqual(checkCompatibility(SOLO_CLIENT_COMPATIBILITY, compatibility), { kind: 'compatible' });
   assert.deepEqual(checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, supportedWireVersions: [6] }, compatibility).issues.map(issue => issue.dimension), ['wire']);
   const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, expectedArtifactId: 'expected' }, {

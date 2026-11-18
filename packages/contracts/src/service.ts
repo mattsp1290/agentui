@@ -18,6 +18,8 @@ import type { Transcript, TranscriptEvent } from './conversation.js';
 import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_DEPTH, JSON_MAX_NODES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
 export * from './customization.js';
+import { CUSTOMIZATION_OPS, parseCustomizationReply, parseCustomizationRequest, parseCustomizationStatus, parseCustomizationWorkerRequests } from './customization.js';
+import type { CustomizationMutation, CustomizationMutationOp, CustomizationReply, CustomizationRequest, CustomizationStatus, CustomizationWorkerRequest } from './customization.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -162,7 +164,8 @@ export type ServiceRequest =
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string }
-  | ({ readonly op: 'extension-call' } & ExtensionCallRequest);
+  | ({ readonly op: 'extension-call' } & ExtensionCallRequest)
+  | CustomizationRequest;
 /** Narrows `catalog` to one namespace or one provider agent, read from the installation stored with each conversation. */
 export type CatalogFilter =
   | { readonly kind: 'namespace'; readonly namespace: string }
@@ -217,7 +220,8 @@ export interface ConversationSearchPage {
   readonly items: readonly ConversationSearchEntry[];
   readonly after: string | null;
 }
-export interface ServiceValueMap {
+export type CustomizationMutationValues = { readonly [K in CustomizationMutationOp]: CustomizationReply };
+export interface ServiceValueMap extends CustomizationMutationValues {
   readonly 'output-list': OutputListValue;
   readonly 'output-read': OutputReadValue;
   readonly 'frontend-binding': FrontendBinding;
@@ -239,6 +243,9 @@ export interface ServiceValueMap {
   readonly pull: ServicePull;
   readonly close: null;
   readonly 'extension-call': ExtensionCallValue;
+  readonly 'customization-status': CustomizationStatus;
+  readonly 'customization-worker-pull': { readonly requests: readonly CustomizationWorkerRequest[] };
+  readonly 'customization-worker-push': { readonly ok: true };
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
@@ -267,6 +274,10 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   abandon(scope: ConversationScope, id: string): Promise<Receipt | null>;
   /** Calls a server extension operation once. No retry and no outbox entry: a lost reply leaves the outcome unknown. */
   extensionCall(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
+  /** Reads the connected customization repository's state as the host last heard it from the launcher's worker. */
+  customizationStatus(): Promise<CustomizationStatus>;
+  /** Queues one customization mutation. The reply only says whether the host accepted it; the outcome arrives in status `results`. No retry. */
+  customization(mutation: CustomizationMutation): Promise<CustomizationReply>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }
 function nil(value: unknown): null {
@@ -338,7 +349,9 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       const { op: _op, ...fields } = input;
       return { op: 'extension-call', ...parseExtensionCallRequest(fields) };
     }
-    default: throw new Error('Unknown service operation');
+    default:
+      if (CUSTOMIZATION_OPS.includes(input.op as typeof CUSTOMIZATION_OPS[number])) return parseCustomizationRequest(input);
+      throw new Error('Unknown service operation');
   }
 }
 export function parseCatalogFilter(value: unknown): CatalogFilter {
@@ -526,6 +539,16 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
   'extension-call': parseExtensionCallValue,
+  'customization-status': parseCustomizationStatus,
+  'customization-connect': parseCustomizationReply,
+  'customization-disconnect': parseCustomizationReply,
+  'customization-sync': parseCustomizationReply,
+  'customization-toggle': parseCustomizationReply,
+  'customization-settings': parseCustomizationReply,
+  'customization-rebuild': parseCustomizationReply,
+  'customization-apply': parseCustomizationReply,
+  'customization-worker-pull': value => ({ requests: parseCustomizationWorkerRequests(value) }),
+  'customization-worker-push'(value) { record(value, ['ok']); if ((value as { ok?: unknown }).ok !== true) throw new Error('Invalid worker push reply'); return { ok: true }; },
 };
 export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);

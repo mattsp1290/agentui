@@ -187,3 +187,25 @@ test('catalog filters and provider identities round-trip; unknown filter kinds a
   assert.deepEqual(parseServiceResponse({ op: 'search' }, { ok: true, value: search }).value, search);
   assert.throws(() => parseServiceResponse({ op: 'search' }, { ok: true, value: { items: [{ scope, preview: null, excerpt: null }], after: null } }));
 });
+
+test('customization client methods send one request each and parse status and replies strictly', async () => {
+  const { createServiceConnection } = await import('../../packages/client/dist/service-engine.js');
+  const { transcriptProjection } = await import('@agentui/contracts/conversation');
+  const { parseCustomizationStatus } = await import('@agentui/contracts/service');
+  const status = { support: 'supported', connection: { location: '/srv/custom', branch: 'customization', subdirectory: '' }, head: 'a'.repeat(40),
+    extensions: [{ key: 'extensions/a', enabled: false, namespace: 'alpha' }], settings: { version: 1, appearance: 'dark', showExtensionViews: true }, build: null,
+    running: { buildKey: null, omittedGrants: [], stale: false }, pending: null, results: [{ requestId: '0f8fad5b-d9cb-469f-a165-70867728950e', outcome: 'conflict' }], missingTokens: ['AGENTUI_EXTENSION_ALPHA_TOKEN'] };
+  assert.deepEqual(parseCustomizationStatus(status), status);
+  for (const broken of [{ ...status, token: 'x' }, { ...status, missingTokens: ['HOME'] }, { ...status, results: [{ requestId: 'x', outcome: 'ok' }] },
+    { ...status, results: [{ requestId: '0f8fad5b-d9cb-469f-a165-70867728950e', outcome: 'stderr: fatal' }] }]) assert.throws(() => parseCustomizationStatus(broken));
+  const bodies = [];
+  let reply = { ok: true, value: status };
+  const connection = createServiceConnection(async body => { bodies.push(JSON.parse(body)); return new Response(JSON.stringify(reply), { headers: { 'content-type': 'application/json' } }); }, transcriptProjection);
+  assert.deepEqual(await connection.customizationStatus(), status);
+  reply = { ok: true, value: { kind: 'refused', cause: 'busy' } };
+  const requestId = '0f8fad5b-d9cb-469f-a165-70867728950e';
+  assert.deepEqual(await connection.customization({ op: 'customization-sync', requestId }), { kind: 'refused', cause: 'busy' });
+  reply = { ok: true, value: { kind: 'refused', cause: 'git exited 128' } };
+  await assert.rejects(connection.customization({ op: 'customization-sync', requestId }));
+  assert.deepEqual(bodies.map(body => body.op), ['customization-status', 'customization-sync', 'customization-sync']);
+});

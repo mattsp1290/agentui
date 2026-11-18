@@ -73,3 +73,12 @@ fn extension_requests_share_the_typescript_golden_cases() {
         }
     }
 }
+
+#[test]
+fn customization_worker_operations_stay_off_the_native_allowlist() {
+    let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    invalid(json!({"op":"customization-worker-pull", "workerId":id, "waitSeconds":1}));
+    invalid(json!({"op":"customization-worker-push", "workerId":id, "status":{
+        "connection":null, "head":null, "extensions":[], "settings":null, "build":null, "presentTokens":[]}, "results":[]}));
+    valid(json!({"op":"customization-status"}));
+}

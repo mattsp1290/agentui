@@ -207,6 +207,137 @@ enum CatalogFilter {
     },
 }
 #[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+struct RequestId(String);
+impl TryFrom<String> for RequestId {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        let bytes = value.as_bytes();
+        let valid = bytes.len() == 36
+            && bytes.iter().enumerate().all(|(index, byte)| match index {
+                8 | 13 | 18 | 23 => *byte == b'-',
+                _ => byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'),
+            });
+        if !valid {
+            return Err(INVALID);
+        }
+        Ok(Self(value))
+    }
+}
+fn lower_hex(value: &str, lengths: &[usize]) -> bool {
+    lengths.contains(&value.len())
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+#[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+struct Head(String);
+impl TryFrom<String> for Head {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if !lower_hex(&value, &[40, 64]) {
+            return Err(INVALID);
+        }
+        Ok(Self(value))
+    }
+}
+#[derive(Deserialize, Serialize)]
+#[serde(try_from = "String")]
+struct Digest(String);
+impl TryFrom<String> for Digest {
+    type Error = &'static str;
+    fn try_from(value: String) -> Result<Self, Self::Error> {
+        if !lower_hex(&value, &[64]) {
+            return Err(INVALID);
+        }
+        Ok(Self(value))
+    }
+}
+/// Bounded customization text: no control characters, at most `max` UTF-8 bytes, nonempty unless `empty`.
+fn customization_text(value: &str, max: usize, empty: bool) -> bool {
+    (empty || !value.is_empty())
+        && value.len() <= max
+        && !value.chars().any(|c| c < ' ' || c == '\u{7f}')
+}
+fn settings_text(value: &str, max: usize) -> bool {
+    customization_text(value, max, false) && !value.chars().all(js_space)
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum Appearance {
+    System,
+    Light,
+    Dark,
+}
+#[derive(Deserialize, Serialize)]
+#[serde(
+    tag = "kind",
+    rename_all = "lowercase",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum DefaultAgent {
+    Native {
+        harness: String,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        model: Option<String>,
+    },
+    Provider {
+        namespace: String,
+        installation_id: String,
+        provider_agent_id: String,
+    },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct Settings {
+    version: Count,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    appearance: Option<Appearance>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    show_extension_views: Option<bool>,
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "present"
+    )]
+    default_agent: Option<DefaultAgent>,
+}
+impl Settings {
+    fn valid(&self) -> bool {
+        self.version.0 == 1
+            && match &self.default_agent {
+                None => true,
+                Some(DefaultAgent::Native { harness, model }) => {
+                    settings_text(harness, 64)
+                        && model.as_ref().is_none_or(|model| settings_text(model, 128))
+                }
+                Some(DefaultAgent::Provider {
+                    namespace,
+                    installation_id,
+                    provider_agent_id,
+                }) => {
+                    settings_text(namespace, 64)
+                        && settings_text(installation_id, 1024)
+                        && settings_text(provider_agent_id, 1024)
+                }
+            }
+    }
+}
+#[derive(Deserialize, Serialize)]
 #[serde(
     tag = "op",
     rename_all = "kebab-case",
@@ -306,6 +437,39 @@ enum Request {
         installation_id: Id,
         operation: String,
         input: Value,
+    },
+    // The eight client customization operations. The two worker operations stay off this allowlist: only the
+    // launcher uses them, over HTTP.
+    CustomizationStatus {},
+    CustomizationConnect {
+        request_id: RequestId,
+        location: String,
+        branch: String,
+        subdirectory: String,
+    },
+    CustomizationDisconnect {
+        request_id: RequestId,
+    },
+    CustomizationSync {
+        request_id: RequestId,
+    },
+    CustomizationToggle {
+        request_id: RequestId,
+        key: String,
+        enabled: bool,
+        expected_head: Head,
+    },
+    CustomizationSettings {
+        request_id: RequestId,
+        settings: Settings,
+        expected_head: Head,
+    },
+    CustomizationRebuild {
+        request_id: RequestId,
+    },
+    CustomizationApply {
+        request_id: RequestId,
+        build_key: Digest,
     },
 }
 fn extension_name(value: &str, max: usize, dot: bool) -> bool {
@@ -517,7 +681,40 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
             }
             None
         }
-        Request::Metadata {} | Request::Pull { .. } | Request::Close { .. } => None,
+        Request::CustomizationConnect {
+            location,
+            branch,
+            subdirectory,
+            ..
+        } => {
+            if !customization_text(location, 2048, false)
+                || !customization_text(branch, 200, false)
+                || !customization_text(subdirectory, 1024, true)
+            {
+                return Err(INVALID);
+            }
+            None
+        }
+        Request::CustomizationToggle { key, .. } => {
+            if !customization_text(key, 3200, false) {
+                return Err(INVALID);
+            }
+            None
+        }
+        Request::CustomizationSettings { settings, .. } => {
+            if !settings.valid() || encoded_bytes(settings)? > 16_384 {
+                return Err(INVALID);
+            }
+            None
+        }
+        Request::Metadata {}
+        | Request::Pull { .. }
+        | Request::Close { .. }
+        | Request::CustomizationStatus {}
+        | Request::CustomizationDisconnect { .. }
+        | Request::CustomizationSync { .. }
+        | Request::CustomizationRebuild { .. }
+        | Request::CustomizationApply { .. } => None,
     };
     if scope.is_some_and(|scope| scope.host_id.0 != host_id) {
         return Err("Conversation belongs to another host");

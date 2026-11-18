@@ -203,6 +203,8 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       if (call.kind === 'failed') return call;
       return request({ op: 'extension-call', ...call.request });
     },
+    customizationStatus: () => request({ op: 'customization-status' }),
+    customization: mutation => request<typeof mutation.op>(mutation),
     conversation(value) {
       const scope = parseScope(value);
       return { scope,

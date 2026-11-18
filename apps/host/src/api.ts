@@ -13,6 +13,8 @@ import { searchConversations } from './conversation-search.js';
 import { conversationProvider, describeAgent, describeProviderAgent, describeUnavailableProvider } from './agents.js';
 import type { InstalledAgent } from './agents.js';
 import { canonicalJson } from '@agentui/contracts';
+import { createCustomizationRelay } from './customization-relay.js';
+import type { CustomizationRelay } from './customization-relay.js';
 
 type ApiAgentSelection =
   | { readonly kind: 'native'; readonly agents: readonly InstalledAgent[]; readonly defaultInstallation: Installation }
@@ -27,7 +29,10 @@ export function createApi(options: {
     describe(): readonly ExtensionDescriptor[];
     call(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
   };
+  /** The connected-repository relay. Without one, status reports `worker-offline` and every mutation is refused. */
+  readonly customization?: CustomizationRelay;
 }) {
+  const customization = options.customization ?? createCustomizationRelay();
   const { host, feeds } = options;
   const selection = options.agentSelection;
   const configured = selection.kind === 'native' ? selection.agents : [];
@@ -43,6 +48,9 @@ export function createApi(options: {
       case 'submit': return request.command.scope;
       case 'output-list': case 'output-read': case 'frontend-binding': case 'image-upload': case 'image-read': case 'conversation-permissions': case 'provider-observation': case 'continuation': case 'conversation-agent': case 'create': case 'receipt': case 'reconcile': case 'abandon': case 'watch': return request.scope;
       case 'pull': case 'close': case 'metadata': case 'catalog': case 'search': case 'extension-call': return null;
+      case 'customization-status': case 'customization-connect': case 'customization-disconnect': case 'customization-sync':
+      case 'customization-toggle': case 'customization-settings': case 'customization-rebuild': case 'customization-apply':
+      case 'customization-worker-pull': case 'customization-worker-push': return null;
     }
   }
   function providerCatalog() {
@@ -163,6 +171,11 @@ export function createApi(options: {
         const { op: _op, ...call } = request;
         return options.extensions.call(call).catch((): ExtensionCallValue => ({ kind: 'failed', cause: 'unavailable' }));
       }
+      case 'customization-status': return customization.status();
+      case 'customization-connect': case 'customization-disconnect': case 'customization-sync': case 'customization-toggle':
+      case 'customization-settings': case 'customization-rebuild': case 'customization-apply': return customization.mutate(request);
+      case 'customization-worker-pull': return customization.pull(request.workerId, request.waitSeconds);
+      case 'customization-worker-push': return customization.push(request.workerId, request.status, request.results);
     }
   }
   return async (principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> => {

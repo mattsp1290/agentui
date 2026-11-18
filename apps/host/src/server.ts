@@ -22,6 +22,8 @@ import type { AccessDatabase } from './access-database.js';
 import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
+import { createCustomizationRelay } from './customization-relay.js';
+import type { CustomizationRelay } from './customization-relay.js';
 import { FeedRegistry } from './feed-registry.js';
 import { serviceEndpoint } from './service-endpoint.js';
 import { startControl, unavailableSelectionControl } from './control.js';
@@ -103,6 +105,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const providers = createServerExtensions(options.operationDeadlineMs === undefined ? {} : { operationDeadlineMs: options.operationDeadlineMs });
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let refresh: RefreshController | undefined;
+  let customization: CustomizationRelay | undefined;
   let resolveFatal!: () => void;
   const fatal = new Promise<void>(resolve => { resolveFatal = resolve; });
   let closePromise: Promise<void> | undefined;
@@ -113,6 +116,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     closePromise = Promise.resolve().then(() => shutdown);
     const shutdown = (async () => {
       closing = true;
+      customization?.close();
       feeds?.dispose();
       const drainResults = await Promise.allSettled([
         refresh?.close(),
@@ -316,7 +320,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
-    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing,
+    customization = createCustomizationRelay({ dataDirectory: owner.directory });
+    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing, customization,
       extensions: { describe: providers.extensions, call: providers.callOperation } });
     const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
     const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
