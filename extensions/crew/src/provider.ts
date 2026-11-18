@@ -63,6 +63,10 @@ function handoffRefusal(error: unknown): ReturnType<typeof refused> | null {
 const redrivable = (error: unknown) => error instanceof CrewUnknownOutcomeError && error.cause instanceof CrewHttpError &&
   ((error.cause.status === 503 && error.cause.code === 'retry_same_request') || (error.cause.status === 409 && error.cause.code === 'update_rejected'));
 type Posted = { readonly record: HandoffRecord } | { readonly error: unknown };
+/**
+ * The standalone example and conformance entry: one installation granted as `member`, optionally fixed to one member.
+ * The installed extension uses `server.ts`, which registers every configured installation and the member operations.
+ */
 export function crewProvider(options: CrewProviderOptions): { manifest: ExtensionManifest; entry: ServerExtensionEntry } {
   const manifest: ExtensionManifest = { namespace: options.instance.namespace, trust: 'full', sdkVersion: EXTENSION_SDK_VERSION,
     entries: [{ kind: 'server', module: './provider.js' }] };

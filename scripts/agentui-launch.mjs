@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { bootstrapScript, distribution, profileFor, shellQuote } from './agentui-runtime.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+/** The local setup root, matching `root="$HOME/.local/share/agentui"` in agentui-runtime.mjs. */
+const LOCAL_SETUP_ROOT = join(homedir(), '.local/share/agentui');
 const sshOptions = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
 const usage = `Usage: ./agentui [--ssh USER@HOST] [--workspace PATH] [--agent codex|pi] [--port PORT]
                  [--no-open] [--skip-build]
@@ -282,7 +284,8 @@ export async function launch(options) {
     const origin = `http://127.0.0.1:${port}`;
     let session;
     if (options.kind === 'ssh') {
-      extensionArguments({ setupRoot: join(homedir(), '.local/share/agentui'), kind: 'ssh' });
+      // A remote host never loads server extensions; this only warns when a local extensions.json would be ignored.
+      void extensionArguments({ setupRoot: LOCAL_SETUP_ROOT, kind: 'ssh' });
       const deploymentHash = createHash('sha256').update(await readFile(join(root, 'scripts/agentui-launch-session.mjs')))
         .update('\0').update(await readFile(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
       const release = await deploy(options.destination, setup, `${host.artifactId.slice(0, 16)}-${browser.artifactId.slice(0, 16)}-${deploymentHash}`, lifecycle);

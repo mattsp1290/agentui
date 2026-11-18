@@ -2,7 +2,7 @@ import { z } from 'zod';
 import { CrewClient, CrewHttpError, CrewTransportError, CrewUnknownOutcomeError } from '@birbcrew/client';
 import type { ExtensionOperation, ExtensionOperationCall, ExtensionOperationResult, ServerProviderCredentials } from '@agentui/sdk';
 import { eachMemberPage, MAX_CREW_MEMBERS } from './members.js';
-import type { MemberSummary, MembersListOutput } from './operation-output.js';
+import type { MemberSummary, MembersCreateOutput, MembersListOutput } from './operation-output.js';
 
 /** Each operation's own deadline, below the host's 15-second reply deadline. */
 const OPERATION_TIMEOUT_MS = 10_000;
@@ -85,7 +85,8 @@ export function crewOperations(credentials: ServerProviderCredentials): Readonly
       if (!parsed.success) return refused('invalid-input');
       const { requestId, engine, profile, instructions } = parsed.data;
       const created = await client.createMember({ requestId, engine, profile, ...(instructions === undefined ? {} : { instructions }) }, { signal });
-      return { kind: 'ok', output: { member: { memberId: created.memberId, engine: created.engine, profile: created.profile } }, agentsChanged: true };
+      const output: MembersCreateOutput = { member: { memberId: created.memberId, engine: created.engine, profile: created.profile } };
+      return { kind: 'ok', output, agentsChanged: true };
     }),
   };
 }

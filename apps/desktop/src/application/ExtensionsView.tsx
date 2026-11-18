@@ -4,7 +4,7 @@ import { sameScope } from '@agentui/contracts';
 import type { AgentDescriptor, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
 import { classifyExtensionCall } from '@agentui/contracts/service';
 import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
-import { CustomizationBoundary, type DesktopCustomization, type NamespaceActivation } from './DesktopCustomizations.js';
+import { CustomizationBoundary, workspaceTranscript, type ContentLayoutSelection, type DesktopCustomization, type NamespaceActivation, type TranscriptSelection } from './DesktopCustomizations.js';
 import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
 
 export type ExtensionRowState = 'Ready' | 'Not configured' | 'Unavailable' | 'No view' | 'Failed' | 'Disabled' | 'Loading';
@@ -28,6 +28,34 @@ const UNAVAILABLE = 'The provider service is offline or unreachable. AgentUI che
 
 export function namespaceAgents(metadata: ServiceMetadata | null, namespace: string): readonly ProviderAgent[] {
   return (metadata?.agents ?? []).filter((agent): agent is ProviderAgent => 'kind' in agent && agent.namespace === namespace);
+}
+
+export interface ConversationSlots {
+  /** The workspace row that renders the active conversation, or null when the Chats view does. */
+  readonly workspace: OpenableRow | null;
+  readonly transcript: TranscriptSelection;
+  readonly contentLayout: ContentLayoutSelection;
+  readonly modules: ReactNode;
+  readonly composerAgents: readonly AgentDescriptor[];
+}
+/**
+ * Where the active conversation renders, and which customization slots apply there.
+ * At most one conversation view is mounted. The Chats view keeps its (hidden) view while Settings is open, and gives it
+ * up only while the open workspace of the active conversation's namespace renders it. `row` is only set while that
+ * workspace is open, so a Failed, Loading or Disabled row never takes the view without rendering one.
+ */
+export function conversationSlots({ row, active, metadata, custom, modules, agents }: {
+  readonly row: OpenableRow | null; readonly active: OpenConversation | null; readonly metadata: ServiceMetadata | null;
+  readonly custom: { readonly transcript: TranscriptSelection; readonly contentLayout: ContentLayoutSelection };
+  readonly modules: ReactNode; readonly agents: readonly AgentDescriptor[];
+}): ConversationSlots {
+  const workspace = row && active && 'kind' in active.agent && active.agent.namespace === row.namespace ? row : null;
+  if (!workspace) return { workspace: null, transcript: custom.transcript, contentLayout: custom.contentLayout, modules, composerAgents: agents };
+  return {
+    workspace,
+    transcript: workspace.workspace.transcript ? workspaceTranscript(workspace.owner, workspace.workspace.transcript) : custom.transcript,
+    contentLayout: { kind: 'default' }, modules: null, composerAgents: namespaceAgents(metadata, workspace.namespace),
+  };
 }
 
 /** One row per namespace in the static desktop selection or the host's configured server extensions, sorted by namespace. */

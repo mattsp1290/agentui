@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { WorkspaceViewProps } from '@agentui/sdk/react';
+import { createdMemberId } from '../operation-output.js';
 
 const ENGINES = ['pi', 'claude', 'codex'] as const;
 /** Crew limits `profile` to 128 UTF-8 bytes and `instructions` to 16,384 UTF-8 bytes without control characters but tab and newline. */
@@ -63,11 +64,11 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
     setPending(true); setMessage(''); setUnconfirmed(requestId);
     const result = await call(installationId, 'members.create', { requestId, engine, profile: profile.trim(), ...(instructions.trim() ? { instructions } : {}) });
     if (result.kind === 'ok') {
-      const output = result.output as { member?: { memberId?: unknown } } | null;
+      const memberId = createdMemberId(result.output);
       await refresh();
       if (!active.current) return;
       setPending(false); setUnconfirmed(null);
-      if (typeof output?.member?.memberId === 'string') { onCreated(output.member.memberId); return; }
+      if (memberId !== null) { onCreated(memberId); return; }
       setProfile(''); setInstructions(''); setMessage(NO_ID);
       return;
     }

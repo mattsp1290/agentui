@@ -109,7 +109,6 @@ const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: 
 const DETACHED_VIEW = {
   observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, workspaces: {}, savedViews: { items: [], after: null }, savedViewNotice: '',
 } satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'workspaces' | 'savedViews' | 'savedViewNotice'>;
-const WORKSPACE_PAGE = SERVICE_CATALOG_PAGE;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -154,6 +153,13 @@ const withPreview = (scope: ConversationScope, preview: string | null): EntriesU
 };
 /** Puts `entry` first, replacing any entry for the same scope. */
 const prepended = (entry: ConversationCatalogEntry): EntriesUpdate => entries => [entry, ...entries.filter(item => !sameScope(item.scope, entry.scope))];
+/** A catalog page merged into what is loaded: the first page replaces it, a later page adds or replaces by scope. */
+function mergePage(loaded: readonly ConversationCatalogEntry[], items: readonly ConversationCatalogEntry[], first: boolean): ConversationCatalogEntry[] {
+  const key = (entry: ConversationCatalogEntry) => JSON.stringify([entry.scope.hostId, entry.scope.conversationId]);
+  const merged = new Map((first ? [] : loaded).map(entry => [key(entry), entry]));
+  for (const entry of items) merged.set(key(entry), entry);
+  return [...merged.values()];
+}
 function initialSnapshot(): ApplicationSnapshot {
   return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
 }
@@ -397,9 +403,7 @@ export function createApplicationController(deps: {
     if (items.some(entry => entry.scope.hostId !== hostId)) throw new Error('Catalog belongs to another host.');
     const next = items.length === SERVICE_CATALOG_PAGE ? items.at(-1)?.scope.conversationId ?? null : null;
     if (next !== null && next === after) throw new Error('Catalog did not advance.');
-    const loaded = new Map((after === null ? [] : state.catalog.items).map(entry => [JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry]));
-    for (const entry of items) loaded.set(JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry);
-    publish({ catalog: { items: [...loaded.values()], after: next } });
+    publish({ catalog: { items: mergePage(state.catalog.items, items, after === null), after: next } });
   }
   /**
    * Applies `update` to the catalog and, when that namespace's workspace is loaded, to its entries. Returns one partial
@@ -423,12 +427,11 @@ export function createApplicationController(deps: {
     const after = more ? previous?.entries.at(-1)?.scope.conversationId ?? null : null;
     publish({ workspaces: { ...state.workspaces, [namespace]: { entries: previous?.entries ?? [], hasMore: previous?.hasMore ?? false, loading: true } } });
     try {
-      const items = await current(owner, owner.connection.catalog(after, WORKSPACE_PAGE, { kind: 'namespace', namespace }));
+      const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE, { kind: 'namespace', namespace }));
       if (!latest()) return;
       if (items.some(entry => entry.scope.hostId !== hostId || entry.provider?.namespace !== namespace)) throw new Error('Workspace catalog belongs to another namespace or host.');
-      const loaded = new Map((more ? state.workspaces[namespace]?.entries ?? [] : []).map(entry => [entry.scope.conversationId, entry]));
-      for (const entry of items) loaded.set(entry.scope.conversationId, entry);
-      publish({ workspaces: { ...state.workspaces, [namespace]: { entries: [...loaded.values()], hasMore: items.length === WORKSPACE_PAGE, loading: false } } });
+      const entries = mergePage(state.workspaces[namespace]?.entries ?? [], items, !more);
+      publish({ workspaces: { ...state.workspaces, [namespace]: { entries, hasMore: items.length === SERVICE_CATALOG_PAGE, loading: false } } });
     } catch (cause) {
       if (!latest()) return;
       if (session === owner) publish({ workspaces: { ...state.workspaces, [namespace]: { entries: state.workspaces[namespace]?.entries ?? [], hasMore: false, loading: false } } });

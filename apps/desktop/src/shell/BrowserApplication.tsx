@@ -11,8 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
-import { ExtensionsList, ExtensionWorkspace, extensionRows, namespaceAgents, openableRow } from '../application/ExtensionsView.js';
-import type { TranscriptSelection } from '../application/DesktopCustomizations.js';
+import { ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -57,26 +56,17 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const rows = extensionRows({ customizations: customization, activations: custom.namespaces, enabled: customizationsOn, metadata });
   const workspaceRow = openableRow(rows.find(row => row.namespace === selectedExtension));
   const workspaceOpen = selectedView === 'extensions' && workspaceRow !== null;
-  // At most one conversation view is mounted. The Chats view keeps its (hidden) view while Settings is open, and gives it
-  // up only while the open workspace of the active conversation's namespace renders it. Derived from workspaceOpen, so a
-  // Failed, Loading or Disabled row never takes the view without rendering one.
-  const workspaceMountsActive = workspaceOpen && app.active !== null && 'kind' in app.active.agent
-    && app.active.agent.namespace === workspaceRow.namespace;
   // One element, placed in one slot: the Chats view, or the open workspace of the active conversation's namespace.
-  const inWorkspace = workspaceMountsActive ? workspaceRow : null;
-  const activeTranscript: TranscriptSelection = inWorkspace?.workspace.transcript
-    ? { kind: 'claimed', owner: { ...inWorkspace.owner, presentation: { ...inWorkspace.owner.presentation, transcript: inWorkspace.workspace.transcript } } }
-    : custom.transcript;
-  const composerAgents = inWorkspace ? namespaceAgents(metadata, inWorkspace.namespace) : choices;
+  const slots = conversationSlots({ row: workspaceOpen ? workspaceRow : null, active: app.active, metadata, custom, modules, agents: choices });
   const activeConversation = app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        transcript={activeTranscript} activity={custom.activity} contentLayout={inWorkspace ? { kind: 'default' } : custom.contentLayout} modules={inWorkspace ? null : modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
-        composerControls={canSwitch => <ComposerAgentControls agents={composerAgents} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
+        transcript={slots.transcript} activity={custom.activity} contentLayout={slots.contentLayout} modules={slots.modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        composerControls={canSwitch => <ComposerAgentControls agents={slots.composerAgents} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
     : null;
-  const workspaceConversation = inWorkspace ? activeConversation : null;
-  const conversation = !inWorkspace && activeConversation
+  const workspaceConversation = slots.workspace ? activeConversation : null;
+  const conversation = !slots.workspace && activeConversation
     ? activeConversation
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
@@ -98,7 +88,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
   </div>;
   const extensionsView = <div className="extensions-view" inert={suspended}>
-    {workspaceOpen && workspaceRow
+    {workspaceOpen
       ? <ExtensionWorkspace row={workspaceRow} metadata={metadata} workspaces={app.workspaces} active={app.active} controller={controller}
           conversation={workspaceConversation} status={<>{hostAlerts}{creationRecovery}</>} onBack={() => setSelectedExtension(null)} />
       : <ExtensionsList rows={rows} enabled={!suspended} onOpen={setSelectedExtension} />}
