@@ -1,6 +1,6 @@
 # Customization-repository extensions and settings, with agent delete and coworker create
 
-Status: Ready for WP1–WP8 and WP13. WP9 and WP10 wait for the owner's answer to U2; WP10 also waits for WP9 (U-Crew). WP12 waits for upstream work package WP11 (U-Coworkers). See [External requests](#external-requests).
+Status: Ready for WP1–WP9, WP11 and WP13. WP10 waits for upstream work package WP9 (U-Crew). WP12 waits for upstream work package WP11 (U-Coworkers). See [External requests](#external-requests).
 
 No implementation has occurred. This directory is a plan only.
 
@@ -143,7 +143,7 @@ Verified upstream: Crew has no retire route. crabber-coworkers has no create or 
 | D8 | Applying a build restarts the host under the session wrapper with new `--assets` and `--extensions`. For an SSH host the worker uploads the build first. | Assets are read once at startup; a restart reuses existing flags. The release upload path already exists. | Live swap. |
 | D9 | Default builds contain no extensions. `scripts/bundled-extensions.mjs` survives only as test support. | This is the "closer to previous" behaviour the user asked for. | Keeping bundling as a fallback. |
 | D10 | Appearance and the default agent apply in the client, from the settings the worker reads at the connected head. | Both can change without a host restart: `ThemeScope` takes `appearance`, and `create` takes an agent ID. | Changing the host's startup default agent: needs a restart and changes the profile. |
-| D11 | Crew Delete maps to retire. | Crew's design forbids deleting a member. | Hard delete. |
+| D11 | Delete means retire for both services, with the same semantics: the agent is hidden from the default list and can start no new conversation, its conversations and history are kept and stay readable, and the action cannot be undone. | Crew's design forbids deleting a member. The owner asked on 2026-11-18 that coworker delete be similar to Crew delete. | Hard delete in either service. |
 | D12 | `@agentui/sdk` re-exports `canonicalJson` and `parseScope`. | Server artifacts may import only `@agentui/sdk` from the host. | Copying the helpers; widening the import policy. |
 | D13 | The worker runs git with hooks disabled, `user.useConfigOnly=true` and `LC_ALL=C`, and honours the user's commit-signing configuration. | Hooks from a global configuration must not run in the worker's clone. An auto-detected identity must not be used. Failure causes are read from git output, so the locale is fixed. A protected branch may require signed commits. | Disabling signing. |
 
@@ -183,13 +183,13 @@ Clients (browser, Mac app)                          session wrapper restarts the
 ## Unresolved decisions
 
 - U1 (blocking for WP12 only). The two proposed owner decisions in the crabber-coworkers request (management switch, local backend only). Owner: Matt, in the crabber-coworkers response. WP12 builds against the answers.
-- U2 (blocking for WP9 and WP10 only). The user asked for delete. For Crew the plan delivers retire: the member is hidden and can start no new conversation, its history is kept, and the action cannot be undone. Exact question for the owner: "Is Crew Delete acceptable as retire (member hidden, history kept, cannot be undone), rather than removal?" Owner: Matt. Unblock action: answer before WP9 starts.
+- U2 (resolved on 2026-11-18). The owner confirmed that Crew Delete as retire is acceptable: the member is hidden and can start no new conversation, its history is kept, and the action cannot be undone.
 
 ## Stop/go gates
 
 - G1. Before WP3: WP1's bundling proof passed (risk R1), and WP2 is merged.
 - G2. Before WP7: one real worker-run build of the example customization completed within the limits (risk R2), with the duration of each phase recorded in the pull request.
-- G3. Before WP10: U2 answered, WP9 delivered, and the Crew response file names an exact commit and a packed client tarball at that commit.
+- G3. Before WP10: WP9 delivered, and the Crew response file names an exact commit and a packed client tarball at that commit.
 - G4. Before WP12: WP11 delivered, the crabber-coworkers response file names an exact commit and answers both proposed decisions, and WP12 advances `extensions/coworkers/openapi/REVISION` to that commit.
 
 ## External requests

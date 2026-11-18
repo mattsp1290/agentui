@@ -64,6 +64,7 @@ Prerequisite state: WP1 merged and gate G3 passed. Build against the delivered c
 Prerequisite state: none in AgentUI.
 
 - Input: `$HOME/.agents/projects/crabber-coworkers/requests/2026-11-18-coworker-create-and-delete.md`, including its two proposed owner decisions.
+- Delete has the same semantics as Crew retire (decision D11): the coworker leaves the default list, new conversations are refused, existing conversations and workspace files are kept and readable, the ID cannot be reused, and the action cannot be undone.
 - Work from a fresh clone of the default branch. Follow that repository's `AGENTS.md` (import crabber only through the facade crate, no `[patch]` sections, track work in `bn`).
 - Deliver: the routes, the `source` field and the capability, merged by that repository's process; the regenerated `openapi/crabber-coworkers.v1.json`; the response file with the 40-character commit and the answers to the two proposed decisions. The clone used for this plan's evidence was at `44ed2ad` and could not be refreshed during planning; confirm the default branch's head first.
 - Verification: `cargo xtask check` and the tests the request describes.
@@ -87,7 +88,7 @@ Prerequisite state: WP1 merged and gate G4 passed, including the owner's answers
   - `conflict` on create says a coworker with that ID already exists or existed.
 - `extensions/coworkers/src/desktop/CoworkersWorkspace.tsx`:
   - `New coworker` is enabled when `management` is true and opens the form. On success it refreshes and shows the new coworker.
-  - Each card with `source: "api"` has Delete with a confirm step: "Delete <name>? Its conversations and workspace files are kept. The ID cannot be used again."
+  - Each card with `source: "api"` has Delete with a confirm step worded like the Crew one: "Delete <name>? AgentUI keeps the coworker's conversations and workspace files. The coworker can no longer start conversations, and its ID cannot be used again. This cannot be undone."
   - A card with `source: "config"` shows `Managed by config.json` and has no Delete.
   - `conflict` on delete while a turn runs tells the user to retry when the coworker is idle.
   - A deleted coworker's chats stay in the list under `Deleted coworkers` and stay readable.
