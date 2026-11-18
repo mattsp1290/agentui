@@ -31,13 +31,25 @@ test('a wrong request contract and a rejected token are typed failures, not opaq
   assert.deepEqual(await call(g, 'coworkers.list'), { kind: 'refused', code: 'unauthorized' });
 });
 
+test('coworkers.list stays under the operation output limit for a large directory and reports truncation', { timeout: 30_000 }, async t => {
+  const long = 'x'.repeat(1_000);
+  const coworkers = Array.from({ length: 800 }, (_, n) => ({ coworkerId: `c-${n}`, name: `${n} ${long}`, role: long, workspace: 'disabled', slack: false, instructions: 'i' }));
+  const remote = await coworkersService(t, { coworkers }), f = await host(t, [installed(remote)]);
+  const result = await call(f, 'coworkers.list');
+  assert.equal(result.kind, 'ok', JSON.stringify(result).slice(0, 200));
+  assert.equal(result.output.truncated, true);
+  assert.ok(result.output.coworkers.length > 0 && result.output.coworkers.length < 800);
+  assert.ok(result.output.coworkers.every(item => Array.from(item.name).length <= 200 && Array.from(item.role).length <= 200));
+  assert.ok(Buffer.byteLength(JSON.stringify(result.output)) < 256_000);
+});
+
 test('discovery, idempotent creation, a polled reply, cancel, failure and uncertainty map onto runs', { timeout: 60_000 }, async t => {
   const remote = await coworkersService(t), f = await host(t, [installed(remote)]);
   const agents = (await f.client.metadata()).agents.filter(value => value.namespace === 'coworkers');
   assert.deepEqual(agents.map(agent => [agent.label, agent.providerAgentId]), [['Ada', 'ada'], ['Grace', 'grace']]);
   assert.deepEqual(await call(f, 'coworkers.list'), { kind: 'ok', output: { management: false, coworkers: [
     { coworkerId: 'ada', name: 'Ada', role: 'Researcher', workspace: 'read_only', slack: false, instructionsBytes: 19 },
-    { coworkerId: 'grace', name: 'Grace', role: 'Engineer', workspace: 'read_write', slack: true, instructionsBytes: 19 }] } });
+    { coworkerId: 'grace', name: 'Grace', role: 'Engineer', workspace: 'read_write', slack: true, instructionsBytes: 19 }], truncated: false } });
   const scope = await create(f, 'Ada');
   await f.client.create(scope, agents[0].id);
   assert.equal(remote.conversations.size, 1, 'a repeated creation names the same upstream conversation');

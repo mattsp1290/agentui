@@ -113,6 +113,13 @@ test('the Extensions view lists namespaces, opens a workspace, creates, chats an
   await workspace.getByRole('region', { name: 'Workspace transcript' }).waitFor();
   assert.equal(await f.page.locator('#message').count(), 1);
 
+  // An invalid operation name is the extension's bug: it still resolves, but is logged with the namespace, not hidden as an outage.
+  const logged = [];
+  f.page.on('console', message => { if (message.type() === 'error') logged.push(message.text()); });
+  assert.deepEqual(await f.page.evaluate(() => window.workspace.call('books', 'Echo.Upper', {})), { kind: 'failed', cause: 'unavailable' });
+  await wait(() => logged.some(text => text.startsWith('[ledger] invalid extension call to "Echo.Upper"')), 'invalid call logged');
+  assert.deepEqual(await f.page.evaluate(() => window.workspace.call('books', 'echo', 'x'.repeat(64_001))), { kind: 'failed', cause: 'too-large' });
+
   await f.host.stop();
   assert.deepEqual(await f.page.evaluate(() => window.workspace.call('books', 'echo', {})), { kind: 'failed', cause: 'unavailable' });
 });

@@ -69,9 +69,18 @@ export interface WorkspaceViewProps {
   readonly selected: ConversationScope | null;
   /** The host-rendered conversation, composer and approvals for `selected`; `null` when nothing is selected. Render it once. */
   readonly conversation: ReactNode;
-  /** Opens a conversation from this namespace's list. It becomes the application's active conversation. */
+  /**
+   * Opens a conversation from this namespace's list. It becomes the application's active conversation.
+   * Rejects only for a scope outside this namespace. Otherwise it resolves once the attempt ends, also when the attempt
+   * did not open the conversation (the application is busy, or the host refused): the host shows the reason in its status
+   * strip and `selected` stays unchanged. Watch `selected`, not the promise, to learn what opened.
+   */
   open(scope: ConversationScope): Promise<void>;
-  /** Creates a conversation with one of this namespace's agents. */
+  /**
+   * Creates a conversation with one of this namespace's agents and makes it the active conversation.
+   * Rejects only for an agent outside this namespace. Like `open`, it resolves when the attempt ends, also without a new
+   * conversation (busy, pending creation to recover, agent unavailable, host refusal); `selected` changes only on success.
+   */
   create(agentId: string): Promise<void>;
   /** Calls one of this extension's server operations. It never rejects: transport failures resolve as `unavailable`. */
   call(installationId: string, operation: string, input: Json): Promise<ExtensionCallValue>;

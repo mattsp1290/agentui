@@ -399,19 +399,26 @@ export function createApplicationController(deps: {
     for (const entry of items) loaded.set(JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry);
     publish({ catalog: { items: [...loaded.values()], after: next } });
   }
+  /** The latest load per namespace. A first-page load supersedes any load in flight; a superseded load publishes nothing. */
+  const workspaceLoads = new Map<string, number>();
   async function readWorkspace(owner: Session, namespace: string, more: boolean): Promise<void> {
     const { hostId } = requireHost(owner);
     const previous = state.workspaces[namespace];
-    if (previous?.loading || (more && (!previous || !previous.hasMore))) return;
+    if (more && (!previous || previous.loading || !previous.hasMore)) return;
+    const load = (workspaceLoads.get(namespace) ?? 0) + 1;
+    workspaceLoads.set(namespace, load);
+    const latest = () => workspaceLoads.get(namespace) === load;
     const after = more ? previous?.entries.at(-1)?.scope.conversationId ?? null : null;
     publish({ workspaces: { ...state.workspaces, [namespace]: { entries: previous?.entries ?? [], hasMore: previous?.hasMore ?? false, loading: true } } });
     try {
       const items = await current(owner, owner.connection.catalog(after, WORKSPACE_PAGE, { kind: 'namespace', namespace }));
+      if (!latest()) return;
       if (items.some(entry => entry.scope.hostId !== hostId || entry.provider?.namespace !== namespace)) throw new Error('Workspace catalog belongs to another namespace or host.');
       const loaded = new Map((more ? state.workspaces[namespace]?.entries ?? [] : []).map(entry => [entry.scope.conversationId, entry]));
       for (const entry of items) loaded.set(entry.scope.conversationId, entry);
       publish({ workspaces: { ...state.workspaces, [namespace]: { entries: [...loaded.values()], hasMore: items.length === WORKSPACE_PAGE, loading: false } } });
     } catch (cause) {
+      if (!latest()) return;
       if (session === owner) publish({ workspaces: { ...state.workspaces, [namespace]: { entries: state.workspaces[namespace]?.entries ?? [], hasMore: false, loading: false } } });
       throw cause;
     }

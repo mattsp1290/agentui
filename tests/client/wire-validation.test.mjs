@@ -141,6 +141,9 @@ test('catalog filters and provider identities round-trip; unknown filter kinds a
   assert.deepEqual(parseServiceResponse({ op: 'catalog' }, { ok: true, value: catalog }).value, catalog);
   assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview: null }] }));
   assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview: null, provider: { ...provider, generation: '1' } }] }));
+  for (const namespace of ['NS', 'example.crew', '1ns']) {
+    assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview: null, provider: { ...provider, namespace } }] }), namespace);
+  }
   const search = { items: [{ scope, preview: null, provider, excerpt: null }], after: null };
   assert.deepEqual(parseServiceResponse({ op: 'search' }, { ok: true, value: search }).value, search);
   assert.throws(() => parseServiceResponse({ op: 'search' }, { ok: true, value: { items: [{ scope, preview: null, excerpt: null }], after: null } }));

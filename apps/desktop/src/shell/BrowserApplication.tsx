@@ -53,11 +53,16 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const activeActions = app.active ? controller.conversationActions(app.active) : null;
   const modules = custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
     active={app.active} actions={activeActions} enabled={enabled} agent={agent} />);
+  const customizationsOn = children === undefined && customizationEnabled;
+  const rows = extensionRows({ customizations: customization, activations: custom.namespaces, enabled: customizationsOn, metadata });
+  const openRow = rows.find(row => row.namespace === selectedExtension && row.state !== 'Disabled' && row.state !== 'Failed' && row.state !== 'Loading');
+  const workspaceRow = openRow?.owner && openRow.workspace ? { ...openRow, owner: openRow.owner, workspace: openRow.workspace } : null;
+  const workspaceOpen = selectedView === 'extensions' && workspaceRow !== null;
   // At most one conversation view is mounted. The Chats view keeps its (hidden) view while Settings is open, and gives it
-  // up only while an open workspace of the active conversation's namespace renders it.
-  const workspaceMountsActive = selectedView === 'extensions' && selectedExtension !== null && customizationEnabled && children === undefined
-    && app.active !== null && 'kind' in app.active.agent && app.active.agent.namespace === selectedExtension
-    && custom.namespaces.some(owner => owner.kind === 'ready' && owner.namespace === selectedExtension && owner.presentation.workspace !== undefined);
+  // up only while the open workspace of the active conversation's namespace renders it. Derived from workspaceOpen, so a
+  // Failed, Loading or Disabled row never takes the view without rendering one.
+  const workspaceMountsActive = workspaceOpen && workspaceRow !== null && app.active !== null && 'kind' in app.active.agent
+    && app.active.agent.namespace === workspaceRow.namespace;
   const conversation = !workspaceMountsActive && app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
@@ -83,13 +88,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </select></label>}
     <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
   </div>;
-  const customizationsOn = children === undefined && customizationEnabled;
-  const rows = extensionRows({ customizations: customization, activations: custom.namespaces, enabled: customizationsOn, metadata });
-  const openRow = rows.find(row => row.namespace === selectedExtension && row.state !== 'Disabled' && row.state !== 'Failed' && row.state !== 'Loading');
-  const workspaceRow = openRow?.owner && openRow.workspace ? { ...openRow, owner: openRow.owner, workspace: openRow.workspace } : null;
-  const workspaceOpen = selectedView === 'extensions' && workspaceRow !== null;
   let workspaceConversation: ReactNode = null;
-  if (workspaceMountsActive && workspaceOpen && workspaceRow && app.active && activeActions) {
+  if (workspaceMountsActive && workspaceRow && app.active && activeActions) {
     const transcript: TranscriptSelection = workspaceRow.workspace.transcript
       ? { kind: 'claimed', owner: { ...workspaceRow.owner, presentation: { ...workspaceRow.owner.presentation, transcript: workspaceRow.workspace.transcript } } }
       : custom.transcript;

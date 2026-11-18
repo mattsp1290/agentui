@@ -19,7 +19,12 @@ function sharedImport(specifier) {
 }
 const scripts = /\.[cm]?[jt]sx?$/u;
 
-/** One plan from the bundled and an external plan. A namespace in both fails, naming the namespace. */
+/**
+ * One plan from the bundled and an external plan. A namespace in both fails, naming the namespace.
+ * `identity` stays the external plan's: `customization-identity.json` records only the external package graph. Bundled
+ * entries are AgentUI source, covered by the artifact manifest's source provenance and by `artifactId`, which hashes
+ * every built file.
+ */
 export function mergePlans(bundled, external) {
   if (!external) return bundled;
   const names = new Set(bundled.entries.map(entry => entry.manifest.namespace));

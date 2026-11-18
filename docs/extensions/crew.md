@@ -38,7 +38,7 @@ The Crew gateway binds to loopback by default. A host on the same machine reache
 | Workspace action | Crew call | Notes |
 |---|---|---|
 | List members | `GET /v1/members`, every page up to 1000 members | Each member becomes one agent in the namespace. |
-| Add member | `POST /v1/members` with `{ requestId, engine, profile, instructions? }` | One `requestId` per form, so a retry after an unknown outcome cannot create a second member. An unregistered profile is refused with a fixed message. |
+| Add member | `POST /v1/members` with `{ requestId, engine, profile, instructions? }` | A fresh `requestId` per request. After an unknown outcome (unreachable, unconfirmed, timed out) the form locks its fields and **Retry** resends the same `requestId` and body, so it cannot create a second member; after a definitive refusal the next submit uses a new `requestId`. An unregistered profile is refused with a fixed message. `profile` is limited to 128 UTF-8 bytes, as in Crew. |
 | Start conversation | `POST /v1/conversations` for the member | The usual provider creation path. |
 | Chat | Crew requests and AG-UI observation | Unchanged provider behaviour, now per member. |
 | Edit, Delete | none yet | Disabled until Crew ships member management. |

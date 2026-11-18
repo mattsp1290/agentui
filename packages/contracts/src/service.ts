@@ -333,7 +333,8 @@ export function parseCatalogFilter(value: unknown): CatalogFilter {
 function conversationProvider(value: unknown): ConversationProvider | null {
   if (value === null) return null;
   const input = record(value, ['namespace', 'installationId', 'providerAgentId']);
-  return { namespace: identifier(input.namespace), installationId: identifier(input.installationId), providerAgentId: identifier(input.providerAgentId) };
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
+    providerAgentId: identifier(input.providerAgentId) };
 }
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
@@ -354,7 +355,7 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   });
   if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
   const common: AgentDescription = { imageInput: parseImageInputCapability(input.imageInput), frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
-  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion),
+  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), protocolVersion: identifier(input.protocolVersion),
     installationId: identifier(input.installationId), providerAgentId: input.providerAgentId === null ? null : identifier(input.providerAgentId) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;

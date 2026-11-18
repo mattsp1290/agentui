@@ -47,6 +47,9 @@ test('members.list and members.create run through the host authority and a creat
   assert.equal(remote.members.length, 3, 'a repeated requestId creates no second member');
   assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'missing' }), { kind: 'refused', code: 'unknown-profile' });
   assert.deepEqual(await f.call('members.create', { requestId: 'not-a-uuid', engine: 'codex', profile: 'test' }), { kind: 'refused', code: 'invalid-input' });
+  // 65 two-byte characters fit in 128 UTF-16 code units but exceed Crew's 128 UTF-8 bytes; 64 fit both.
+  assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'é'.repeat(65) }), { kind: 'refused', code: 'invalid-input' });
+  assert.deepEqual(await f.call('members.create', { requestId: randomUUID(), engine: 'codex', profile: 'é'.repeat(64) }), { kind: 'refused', code: 'unknown-profile' });
   assert.deepEqual(await f.call('members.list', { extra: true }), { kind: 'refused', code: 'invalid-input' });
   const text = f.raw.join('\n');
   for (const value of [token, remote.origin, 'unknown_profile']) assert.equal(text.includes(value), false, value);

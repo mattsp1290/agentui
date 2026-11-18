@@ -155,6 +155,54 @@ test('a handler waiting inside credentials.use times out at the deadline, releas
   assert.equal((await f.host.replaceProviderExtensions([ext.value])).kind, 'replaced');
 });
 
+test('host close aborts an admitted operation at once and replies unavailable without waiting for the deadline', async t => {
+  const a = await service(t, []);
+  const admitted = Promise.withResolvers(), aborted = Promise.withResolvers();
+  const ext = extension({ services: [a], operations: {
+    async wait({ signal }) {
+      admitted.resolve();
+      return new Promise(resolve => signal.addEventListener('abort', () => { aborted.resolve(); resolve({ kind: 'ok', output: 'late' }); }, { once: true }));
+    },
+  } });
+  const f = await open(t, [ext], { operationDeadlineMs: 10_000 });
+  const reply = f.host.callOperation({ namespace, installationId: 'install-0', operation: 'wait', input: null });
+  await admitted.promise;
+  const started = Date.now();
+  await f.close();
+  assert.ok(Date.now() - started < 5_000, 'close waited for the operation deadline');
+  await aborted.promise;
+  assert.deepEqual(await reply, { kind: 'failed', cause: 'unavailable' });
+});
+
+test('a malformed direct call request rejects as a caller error instead of reporting a handler fault', async t => {
+  const a = await service(t, []);
+  const ext = extension({ services: [a], operations: { echo: async ({ input }) => ({ kind: 'ok', output: input }) } });
+  const f = await open(t, [ext]);
+  await assert.rejects(f.host.callOperation({ namespace, installationId: 'install-0', operation: 'echo', input: 1, extra: true }), TypeError);
+  await assert.rejects(f.host.callOperation({ namespace, installationId: 'install-0', operation: 'Echo', input: 1 }), TypeError);
+  assert.deepEqual(await f.host.callOperation({ namespace, installationId: 'install-0', operation: 'echo', input: 1 }), { kind: 'ok', output: 1 });
+});
+
+test('metadata keeps the retiring namespaces listed, with unavailable installations, while a replacement is changing', { timeout: 10000 }, async t => {
+  const a = await service(t, []);
+  const entered = Promise.withResolvers(), finish = Promise.withResolvers();
+  const good = extension({ services: [a], operations: { echo: async ({ input }) => ({ kind: 'ok', output: input }) } });
+  const slow = extension({ services: [a], operations: { echo: async ({ input }) => ({ kind: 'ok', output: input }) },
+    async activate() { entered.resolve(); await finish.promise; } });
+  const f = await open(t, [good]);
+  const replacing = f.host.replaceProviderExtensions([slow.value]);
+  try {
+    await entered.promise;
+    assert.equal(f.host.extensionStatus().kind, 'changing');
+    assert.deepEqual((await f.client.metadata()).extensions, [{ namespace, state: 'active', operations: ['echo'],
+      installations: [{ installationId: 'install-0', status: 'unavailable' }] }]);
+    assert.deepEqual(await call(f.client, 'echo'), { kind: 'failed', cause: 'unavailable' });
+  } finally { finish.resolve(); }
+  assert.equal((await replacing).kind, 'replaced');
+  assert.deepEqual((await f.client.metadata()).extensions, [{ namespace, state: 'active', operations: ['echo'],
+    installations: [{ installationId: 'install-0', status: 'available' }] }]);
+});
+
 test('agentsChanged waits for a running discovery, then rediscovers before replying', async t => {
   const a = await service(t, ['first']);
   const ext = extension({ services: [a], operations: {

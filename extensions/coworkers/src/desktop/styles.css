@@ -4,9 +4,9 @@
 [data-extension-workspace="coworkers"] .coworkers-workspace button:disabled { opacity: .5; cursor: default; }
 [data-extension-workspace="coworkers"] .coworkers-workspace button:focus-visible { outline: 2px solid var(--aui-color-focus); outline-offset: 2px; }
 [data-extension-workspace="coworkers"] .coworkers-app-bar { background: var(--aui-color-raised); border-right: 1px solid var(--aui-color-border); padding: 8px 4px; }
-[data-extension-workspace="coworkers"] .coworkers-app-bar [role="tablist"] { display: flex; flex-direction: column; gap: 4px; }
-[data-extension-workspace="coworkers"] .coworkers-app-bar [role="tab"] { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: 0; border-radius: 6px; background: transparent; font-size: 11px; color: var(--aui-color-muted); }
-[data-extension-workspace="coworkers"] .coworkers-app-bar [role="tab"][aria-selected="true"] { color: var(--aui-color-accent); background: var(--aui-color-surface); box-shadow: inset 3px 0 0 var(--aui-color-accent); }
+[data-extension-workspace="coworkers"] .coworkers-sections { display: flex; flex-direction: column; gap: 4px; }
+[data-extension-workspace="coworkers"] .coworkers-sections button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: 0; border-radius: 6px; background: transparent; font-size: 11px; color: var(--aui-color-muted); }
+[data-extension-workspace="coworkers"] .coworkers-sections button[aria-pressed="true"] { color: var(--aui-color-accent); background: var(--aui-color-surface); box-shadow: inset 3px 0 0 var(--aui-color-accent); }
 [data-extension-workspace="coworkers"] .coworkers-app-bar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
 [data-extension-workspace="coworkers"] .coworkers-chat-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--aui-color-surface); border-right: 1px solid var(--aui-color-border); padding: 12px; gap: 6px; }
 [data-extension-workspace="coworkers"] .coworkers-chat-list-header, [data-extension-workspace="coworkers"] .coworkers-directory-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
@@ -27,9 +27,10 @@
 [data-extension-workspace="coworkers"] .coworkers-header-text h2 { font-size: 16px; }
 [data-extension-workspace="coworkers"] .coworkers-role { color: var(--aui-color-muted); font-size: 12px; }
 [data-extension-workspace="coworkers"] .coworkers-pills { display: flex; gap: 4px; margin-left: 12px; }
-[data-extension-workspace="coworkers"] .coworkers-pills [role="tab"] { padding: 4px 14px; border: 0; border-radius: 16px; background: transparent; }
-[data-extension-workspace="coworkers"] .coworkers-pills [role="tab"][aria-selected="true"] { background: var(--aui-color-raised); color: var(--aui-color-accent); font-weight: 600; }
+[data-extension-workspace="coworkers"] .coworkers-pills button { padding: 4px 14px; border: 0; border-radius: 16px; background: transparent; }
+[data-extension-workspace="coworkers"] .coworkers-pills button[aria-pressed="true"] { background: var(--aui-color-raised); color: var(--aui-color-accent); font-weight: 600; }
 [data-extension-workspace="coworkers"] .coworkers-back { display: none; }
+[data-extension-workspace="coworkers"] .coworkers-notice { margin: 0; padding: 6px 8px; border-radius: 4px; background: var(--aui-color-raised); font-size: 13px; }
 [data-extension-workspace="coworkers"] .coworkers-pane { flex: 1; min-height: 0; display: flex; padding: 0 20px; }
 [data-extension-workspace="coworkers"] .coworkers-pane > * { flex: 1; min-width: 0; }
 [data-extension-workspace="coworkers"] .coworkers-about { padding: 20px 0; }

@@ -109,12 +109,12 @@ export async function customRuntime(page, host, selection, breakDefault = false,
  * built browser assets. It returns the shape `fixture(t)` returns, so `customRuntime` and `page` work with it.
  * `page({ ready })` waits for the named button instead of the recorded conversation button.
  */
-export async function extensionFixture(t, { extensions = [], agentStartup = { kind: 'recorded' } } = {}) {
+export async function extensionFixture(t, { extensions = [], agentStartup = { kind: 'recorded' }, operationDeadlineMs } = {}) {
   const { startBrowserHost } = await import('../host/extensions/fixtures.mjs');
   const directory = await mkdtemp(join(tmpdir(), 'agentui-extension-browser-'));
   const browser = await chromium.launch();
   let running = await startBrowserHost({ agentStartup, directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
-    extensions: { kind: 'transient', entries: extensions } });
+    extensions: { kind: 'transient', entries: extensions }, ...(operationDeadlineMs ? { operationDeadlineMs } : {}) });
   let stopped = false;
   const stop = async () => { if (!stopped) { stopped = true; await running.close(); } };
   t.after(async () => { await browser.close(); await stop(); await rm(directory, { recursive: true, force: true }); });

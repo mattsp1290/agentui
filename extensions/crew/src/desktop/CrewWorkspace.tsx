@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { WorkspaceAgent, WorkspaceViewProps } from '@agentui/sdk/react';
 import { useTheme } from '@agentui/theme/react';
 import { ThemeScope } from '@agentui/ui-primitives/desktop';
@@ -28,6 +28,10 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   const [adding, setAdding] = useState(false);
   const [panel, setPanel] = useState(false);
   const [drawer, setDrawer] = useState(false);
+  const [notice, setNotice] = useState('');
+  const membersNav = useRef<HTMLElement>(null);
+  // The drawer only opens from its toggle on narrow widths; move focus into it so keyboard users land on the members.
+  useEffect(() => { if (drawer) membersNav.current?.querySelector<HTMLButtonElement>('button')?.focus(); }, [drawer]);
   const available = installation?.status === 'available';
   const memberKey = members.map(member => member.providerAgentId).join(',');
   useEffect(() => {
@@ -49,6 +53,12 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   const showing = selectedEntry && selectedEntry.provider.providerAgentId === activeMember;
   const detail = member ? details.get(member.providerAgentId) : undefined;
   const palette = SIDEBAR[theme.appearance];
+  const sidebarId = `crew-members-${installation?.installationId ?? 'none'}`;
+  /** open and create reject only outside this namespace; any other failure is in the host status strip. */
+  function attempt(action: () => Promise<void>) {
+    setNotice('');
+    void action().catch(() => setNotice('That conversation could not be opened. Refresh and try again.'));
+  }
 
   if (!installation) {
     return <div className="crew-workspace crew-setup" role="region" aria-label="Crew setup">
@@ -66,8 +76,8 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     </div>;
   }
   return <div className="crew-workspace" data-drawer={drawer ? 'open' : 'closed'}>
-    <ThemeScope className="crew-sidebar" colors={palette}>
-      <nav aria-label="Crew members">
+    <ThemeScope id={sidebarId} className="crew-sidebar" colors={palette}>
+      <nav aria-label="Crew members" ref={membersNav}>
         <header className="crew-sidebar-header">
           <strong>{installation.installationId}</strong>
           <button type="button" className="crew-compose" aria-label="Add member" title="Add member" onClick={() => { setAdding(true); setDrawer(false); }}>+</button>
@@ -87,7 +97,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
               {selected && own.length > 0 && <ul className="crew-conversation-list" aria-label={`Conversations with ${item.label}`}>
                 {own.map(entry => <li key={entry.scope.conversationId}>
                   <button type="button" className="crew-conversation-row" aria-current={props.selected?.conversationId === entry.scope.conversationId ? 'page' : undefined}
-                    onClick={() => { void props.open(entry.scope); setDrawer(false); }}>{entry.preview ?? 'New conversation'}</button>
+                    onClick={() => { attempt(() => props.open(entry.scope)); setDrawer(false); }}>{entry.preview ?? 'New conversation'}</button>
                 </li>)}
               </ul>}
             </li>;
@@ -99,13 +109,15 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     </ThemeScope>
     <section className="crew-main" aria-label="Crew conversation">
       <header className="crew-header">
-        <button type="button" className="crew-drawer-toggle" aria-label="Members" aria-expanded={drawer} onClick={() => setDrawer(open => !open)}>☰</button>
+        <button type="button" className="crew-drawer-toggle" aria-label="Members" aria-expanded={drawer} aria-controls={sidebarId}
+          onClick={() => setDrawer(open => !open)}><span aria-hidden="true">☰</span></button>
         {member ? <>
           <h2 className="crew-header-title">{member.label}</h2>
           {detail && `${detail.engine} · ${detail.profile}` !== member.label && <span className="crew-header-meta">{detail.engine} · {detail.profile}</span>}
           <button type="button" className="crew-details-toggle" aria-pressed={panel} onClick={() => setPanel(open => !open)}>Details</button>
         </> : <h2 className="crew-header-title">Crew</h2>}
       </header>
+      {notice && <p role="alert" className="crew-notice">{notice}</p>}
       <div className="crew-body">
         <div className="crew-conversation">
           {adding ? <MemberForm installationId={installation.installationId} call={props.call} refresh={props.refresh}
@@ -115,7 +127,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
             : showing ? props.conversation
             : <div className="crew-empty-state">
                 <p>{conversations.length ? `Pick a conversation with ${member.label}, or start a new one.` : `No conversation with ${member.label} yet.`}</p>
-                <button type="button" disabled={member.availability.kind !== 'ready'} onClick={() => void props.create(member.id)}>Start conversation</button>
+                <button type="button" disabled={member.availability.kind !== 'ready'} onClick={() => attempt(() => props.create(member.id))}>Start conversation</button>
               </div>}
         </div>
         {panel && member && <aside className="crew-details" aria-label="Member details">

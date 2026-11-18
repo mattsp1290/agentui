@@ -98,12 +98,13 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       const known = new Map((previous?.requests ?? []).map(request => [request.requestId, request]));
       const window = order.slice(-MAX_REQUESTS);
       const requests: CoworkersRequest[] = [];
-      for (const [index, requestId] of window.entries()) {
+      for (const requestId of window) {
         const before = known.get(requestId), reply = replies.get(requestId);
         let status = before?.status ?? (reply !== undefined ? 'completed' : 'accepted');
         let assistantText = reply ?? before?.assistantText ?? null;
-        // A stored terminal status is never fetched again. A reply means completed; older requests without one may have failed.
-        if (!isTerminal(status) || (before === undefined && reply === undefined && index < window.length - 1)) {
+        // A stored terminal status is never fetched again, and a reply means completed. Every other request, the newest or
+        // an older one without a reply, has its receipt fetched: it may still be running or may have failed.
+        if (!isTerminal(status)) {
           const receipt = await use(client => client.receipt(conversationId, requestId));
           if (receipt.kind === 'ok') {
             status = receipt.value.status;
@@ -182,7 +183,9 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
         const finish = (kind: 'closed' | 'resync' | 'disconnected', reason: string) => {
           if (stopped) return;
           stopped = true; handle.stop();
-          handles.get(conversationId)?.delete(handle);
+          const own = handles.get(conversationId);
+          own?.delete(handle);
+          if (own?.size === 0) handles.delete(conversationId);
           feeds.delete(feed);
           ended.resolve({ kind, cursor: acknowledged, reason });
         };

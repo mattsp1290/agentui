@@ -47,7 +47,7 @@ for (const colorScheme of ['light', 'dark']) {
     await openWorkspace(view, 'Coworkers');
     const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
     const appBar = workspace.getByRole('navigation', { name: 'Coworkers app bar' });
-    await appBar.getByRole('tab', { name: 'Coworkers' }).click();
+    await appBar.getByRole('button', { name: 'Coworkers', exact: true }).click();
     const directory = workspace.getByRole('region', { name: 'Coworker directory' });
     await directory.getByText('Ada').waitFor();
     await directory.getByText('Grace').waitFor();
@@ -62,8 +62,8 @@ for (const colorScheme of ['light', 'dark']) {
     await directory.getByRole('button', { name: 'Chat with Ada' }).click();
     await workspace.locator('#message').waitFor();
     const header = workspace.locator('.coworkers-header');
-    assert.deepEqual(await header.getByRole('tab').allTextContents(), ['Chat', 'About']);
-    assert.deepEqual(await appBar.getByRole('tab').allTextContents(), ['Chat', 'Coworkers']);
+    assert.deepEqual(await header.getByRole('group', { name: 'Conversation views' }).getByRole('button').allTextContents(), ['Chat', 'About']);
+    assert.deepEqual(await appBar.getByRole('group', { name: 'Coworkers sections' }).getByRole('button').allTextContents(), ['Chat', 'Coworkers']);
     await workspace.locator('#message').fill('Hello Ada');
     await wait(() => workspace.getByRole('button', { name: 'Send', exact: true }).isEnabled(), 'send enabled');
     await workspace.getByRole('button', { name: 'Send', exact: true }).click();
@@ -75,9 +75,9 @@ for (const colorScheme of ['light', 'dark']) {
     const [mine, theirs] = await Promise.all(['mine', 'theirs'].map(side => transcript.locator(`.coworkers-message[data-side="${side}"] .coworkers-bubble`).first().boundingBox()));
     assert.ok(mine.x > theirs.x, 'your bubble sits right of the coworker bubble');
     assert.equal(await transcript.locator('.coworkers-sender').first().textContent(), 'ADAda');
-    await header.getByRole('tab', { name: 'About' }).click();
+    await header.getByRole('button', { name: 'About', exact: true }).click();
     await workspace.getByText('19 bytes').waitFor();
-    await header.getByRole('tab', { name: 'Chat' }).click();
+    await header.getByRole('button', { name: 'Chat', exact: true }).click();
     await audit(view.page, `Coworkers workspace ${colorScheme}`);
     if (shots) await view.page.screenshot({ path: `${shots}/coworkers-workspace-${colorScheme}.png` });
 
@@ -98,7 +98,7 @@ test('Chat on a coworker card opens the first of several chats in list order; Ne
   const view = await page(t, host);
   await openWorkspace(view, 'Coworkers');
   const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
-  await workspace.getByRole('tab', { name: 'Coworkers' }).click();
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
   await workspace.getByRole('button', { name: 'Chat with Grace' }).click();
   await workspace.locator('#message').waitFor();
   for (let created = 1; created < 3; created++) {
@@ -108,7 +108,7 @@ test('Chat on a coworker card opens the first of several chats in list order; Ne
   const order = await view.page.evaluate(async () => (await (await fetch('/api/v1', { method: 'POST', headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ op: 'catalog', after: null, limit: 100, filter: { kind: 'provider-agent', namespace: 'coworkers', installationId: 'team', providerAgentId: 'grace' } }) })).json()).value.map(entry => entry.scope.conversationId));
   assert.equal(order.length, 3);
-  await workspace.getByRole('tab', { name: 'Coworkers' }).click();
+  await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
   await workspace.getByRole('button', { name: 'Chat with Grace' }).click();
   await wait(async () => (await workspace.locator('.coworkers-chat-card[aria-current="page"]').count()) === 1, 'a chat is open');
   const selected = await workspace.locator('.coworkers-chat-card[aria-current="page"]').evaluate(node =>
@@ -157,7 +157,7 @@ test('with both extensions each workspace renders its own transcript style and C
   await crewSpace.locator('xpath=ancestor::div[contains(@class,"extension-workspace-frame")]').getByRole('button', { name: 'All extensions' }).click();
   await view.page.getByRole('button', { name: 'Open Coworkers' }).click();
   const coworkers = view.page.locator('[data-extension-workspace="coworkers"]');
-  await coworkers.getByRole('tab', { name: 'Coworkers' }).click();
+  await coworkers.getByRole('button', { name: 'Coworkers', exact: true }).click();
   await coworkers.getByRole('button', { name: 'Chat with Ada' }).click();
   await coworkers.locator('#message').fill('Hello coworker');
   await wait(() => coworkers.getByRole('button', { name: 'Send', exact: true }).isEnabled(), 'coworkers send');

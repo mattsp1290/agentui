@@ -267,7 +267,7 @@ test('provider descriptors have a strict independent shape and retain native des
   assert.deepEqual(parse(provider), provider);
   assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ imageInput: agent.imageInput, frontendOffers: agent.frontendOffers, id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
   for (const invalid of [{ ...provider, runtime: agent.runtime }, { ...provider, kind: 'remote' },
-    { ...provider, namespace: '' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
+    { ...provider, namespace: '' }, { ...provider, namespace: 'Example' }, { ...provider, namespace: 'example.crew' }, { ...provider, protocolVersion: 1 }, { ...provider, credential: 'private' }]) assert.throws(() => parse(invalid));
 });
 
 

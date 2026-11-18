@@ -7,7 +7,9 @@ import { MAX_CREW_MEMBERS } from './provider.js';
 const OPERATION_TIMEOUT_MS = 10_000;
 const engineSchema = z.enum(['pi', 'claude', 'codex']);
 const listInput = z.strictObject({});
-const createInput = z.strictObject({ requestId: z.uuid(), engine: engineSchema, profile: z.string().min(1).max(128),
+/** Crew bounds `profile` in UTF-8 bytes (`x-maxUtf8Bytes: 128`), not UTF-16 code units. */
+const profileSchema = z.string().min(1).refine(value => Buffer.byteLength(value, 'utf8') <= 128, 'profile too long');
+const createInput = z.strictObject({ requestId: z.uuid(), engine: engineSchema, profile: profileSchema,
   instructions: z.string().min(1).max(16_384).optional() });
 type Refusal = { readonly kind: 'refused'; readonly code: string };
 const refused = (code: string): Refusal => ({ kind: 'refused', code });

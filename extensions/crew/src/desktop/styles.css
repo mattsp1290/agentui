@@ -53,6 +53,7 @@
 [data-extension-workspace="crew"] .crew-member-form input, [data-extension-workspace="crew"] .crew-member-form select, [data-extension-workspace="crew"] .crew-member-form textarea { font: inherit; font-weight: 400; padding: 6px 8px; border: 1px solid var(--aui-color-control-border); border-radius: 6px; background: var(--aui-color-surface); color: var(--aui-color-text); }
 [data-extension-workspace="crew"] .crew-form-actions { display: flex; gap: 8px; }
 [data-extension-workspace="crew"] .crew-form-message { margin: 0; color: var(--aui-color-danger); }
+[data-extension-workspace="crew"] .crew-notice { margin: 0; padding: 6px 16px; color: var(--aui-color-danger); }
 [data-extension-workspace="crew"] .crew-setup { display: block; max-width: 640px; padding: 32px; }
 @container (max-width: 640px) {
   [data-extension-workspace="crew"] .crew-workspace { grid-template-columns: minmax(0, 1fr); }

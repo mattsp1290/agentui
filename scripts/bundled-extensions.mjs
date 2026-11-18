@@ -25,12 +25,15 @@ export function bundledPlan(root = repository) {
     if (!desktop) continue;
     const mapped = metadata.agentui.sources?.[desktop.module];
     if (typeof mapped !== 'string') throw new Error(`Bundled extension ${manifest.namespace} has no source for ${desktop.module}`);
-    const source = resolve(directory, mapped);
-    if (relative(directory, source).startsWith('..') || !source.startsWith(directory + sep) || !existsSync(source)) {
+    // Check containment on the real path: a symlink inside the package must not point the entry outside `roots`,
+    // where the customization plugin would not apply the source policy.
+    const mappedPath = resolve(directory, mapped);
+    const source = existsSync(mappedPath) ? realpathSync(mappedPath) : null;
+    if (!source || relative(directory, source).startsWith('..') || !source.startsWith(directory + sep)) {
       throw new Error(`Bundled extension ${manifest.namespace} source is missing or outside its package`);
     }
     roots.push(directory);
-    entries.push({ module: desktop.module, manifest, source: realpathSync(source) });
+    entries.push({ module: desktop.module, manifest, source });
   }
   const order = entries.map((entry, index) => [entry, roots[index]]).sort(([a], [b]) => a.manifest.namespace < b.manifest.namespace ? -1 : a.manifest.namespace > b.manifest.namespace ? 1 : 0);
   const names = order.map(([entry]) => entry.manifest.namespace);

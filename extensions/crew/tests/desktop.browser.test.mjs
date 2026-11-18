@@ -13,11 +13,11 @@ const token = 'PRIVATE_CREW_BROWSER_TOKEN_19';
 const instance = { namespace: 'crew', installationId: 'personal', generation: '1', protocolVersion: '1' };
 const shots = process.env.AGENTUI_SCREENSHOT_DIRECTORY;
 
-async function open(t, { configured = true, colorScheme = 'light' } = {}) {
+async function open(t, { configured = true, colorScheme = 'light', operationDeadlineMs } = {}) {
   const first = randomUUID(), second = randomUUID();
   const remote = configured ? await crewService(t, { memberId: first, token, instance, members: [{ memberId: second, engine: 'pi', profile: 'research' }] }) : null;
   const host = await extensionFixture(t, { extensions: remote ? [{ kind: 'installed', directory, manifest, installations: [{ id: 'personal', instance,
-    service: remote.origin, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: '1', resolve: async () => token } }] }] : [] });
+    service: remote.origin, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: '1', resolve: async () => token } }] }] : [], operationDeadlineMs });
   const context = await host.browser.newContext({ colorScheme, viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
@@ -86,6 +86,34 @@ for (const colorScheme of ['light', 'dark']) {
     assert.deepEqual(f.violations, []);
   });
 }
+
+test('after an unknown outcome the member form locks its fields and retries the same request, creating one member', { timeout: 90_000 }, async t => {
+  const f = await open(t, { operationDeadlineMs: 1_500 });
+  const row = f.page.locator('[data-extension="crew"]');
+  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === 'Ready', 'Crew ready');
+  await f.page.getByRole('button', { name: 'Open Crew' }).click();
+  const sidebar = f.page.getByRole('navigation', { name: 'Crew members' });
+  await sidebar.getByText('pi · research').waitFor();
+  await sidebar.getByRole('button', { name: 'Add member', exact: true }).first().click();
+  const form = f.page.getByRole('form', { name: 'Add member' });
+  const release = Promise.withResolvers();
+  f.remote.holdMembers(release.promise);
+  await form.getByRole('combobox', { name: 'Engine' }).selectOption('claude');
+  await form.getByRole('textbox', { name: 'Profile' }).fill('test');
+  await form.getByRole('button', { name: 'Create member' }).click();
+  // The host deadline replies before Crew does; Crew still has the request.
+  await form.getByRole('alert').getByText('Crew may already have created this member').waitFor();
+  for (const field of [form.getByRole('textbox', { name: 'Profile' }), form.getByRole('combobox', { name: 'Engine' }), form.getByRole('textbox', { name: 'Instructions' })]) {
+    assert.equal(await field.isDisabled(), true, 'fields stay locked while the outcome is unknown');
+  }
+  f.remote.holdMembers(null);
+  release.resolve();
+  await wait(() => f.remote.members.length === 3, 'Crew created the held request');
+  await form.getByRole('button', { name: 'Retry' }).click();
+  await wait(async () => !(await form.isVisible()), 'the form closes once Crew confirms');
+  assert.equal(f.remote.members.length, 3, 'the retry created no second member');
+  await wait(async () => (await sidebar.locator('.crew-member-row[aria-current="true"]').textContent()).includes('claude · test'), 'created member selected');
+});
 
 test('without a Crew installation the workspace shows setup guidance and calls nothing but the host', { timeout: 60_000 }, async t => {
   const f = await open(t, { configured: false });

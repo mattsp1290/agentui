@@ -103,10 +103,17 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let feeds: FeedRegistry | undefined;
   const providers = createServerExtensions(options.operationDeadlineMs === undefined ? {} : { operationDeadlineMs: options.operationDeadlineMs });
   let configuredNamespaces: readonly string[] = [];
-  /** Active namespaces come from the registry. A failed generation reports each configured namespace without detail. */
+  /** The descriptors of the generation a replacement is retiring, with every installation unavailable. */
+  let retiringDescriptors: readonly ExtensionDescriptor[] = [];
+  /**
+   * Active namespaces come from the registry. While a replacement is changing, the retiring generation's namespaces stay
+   * listed with unavailable installations, so a client does not show them as unconfigured. A failed generation reports
+   * each configured namespace without detail.
+   */
   const extensionDescriptors = (): readonly ExtensionDescriptor[] => {
     const status = providers.status();
     if (status.kind === 'active') return providers.extensions();
+    if (status.kind === 'changing') return retiringDescriptors;
     if (status.kind !== 'failed') return [];
     return configuredNamespaces.map(namespace => ({ namespace, state: 'failed' as const, operations: [], installations: [] }));
   };
@@ -154,7 +161,13 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
-      const replacement = await providers.replace(providerExtensionSource(database, selected));
+      // Capture before replace: an admitted replacement turns the state to changing synchronously.
+      const retiring = providers.status().kind === 'active' ? providers.extensions().map(descriptor => ({ ...descriptor,
+        installations: descriptor.installations.map(item => ({ installationId: item.installationId, status: 'unavailable' as const })) })) : null;
+      if (retiring) retiringDescriptors = retiring;
+      let replacement: Awaited<ReturnType<typeof providers.replace>>;
+      try { replacement = await providers.replace(providerExtensionSource(database, selected)); }
+      finally { if (retiring && retiringDescriptors === retiring) retiringDescriptors = []; }
       // Read the selection only after it was admitted: a deferred replacement must not inspect its candidate.
       if (replacement.kind === 'replaced' || replacement.kind === 'failed') {
         try { configuredNamespaces = replacement.kind === 'replaced' && replacement.generation === null ? [] : selectedNamespaces(selected); }

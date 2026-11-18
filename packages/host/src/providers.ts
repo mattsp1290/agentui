@@ -522,6 +522,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     readonly operations: Map<string, ExtensionOperation> }>();
   let refreshing: Promise<unknown> | undefined;
   const pending = new Set<Promise<unknown>>();
+  /** Ends each admitted operation call: aborts its signal and replies `unavailable`. Close runs every one. */
+  const operationCancels = new Set<() => void>();
   let outputOperations = 0;
   const streams = new Set<ProviderStream>();
   let retiring: Set<ProviderStream> | undefined;
@@ -577,8 +579,18 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     const found = catalog.find(provider => provider.contributionId === grant.id && identityKey(provider.instance) === identityKey(grant.instance));
     return found?.kind === 'available' ? 'available' : 'unavailable';
   }
-  /** Admits one operation call. The admission ends at the reply, so a handler that outlives the deadline does not defer replacement. */
-  async function callOperation(request: ExtensionCallRequest): Promise<ExtensionCallValue> {
+  /**
+   * Admits one operation call. The admission ends at the reply, so a handler that outlives the deadline does not defer
+   * replacement. Registry close aborts every admitted call and replies `unavailable` at once.
+   * A malformed request rejects as a caller error; an over-limit input resolves as `too-large`.
+   */
+  async function callOperation(raw: ExtensionCallRequest): Promise<ExtensionCallValue> {
+    let request: ExtensionCallRequest;
+    try { request = parseExtensionCallRequest(raw); }
+    catch (error) {
+      if (error instanceof ExtensionCallTooLarge) return failedCall('too-large');
+      throw new TypeError('Invalid extension call request');
+    }
     if (phase !== 'active') return failedCall('unavailable');
     const namespace = contributed.get(request.namespace);
     if (!namespace) return failedCall('unknown-extension');
@@ -587,17 +599,17 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     if (!installation) return failedCall('unknown-installation');
     const operation = namespace.operations.get(request.operation);
     if (!operation) return failedCall('unknown-operation');
-    let input: ExtensionCallRequest['input'];
-    try { input = parseExtensionCallRequest(request).input; }
-    catch (error) { return failedCall(error instanceof ExtensionCallTooLarge ? 'too-large' : 'invalid-result'); }
+    const { input } = request;
     const controller = new AbortController();
-    let release = (): void => {}, timer: ReturnType<typeof setTimeout> | undefined;
+    let release = (): void => {}, timer: ReturnType<typeof setTimeout> | undefined, cancel = (): void => {};
     const admission = new Promise<void>(resolve => { release = resolve; });
     pending.add(admission);
     void admission.then(() => pending.delete(admission));
     const expired = new Promise<ExtensionCallValue>(resolve => {
       timer = setTimeout(() => { controller.abort(); resolve(failedCall('timeout')); }, operationDeadlineMs);
+      cancel = () => { controller.abort(); resolve(failedCall('unavailable')); };
     });
+    operationCancels.add(cancel);
     const work = (async (): Promise<ExtensionCallValue> => {
       let credential: CredentialHandle<string> | null;
       try { credential = namespace.authority.issue(installation.id, installation.instance).credential; }
@@ -619,7 +631,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
       return result.value;
     })();
     try { return await Promise.race([work, expired]); }
-    finally { clearTimeout(timer); release(); }
+    finally { clearTimeout(timer); operationCancels.delete(cancel); release(); }
   }
   function rediscover(): void {
     if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
@@ -631,6 +643,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
   function close(): Promise<void> {
     if (closing) return closing;
     phase = 'closing';
+    // Stop admitted operations before their authorities close, so close never waits for the operation deadline.
+    for (const cancel of operationCancels) cancel();
     const draining = new Set(streams);
     retiring = draining;
     const authorities: Promise<void>[] = [];

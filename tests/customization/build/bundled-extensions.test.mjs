@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { mkdtemp, mkdir, readdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, readdir, readFile, rm, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -43,6 +43,12 @@ test('bundledPlan lists desktop entries sorted by namespace with only extension 
   await write('stale', { ...manifest('stale'), sdkVersion: '0.1.0' }, { './dist/desktop.js': './src/index.tsx' });
   assert.throws(() => bundledPlan(temp), /targets SDK/);
   await write('stale', manifest('stale'), { './dist/desktop.js': '../alpha/src/index.tsx' });
+  assert.throws(() => bundledPlan(temp), /outside its package/);
+  // A symlink inside the package that points outside it is refused by its real path.
+  const outside = join(temp, 'outside.tsx');
+  await writeFile(outside, 'export default {};');
+  await symlink(outside, join(temp, 'extensions', 'stale', 'src', 'linked.tsx'));
+  await write('stale', manifest('stale'), { './dist/desktop.js': './src/linked.tsx' });
   assert.throws(() => bundledPlan(temp), /outside its package/);
 });
 

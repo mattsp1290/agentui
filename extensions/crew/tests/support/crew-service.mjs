@@ -17,6 +17,8 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
   // Members in list order. `members` adds more after the configured one; POST /v1/members appends, keyed by requestId.
   const members = [...(memberId ? [{ memberId, engine: 'codex', profile: 'test' }] : []), ...extraMembers];
   const memberRequests = new Map();
+  // Like a service that binds a request ID to its first body: a reused ID with a different body is a conflict.
+  const memberBodies = new Map();
   let memberHold = null;
   const calls = [], streams = new Set(), conversations = new Map(), receipts = new Map(), details = new Map();
   let detailHandler, grantHandler, revokeHandler;
@@ -70,6 +72,9 @@ export async function crewService(t, { memberId, token, instance, approvalDetail
       return json(200, { apiVersion: '1', grant: revokeHandler ? await revokeHandler(grant) : grant });
     }
     if (path === '/v1/members' && request.method === 'POST') {
+      const body = JSON.stringify([input.engine, input.profile, input.instructions ?? null]);
+      if (!memberBodies.has(input.requestId)) memberBodies.set(input.requestId, body);
+      if (memberBodies.get(input.requestId) !== body) return json(409, { error: 'conflict' });
       if (memberHold) await memberHold;
       const prior = memberRequests.get(input.requestId);
       if (prior) return json(201, prior);

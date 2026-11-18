@@ -27,11 +27,15 @@ export function createPoller(options: { readonly clock?: PollerClock; readonly m
   const waiting: (() => void)[] = [];
   let stats = { maxInFlight: 0, requests: 0 };
   async function limit<T>(task: () => Promise<T>): Promise<T> {
+    // A finishing task hands its slot straight to the next waiter, so no caller can take it in between.
     if (inFlight >= maxInFlight) await new Promise<void>(resolve => waiting.push(resolve));
-    inFlight++;
+    else inFlight++;
     stats = { maxInFlight: Math.max(stats.maxInFlight, inFlight), requests: stats.requests + 1 };
     try { return await task(); }
-    finally { inFlight--; waiting.shift()?.(); }
+    finally {
+      const next = waiting.shift();
+      if (next) next(); else inFlight--;
+    }
   }
   function schedule(poll: () => Promise<PollResult>): PollHandle {
     let stopped = false, running = false, timer: unknown = null, idleStep = 0, delay = 0, woken = false;

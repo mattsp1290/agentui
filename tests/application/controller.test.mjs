@@ -1509,6 +1509,27 @@ test('image previews and uploads share one host transfer slot, reusing concurren
   assert.equal(f.app.getSnapshot().error, '');
 });
 
+test('a workspace reload during an in-flight page load re-reads the first page and discards the superseded page', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  const entry = n => ({ scope: { hostId: 'host', conversationId: `w-${String(n).padStart(3, '0')}` }, preview: null,
+    provider: { namespace: 'ledger', installationId: 'books', providerAgentId: 'desk' } });
+  f.behavior.workspaceCatalog = async () => Array.from({ length: 100 }, (_, n) => entry(n));
+  await f.app.loadWorkspace('ledger');
+  const gate = Promise.withResolvers();
+  f.behavior.workspaceCatalog = async after => { if (after !== null) { await gate.promise; return [entry(100)]; } return [entry(500)]; };
+  const more = f.app.moreWorkspace('ledger');
+  assert.equal(f.app.getSnapshot().workspaces.ledger.loading, true);
+  await f.app.loadWorkspace('ledger');
+  assert.deepEqual(f.filters.slice(-2).map(item => item.after), ['w-099', null], 'the reload sent its own first-page request');
+  gate.resolve();
+  await more;
+  const workspace = f.app.getSnapshot().workspaces.ledger;
+  assert.deepEqual(workspace.entries.map(item => item.scope.conversationId), ['w-500']);
+  assert.deepEqual([workspace.hasMore, workspace.loading], [false, false]);
+  assert.equal(f.app.getSnapshot().error, '');
+});
+
 test('workspace lists page by namespace filter, refresh replaces metadata and extension calls forward once', async t => {
   const f = fixture(); t.after(() => f.app.dispose());
   await f.app.start();

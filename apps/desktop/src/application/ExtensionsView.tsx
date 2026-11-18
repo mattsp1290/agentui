@@ -2,6 +2,7 @@ import { Suspense, useEffect, type ReactNode } from 'react';
 import type { ConversationScope, Json } from '@agentui/contracts';
 import { sameScope } from '@agentui/contracts';
 import type { AgentDescriptor, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
+import { ExtensionCallTooLarge, parseExtensionCallRequest } from '@agentui/contracts/service';
 import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
 import { CustomizationBoundary, type DesktopCustomization, type NamespaceActivation } from './DesktopCustomizations.js';
 import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
@@ -109,7 +110,15 @@ export function ExtensionWorkspace({ row, metadata, workspaces, active, controll
       await controller.create(agentId);
     },
     async call(installationId: string, operation: string, input: Json): Promise<ExtensionCallValue> {
-      try { return await controller.extensionCall({ namespace, installationId, operation, input }); }
+      const request = { namespace, installationId, operation, input };
+      try { parseExtensionCallRequest(request); }
+      catch (error) {
+        if (error instanceof ExtensionCallTooLarge) return { kind: 'failed', cause: 'too-large' };
+        // A malformed operation name or input is the extension's own bug, not an outage: say so where its author looks.
+        console.error(`[${namespace}] invalid extension call to "${String(operation)}": ${error instanceof Error ? error.message : 'invalid request'}`);
+        return { kind: 'failed', cause: 'unavailable' };
+      }
+      try { return await controller.extensionCall(request); }
       catch { return { kind: 'failed', cause: 'unavailable' }; }
     },
     async refresh() {
