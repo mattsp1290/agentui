@@ -108,7 +108,7 @@ test('a result for an unknown request ID is stored, and the ring keeps the last 
   assert.deepEqual(relay.status().results.map(item => item.requestId), ids.slice(-32));
 });
 
-test('apply is refused as not-ready until the restart path exists', () => {
+test('apply is refused as not-ready without a ready build of that key made by the running host build', () => {
   const { relay } = clocked();
   relay.push(randomUUID(), workerStatus(), []);
   assert.deepEqual(relay.mutate(parseServiceRequest({ op: 'customization-apply', requestId: randomUUID(), buildKey: 'c'.repeat(64) })), { kind: 'refused', cause: 'not-ready' });
@@ -135,7 +135,7 @@ test('a real host relays through HTTP: worker operations use the worker route, s
   // 256 extensions and a 3,000-byte remote key fit.
   const extensions = Array.from({ length: 256 }, (_, index) => ({ key: `${'r'.repeat(2_990)}#${index}`, enabled: index % 2 === 0, namespace: null }));
   const pushed = await call({ op: 'customization-worker-push', workerId, status: workerStatus({ extensions }), results: [] }, '/api/v1/worker');
-  assert.deepEqual(pushed.body, { ok: true, value: { ok: true } });
+  assert.deepEqual(pushed.body, { ok: true, value: { ok: true, launch: { current: null, next: null } } });
   const status = await call({ op: 'customization-status' });
   assert.equal(status.body.value.support, 'supported');
   assert.equal(status.body.value.extensions.length, 256);

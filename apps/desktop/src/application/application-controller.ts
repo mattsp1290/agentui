@@ -9,7 +9,8 @@ import type { ConversationScope, SubmitResult, ProviderObservationStatus, Conver
 import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, CustomizationMutation, CustomizationRefusal, CustomizationStatus,
+  CustomizationWorkerFailure, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
@@ -60,6 +61,25 @@ export interface ApplicationSnapshot {
   readonly storageFailure: string;
   readonly busy: boolean;
   readonly capturedSends: readonly CapturedSend[];
+  /** The connected customization repository as the host last reported it, or null before the first read. */
+  readonly customization: CustomizationStatus | null;
+  /** Set from an accepted apply until the restarted host answers (the page then reloads or resumes) or the wait ends. */
+  readonly restarting: boolean;
+}
+/** How a customization request ended. `unknown`: the host restarted or stayed silent, so the page shows the repository's current state. */
+export type CustomizationOutcome =
+  | { readonly kind: 'ok' }
+  | { readonly kind: 'refused'; readonly cause: CustomizationRefusal }
+  | { readonly kind: 'failed'; readonly cause: CustomizationWorkerFailure }
+  | { readonly kind: 'unknown' };
+/** The page's own build: read once, and reloaded when the host serves a different one after a restart. */
+export interface ArtifactSource {
+  /** The artifact ID read when the page loaded, or null when it could not be read then. */
+  loaded(): Promise<string | null>;
+  /** The artifact ID the host serves now, or null when it cannot be read. */
+  read(): Promise<string | null>;
+  /** Reloads the page from exactly the URL it was loaded from. */
+  reload(): void;
 }
 export interface ConversationActions {
   readonly commands: ConversationCommands;
@@ -96,6 +116,12 @@ export interface ApplicationController {
   refreshMetadata(): Promise<void>;
   /** Forwards one extension operation call. No retry. */
   extensionCall(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
+  /** Reads customization status now. */
+  loadCustomization(): Promise<void>;
+  /** While a customization view is visible, status is read every 2 seconds instead of every 30. */
+  setCustomizationVisible(visible: boolean): void;
+  /** Applies a ready build: the host restarts with it, and the page reconnects, then reloads when its build changed. */
+  applyCustomization(buildKey: string): Promise<CustomizationOutcome>;
 }
 interface LoadedView { readonly borrow: ViewBorrow; readonly saved: SavedView; readonly hostId: string }
 type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedView;
@@ -161,8 +187,16 @@ function mergePage(loaded: readonly ConversationCatalogEntry[], items: readonly 
   return [...merged.values()];
 }
 function initialSnapshot(): ApplicationSnapshot {
-  return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
+  return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [],
+    customization: null, restarting: false };
 }
+const FINAL_BUILD_STATES = new Set(['ready', 'failed', 'cancelled']);
+/** A customization request never stays pending longer than this. */
+export const CUSTOMIZATION_REQUEST_LIMIT_MS = 200_000;
+/** How long a restarting host gets to answer again before the page shows it as unavailable. */
+export const RESTART_LIMIT_MS = 120_000;
+/** The host's own limit on delivering a build while it drains. */
+const DELIVERY_LIMIT_MS = 10 * 60_000;
 function message(error: unknown): string { return error instanceof Error ? error.message : 'The operation failed.'; }
 export function applicationEnabled(state: ApplicationSnapshot): boolean {
   return state.host.kind === 'ready' && !state.storageFailure && !state.busy;
@@ -182,6 +216,8 @@ export function createApplicationController(deps: {
   readonly createConnection: (options: ServiceConnectionOptions) => ServiceConnection;
   readonly ownedViewStorage: ViewStorageFactory;
   readonly createId: () => string;
+  /** The page's served build. Absent in the Mac app's native mode, which never reloads for it. */
+  readonly artifact?: ArtifactSource;
 }): ApplicationController {
   let state = initialSnapshot();
   let session: Session | null = null;
@@ -249,9 +285,122 @@ export function createApplicationController(deps: {
   }
   function lose(owner: Session, cause: ServiceConnectionLost): void {
     if (session !== owner) return;
-    if (state.host.kind !== 'unavailable') publish({ host: { kind: 'unavailable' }, error: message(cause) });
+    if (state.host.kind !== 'unavailable') publish({ host: { kind: 'unavailable' }, error: state.restarting ? '' : message(cause) });
     disconnectActive();
     owner.frontend.pause();
+    if (state.restarting) void awaitRestart(owner);
+  }
+  // Customization status, requests and the restart after an apply.
+  let customizationTimer: ReturnType<typeof setTimeout> | undefined;
+  let customizationVisible = false;
+  let customizationReads = 0;
+  /** Bumped by every handshake; a request whose host has handshaken since and no longer knows it ended as unknown. */
+  let connectionEpoch = 0;
+  let reloading = false;
+  let restartKey: string | null = null;
+  let restartRequest: string | null = null;
+  let restartStartedAt = 0;
+  let awaitingRestart = false;
+  const waiters = new Map<string, { readonly resolve: (outcome: CustomizationOutcome) => void; readonly startedAt: number; readonly epoch: number }>();
+  function scheduleCustomization(owner: Session): void {
+    clearTimeout(customizationTimer);
+    if (session !== owner) return;
+    const status = state.customization;
+    const fast = waiters.size > 0 || state.restarting || customizationVisible || status?.pending !== null && status?.pending !== undefined ||
+      (status?.build !== null && status?.build !== undefined && !FINAL_BUILD_STATES.has(status.build.state));
+    customizationTimer = setTimeout(() => { void readCustomization(owner); }, fast ? 2_000 : 30_000);
+  }
+  function settleWaiters(status: CustomizationStatus | null): void {
+    for (const [requestId, waiter] of waiters) {
+      const result = status?.results.find(item => item.requestId === requestId);
+      let outcome: CustomizationOutcome | null = null;
+      if (result) outcome = result.outcome === 'ok' ? { kind: 'ok' } : { kind: 'failed', cause: result.outcome };
+      else if (Date.now() - waiter.startedAt >= CUSTOMIZATION_REQUEST_LIMIT_MS) outcome = { kind: 'unknown' };
+      else if (status && connectionEpoch > waiter.epoch && status.pending?.requestId !== requestId) outcome = { kind: 'unknown' };
+      if (outcome) { waiters.delete(requestId); waiter.resolve(outcome); }
+    }
+  }
+  async function readCustomization(owner: Session): Promise<void> {
+    clearTimeout(customizationTimer);
+    const read = ++customizationReads;
+    try {
+      if (session !== owner || reloading) return;
+      const status = await current(owner, owner.connection.customizationStatus());
+      if (read !== customizationReads) return;
+      publish({ customization: status });
+      settleWaiters(status);
+      const applied = restartRequest === null ? undefined : status.results.find(item => item.requestId === restartRequest);
+      if (state.restarting && applied && applied.outcome !== 'ok') {
+        // The apply ended without a restart (for example delivery-failed after this page stopped waiting for its result).
+        endRestart('AgentUI could not apply the build. Nothing changed.');
+      } else if (state.restarting && restartKey !== null && status.running.buildKey === restartKey && !awaitingRestart) {
+        // The restarted host reports the applied build as running: the restart is over even if no connection loss was seen.
+        await finishRestart(owner);
+      } else if (state.restarting && Date.now() - restartStartedAt > DELIVERY_LIMIT_MS + RESTART_LIMIT_MS) {
+        endRestart('The restart did not finish. The page shows the host\u2019s current state.');
+      }
+    } catch {
+      if (session !== owner) return;
+      settleWaiters(null);
+      // A status read that fails while restarting is the host going away, even when no conversation feed noticed it.
+      if (state.restarting && !awaitingRestart) void awaitRestart(owner);
+    } finally { if (session === owner && read === customizationReads) scheduleCustomization(owner); }
+  }
+  /** Reloads when the host now serves a build other than the one this page loaded. Returns true when a reload started. */
+  async function reloadForArtifact(): Promise<boolean> {
+    const source = deps.artifact;
+    if (!source || reloading) return reloading;
+    // Without the build read at page load nothing can be compared; a read after a restart never becomes the baseline.
+    const loaded = await source.loaded().catch(() => null);
+    const served = await source.read().catch(() => null);
+    if (loaded === null || served === null || served === loaded) return false;
+    reloading = true;
+    source.reload();
+    // A page that is still here after the reload attempt shows that, instead of waiting forever.
+    setTimeout(() => { reloading = false; publish({ restarting: false, error: 'AgentUI restarted with a new build. Reload this page to use it.' }); }, 10_000);
+    return true;
+  }
+  function endRestart(error: string): void {
+    restartKey = null;
+    restartRequest = null;
+    publish({ restarting: false, error });
+  }
+  async function finishRestart(owner: Session): Promise<void> {
+    if (session !== owner) return;
+    const expected = restartKey;
+    restartKey = null;
+    restartRequest = null;
+    if (await reloadForArtifact()) return;
+    publish({ restarting: false });
+    await run(refresh);
+    const running = state.customization?.running.buildKey ?? null;
+    if (expected !== null && running !== null && running !== expected) publish({ error: 'AgentUI could not start with the applied build and is running the previous one.' });
+  }
+  /** After an apply the host goes away: ask it for metadata every second, without user action, for up to two minutes. */
+  async function awaitRestart(owner: Session): Promise<void> {
+    if (awaitingRestart) return;
+    awaitingRestart = true;
+    const deadline = Date.now() + RESTART_LIMIT_MS;
+    let answered = false;
+    try {
+      while (session === owner && !answered && Date.now() < deadline) {
+        await new Promise(resolve => setTimeout(resolve, 1_000));
+        try { await owner.connection.metadata(); answered = true; } catch { /* still restarting */ }
+      }
+    } finally { awaitingRestart = false; }
+    if (session !== owner) return;
+    if (answered) { await finishRestart(owner); return; }
+    endRestart('AgentUI did not come back after the restart. Select Reconnect to try again.');
+  }
+  async function customizationRequest(owner: Session, build: (requestId: string) => CustomizationMutation): Promise<CustomizationOutcome> {
+    const requestId = deps.createId();
+    let reply;
+    try { reply = await current(owner, owner.connection.customization(build(requestId))); }
+    catch { return { kind: 'unknown' }; }
+    if (reply.kind === 'refused') return { kind: 'refused', cause: reply.cause };
+    const outcome = new Promise<CustomizationOutcome>(resolve => waiters.set(requestId, { resolve, startedAt: Date.now(), epoch: connectionEpoch }));
+    void readCustomization(owner);
+    return outcome;
   }
   async function current<T>(owner: Session, operation: Promise<T>): Promise<T> {
     const result = await operation;
@@ -465,6 +614,9 @@ export function createApplicationController(deps: {
     let held: StoreBorrow | undefined;
     try {
       const received = await current(owner, owner.connection.metadata());
+      // A host that restarted with another build serves new assets: load them instead of resuming.
+      if (await reloadForArtifact()) return;
+      connectionEpoch++;
       const metadata = { ...received, agents: received.agents.map(compatibleAgent) };
       const compatibility = checkCompatibility(SOLO_CLIENT_COMPATIBILITY, metadata.compatibility);
       const issues = compatibility.kind === 'incompatible' ? compatibility.issues.filter(issue => issue.dimension !== 'native-runtime') : [];
@@ -497,6 +649,7 @@ export function createApplicationController(deps: {
       if (!borrow) throw new Error('The original view lease is unavailable.');
       owner.view = { borrow, saved, hostId: metadata.hostId };
       publish({ host: { kind: 'ready', metadata } });
+      void readCustomization(owner);
       const { hostId } = metadata;
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
         saved.route ? install(owner, saved.route) : Promise.resolve()]);
@@ -609,6 +762,9 @@ export function createApplicationController(deps: {
       });
       disposal = closing;
       const observation = observationPoll, unsubscribe = unsubscribeActive;
+      clearTimeout(customizationTimer);
+      for (const waiter of waiters.values()) waiter.resolve({ kind: 'unknown' });
+      waiters.clear();
       observationPoll = null;
       unsubscribeActive = null;
       session = null;
@@ -716,6 +872,28 @@ export function createApplicationController(deps: {
       const owner = session;
       if (!owner) return { kind: 'failed', cause: 'unavailable' };
       return owner.connection.extensionCall(request);
+    },
+    async loadCustomization() {
+      const owner = session;
+      if (owner) await readCustomization(owner);
+    },
+    setCustomizationVisible(visible) {
+      if (customizationVisible === visible) return;
+      customizationVisible = visible;
+      const owner = session;
+      if (owner && visible && state.host.kind === 'ready') void readCustomization(owner);
+    },
+    async applyCustomization(buildKey) {
+      const owner = session;
+      if (!owner || state.restarting) return { kind: 'unknown' };
+      publish({ restarting: true, error: '' });
+      restartKey = buildKey;
+      restartStartedAt = Date.now();
+      const outcome = await customizationRequest(owner, requestId => { restartRequest = requestId; return { op: 'customization-apply', requestId, buildKey }; });
+      // Refused or failed: the host keeps running and nothing restarts. `ok` and `unknown` leave the restart to finish,
+      // and status reads end it either way: running build, a failed result, a lost host, or the overall limit.
+      if ((outcome.kind === 'refused' || outcome.kind === 'failed') && session === owner) { restartKey = null; restartRequest = null; publish({ restarting: false }); }
+      return outcome;
     },
     conversationActions(target) {
       const owner = session;

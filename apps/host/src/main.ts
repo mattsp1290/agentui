@@ -5,6 +5,7 @@ import { resolve, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
 import { startBrowserHost } from './server.js';
+import { RESTART_EXIT_CODE } from './customization-relay.js';
 import type { AgentConfiguration, NativeProvider } from './agent-config.js';
 import { readAgentConfiguration } from './agent-config.js';
 import { takeServerExtensionConfiguration } from './server-extension-config.js';
@@ -51,7 +52,11 @@ async function main(): Promise<void> {
     const port = values.port === undefined ? 7140 : Number(values.port);
     if (!Number.isInteger(port) || port < 0 || port > 65535) throw new Error('Invalid listener port');
     if (values.extensions !== undefined && !values.extensions.trim()) throw new Error('Invalid server extension configuration');
+    const tokens = () => new Set(Object.keys(process.env).filter(name => /^AGENTUI_EXTENSION_[A-Za-z0-9_]+$/u.test(name)));
+    const before = tokens();
     const extensions = values.extensions === undefined ? undefined : takeServerExtensionConfiguration(resolve(values.extensions), process.env);
+    const after = tokens();
+    const consumedTokens = [...before].filter(name => !after.has(name)).sort();
     const desktopAgents: AgentConfiguration['agents'] = [
       ...(values.preferred === 'codex' ? [{ name: 'codex', kind: 'codex', cwd: resolve(values.workspace ?? '.'), ...executable } satisfies AgentConfiguration['agents'][number]] : []),
       { name: 'pi', kind: 'pi', cwd: resolve(values.workspace ?? '.') },
@@ -59,12 +64,18 @@ async function main(): Promise<void> {
     const setupCapability = process.env.AGENTUI_SETUP_CAPABILITY ?? '';
     delete process.env.AGENTUI_SETUP_CAPABILITY;
     const host = await startBrowserHost({ directory, port, observability: readObservabilityConfiguration(process.env), assetsDirectory: values.assets ? resolve(values.assets) : fileURLToPath(new URL('../../desktop/web-dist-browser/', import.meta.url)),
-      ...(extensions === undefined ? {} : { extensions }),
+      ...(extensions === undefined ? {} : { extensions }), consumedTokens,
       ...(values['refresh-builder'] === undefined ? {} : { refreshBuilder: values['refresh-builder'] }),
       ...(command === 'desktop' ? { setupCapability } : {}),
       agentStartup: command === 'desktop' ? { kind: 'desktop', configuration: { default: values.preferred ?? 'codex', agents: desktopAgents } } : values.config !== undefined ? { kind: 'configured', configuration: readAgentConfiguration(resolve(values.config)) }
         : provider ? { kind: 'provider', provider } : { kind: command === 'browser-dev' ? 'recorded' : 'extensions' } });
     void host.fatal.then(() => { process.exitCode = 1; });
+    // An applied customization: close, then exit with the code that makes the session wrapper start the next build.
+    void host.restart.then(async () => {
+      setTimeout(() => process.exit(RESTART_EXIT_CODE), 20_000).unref();
+      await host.close().catch(() => {});
+      process.exit(RESTART_EXIT_CODE);
+    });
     const close = () => { void host.close().catch(() => { process.exitCode = 1; }); };
     process.on('SIGINT', close);
     process.on('SIGTERM', close);

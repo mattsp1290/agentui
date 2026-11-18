@@ -6,7 +6,6 @@ import { MemberForm } from './MemberForm.js';
 import { initials } from './initials.js';
 import { membersListOutput } from '../operation-output.js';
 
-const CONFIGURATION = '~/.local/share/agentui/extensions.json';
 const TOKEN = 'AGENTUI_EXTENSION_CREW_TOKEN';
 const NEWER = 'Requires a newer Crew service';
 /** A dark aubergine sidebar beside the host's light or dark message area. Layout and colour idiom only. */
@@ -91,7 +90,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   if (!installation) {
     return <div className="crew-workspace crew-setup" role="region" aria-label="Crew setup">
       <h2>Connect Crew</h2>
-      <p>Crew is not configured on this host. Add a Crew installation to <code>{CONFIGURATION}</code> with its service address and the token variable <code>{TOKEN}</code>, export that variable in the launcher's shell, and restart AgentUI.</p>
+      <p>Crew is not configured on this host. Add a Crew installation grant to <code>installations</code> in the connected customization repository, with its service address and the token variable <code>{TOKEN}</code>. Set that variable in the shell that runs the AgentUI launcher, and restart AgentUI.</p>
       <p>See <code>docs/extensions/crew.md</code> in the AgentUI repository for the configuration file and the network setup Crew needs.</p>
     </div>;
   }

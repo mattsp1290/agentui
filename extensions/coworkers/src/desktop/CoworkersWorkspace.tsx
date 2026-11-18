@@ -6,7 +6,6 @@ import { ThemeScope } from '@agentui/ui-primitives/desktop';
 import { CoworkerContext, initials } from './shared.js';
 import { coworkersListOutput, type CoworkerSummary } from '../operation-output.js';
 
-const CONFIGURATION = '~/.local/share/agentui/extensions.json';
 const TOKEN = 'AGENTUI_EXTENSION_COWORKERS_TOKEN';
 const NEWER = 'Requires a newer Coworkers service';
 /** A neutral grey surface with an indigo accent. Layout and colour idiom only. */
@@ -69,7 +68,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   if (!installation) {
     return <div className="coworkers-workspace coworkers-setup" role="region" aria-label="Coworkers setup">
       <h2>Connect Coworkers</h2>
-      <p>Coworkers is not configured on this host. Add a Coworkers installation to <code>{CONFIGURATION}</code> with its service address and the token variable <code>{TOKEN}</code>, export that variable in the launcher's shell, and restart AgentUI.</p>
+      <p>Coworkers is not configured on this host. Add a Coworkers installation grant to <code>installations</code> in the connected customization repository, with its service address and the token variable <code>{TOKEN}</code>. Set that variable in the shell that runs the AgentUI launcher, and restart AgentUI.</p>
       <p>The service must listen on an address this host can reach. See <code>docs/extensions/coworkers.md</code> in the AgentUI repository.</p>
     </div>;
   }

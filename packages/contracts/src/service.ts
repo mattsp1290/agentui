@@ -18,8 +18,8 @@ import type { Transcript, TranscriptEvent } from './conversation.js';
 import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_DEPTH, JSON_MAX_NODES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
 import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
 export * from './customization.js';
-import { CUSTOMIZATION_OPS, parseCustomizationReply, parseCustomizationRequest, parseCustomizationStatus, parseCustomizationWorkerRequests } from './customization.js';
-import type { CustomizationMutation, CustomizationMutationOp, CustomizationReply, CustomizationRequest, CustomizationStatus, CustomizationWorkerRequest } from './customization.js';
+import { CUSTOMIZATION_OPS, parseCustomizationLaunchKeys, parseCustomizationReply, parseCustomizationRequest, parseCustomizationStatus, parseCustomizationWorkerRequests } from './customization.js';
+import type { CustomizationLaunchKeys, CustomizationMutation, CustomizationMutationOp, CustomizationReply, CustomizationRequest, CustomizationStatus, CustomizationWorkerRequest } from './customization.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -245,7 +245,7 @@ export interface ServiceValueMap extends CustomizationMutationValues {
   readonly 'extension-call': ExtensionCallValue;
   readonly 'customization-status': CustomizationStatus;
   readonly 'customization-worker-pull': { readonly requests: readonly CustomizationWorkerRequest[] };
-  readonly 'customization-worker-push': { readonly ok: true };
+  readonly 'customization-worker-push': { readonly ok: true; readonly launch: CustomizationLaunchKeys };
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
@@ -548,7 +548,11 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   'customization-rebuild': parseCustomizationReply,
   'customization-apply': parseCustomizationReply,
   'customization-worker-pull': value => ({ requests: parseCustomizationWorkerRequests(value) }),
-  'customization-worker-push'(value) { record(value, ['ok']); if ((value as { ok?: unknown }).ok !== true) throw new Error('Invalid worker push reply'); return { ok: true }; },
+  'customization-worker-push'(value) {
+    const input = record(value, ['ok', 'launch']);
+    if (input.ok !== true) throw new Error('Invalid worker push reply');
+    return { ok: true, launch: parseCustomizationLaunchKeys(input.launch) };
+  },
 };
 export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);

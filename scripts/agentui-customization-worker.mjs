@@ -3,16 +3,19 @@
 // `customization-worker-pull` and reports through `customization-worker-push`. It names no service.
 import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
-import { rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { isAbsolute, join, posix } from 'node:path';
 import { committedReferenceKey, containedPath, customizationSettingsFile, EXTENSION_TOKEN_VARIABLE, isSiblingReference,
   parseCustomizationPackage, parseCustomizationSettings, repositoryLocation, serializeCustomizationSettings } from '@agentui/host/customization';
 import { commitFailure, GitFailure, pushFailure, runGit, setReferenceEnabled } from './lib/customization-git.mjs';
-import { openStore, StateInvalid, StoreBusy } from './lib/customization-store.mjs';
+import { openStore, StateInvalid, StoreBusy, writeAtomic } from './lib/customization-store.mjs';
 import { createBuildManager } from './lib/customization-builds.mjs';
+import { deliverBuild, DeliveryFailed } from './lib/customization-delivery.mjs';
 
 export const PUSH_INTERVAL_MS = 5_000;
 const PULL_WAIT_SECONDS = 10;
+// A call to a host that went away must not hold the serialized pushes forever.
+const CALL_TIMEOUT_MS = 25_000;
 
 class Outcome extends Error {
   constructor(cause) { super(cause); this.cause = cause; }
@@ -34,10 +37,13 @@ const packagePath = (subdirectory, file) => subdirectory ? posix.join(subdirecto
  */
 export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoot, signal, target = { kind: 'local' }, registerChild = () => {},
   builds: injectedBuilds, buildOptions = {}, environment = process.env, gitEnvironment = process.env, gitTimeoutMs, pushIntervalMs = PUSH_INTERVAL_MS, sessionId = randomUUID(), lockWaitMs,
-  fetch: send = fetch }) {
+  profileId = null, sshRunner, fetch: send = fetch }) {
   const store = openStore(localSetupRoot);
   const workerId = randomUUID();
   const unsent = [];
+  // The delivery that goes with an apply's `ok` result, and the host's launch keys as of its last reply.
+  let delivery = null;
+  let launch = { current: null, next: null };
   let pushSoon = () => {};
   const builds = injectedBuilds !== undefined ? injectedBuilds : repositoryRoot
     ? createBuildManager({ store, repositoryRoot, sessionId, signal, registerChild, onChange: () => pushSoon(), environment, ...buildOptions }) : null;
@@ -172,6 +178,14 @@ export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoo
       const after = await refresh();
       requestBuild({ connection, head: after.head });
     },
+    /** Puts a ready build where the host can read it. The host records it as its next launch target and restarts. */
+    async apply({ requestId, buildKey }) {
+      let delivered;
+      const lifecycle = { children: { add: task => registerChild(task.child), delete() {} } };
+      try { delivered = await deliverBuild({ buildsRoot: store.paths.builds, buildKey, target, keep: [launch.current, launch.next], runner: sshRunner, lifecycle }); }
+      catch (error) { fail(error instanceof DeliveryFailed && error.message === 'The build is not ready.' ? 'not-ready' : 'delivery-failed'); }
+      delivery = { requestId, buildKey, ...delivered };
+    },
     async settings({ settings, expectedHead }) {
       const connection = await connected();
       const committed = await sync(connection);
@@ -191,7 +205,7 @@ export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoo
 
   async function handle(request) {
     const handler = handlers[request.op];
-    if (!handler) return 'not-ready';
+    if (!handler) return 'state-invalid';
     let release;
     try { release = await store.lock({ sessionId, signal, ...(lockWaitMs === undefined ? {} : { waitMs: lockWaitMs }) }); }
     catch (error) { return error instanceof StoreBusy ? 'busy' : 'state-invalid'; }
@@ -213,17 +227,31 @@ export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoo
 
   async function call(op, body) {
     const response = await send(`${origin}/api/v1/worker`, { method: 'POST', headers: { Origin: origin, 'Content-Type': 'application/json' },
-      body: JSON.stringify({ op, workerId, ...body }), signal });
+      body: JSON.stringify({ op, workerId, ...body }), signal: AbortSignal.any([signal, AbortSignal.timeout(CALL_TIMEOUT_MS)]) });
     const reply = await response.json();
     if (!reply?.ok) throw new Error('The host refused the worker request.');
     return reply.value;
   }
   const status = () => ({ connection: state.connection, head: state.head, extensions: state.extensions, settings: state.settings,
     build: builds?.status() ?? null, presentTokens: presentTokens() });
-  async function push() {
+  // Pushes run one at a time, so the heartbeat and the request loop never send or drop the same results.
+  let pushing = Promise.resolve();
+  const push = () => { const next = pushing.then(pushNow); pushing = next.catch(() => {}); return next; };
+  async function pushNow() {
     const results = unsent.slice(0, 32);
-    await call('customization-worker-push', { status: status(), results });
+    const sent = delivery && results.some(result => result.requestId === delivery.requestId) ? delivery : null;
+    const reply = await call('customization-worker-push', { status: status(), results, ...(sent ? { delivery: sent } : {}) });
     unsent.splice(0, results.length);
+    if (sent && delivery === sent) delivery = null;
+    await recordLaunch(reply?.launch);
+  }
+  /** Keeps `profiles/<profile id>.json` in step with the builds this profile's host uses, so pruning keeps them. */
+  async function recordLaunch(next) {
+    if (!next || (next.current === launch.current && next.next === launch.next)) return;
+    launch = { current: next.current ?? null, next: next.next ?? null };
+    if (!profileId) return;
+    await mkdir(store.paths.profiles, { recursive: true, mode: 0o700 }).catch(() => {});
+    await writeAtomic(join(store.paths.profiles, `${profileId}.json`), `${JSON.stringify({ version: 1, ...launch })}\n`).catch(() => {});
   }
   const pause = ms => new Promise(resolve => {
     const timer = setTimeout(resolve, ms);
@@ -257,7 +285,6 @@ export function startCustomizationWorker({ origin, localSetupRoot, repositoryRoo
   }
   const stopped = (async () => {
     await refresh().catch(() => {});
-    void target;
     // After an AgentUI update or a launcher restart: recover interrupted builds, then build the head if no ready build matches.
     const recovered = (async () => {
       if (!builds?.recover) return;

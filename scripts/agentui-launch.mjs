@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, existsSync, readFileSync, realpathSync } from 'node:fs';
+import { createReadStream, existsSync, realpathSync } from 'node:fs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
 import { homedir, tmpdir } from 'node:os';
@@ -64,51 +64,13 @@ export function parseLaunchArgs(args, cwd = process.cwd()) {
     : { kind: 'local', workspace: resolve(cwd, workspace ?? '.'), agent, port, ...common };
 }
 
-/** Names of the environment variables an extension configuration reads its tokens from. */
-function tokenVariables(configuration) {
-  const names = new Set();
-  for (const extension of Array.isArray(configuration?.extensions) ? configuration.extensions : []) {
-    for (const installation of Array.isArray(extension?.installations) ? extension.installations : []) {
-      if (installation?.authentication?.kind === 'environment' && typeof installation.authentication.variable === 'string') names.add(installation.authentication.variable);
-    }
-  }
-  return [...names].sort();
+/** Every `AGENTUI_EXTENSION_*` variable set in the launcher's environment, for the session's secrets line. Never printed. */
+export function extensionVariables(env = process.env) {
+  return Object.fromEntries(Object.entries(env).filter(([name, value]) => /^AGENTUI_EXTENSION_[A-Za-z0-9_]+$/.test(name) && typeof value === 'string'));
 }
-/**
- * Whether the launcher can hand this configuration to the host. The host refuses to start on an invalid file, so the
- * launcher checks the parts that go stale: the version and each selected directory. The host still validates the rest.
- */
-function loadableConfiguration(configuration, base) {
-  if (configuration?.version !== 2 || !Array.isArray(configuration.extensions)) return false;
-  return configuration.extensions.every(extension => {
-    if (typeof extension?.directory !== 'string' || !extension.directory) return false;
-    const directory = resolve(base, extension.directory);
-    return existsSync(extension.kind === 'artifact' ? directory : join(directory, 'package.json'));
-  });
-}
-/**
- * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when the file names
- * version 2 and existing extension directories and every named token variable is set. Otherwise it prints one warning
- * (naming every missing variable, never a value) and starts with native agents only.
- * A remote profile never loads bundled server extensions (decision D13).
- */
-export function extensionArguments({ setupRoot, kind, env = process.env, warn = line => process.stderr.write(`${line}\n`) }) {
-  const file = join(setupRoot, 'extensions.json');
-  if (kind === 'ssh') {
-    if (existsSync(file)) warn('Server extensions run only with a local host. Ignoring extensions.json for this remote session.');
-    return [];
-  }
-  if (!existsSync(file)) return [];
-  let configuration;
-  try { configuration = JSON.parse(readFileSync(file, 'utf8')); }
-  catch { warn('extensions.json is not valid JSON. Starting without server extensions.'); return []; }
-  if (!loadableConfiguration(configuration, setupRoot)) {
-    warn('extensions.json is not a usable extension configuration (version 2 with existing extension directories). Starting without server extensions.');
-    return [];
-  }
-  const missing = tokenVariables(configuration).filter(name => !env[name]?.trim());
-  if (missing.length) warn(`Set ${missing.join(', ')} to load server extensions. Starting without server extensions.`);
-  return missing.length ? [] : ['--extensions', file];
+/** The setup-root extensions.json of earlier releases is no longer read; say so once per start when it is still there. */
+export function oldExtensionsNotice(setupRoot, warn = line => process.stderr.write(`${line}\n`)) {
+  if (existsSync(join(setupRoot, 'extensions.json'))) warn(`${join(setupRoot, 'extensions.json')} is no longer read. Enable extensions in Settings from a connected customization repository.`);
 }
 
 export async function assertPortAvailable(port) {
@@ -177,7 +139,9 @@ export async function createReleaseArchive(directory, archive, lifecycle = {}) {
  * Uploads a directory to `destination` with tar over ssh: the archive is piped into `sh -c <remoteScript>`, which reads it
  * from standard input. The customization worker reuses this to deliver builds to a remote host.
  */
-export async function uploadDirectory(destination, directory, remoteScript, lifecycle = {}, runner = (args, options) => command('ssh', args, options)) {
+/** Starts `ssh` with `args`; resolves `exited` with its standard output. The worker's delivery uses it unless a test injects another. */
+export const sshRunner = (args, options) => command('ssh', args, options);
+export async function uploadDirectory(destination, directory, remoteScript, lifecycle = {}, runner = sshRunner) {
   const archive = `${await mkdtemp(join(tmpdir(), 'agentui-upload-'))}.tar.gz`;
   try {
     await createReleaseArchive(directory, archive, lifecycle);
@@ -203,11 +167,12 @@ async function deploy(destination, setup, releaseId, lifecycle) {
   return release;
 }
 
-async function waitForHost(session, origin, artifactId) {
+export async function waitForHost(session, origin, artifactId) {
   let done = false;
   let failure;
   session.exited.then(() => { done = true; }, error => { done = true; failure = error; });
-  const deadline = Date.now() + 60_000;
+  // Covers two launch targets that fail to start (20 s each in the session wrapper) plus a start with the defaults.
+  const deadline = Date.now() + 120_000;
   while (Date.now() < deadline) {
     if (done) throw failure ?? new Error('The host stopped before becoming ready.');
     const lines = session.output().split('\n');
@@ -298,9 +263,8 @@ export async function launch(options) {
     const setupCapability = randomBytes(32).toString('hex');
     const origin = `http://127.0.0.1:${port}`;
     let session;
+    oldExtensionsNotice(LOCAL_SETUP_ROOT);
     if (options.kind === 'ssh') {
-      // A remote host never loads server extensions; this only warns when a local extensions.json would be ignored.
-      void extensionArguments({ setupRoot: LOCAL_SETUP_ROOT, kind: 'ssh' });
       const deploymentHash = createHash('sha256').update(await readFile(join(root, 'scripts/agentui-launch-session.mjs')))
         .update('\0').update(await readFile(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
       const release = await deploy(options.destination, setup, `${host.artifactId.slice(0, 16)}-${browser.artifactId.slice(0, 16)}-${deploymentHash}`, lifecycle);
@@ -311,17 +275,18 @@ export async function launch(options) {
     } else {
       const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--workspace', workspace,
         '--data-dir', dataDir, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port),
-        ...(options.agent === 'codex' ? ['--executable', setup.codex] : []), ...extensionArguments({ setupRoot: setup.root, kind: 'local' })];
+        ...(options.agent === 'codex' ? ['--executable', setup.codex] : [])];
       session = command(setup.node, [join(root, 'scripts/agentui-launch-session.mjs'), ...args],
         { ...lifecycle, lease: true, env: { ...process.env, PATH: `${dirname(setup.node)}:${process.env.PATH}` } });
     }
-    session.child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: process.env.OPENCODE_GO_API_KEY ?? null, AGENTUI_SETUP_CAPABILITY: setupCapability })}\n`);
+    session.child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: process.env.OPENCODE_GO_API_KEY ?? null, AGENTUI_SETUP_CAPABILITY: setupCapability,
+      extensionVariables: extensionVariables() })}\n`);
     await waitForHost(session, origin, host.artifactId);
     checkRunning();
     // Imported here: the worker needs the built host packages, which the build step above produces.
     const { startCustomizationWorker } = await import('./agentui-customization-worker.mjs');
     checkRunning();
-    worker.running = startCustomizationWorker({ origin, localSetupRoot: LOCAL_SETUP_ROOT, repositoryRoot: root, signal: worker.controller.signal,
+    worker.running = startCustomizationWorker({ origin, localSetupRoot: LOCAL_SETUP_ROOT, repositoryRoot: root, signal: worker.controller.signal, profileId: profile.id,
       target: options.kind === 'ssh' ? { kind: 'ssh', destination: options.destination, remoteSetupRoot: setup.root } : { kind: 'local' },
       registerChild: child => {
         const exited = new Promise(resolve => child.once('close', resolve));

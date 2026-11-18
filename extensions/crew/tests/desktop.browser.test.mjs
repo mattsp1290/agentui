@@ -391,7 +391,8 @@ test('without a Crew installation the workspace shows setup guidance and calls n
   await f.page.getByRole('button', { name: 'Open Crew' }).click();
   const setup = f.page.getByRole('region', { name: 'Crew setup' });
   await setup.getByText('AGENTUI_EXTENSION_CREW_TOKEN').waitFor();
-  await setup.getByText('~/.local/share/agentui/extensions.json').waitFor();
+  assert.match(await setup.textContent(), /installation grant to installations in the connected customization repository/);
+  assert.doesNotMatch(await setup.textContent(), /extensions\.json/);
   assert.equal(await setup.locator('input').count(), 0, 'no token entry field');
   assert.deepEqual(f.requests.filter(url => !url.startsWith(f.host.origin)), []);
   assert.deepEqual(f.violations, []);

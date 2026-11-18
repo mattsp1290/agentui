@@ -62,6 +62,12 @@ export interface LocalHost<E, P> {
   /** Stops waiting on a provider send that blocks its conversation and is not being dispatched. Never says whether it took effect. */
   abandon(scope: ConversationScope, id: string, actor?: FrontendSendActor): Promise<Receipt | null>;
   frontendBinding(input: FrontendBindingRequest, actor: FrontendSendActor, producerFor: (scope: ConversationScope) => Pick<FrontendToolProducer, 'register'>): Promise<FrontendBinding>;
+  /**
+   * True while a host call is in flight: a native or provider dispatch, a reconcile, a provider creation or a
+   * continuation. A native turn that keeps running after its dispatch returned is visible only in the conversation's
+   * projected run state, which the caller reads from `inspect`.
+   */
+  busy(): boolean;
   close(): void;
 }
 export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<E, P> {
@@ -529,6 +535,7 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
         return { kind: 'pending', id: identity.id };
       });
     },
+    busy: () => active > 0 || dispatching.size > 0 || creating.size > 0 || continuing.size > 0,
     close(): void {
       if (closed) return;
       closed = true;

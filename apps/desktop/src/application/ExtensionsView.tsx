@@ -1,11 +1,12 @@
-import { Suspense, useEffect, type ReactNode } from 'react';
+import { Suspense, useEffect, useState, type ReactNode } from 'react';
 import type { ConversationScope, Json } from '@agentui/contracts';
 import { sameScope } from '@agentui/contracts';
-import type { AgentDescriptor, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, CustomizationStatus, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
 import { classifyExtensionCall } from '@agentui/contracts/service';
 import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
 import { CustomizationBoundary, workspaceTranscript, type ContentLayoutSelection, type DesktopCustomization, type NamespaceActivation, type TranscriptSelection } from './DesktopCustomizations.js';
 import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
+import { outcomeMessage } from './customization-messages.js';
 
 export type ExtensionRowState = 'Ready' | 'Not configured' | 'Unavailable' | 'No view' | 'Failed' | 'Disabled' | 'Loading';
 export interface ExtensionRow {
@@ -89,11 +90,33 @@ export function extensionRows({ customizations, activations, enabled, metadata }
   });
 }
 
-export function ExtensionsList({ rows, onOpen, enabled }: {
-  readonly rows: readonly ExtensionRow[]; readonly onOpen: (namespace: string) => void; readonly enabled: boolean;
+/** The apply step: offered for a ready build of the connected head that the host is not running. */
+export function ApplyPanel({ controller, status, restarting, enabled }: {
+  readonly controller: ApplicationController; readonly status: CustomizationStatus | null; readonly restarting: boolean; readonly enabled: boolean;
+}) {
+  const [notice, setNotice] = useState('');
+  const build = status?.build ?? null;
+  const applicable = status?.support === 'supported' && build?.state === 'ready' && status.running.buildKey !== build.buildKey;
+  if (restarting) return <p className="customization-apply" role="status">AgentUI is restarting with the applied customization. The page reloads when it is back.</p>;
+  if (!applicable && !notice) return null;
+  return <div className="customization-apply">
+    {applicable && build && <>
+      <p>A new build of the connected repository is ready. Applying it restarts the host, and this page reloads.</p>
+      <button type="button" disabled={!enabled} onClick={() => {
+        setNotice('');
+        void controller.applyCustomization(build.buildKey).then(outcome => setNotice(outcomeMessage(outcome, controller.getSnapshot().customization)));
+      }}>Apply and restart</button>
+    </>}
+    {notice && <p role="alert">{notice}</p>}
+  </div>;
+}
+
+export function ExtensionsList({ rows, onOpen, enabled, children }: {
+  readonly rows: readonly ExtensionRow[]; readonly onOpen: (namespace: string) => void; readonly enabled: boolean; readonly children?: ReactNode;
 }) {
   return <section className="extensions-panel" aria-label="Extensions">
     <h1>Extensions</h1>
+    {children}
     {rows.length === 0 ? <p className="empty-state">No extensions are installed in this build or configured on this host.</p>
       : <ul className="extension-list">
         {rows.map(row => {

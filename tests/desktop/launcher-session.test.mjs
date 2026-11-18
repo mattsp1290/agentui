@@ -212,19 +212,21 @@ async function waitFor(check, timeout) {
  * remote setup root, and a temporary HOME for the launcher's own setup root. Setup itself is faked: it prints the runtime
  * record the bootstrap script would, so no tool is downloaded.
  */
-async function fakeSshLaunch(t, { env = {} } = {}) {
+async function fakeSshLaunch(t, { env = {}, node = process.execPath, before = async () => {} } = {}) {
   // Short names: the host's control socket path under the remote data directory has a portable length limit.
   const directory = await mkdtemp(join(tmpdir(), 'aui-'));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const bin = join(directory, 'bin'), home = join(directory, 'home'), remote = join(directory, 'r');
   await Promise.all([bin, home, join(remote, 's/releases')].map(path => import('node:fs/promises').then(fs => fs.mkdir(path, { recursive: true }))));
-  const setupLine = `AGENTUI_SETUP ${JSON.stringify({ home: remote, root: join(remote, 's'), node: process.execPath, codex: '', os: process.platform === 'darwin' ? 'Darwin' : 'Linux', arch: process.arch === 'arm64' ? 'arm64' : 'x86_64' })}`;
+  const setupLine = `AGENTUI_SETUP ${JSON.stringify({ home: remote, root: join(remote, 's'), node: typeof node === 'function' ? await node(bin) : node, codex: '', os: process.platform === 'darwin' ? 'Darwin' : 'Linux', arch: process.arch === 'arm64' ? 'arm64' : 'x86_64' })}`;
   await writeFile(join(bin, 'ssh'), `#!/bin/sh
 for last; do :; done
 if [ "$last" = "sh -s" ]; then cat >/dev/null; printf '%s\\n' ${shellQuote(setupLine)}; exit 0; fi
 exec /bin/sh -c "$last"
 `, { mode: 0o755 });
   const port = await new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
+  const dataDir = join(remote, 's/data', profileFor('test-only', remote, 'pi').id);
+  await before({ dataDir, remote, home });
   const entry = fileURLToPath(new URL('../../scripts/agentui-launch.mjs', import.meta.url));
   const child = spawn(process.execPath, [entry, '--skip-build', '--no-open', '--agent', 'pi', '--ssh', 'test-only', '--port', String(port)],
     { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
@@ -234,7 +236,7 @@ exec /bin/sh -c "$last"
   const closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
   t.after(async () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } await closed; });
   const origin = `http://127.0.0.1:${port}`;
-  return { directory, home, remote, port, origin, child, closed, output: () => output, errors: () => errors };
+  return { directory, home, remote, port, origin, dataDir, child, closed, output: () => output, errors: () => errors };
 }
 
 test('the launcher starts the customization worker for a session through the fake ssh and stops it with the session', { timeout: 120_000 }, async t => {
@@ -249,4 +251,43 @@ test('the launcher starts the customization worker for a session through the fak
   launch.child.kill('SIGTERM');
   await launch.closed;
   assert.equal(spawnSync('test', ['-e', join(store, 'lock')]).status, 1, 'no lock is left behind');
+});
+
+test('the launcher still gets a ready session on the defaults when the current launch target hangs, and the next start skips it', { timeout: 150_000 }, async t => {
+  const { readFile, mkdir } = await import('node:fs/promises');
+  const hostArtifactId = JSON.parse(await readFile(fileURLToPath(new URL('../../apps/host/dist/artifact.json', import.meta.url)), 'utf8')).artifactId;
+  const buildKey = 'f'.repeat(64);
+  // A stub node: the host start that uses the target's assets never gets ready; everything else is the real node.
+  const node = async bin => {
+    const path = join(bin, 'node-stub');
+    await writeFile(path, `#!/bin/sh\ncase "$*" in *HANG_TARGET*) exec sleep 600;; esac\nexec ${shellQuote(process.execPath)} "$@"\n`, { mode: 0o755 });
+    return path;
+  };
+  const launch = await fakeSshLaunch(t, { node, before: async ({ dataDir }) => {
+    await mkdir(join(dataDir, 'customization'), { recursive: true, mode: 0o700 });
+    await writeFile(join(dataDir, 'customization/launch.json'), JSON.stringify({ version: 1, next: null, current: { buildKey, inputsKey: 'e'.repeat(64), hostArtifactId,
+      assets: join(dataDir, 'HANG_TARGET/desktop'), server: null, grants: [] } }));
+  } });
+  await waitFor(() => launch.output().includes('"event":"ready"'), 120_000).catch(error => { throw new Error(`${error.message}\n${launch.errors()}`); });
+  const result = JSON.parse(await readFile(join(launch.dataDir, 'customization/launch-result.json'), 'utf8'));
+  assert.deepEqual([result.started, result.outcome, result.failed], [null, 'start-failed', [buildKey]]);
+  // Once the worker reports, the host has cleared the failed target, so the following start does not try it again.
+  await waitFor(async () => JSON.parse(await readFile(join(launch.dataDir, 'customization/launch.json'), 'utf8')).current === null, 30_000);
+  launch.child.kill('SIGTERM');
+  await launch.closed;
+});
+
+test('the launcher prints one line when the old setup-root extensions.json exists, and no longer passes it to the host', async t => {
+  const { oldExtensionsNotice, extensionVariables } = await import('../../scripts/agentui-launch.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-notice-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const lines = [];
+  oldExtensionsNotice(directory, line => lines.push(line));
+  assert.deepEqual(lines, []);
+  await writeFile(join(directory, 'extensions.json'), '{}');
+  oldExtensionsNotice(directory, line => lines.push(line));
+  assert.equal(lines.length, 1);
+  assert.match(lines[0], /no longer read.*Settings/u);
+  assert.deepEqual(extensionVariables({ AGENTUI_EXTENSION_A_TOKEN: 'a', AGENTUI_EXTENSION_bad: 'b', OTHER: 'c', 'AGENTUI_EXTENSION_X-Y': 'd' }),
+    { AGENTUI_EXTENSION_A_TOKEN: 'a', AGENTUI_EXTENSION_bad: 'b' });
 });

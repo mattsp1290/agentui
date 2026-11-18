@@ -2,11 +2,12 @@ import { useEffect, useState, useSyncExternalStore } from 'react';
 import { createBrowserConnection } from '@agentui/client/service';
 import { BrowserViewStorage } from './browser-storage.js';
 import { createApplicationController } from './application-controller.js';
+import { capturePageArtifact } from './page-artifact.js';
 import type { ApplicationController, ApplicationSnapshot } from './application-controller.js';
 
 export function useApplication(supplied?: ApplicationController): { readonly controller: ApplicationController; readonly snapshot: ApplicationSnapshot } {
   const [controller] = useState(() => supplied ?? createApplicationController({ createConnection: createBrowserConnection,
-    ownedViewStorage: BrowserViewStorage, createId: () => crypto.randomUUID() }));
+    ownedViewStorage: BrowserViewStorage, createId: () => crypto.randomUUID(), artifact: capturePageArtifact() }));
   const snapshot = useSyncExternalStore(controller.subscribe, controller.getSnapshot);
   useEffect(() => {
     void controller.start();

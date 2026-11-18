@@ -58,7 +58,7 @@ export function serializeCustomizationSettings(settings: CustomizationSettings):
 // Connected customization repository: client and worker operations relayed by the host (wire 17).
 
 export const CUSTOMIZATION_BOUNDS = Object.freeze({ location: 2_048, branch: 200, subdirectory: 1_024, key: 3_200, extensions: 256,
-  workerStatus: 1_000_000, results: 32, waitSeconds: 10, tokens: 256 });
+  workerStatus: 1_000_000, results: 32, waitSeconds: 10, tokens: 256, path: 1_024, grants: 64 });
 export const CUSTOMIZATION_WORKER_FAILURES = ['worker-timeout', 'toolchain-missing', 'invalid-location', 'clone-failed', 'invalid-package',
   'invalid-settings', 'conflict', 'unknown-extension', 'unchanged', 'unsupported-format', 'identity-missing', 'push-rejected',
   'push-unauthorized', 'git-timeout', 'git-failed', 'not-ready', 'active-work', 'missing-token', 'delivery-failed', 'state-invalid', 'busy'] as const;
@@ -111,6 +111,19 @@ export interface CustomizationStatus {
   readonly missingTokens: readonly string[];
 }
 export type CustomizationReply = { readonly kind: 'accepted' } | { readonly kind: 'refused'; readonly cause: CustomizationRefusal };
+/**
+ * What the worker reports once a build is on the host machine, with its `ok` result for the apply request. Paths are
+ * absolute on the host machine; grants hold variable names only and the host validates them.
+ */
+export interface CustomizationDelivery {
+  readonly requestId: string;
+  readonly buildKey: string;
+  readonly assets: string | null;
+  readonly server: { readonly directory: string; readonly artifactId: string } | null;
+  readonly grants: readonly unknown[];
+}
+/** The host's `launch.json` build keys, returned to the worker so it can record which builds this profile uses. */
+export interface CustomizationLaunchKeys { readonly current: string | null; readonly next: string | null }
 
 export type CustomizationMutation =
   | { readonly op: 'customization-connect'; readonly requestId: string; readonly location: string; readonly branch: string; readonly subdirectory: string }
@@ -123,7 +136,8 @@ export type CustomizationRequest =
   | { readonly op: 'customization-status' }
   | CustomizationMutation
   | { readonly op: 'customization-worker-pull'; readonly workerId: string; readonly waitSeconds: number }
-  | { readonly op: 'customization-worker-push'; readonly workerId: string; readonly status: CustomizationWorkerStatus; readonly results: readonly CustomizationResult[] };
+  | { readonly op: 'customization-worker-push'; readonly workerId: string; readonly status: CustomizationWorkerStatus; readonly results: readonly CustomizationResult[];
+    readonly delivery?: CustomizationDelivery };
 export const CUSTOMIZATION_MUTATION_OPS = ['customization-connect', 'customization-disconnect', 'customization-sync', 'customization-toggle',
   'customization-settings', 'customization-rebuild', 'customization-apply'] as const satisfies readonly CustomizationMutationOp[];
 export const CUSTOMIZATION_WORKER_OPS = ['customization-worker-pull', 'customization-worker-push'] as const;
@@ -263,10 +277,27 @@ export function parseCustomizationRequest(input: Record<string, unknown>): Custo
       return { op: input.op, workerId: customizationRequestId(input.workerId), waitSeconds };
     }
     case 'customization-worker-push':
-      record(input, ['op', 'workerId', 'status', 'results']);
-      return { op: input.op, workerId: customizationRequestId(input.workerId), status: parseCustomizationWorkerStatus(input.status), results: results(input.results) };
+      record(input, ['op', 'workerId', 'status', 'results', ...(input.delivery === undefined ? [] : ['delivery'])]);
+      return { op: input.op, workerId: customizationRequestId(input.workerId), status: parseCustomizationWorkerStatus(input.status), results: results(input.results),
+        ...(input.delivery === undefined ? {} : { delivery: parseCustomizationDelivery(input.delivery) }) };
     default: throw new Error('Unknown customization operation');
   }
+}
+function absolutePath(value: unknown): string {
+  const path = text(value, CUSTOMIZATION_BOUNDS.path);
+  if (!path.startsWith('/') || path.split('/').includes('..')) throw new Error('Invalid delivered path');
+  return path;
+}
+export function parseCustomizationDelivery(value: unknown): CustomizationDelivery {
+  const input = record(value, ['requestId', 'buildKey', 'assets', 'server', 'grants']);
+  if (!Array.isArray(input.grants) || input.grants.length > CUSTOMIZATION_BOUNDS.grants) throw new Error('Invalid delivered grants');
+  const server = input.server === null ? null : record(input.server, ['directory', 'artifactId']);
+  return { requestId: customizationRequestId(input.requestId), buildKey: digest(input.buildKey), assets: input.assets === null ? null : absolutePath(input.assets),
+    server: server === null ? null : { directory: absolutePath(server.directory), artifactId: digest(server.artifactId) }, grants: input.grants.map(grant => record(grant)) };
+}
+export function parseCustomizationLaunchKeys(value: unknown): CustomizationLaunchKeys {
+  const input = record(value, ['current', 'next']);
+  return { current: input.current === null ? null : digest(input.current), next: input.next === null ? null : digest(input.next) };
 }
 /** The worker's view of a queued mutation. */
 export function customizationWorkerRequest(mutation: CustomizationMutation): CustomizationWorkerRequest {

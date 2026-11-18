@@ -175,12 +175,15 @@ export function createApi(options: {
       case 'customization-connect': case 'customization-disconnect': case 'customization-sync': case 'customization-toggle':
       case 'customization-settings': case 'customization-rebuild': case 'customization-apply': return customization.mutate(request);
       case 'customization-worker-pull': return customization.pull(request.workerId, request.waitSeconds);
-      case 'customization-worker-push': return customization.push(request.workerId, request.status, request.results);
+      case 'customization-worker-push': return customization.push(request.workerId, request.status, request.results, request.delivery);
     }
   }
   return async (principal: Principal, request: ServiceRequest): Promise<ServiceValueMap[ServiceRequest['op']]> => {
     try {
       if (options.isClosing()) throw new ServiceError('unavailable', 'Host is shutting down');
+      // While an apply drains the host, no new turn, creation or provider operation is admitted.
+      if ((request.op === 'submit' || request.op === 'create' || request.op === 'extension-call' || (request.op === 'continuation' && request.action === 'start')) &&
+        customization.draining()) throw new ServiceError('unavailable', 'AgentUI is restarting to apply a customization. Try again once it reconnects.');
       const scope = requestScope(request);
       if (scope !== null && scope.hostId !== principal.hostId) throw new ServiceError('forbidden', 'Conversation belongs to another host');
       return await apply(principal, request);

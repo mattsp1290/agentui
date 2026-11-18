@@ -1,4 +1,4 @@
-import { useState, type ReactElement, type ReactNode } from 'react';
+import { useEffect, useState, type ReactElement, type ReactNode } from 'react';
 import { DesktopShell } from './Shell.js';
 import { HostStatusLabel } from './HostStatusLabel.js';
 import { applicationEnabled } from '../application/application-controller.js';
@@ -11,7 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
-import { ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
+import { ApplyPanel, ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -28,6 +28,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const [selectedView, setSelectedView] = useState<'chats' | 'extensions' | 'settings'>('chats');
   const [selectedExtension, setSelectedExtension] = useState<string | null>(null);
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
+  const customizationVisible = selectedView === 'extensions' || selectedView === 'settings';
+  useEffect(() => { controller.setCustomizationVisible(customizationVisible); }, [controller, customizationVisible]);
   const custom = useDesktopCustomizations({ customizations: customization, sink: controller.frontendGenerations, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
   const pendingScope = app.saved.pendingCreation?.scope;
@@ -91,7 +93,9 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     {workspaceOpen
       ? <ExtensionWorkspace row={workspaceRow} metadata={metadata} workspaces={app.workspaces} active={app.active} controller={controller}
           conversation={workspaceConversation} status={<>{hostAlerts}{creationRecovery}</>} onBack={() => setSelectedExtension(null)} />
-      : <ExtensionsList rows={rows} enabled={!suspended} onOpen={setSelectedExtension} />}
+      : <ExtensionsList rows={rows} enabled={!suspended} onOpen={setSelectedExtension}>
+          <ApplyPanel controller={controller} status={app.customization} restarting={app.restarting} enabled={!suspended && !app.restarting} />
+        </ExtensionsList>}
   </div>;
   const controls = <div className="application-controls">
     <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : selectedView === 'extensions' ? 'Extensions' : 'Settings'}</h2>

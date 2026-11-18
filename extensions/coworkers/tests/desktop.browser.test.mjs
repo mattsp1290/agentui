@@ -332,6 +332,7 @@ test('without a Coworkers installation the workspace names the configuration and
   const setup = view.page.getByRole('region', { name: 'Coworkers setup' });
   await setup.getByText('AGENTUI_EXTENSION_COWORKERS_TOKEN').waitFor();
   assert.match(await setup.textContent(), /listen on an address this host can reach/);
+  assert.match(await setup.textContent(), /installation grant to installations in the connected customization repository/);
   assert.equal(await setup.locator('input').count(), 0);
 });
 

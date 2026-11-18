@@ -23,6 +23,7 @@ import { ownDirectory } from './ownership.js';
 import { readArtifactBytes, readInstalledArtifact } from './artifact.js';
 import { createApi } from './api.js';
 import { createCustomizationRelay } from './customization-relay.js';
+import { hostActiveWork } from './active-work.js';
 import type { CustomizationRelay } from './customization-relay.js';
 import { FeedRegistry } from './feed-registry.js';
 import { serviceEndpoint } from './service-endpoint.js';
@@ -61,6 +62,8 @@ export interface BrowserHostOptions {
   readonly setupCapability?: string;
   /** Test-only override of the 15-second extension operation deadline. */
   readonly operationDeadlineMs?: number;
+  /** Token variables the startup extension configuration consumed from the environment (names only). */
+  readonly consumedTokens?: readonly string[];
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -108,6 +111,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let customization: CustomizationRelay | undefined;
   let resolveFatal!: () => void;
   const fatal = new Promise<void>(resolve => { resolveFatal = resolve; });
+  let resolveRestart!: () => void;
+  /** Settles when an applied customization build needs the host to stop and the session wrapper to start it again. */
+  const restart = new Promise<void>(resolve => { resolveRestart = resolve; });
   let closePromise: Promise<void> | undefined;
   let closing = false;
   const http = createServer();
@@ -320,7 +326,9 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
-    customization = createCustomizationRelay({ dataDirectory: owner.directory });
+    const activeWork = () => host !== undefined && hostActiveWork(host, hostId, providers);
+    customization = createCustomizationRelay({ dataDirectory: owner.directory, hostArtifactId: artifact.manifest.artifactId, activeWork,
+      consumedTokens: options.consumedTokens ?? [], restart: resolveRestart });
     const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing, customization,
       extensions: { describe: providers.extensions, call: providers.callOperation } });
     const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
@@ -346,7 +354,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     if (!address || typeof address === 'string') throw new Error('Invalid host address');
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover, refresh);
-    return { origin, hostId, close, fatal, discoverProviders: providers.discover,
+    return { origin, hostId, close, fatal, restart, discoverProviders: providers.discover,
       extensionStatus: providers.status, callOperation: providers.callOperation,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);
