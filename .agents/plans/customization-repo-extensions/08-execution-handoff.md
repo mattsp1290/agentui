@@ -1,6 +1,6 @@
 # Execution handoff
 
-No implementation has occurred. Each work package is one pull request unless stated.
+Implementation status as of 2026-11-18: WP1–WP7 are implemented on branch `feat/customization-repo-extensions` as one stacked branch and are unreviewed; WP8 is work in progress on `wip/customization-repo-extensions-wp8`; the rest is not started. The plan intended one pull request per work package; the owner decides whether the stacked branch ships as one pull request or is split.
 
 ## Order
 

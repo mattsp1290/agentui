@@ -2,7 +2,7 @@
 
 Status: Ready for WP1–WP9, WP11 and WP13. WP10 waits for upstream work package WP9 (U-Crew). WP12 waits for upstream work package WP11 (U-Coworkers). See [External requests](#external-requests).
 
-No implementation has occurred. This directory is a plan only.
+Implementation status as of 2026-11-18: WP1–WP7 are implemented and committed on branch `feat/customization-repo-extensions` as one stacked branch (not one pull request per work package), and have had no code review. WP8 is work in progress on branch `wip/customization-repo-extensions-wp8`. WP9–WP13 are not started. The Beans handoff attached to `agentui-em4a` on 2026-11-18 has the current state; where it and this file disagree about status, the handoff wins.
 
 ## Application context
 
