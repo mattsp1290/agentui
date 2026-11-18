@@ -1,4 +1,4 @@
-export { contractVersion } from '@agentui/contracts';
+export { canonicalJson, contractVersion, parseScope } from '@agentui/contracts';
 export type { ContinuationCarried, ContinuationRefusal, ConversationClosure, ConversationScope, Json, ProviderBinding, RunAuthority, RunIdentity, TextMetadata, TextOutput, OutputId, OutputFailure, OutputListing, OutputRead } from '@agentui/contracts';
 export type { SecretProvider } from './secrets.js';
 

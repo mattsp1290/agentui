@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { canonicalJson, parseScope } from '@agentui/contracts';
+import { canonicalJson, parseScope } from '@agentui/sdk';
 import type { ConversationScope, RunIdentity } from '@agentui/contracts';
 import { CrewClient, CrewHttpError } from '@birbcrew/client';
 import { openConversationSchema, requestReceiptResponseSchema, submitRequestSchema } from '@birbcrew/client/contract';

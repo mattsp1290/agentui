@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { canonicalJson } from '@agentui/contracts';
+import { canonicalJson } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, ConversationRef, CreationIntent, CredentialHandle, ProviderCommand, ProviderCommandEffect,
   ProviderConversation, ProviderCursor, ProviderFeed, ProviderInstance, ProviderOutcome, ProviderSnapshot, ServerExtensionContext } from '@agentui/sdk';
 import { COWORKERS_API_VERSION, COWORKERS_REQUEST_CONTRACT, CoworkersClient } from './client.js';

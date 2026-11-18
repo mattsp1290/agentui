@@ -35,14 +35,15 @@
     "extension": {
       "namespace": "coworkers",
       "trust": "full",
-      "sdkVersion": "0.13.0",
+      "sdkVersion": "0.14.0",
       "entries": [
         { "kind": "server", "module": "./dist/server.js" },
         { "kind": "desktop", "module": "./dist/desktop.js" }
       ]
     },
     "sources": {
-      "./dist/desktop.js": "./src/desktop/index.tsx"
+      "./dist/desktop.js": "./src/desktop/index.tsx",
+      "./dist/server.js": "./src/server.ts"
     }
   }
 }

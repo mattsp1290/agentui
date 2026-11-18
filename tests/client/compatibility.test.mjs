@@ -89,9 +89,9 @@ test('provider observation wire 5 requires matching artifacts and rejects wire 4
 });
 
 
-test('workspace release requires wire 16 and SDK 0.13.0', () => {
+test('workspace release requires wire 16 and SDK 0.14.0', () => {
   assert.equal(SERVICE_WIRE_VERSION, 16);
-  assert.equal(EXTENSION_SDK_VERSION, '0.13.0');
+  assert.equal(EXTENSION_SDK_VERSION, '0.14.0');
   const current = { ...host, wireVersion: SERVICE_WIRE_VERSION, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: CODEX_SDK_RUNTIME };
   for (const [changes, dimension] of [[{ supportedWireVersions: [15] }, 'wire'], [{ supportedExtensionSdkVersions: ['0.12.0'] }, 'extension-sdk']]) {
     const result = checkCompatibility({ ...SOLO_CLIENT_COMPATIBILITY, ...changes }, current);

@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { canonicalJson } from '@agentui/contracts';
+import { canonicalJson } from '@agentui/sdk';
 import type { RunOutcome, Transcript, TranscriptMessage } from '@agentui/contracts/conversation';
 import type { ProviderInstance, ProviderModel, ProviderPresentation } from '@agentui/sdk';
 import { requestStatusSchema, TERMINAL_STATUSES } from './client.js';

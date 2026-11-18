@@ -2,7 +2,7 @@ import { setTimeout as delay } from 'node:timers/promises';
 import { z } from 'zod';
 import { CrewClient, CrewHttpError, CrewProtocolError, CrewUnknownOutcomeError, type Capabilities, type HandoffRecord } from '@birbcrew/client';
 import { standingGrantsCapabilityV1Schema } from '@birbcrew/client/contract';
-import { canonicalJson } from '@agentui/contracts';
+import { canonicalJson } from '@agentui/sdk';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { BackendProvider, ConnectedProvider, ContinuationRefusal, CreationIntent, ProviderCommand, ProviderCommandEffect,
   ProviderConversation, ProviderInstance, ProviderOutcome, ProviderPermissions, ServerExtensionContext, ServerExtensionEntry, ExtensionManifest } from '@agentui/sdk';

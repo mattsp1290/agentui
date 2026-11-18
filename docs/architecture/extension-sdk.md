@@ -30,11 +30,11 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.13.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.14.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.13.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.14.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
 SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
 SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It reads a provider-confirmed end of the conversation from saved state without I/O and returns `{ cause }` or `null`. Hosts report such a conversation as `concluded`, start no observation for it and refuse its sends. Existing presentations may omit the hook. The new observation status requires wire 12; backend contract 1, core DB 7 and transcript 4 are unchanged.
@@ -246,7 +246,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "crew",
 			"trust": "full",
-			"sdkVersion": "0.13.0",
+			"sdkVersion": "0.14.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -384,6 +384,8 @@ Theme and platform controls remain direct imports from `@agentui/theme/react` an
 Every package under the repository's `extensions/` directory is first-party. Its `package.json.agentui.extension` is its canonical manifest, its package name stays outside the `@agentui/` scope, and the default desktop build bundles its `desktop` entry through `agentui.sources` (`scripts/bundled-extensions.mjs`). Its server entry loads as an installed entry from the working tree through `serve --extensions` or `desktop --extensions`; the [launcher](../development/launcher.md#load-server-extensions-on-a-local-host) passes the file when every token variable is set. Restart the host after rebuilding an extension: Node keeps the module it imported.
 
 ## Contribute a workspace view
+
+SDK 0.14.0 re-exports `canonicalJson` and `parseScope` from `@agentui/sdk`, because a server artifact may import only `@agentui/sdk` from the host. Server code must import them from there instead of `@agentui/contracts`. Extensions rebuild for the exact version.
 
 SDK 0.13.0 adds the optional `workspace` contribution: `{ label, component, transcript? }`. The label has 1 to 40 characters and names the extension in the Extensions view. `component` and the optional `transcript` follow the same function, memo, forwardRef and lazy rules as transcript overrides. Unknown keys are rejected.
 The desktop rail shows Chats, Extensions and Settings. The Extensions view lists every namespace in the desktop selection and in `ServiceMetadata.extensions`, sorted by namespace, with a state of `Ready`, `Not configured`, `Unavailable`, `No view`, `Failed`, `Disabled` or `Loading` (while the desktop entry activates, or while the host has not yet reported its extensions, for example during startup or while it is unreachable). Selecting a row with a workspace renders its component inside an element with `data-extension-workspace="<namespace>"`; scope every stylesheet selector under that attribute. That element also contains the host-rendered `conversation` node, so the attribute alone does not keep a rule off the host composer, approvals or agent picker: scope element rules such as `button` or `h2` to your own containers, for example `[data-extension-workspace="crew"] :is(.crew-header, .crew-member-form) button`. The host conversation keeps the host styles; only theme tokens set by an enclosing `ThemeScope` reach it.
