@@ -198,3 +198,55 @@ child.once('message',()=>{process.stderr.write('SETUP_TREE='+JSON.stringify({lea
   await until(() => closed && !alive(tree.descendant));
   assert.doesNotMatch(output, /"event":"ready"/);
 });
+
+async function waitFor(check, timeout) {
+  const deadline = Date.now() + timeout;
+  while (!await check()) {
+    if (Date.now() > deadline) throw new Error('Timed out');
+    await new Promise(resolve => setTimeout(resolve, 100));
+  }
+}
+
+/**
+ * Drives the real launcher through a fake `ssh` that runs every remote command on this machine against a temporary
+ * remote setup root, and a temporary HOME for the launcher's own setup root. Setup itself is faked: it prints the runtime
+ * record the bootstrap script would, so no tool is downloaded.
+ */
+async function fakeSshLaunch(t, { env = {} } = {}) {
+  // Short names: the host's control socket path under the remote data directory has a portable length limit.
+  const directory = await mkdtemp(join(tmpdir(), 'aui-'));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const bin = join(directory, 'bin'), home = join(directory, 'home'), remote = join(directory, 'r');
+  await Promise.all([bin, home, join(remote, 's/releases')].map(path => import('node:fs/promises').then(fs => fs.mkdir(path, { recursive: true }))));
+  const setupLine = `AGENTUI_SETUP ${JSON.stringify({ home: remote, root: join(remote, 's'), node: process.execPath, codex: '', os: process.platform === 'darwin' ? 'Darwin' : 'Linux', arch: process.arch === 'arm64' ? 'arm64' : 'x86_64' })}`;
+  await writeFile(join(bin, 'ssh'), `#!/bin/sh
+for last; do :; done
+if [ "$last" = "sh -s" ]; then cat >/dev/null; printf '%s\\n' ${shellQuote(setupLine)}; exit 0; fi
+exec /bin/sh -c "$last"
+`, { mode: 0o755 });
+  const port = await new Promise(resolve => { const server = createServer().listen(0, '127.0.0.1', () => { const { port } = server.address(); server.close(() => resolve(port)); }); });
+  const entry = fileURLToPath(new URL('../../scripts/agentui-launch.mjs', import.meta.url));
+  const child = spawn(process.execPath, [entry, '--skip-build', '--no-open', '--agent', 'pi', '--ssh', 'test-only', '--port', String(port)],
+    { env: { ...process.env, HOME: home, PATH: `${bin}:${process.env.PATH}`, ...env }, stdio: ['ignore', 'pipe', 'pipe'], detached: true });
+  let output = '', errors = '';
+  child.stdout.on('data', data => { output += data; });
+  child.stderr.on('data', data => { errors += data; });
+  const closed = new Promise(resolve => child.once('close', (code, signal) => resolve({ code, signal })));
+  t.after(async () => { try { process.kill(-child.pid, 'SIGKILL'); } catch { /* gone */ } await closed; });
+  const origin = `http://127.0.0.1:${port}`;
+  return { directory, home, remote, port, origin, child, closed, output: () => output, errors: () => errors };
+}
+
+test('the launcher starts the customization worker for a session through the fake ssh and stops it with the session', { timeout: 120_000 }, async t => {
+  const launch = await fakeSshLaunch(t);
+  await waitFor(() => launch.output().includes('"event":"ready"'), 90_000).catch(error => { throw new Error(`${error.message}\n${launch.errors()}`); });
+  const status = () => fetch(`${launch.origin}/api/v1`, { method: 'POST', headers: { 'content-type': 'application/json', origin: launch.origin },
+    body: JSON.stringify({ op: 'customization-status' }) }).then(response => response.json());
+  await waitFor(async () => (await status()).value?.support === 'supported', 30_000);
+  const store = join(launch.home, '.local/share/agentui/customization');
+  assert.equal(spawnSync('test', ['-d', store]).status, 0, 'the worker store is on the launcher machine');
+  assert.equal(spawnSync('test', ['-e', join(launch.remote, 's/customization/connection.json')]).status, 1);
+  launch.child.kill('SIGTERM');
+  await launch.closed;
+  assert.equal(spawnSync('test', ['-e', join(store, 'lock')]).status, 1, 'no lock is left behind');
+});

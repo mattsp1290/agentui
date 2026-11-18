@@ -48,6 +48,21 @@ test('a queued toggle reaches the worker, a second mutation is busy, and the pus
   assert.deepEqual(relay.mutate(toggle()), { kind: 'accepted' });
 });
 
+test('a request taken by a worker that then went silent goes to the next worker, never to a live one twice', async () => {
+  const { relay, advance } = clocked();
+  const first = randomUUID(), second = randomUUID();
+  relay.push(first, workerStatus(), []);
+  const request = toggle();
+  relay.mutate(request);
+  assert.equal((await relay.pull(first, 0)).requests.length, 1);
+  advance(5_000);
+  relay.push(first, workerStatus(), []);
+  assert.deepEqual((await relay.pull(second, 0)).requests, [], 'the first worker is alive');
+  advance(16_000);
+  assert.equal((await relay.pull(second, 0)).requests[0].requestId, request.requestId);
+  assert.deepEqual((await relay.pull(second, 0)).requests, []);
+});
+
 test('worker-pull returns empty after its wait when nothing is queued', async () => {
   const { relay } = clocked();
   const started = Date.now();

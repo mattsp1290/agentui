@@ -11,7 +11,7 @@ import { bootstrapScript, distribution, profileFor, shellQuote } from './agentui
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 /** The local setup root, matching `root="$HOME/.local/share/agentui"` in agentui-runtime.mjs. */
 const LOCAL_SETUP_ROOT = join(homedir(), '.local/share/agentui');
-const sshOptions = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
+export const sshOptions = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
 const usage = `Usage: ./agentui [--ssh USER@HOST] [--workspace PATH] [--agent codex|pi] [--port PORT]
                  [--no-open] [--skip-build]
        ./agentui --host-url http://127.0.0.1:PORT/browser.html
@@ -173,6 +173,22 @@ export async function createReleaseArchive(directory, archive, lifecycle = {}) {
     { ...lifecycle, env: { ...process.env, COPYFILE_DISABLE: '1' } });
 }
 
+/**
+ * Uploads a directory to `destination` with tar over ssh: the archive is piped into `sh -c <remoteScript>`, which reads it
+ * from standard input. The customization worker reuses this to deliver builds to a remote host.
+ */
+export async function uploadDirectory(destination, directory, remoteScript, lifecycle = {}, runner = (args, options) => command('ssh', args, options)) {
+  const archive = `${await mkdtemp(join(tmpdir(), 'agentui-upload-'))}.tar.gz`;
+  try {
+    await createReleaseArchive(directory, archive, lifecycle);
+    const transfer = runner([...sshOptions, destination, `sh -c ${shellQuote(remoteScript)}`], lifecycle);
+    const source = createReadStream(archive);
+    source.once('error', () => transfer.child.stdin.destroy());
+    source.pipe(transfer.child.stdin);
+    await transfer.exited;
+  } finally { await rm(archive, { force: true }); await rm(archive.slice(0, -'.tar.gz'.length), { recursive: true, force: true }); }
+}
+
 async function deploy(destination, setup, releaseId, lifecycle) {
   const release = join(setup.root, 'releases', releaseId);
   const staging = await mkdtemp(join(tmpdir(), 'agentui-release-'));
@@ -181,16 +197,8 @@ async function deploy(destination, setup, releaseId, lifecycle) {
     await cp(join(root, 'apps/desktop/web-dist-browser'), join(staging, 'browser'), { recursive: true });
     await cp(join(root, 'scripts/agentui-launch-session.mjs'), join(staging, 'session.mjs'));
     await writeFile(join(staging, 'package.json'), '{"type":"module"}\n');
-    const archive = `${staging}.tar.gz`;
-    try {
-      await createReleaseArchive(staging, archive, lifecycle);
-      const script = `set -eu; umask 077; release=${shellQuote(release)}; if [ -f "$release/package.json" ]; then cat >/dev/null; else work=$(mktemp -d ${shellQuote(join(setup.root, 'releases', '.upload-XXXXXX'))}); trap 'rm -rf "$work"' EXIT HUP INT TERM; tar -xzf - -C "$work"; mv "$work" "$release"; fi`;
-      const transfer = command('ssh', [...sshOptions, destination, `sh -c ${shellQuote(script)}`], lifecycle);
-      const source = createReadStream(archive);
-      source.once('error', () => transfer.child.stdin.destroy());
-      source.pipe(transfer.child.stdin);
-      await transfer.exited;
-    } finally { await rm(archive, { force: true }); }
+    const script = `set -eu; umask 077; release=${shellQuote(release)}; if [ -f "$release/package.json" ]; then cat >/dev/null; else work=$(mktemp -d ${shellQuote(join(setup.root, 'releases', '.upload-XXXXXX'))}); trap 'rm -rf "$work"' EXIT HUP INT TERM; tar -xzf - -C "$work"; mv "$work" "$release"; fi`;
+    await uploadDirectory(destination, staging, script, lifecycle);
   } finally { await rm(staging, { recursive: true, force: true }); }
   return release;
 }
@@ -226,10 +234,14 @@ export async function launch(options) {
   if (process.platform !== 'darwin' && options.open) throw new Error('The AgentUI desktop client requires macOS. Use --no-open to run without a window.');
   const children = new Set();
   let stopping;
+  const worker = { controller: new AbortController(), running: null };
   const checkRunning = () => { if (stopping) throw new Error('AgentUI startup cancelled.'); };
   const lifecycle = { children, checkRunning };
   async function stop() {
     stopping ??= (async () => {
+      // The worker first: it kills its own children, records an interrupted build and releases the store lock.
+      worker.controller.abort();
+      await worker.running?.catch(() => {});
       await Promise.allSettled([...children].map(async session => {
         if (session.lease) session.child.stdin?.end();
         else terminate(session, 'SIGTERM');
@@ -303,6 +315,17 @@ export async function launch(options) {
     session.child.stdin.write(`${JSON.stringify({ OPENCODE_GO_API_KEY: process.env.OPENCODE_GO_API_KEY ?? null, AGENTUI_SETUP_CAPABILITY: setupCapability })}\n`);
     await waitForHost(session, origin, host.artifactId);
     checkRunning();
+    // Imported here: the worker needs the built host packages, which the build step above produces.
+    const { startCustomizationWorker } = await import('./agentui-customization-worker.mjs');
+    checkRunning();
+    worker.running = startCustomizationWorker({ origin, localSetupRoot: LOCAL_SETUP_ROOT, repositoryRoot: root, signal: worker.controller.signal,
+      target: options.kind === 'ssh' ? { kind: 'ssh', destination: options.destination, remoteSetupRoot: setup.root } : { kind: 'local' },
+      registerChild: child => {
+        const exited = new Promise(resolve => child.once('close', resolve));
+        const task = { child, exited, lease: false };
+        children.add(task);
+        void exited.finally(() => children.delete(task));
+      } }).stopped;
     process.stdout.write(`${JSON.stringify({ event: 'ready', url: `${origin}/browser.html`, target, workspace, dataDir, port, agent: options.agent, platform })}\n`);
     process.stderr.write(`AgentUI is ready. ${target} runs ${options.agent} in ${workspace}. Keep this terminal running.\n`);
     if (options.open) await Promise.race([open(`${origin}/browser.html`, { AGENTUI_SETUP_CAPABILITY: setupCapability, AGENTUI_SETUP_PROFILE: profile.id, AGENTUI_SETUP_TARGET: `${target} · ${workspace}` }), session.exited.then(() => { if (!stopping) throw new Error('AgentUI host stopped.'); })]);
