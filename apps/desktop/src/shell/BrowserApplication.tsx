@@ -11,7 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
-import { ExtensionsList, ExtensionWorkspace, extensionRows, namespaceAgents } from '../application/ExtensionsView.js';
+import { ExtensionsList, ExtensionWorkspace, extensionRows, namespaceAgents, openableRow } from '../application/ExtensionsView.js';
 import type { TranscriptSelection } from '../application/DesktopCustomizations.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
@@ -55,13 +55,12 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     active={app.active} actions={activeActions} enabled={enabled} agent={agent} />);
   const customizationsOn = children === undefined && customizationEnabled;
   const rows = extensionRows({ customizations: customization, activations: custom.namespaces, enabled: customizationsOn, metadata });
-  const openRow = rows.find(row => row.namespace === selectedExtension && row.state !== 'Disabled' && row.state !== 'Failed' && row.state !== 'Loading');
-  const workspaceRow = openRow?.owner && openRow.workspace ? { ...openRow, owner: openRow.owner, workspace: openRow.workspace } : null;
+  const workspaceRow = openableRow(rows.find(row => row.namespace === selectedExtension));
   const workspaceOpen = selectedView === 'extensions' && workspaceRow !== null;
   // At most one conversation view is mounted. The Chats view keeps its (hidden) view while Settings is open, and gives it
   // up only while the open workspace of the active conversation's namespace renders it. Derived from workspaceOpen, so a
   // Failed, Loading or Disabled row never takes the view without rendering one.
-  const workspaceMountsActive = workspaceOpen && workspaceRow !== null && app.active !== null && 'kind' in app.active.agent
+  const workspaceMountsActive = workspaceOpen && app.active !== null && 'kind' in app.active.agent
     && app.active.agent.namespace === workspaceRow.namespace;
   const conversation = !workspaceMountsActive && app.active && activeActions
     ? <ConversationView

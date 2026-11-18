@@ -85,6 +85,18 @@ export function parseExtensionCallRequest(value: unknown): ExtensionCallRequest 
   return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
     operation: patterned(input.operation, EXTENSION_OPERATION, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES) };
 }
+/**
+ * Parses an extension call, mapping an over-limit call to the `too-large` failure every layer replies with. Any other
+ * invalid call throws the parse error, so each caller keeps its own policy for it.
+ */
+export function classifyExtensionCall(value: unknown):
+  { readonly kind: 'call'; readonly request: ExtensionCallRequest } | { readonly kind: 'failed'; readonly cause: 'too-large' } {
+  try { return { kind: 'call', request: parseExtensionCallRequest(value) }; }
+  catch (error) {
+    if (error instanceof ExtensionCallTooLarge) return { kind: 'failed', cause: 'too-large' };
+    throw error;
+  }
+}
 export function parseExtensionCallValue(value: unknown): ExtensionCallValue {
   const input = record(value);
   switch (input.kind) {
@@ -144,7 +156,7 @@ export type ServiceRequest =
 /** Narrows `catalog` to one namespace or one provider agent, read from the installation stored with each conversation. */
 export type CatalogFilter =
   | { readonly kind: 'namespace'; readonly namespace: string }
-  | { readonly kind: 'provider-agent'; readonly namespace: string; readonly installationId: string; readonly providerAgentId: string };
+  | ({ readonly kind: 'provider-agent' } & ConversationProvider);
 /** The provider identity stored with a conversation; `null` for native and recorded conversations. */
 export interface ConversationProvider {
   readonly namespace: string;
@@ -327,14 +339,15 @@ export function parseCatalogFilter(value: unknown): CatalogFilter {
   }
   if (input.kind !== 'provider-agent') throw new Error('Invalid catalog filter');
   exact(input, ['kind', 'namespace', 'installationId', 'providerAgentId']);
-  return { kind: 'provider-agent', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'),
-    installationId: identifier(input.installationId), providerAgentId: identifier(input.providerAgentId) };
+  return { kind: 'provider-agent', ...providerFields(input) };
 }
-function conversationProvider(value: unknown): ConversationProvider | null {
-  if (value === null) return null;
-  const input = record(value, ['namespace', 'installationId', 'providerAgentId']);
+/** The fields of a provider identity, shared by the catalog filter and catalog entries. */
+function providerFields(input: Readonly<Record<string, unknown>>): ConversationProvider {
   return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'), installationId: identifier(input.installationId),
     providerAgentId: identifier(input.providerAgentId) };
+}
+function conversationProvider(value: unknown): ConversationProvider | null {
+  return value === null ? null : providerFields(record(value, ['namespace', 'installationId', 'providerAgentId']));
 }
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);

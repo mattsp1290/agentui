@@ -13,7 +13,7 @@ const repository = fileURLToPath(new URL('../', import.meta.url));
 export function bundledPlan(root = repository) {
   const base = join(root, 'extensions');
   if (!existsSync(base)) return { roots: [], entries: [], identity: null };
-  const entries = [], roots = [];
+  const found = [];
   for (const name of readdirSync(base, { withFileTypes: true }).filter(item => item.isDirectory()).map(item => item.name).sort()) {
     const directory = realpathSync(join(base, name)), file = join(directory, 'package.json');
     if (!existsSync(file)) continue;
@@ -32,11 +32,10 @@ export function bundledPlan(root = repository) {
     if (!source || relative(directory, source).startsWith('..') || !source.startsWith(directory + sep)) {
       throw new Error(`Bundled extension ${manifest.namespace} source is missing or outside its package`);
     }
-    roots.push(directory);
-    entries.push({ module: desktop.module, manifest, source });
+    found.push({ root: directory, entry: { module: desktop.module, manifest, source } });
   }
-  const order = entries.map((entry, index) => [entry, roots[index]]).sort(([a], [b]) => a.manifest.namespace < b.manifest.namespace ? -1 : a.manifest.namespace > b.manifest.namespace ? 1 : 0);
-  const names = order.map(([entry]) => entry.manifest.namespace);
+  found.sort((a, b) => a.entry.manifest.namespace < b.entry.manifest.namespace ? -1 : a.entry.manifest.namespace > b.entry.manifest.namespace ? 1 : 0);
+  const names = found.map(item => item.entry.manifest.namespace);
   if (new Set(names).size !== names.length) throw new Error('Duplicate bundled extension namespace');
-  return { roots: order.map(([, directory]) => directory), entries: order.map(([entry]) => entry), identity: null };
+  return { roots: found.map(item => item.root), entries: found.map(item => item.entry), identity: null };
 }

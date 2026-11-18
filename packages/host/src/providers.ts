@@ -8,8 +8,9 @@ import { randomUUID } from 'node:crypto';
 import { canonicalJson, copyJson, isOutputId, parseContinuationCarried, parseContinuationRefusal, parseConversationClosure, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, EXTENSION_OPERATION_PATTERN, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import { ExtensionCallTooLarge, parseExtensionCallRequest, parseExtensionCallValue } from '@agentui/contracts/service';
-import type { ExtensionCallRequest, ExtensionCallValue, ExtensionCallFailure, ExtensionDescriptor } from '@agentui/contracts/service';
+import { classifyExtensionCall, ExtensionCallTooLarge } from '@agentui/contracts/service';
+import type { ExtensionCallRequest, ExtensionCallValue, ExtensionDescriptor } from '@agentui/contracts/service';
+import { EXTENSION_OPERATION_DEADLINE_MS, failedCall, operationResult, runAdmitted } from './extension-operations.js';
 import type { ContinuationCarried, ContinuationRefusal, ConversationClosure, ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
@@ -39,26 +40,11 @@ export interface ProviderExtension {
   readonly installations?: readonly ServerExtensionInstallation[];
   readonly dispose?: () => Promise<void>;
 }
-/** The host replies to an extension operation within this many milliseconds of admission. */
-export const EXTENSION_OPERATION_DEADLINE_MS = 15_000;
-const failedCall = (cause: ExtensionCallFailure): ExtensionCallValue => ({ kind: 'failed', cause });
+export { EXTENSION_OPERATION_DEADLINE_MS } from './extension-operations.js';
 function installationCopy(value: ServerExtensionInstallation): ServerExtensionInstallation {
   const instance = providerIdentity(value.instance);
   if (value.expectedAuthority !== 'agentui-host' && value.expectedAuthority !== 'remote-provider') throw new Error('Invalid installation');
   return Object.freeze({ id: text(value.id), instance: Object.freeze({ ...instance }), service: text(value.service), expectedAuthority: value.expectedAuthority });
-}
-/** Reads a handler result. Thrown errors classify it: ExtensionCallTooLarge is too-large, anything else invalid-result. */
-function operationResult(value: unknown): { readonly value: ExtensionCallValue; readonly agentsChanged: boolean } {
-  const input = record(value);
-  if (input.kind === 'refused') {
-    record(value, ['kind', 'code']);
-    return { value: parseExtensionCallValue({ kind: 'refused', code: input.code }), agentsChanged: false };
-  }
-  if (input.kind !== 'ok') throw new Error('Invalid operation result');
-  const changed = Object.hasOwn(input, 'agentsChanged');
-  record(value, changed ? ['kind', 'output', 'agentsChanged'] : ['kind', 'output']);
-  if (changed && input.agentsChanged !== true) throw new Error('Invalid operation result');
-  return { value: parseExtensionCallValue({ kind: 'ok', output: input.output }), agentsChanged: changed };
 }
 export interface DiscoveredProvider {
   readonly kind: 'available';
@@ -522,8 +508,8 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     readonly operations: Map<string, ExtensionOperation> }>();
   let refreshing: Promise<unknown> | undefined;
   const pending = new Set<Promise<unknown>>();
-  /** Ends each admitted operation call: aborts its signal and replies `unavailable`. Close runs every one. */
-  const operationCancels = new Set<() => void>();
+  /** The controller of each admitted operation call. Close aborts every one, which replies `unavailable`. */
+  const operationControllers = new Set<AbortController>();
   let outputOperations = 0;
   const streams = new Set<ProviderStream>();
   let retiring: Set<ProviderStream> | undefined;
@@ -585,12 +571,11 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
    * A malformed request rejects as a caller error; an over-limit input resolves as `too-large`.
    */
   async function callOperation(raw: ExtensionCallRequest): Promise<ExtensionCallValue> {
-    let request: ExtensionCallRequest;
-    try { request = parseExtensionCallRequest(raw); }
-    catch (error) {
-      if (error instanceof ExtensionCallTooLarge) return failedCall('too-large');
-      throw new TypeError('Invalid extension call request');
-    }
+    let call: ReturnType<typeof classifyExtensionCall>;
+    try { call = classifyExtensionCall(raw); }
+    catch { throw new TypeError('Invalid extension call request'); }
+    if (call.kind === 'failed') return call;
+    const { request } = call;
     if (phase !== 'active') return failedCall('unavailable');
     const namespace = contributed.get(request.namespace);
     if (!namespace) return failedCall('unknown-extension');
@@ -600,38 +585,29 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     const operation = namespace.operations.get(request.operation);
     if (!operation) return failedCall('unknown-operation');
     const { input } = request;
-    const controller = new AbortController();
-    let release = (): void => {}, timer: ReturnType<typeof setTimeout> | undefined, cancel = (): void => {};
-    const admission = new Promise<void>(resolve => { release = resolve; });
-    pending.add(admission);
-    void admission.then(() => pending.delete(admission));
-    const expired = new Promise<ExtensionCallValue>(resolve => {
-      timer = setTimeout(() => { controller.abort(); resolve(failedCall('timeout')); }, operationDeadlineMs);
-      cancel = () => { controller.abort(); resolve(failedCall('unavailable')); };
-    });
-    operationCancels.add(cancel);
-    const work = (async (): Promise<ExtensionCallValue> => {
+    const reply = runAdmitted(async (signal): Promise<ExtensionCallValue> => {
       let credential: CredentialHandle<string> | null;
       try { credential = namespace.authority.issue(installation.id, installation.instance).credential; }
       catch { return failedCall('unavailable'); }
       let raw: unknown;
-      try { raw = await operation.run(Object.freeze({ installation, credential, input, signal: controller.signal })); }
+      try { raw = await operation.run(Object.freeze({ installation, credential, input, signal })); }
       catch { return failedCall('threw'); }
       let result: ReturnType<typeof operationResult>;
       try { result = operationResult(raw); }
       catch (error) { return failedCall(error instanceof ExtensionCallTooLarge ? 'too-large' : 'invalid-result'); }
       if (result.agentsChanged && phase === 'active') {
         // A discovery that is already running may predate the change, so wait for it before starting a fresh one.
-        const fresh = (async () => {
+        // runAdmitted bounds this wait: the reply ends at the deadline or on close.
+        await (async () => {
           await refreshing?.catch(() => {});
-          if (phase === 'active' && !controller.signal.aborted) await track(refresh);
+          if (phase === 'active' && !signal.aborted) await track(refresh);
         })().catch(() => {});
-        await Promise.race([fresh, expired]);
       }
       return result.value;
-    })();
-    try { return await Promise.race([work, expired]); }
-    finally { clearTimeout(timer); operationCancels.delete(cancel); release(); }
+    }, operationDeadlineMs, operationControllers);
+    pending.add(reply);
+    void reply.finally(() => pending.delete(reply));
+    return reply;
   }
   function rediscover(): void {
     if (phase !== 'active' || background || Date.now() - discoveredAt < rediscoveryInterval) return;
@@ -644,7 +620,7 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     if (closing) return closing;
     phase = 'closing';
     // Stop admitted operations before their authorities close, so close never waits for the operation deadline.
-    for (const cancel of operationCancels) cancel();
+    for (const controller of operationControllers) controller.abort();
     const draining = new Set(streams);
     retiring = draining;
     const authorities: Promise<void>[] = [];
@@ -743,12 +719,16 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[],
     /** Active namespaces in namespace order, each with its operations and installation status. No secrets or origins. */
     extensions(): readonly ExtensionDescriptor[] {
       if (phase !== 'active') return [];
-      return [...contributed.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([namespace, value]) => ({
-        namespace, state: 'active' as const, operations: [...value.operations.keys()].sort(),
-        installations: [...new Set(value.installations.map(installation => installation.instance.installationId))].sort().map(installationId => ({
-          installationId, status: value.installations.some(installation => installation.instance.installationId === installationId &&
-            installationStatus(installation) === 'available') ? 'available' as const : 'unavailable' as const })),
-      }));
+      return [...contributed.entries()].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([namespace, value]) => {
+        // An installation is available when any of its grants is available.
+        const status = new Map<string, 'available' | 'unavailable'>();
+        for (const installation of value.installations) {
+          const id = installation.instance.installationId;
+          if (status.get(id) !== 'available') status.set(id, installationStatus(installation));
+        }
+        return { namespace, state: 'active' as const, operations: [...value.operations.keys()].sort(),
+          installations: [...status].sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([installationId, available]) => ({ installationId, status: available })) };
+      });
     },
     catalog(): readonly ProviderStatus[] {
       if (phase !== 'active') return [];

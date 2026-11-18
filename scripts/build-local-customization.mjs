@@ -9,6 +9,7 @@ import { prepareCustomizationSources } from './prepare-customization-sources.mjs
 import { desktopPlan, mergePlans } from './local-customization.mjs';
 import { bundledPlan } from './bundled-extensions.mjs';
 import { qualifyDesktopArtifact } from './desktop-customization-qualifier.mjs';
+import { desktopConfig } from '../apps/desktop/vite.config.mjs';
 
 const root = fileURLToPath(new URL('../', import.meta.url));
 const { values } = parseArgs({ options: Object.fromEntries(['repository', 'commit', 'subdirectory', 'out'].map(name => [name, { type: 'string' }])) });
@@ -25,20 +26,12 @@ try {
     ...(values.subdirectory ? { subdirectory: values.subdirectory } : {}) }, scratchParent: scratch });
   const plan = desktopPlan(prepared.root);
   const stage = join(scratch, 'browser');
-  // The desktop Vite configuration adds the only customization plugin. It reads this external plan from the named file
-  // and merges it with the bundled first-party plan; a namespace in both fails the build.
+  // The desktop Vite configuration adds the only customization plugin, merging this external plan with the bundled
+  // first-party plan; a namespace in both fails the build.
   const merged = mergePlans(bundledPlan(root), plan);
-  const planFile = join(scratch, 'external-plan.json');
-  await writeFile(planFile, JSON.stringify(plan));
-  const previousPlan = process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN;
-  process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN = planFile;
-  let result;
-  try {
-    result = await build({ root: join(root, 'apps/desktop'), configFile: join(root, 'apps/desktop/vite.config.mjs'), mode: 'browser',
-      build: { outDir: stage, emptyOutDir: true } });
-  } finally {
-    if (previousPlan === undefined) delete process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN; else process.env.AGENTUI_EXTERNAL_DESKTOP_PLAN = previousPlan;
-  }
+  const config = desktopConfig('browser', plan);
+  const result = await build({ ...config, configFile: false, mode: 'browser', root: join(root, 'apps/desktop'),
+    build: { ...config.build, outDir: stage, emptyOutDir: true } });
   const builds = Array.isArray(result) ? result : [result];
   const outputs = builds.flatMap(item => item.output);
   const paths = new Set(outputs.map(item => item.fileName));

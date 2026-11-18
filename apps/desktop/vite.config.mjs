@@ -1,15 +1,14 @@
-import { readFileSync } from 'node:fs';
 import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { cssUrlExpressions } from '../../scripts/lib/css-url-expressions.mjs';
 import { customizationPlugin, mergePlans } from '../../scripts/lib/customization-plugin.mjs';
 import { bundledPlan } from '../../scripts/bundled-extensions.mjs';
 
-/** scripts/build-local-customization.mjs names its external plan here so exactly one customization plugin runs. */
-export const EXTERNAL_PLAN_VARIABLE = 'AGENTUI_EXTERNAL_DESKTOP_PLAN';
-
-export default defineConfig(({ mode }) => {
-  const external = process.env[EXTERNAL_PLAN_VARIABLE] ? JSON.parse(readFileSync(process.env[EXTERNAL_PLAN_VARIABLE], 'utf8')) : null;
+/**
+ * The desktop Vite configuration. It adds the only customization plugin, for the bundled first-party plan merged with an
+ * optional external plan; scripts/build-local-customization.mjs passes its plan here. A namespace in both fails the build.
+ */
+export function desktopConfig(mode, external = null) {
   return {
     base: './',
     plugins: [cssUrlExpressions(), customizationPlugin(mergePlans(bundledPlan(), external))],
@@ -25,4 +24,6 @@ export default defineConfig(({ mode }) => {
       watch: { ignored: ['**/src-tauri/**'] },
     },
   };
-});
+}
+
+export default defineConfig(({ mode }) => desktopConfig(mode));

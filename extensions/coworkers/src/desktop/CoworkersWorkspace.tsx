@@ -4,6 +4,7 @@ import type { WorkspaceAgent, WorkspaceViewProps } from '@agentui/sdk/react';
 import { useTheme } from '@agentui/theme/react';
 import { ThemeScope } from '@agentui/ui-primitives/desktop';
 import { CoworkerContext, initials } from './shared.js';
+import { coworkersListOutput, type CoworkerSummary } from '../operation-output.js';
 
 const CONFIGURATION = '~/.local/share/agentui/extensions.json';
 const TOKEN = 'AGENTUI_EXTENSION_COWORKERS_TOKEN';
@@ -14,7 +15,6 @@ const PALETTE = {
   dark: { canvas: '#1f1f1f', surface: '#292929', raised: '#333333', border: '#3d3d3d', text: '#ffffff', muted: '#c7c7c7', accent: '#9ea2ff', onAccent: '#1a1b3d', focus: '#9ea2ff' },
 } as const;
 const WORKSPACE_ACCESS: Readonly<Record<string, string>> = { disabled: 'No workspace', read_only: 'Read-only workspace', read_write: 'Read and write workspace' };
-type Detail = { readonly coworkerId: string; readonly name: string; readonly role: string; readonly workspace: string; readonly slack: boolean; readonly instructionsBytes: number };
 type Coworker = WorkspaceAgent & { readonly providerAgentId: string };
 
 export function CoworkersWorkspace(props: WorkspaceViewProps) {
@@ -22,7 +22,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const installation = props.installations.find(item => item.status === 'available') ?? props.installations[0];
   const available = installation?.status === 'available';
   const coworkers = props.agents.filter((agent): agent is Coworker => agent.providerAgentId !== null);
-  const [details, setDetails] = useState<ReadonlyMap<string, Detail>>(new Map());
+  const [details, setDetails] = useState<ReadonlyMap<string, CoworkerSummary>>(new Map());
   const [management, setManagement] = useState(false);
   const [tab, setTab] = useState<'chat' | 'coworkers'>('chat');
   const [pill, setPill] = useState<'chat' | 'about'>('chat');
@@ -41,7 +41,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
     let current = true;
     void props.call(installation.installationId, 'coworkers.list', {}).then(result => {
       if (!current || result.kind !== 'ok') return;
-      const output = result.output as { coworkers?: readonly Detail[]; management?: boolean } | null;
+      const output = coworkersListOutput(result.output);
       setDetails(new Map((output?.coworkers ?? []).map(item => [item.coworkerId, item])));
       setManagement(output?.management === true);
     });

@@ -146,6 +146,14 @@ function imageTransfers(connection: ServiceConnection): ImageTransfers {
     },
   };
 }
+type EntriesUpdate = (entries: readonly ConversationCatalogEntry[]) => readonly ConversationCatalogEntry[] | null;
+/** Sets the preview of the entry for `scope`; no change when it is absent or already current. */
+const withPreview = (scope: ConversationScope, preview: string | null): EntriesUpdate => entries => {
+  const existing = entries.find(entry => sameScope(entry.scope, scope));
+  return existing && existing.preview !== preview ? entries.map(entry => entry === existing ? { ...entry, preview } : entry) : null;
+};
+/** Puts `entry` first, replacing any entry for the same scope. */
+const prepended = (entry: ConversationCatalogEntry): EntriesUpdate => entries => [entry, ...entries.filter(item => !sameScope(item.scope, entry.scope))];
 function initialSnapshot(): ApplicationSnapshot {
   return { ...DETACHED_VIEW, active: null, host: { kind: 'loading' }, saved: EMPTY_SAVED_VIEW, error: '', storageFailure: '', busy: false, capturedSends: [] };
 }
@@ -377,14 +385,8 @@ export function createApplicationController(deps: {
         }
         if (!connected && state.active) refreshPermissions(owner, state.active);
         connected = true;
-        const preview = conversationPreview(snapshot.document.domain);
-        const existing = state.catalog.items.find(entry => sameScope(entry.scope, scope));
-        if (existing && existing.preview !== preview) publish({ catalog: { ...state.catalog,
-          items: state.catalog.items.map(entry => entry === existing ? { ...entry, preview } : entry) } });
-        const namespace = 'kind' in agent ? agent.namespace : null, workspace = namespace === null ? undefined : state.workspaces[namespace];
-        const listed = workspace?.entries.find(entry => sameScope(entry.scope, scope));
-        if (namespace !== null && workspace && listed && listed.preview !== preview) publish({ workspaces: { ...state.workspaces,
-          [namespace]: { ...workspace, entries: workspace.entries.map(entry => entry === listed ? { ...entry, preview } : entry) } } });
+        const patch = patchEntries('kind' in agent ? agent.namespace : null, withPreview(scope, conversationPreview(snapshot.document.domain)));
+        if (patch.catalog || patch.workspaces) publish(patch);
       });
       await current(owner, store.connect());
       refreshPermissions(owner, active);
@@ -398,6 +400,16 @@ export function createApplicationController(deps: {
     const loaded = new Map((after === null ? [] : state.catalog.items).map(entry => [JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry]));
     for (const entry of items) loaded.set(JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry);
     publish({ catalog: { items: [...loaded.values()], after: next } });
+  }
+  /**
+   * Applies `update` to the catalog and, when that namespace's workspace is loaded, to its entries. Returns one partial
+   * snapshot holding each list that changed, so a caller publishes them together. `update` returns null for no change.
+   */
+  function patchEntries(namespace: string | null, update: EntriesUpdate): Partial<Pick<ApplicationSnapshot, 'catalog' | 'workspaces'>> {
+    const items = update(state.catalog.items), workspace = namespace === null ? undefined : state.workspaces[namespace];
+    const entries = workspace ? update(workspace.entries) : null;
+    return { ...(items ? { catalog: { ...state.catalog, items } } : {}),
+      ...(namespace !== null && workspace && entries ? { workspaces: { ...state.workspaces, [namespace]: { ...workspace, entries } } } : {}) };
   }
   /** The latest load per namespace. A first-page load supersedes any load in flight; a superseded load publishes nothing. */
   const workspaceLoads = new Map<string, number>();
@@ -521,11 +533,7 @@ export function createApplicationController(deps: {
     const created = host.agents.find(agent => agent.id === agentId);
     const provider = created && 'kind' in created && created.providerAgentId !== null
       ? { namespace: created.namespace, installationId: created.installationId, providerAgentId: created.providerAgentId } : null;
-    const entry = { scope, preview: null, provider };
-    const workspace = provider ? state.workspaces[provider.namespace] : undefined;
-    publish({ catalog: { ...state.catalog, items: [entry, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] },
-      ...(provider && workspace ? { workspaces: { ...state.workspaces, [provider.namespace]: { ...workspace,
-        entries: [entry, ...workspace.entries.filter(item => !sameScope(item.scope, scope))] } } } : {}) });
+    publish(patchEntries(provider?.namespace ?? null, prepended({ scope, preview: null, provider })));
     await install(owner, scope);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {

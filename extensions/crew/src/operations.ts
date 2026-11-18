@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import { CrewClient, CrewHttpError, CrewTransportError, CrewUnknownOutcomeError } from '@birbcrew/client';
 import type { ExtensionOperation, ExtensionOperationCall, ExtensionOperationResult, ServerProviderCredentials } from '@agentui/sdk';
-import { MAX_CREW_MEMBERS } from './provider.js';
+import { eachMemberPage, MAX_CREW_MEMBERS } from './members.js';
+import type { MemberSummary, MembersListOutput } from './operation-output.js';
 
 /** Each operation's own deadline, below the host's 15-second reply deadline. */
 const OPERATION_TIMEOUT_MS = 10_000;
@@ -48,20 +49,17 @@ export function crewOperations(credentials: ServerProviderCredentials): Readonly
   return {
     'members.list': operation(credentials, false, async (client, input, signal) => {
       if (!listInput.safeParse(input).success) return refused('invalid-input');
-      const members: { memberId: string; engine: string; profile: string }[] = [];
-      const seen = new Set<string>();
-      let after: string | undefined, truncated = false;
-      do {
-        const page = await client.listMembers(after ? { after } : {}, { signal });
-        for (const member of page.members) {
-          if (members.length >= MAX_CREW_MEMBERS) { truncated = true; break; }
+      const members: MemberSummary[] = [];
+      const read = await eachMemberPage(client, () => signal, page => {
+        for (const member of page) {
+          if (members.length >= MAX_CREW_MEMBERS) return 'truncated' as const;
           members.push({ memberId: member.memberId, engine: member.engine, profile: member.profile });
         }
-        if (truncated || !page.next) break;
-        if (seen.has(page.next) || seen.size >= 100) return refused('rejected');
-        seen.add(page.next); after = page.next;
-      } while (after);
-      return { kind: 'ok', output: { members, truncated } };
+        return undefined;
+      });
+      if (read.kind === 'invalid') return refused('rejected');
+      const output: MembersListOutput = { members, truncated: read.kind === 'stopped' };
+      return { kind: 'ok', output };
     }),
     'members.create': operation(credentials, true, async (client, input, signal) => {
       const parsed = createInput.safeParse(input);

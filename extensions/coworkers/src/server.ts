@@ -3,6 +3,7 @@ import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import type { ExtensionOperation, ServerExtensionEntry } from '@agentui/sdk';
 import { CoworkersClient, type Coworker } from './client.js';
 import { registerCoworkersProvider } from './provider.js';
+import type { CoworkerSummary, CoworkersListOutput } from './operation-output.js';
 
 const OPERATION_TIMEOUT_MS = 10_000;
 /** Bounds that keep `coworkers.list` well under the host's 256,000-byte operation output limit. */
@@ -14,8 +15,8 @@ const refused = (code: string) => ({ kind: 'refused', code } as const);
 const capped = (value: string) => { const points = Array.from(value); return points.length > MAX_COWORKER_TEXT ? points.slice(0, MAX_COWORKER_TEXT).join('') : value; };
 
 /** The listed coworkers in service order, cut by count and byte budget; `truncated` says whether any were left out. */
-export function listedCoworkers(coworkers: readonly Coworker[]) {
-  const listed = [];
+export function listedCoworkers(coworkers: readonly Coworker[]): CoworkersListOutput {
+  const listed: CoworkerSummary[] = [];
   let bytes = 0;
   for (const coworker of coworkers) {
     if (listed.length >= MAX_LISTED_COWORKERS) break;

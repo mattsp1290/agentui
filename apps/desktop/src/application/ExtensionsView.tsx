@@ -2,7 +2,7 @@ import { Suspense, useEffect, type ReactNode } from 'react';
 import type { ConversationScope, Json } from '@agentui/contracts';
 import { sameScope } from '@agentui/contracts';
 import type { AgentDescriptor, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
-import { ExtensionCallTooLarge, parseExtensionCallRequest } from '@agentui/contracts/service';
+import { classifyExtensionCall } from '@agentui/contracts/service';
 import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
 import { CustomizationBoundary, type DesktopCustomization, type NamespaceActivation } from './DesktopCustomizations.js';
 import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
@@ -15,6 +15,12 @@ export interface ExtensionRow {
   readonly detail: string | null;
   readonly owner: Extract<NamespaceActivation, { readonly kind: 'ready' }> | null;
   readonly workspace: WorkspaceContribution | null;
+}
+/** A row whose workspace can open: its namespace is ready and contributes a workspace. */
+export type OpenableRow = ExtensionRow & { readonly owner: NonNullable<ExtensionRow['owner']>; readonly workspace: WorkspaceContribution };
+const CLOSED_STATES: ReadonlySet<ExtensionRowState> = new Set(['Disabled', 'Failed', 'Loading']);
+export function openableRow(row: ExtensionRow | undefined): OpenableRow | null {
+  return row?.owner && row.workspace && !CLOSED_STATES.has(row.state) ? { ...row, owner: row.owner, workspace: row.workspace } : null;
 }
 type ProviderAgent = Extract<AgentDescriptor, { readonly kind: 'provider' }>;
 const SERVER_FAILURE = 'The server extension failed to load. Check the extension configuration, then restart the host.';
@@ -61,7 +67,7 @@ export function ExtensionsList({ rows, onOpen, enabled }: {
     {rows.length === 0 ? <p className="empty-state">No extensions are installed in this build or configured on this host.</p>
       : <ul className="extension-list">
         {rows.map(row => {
-          const selectable = row.workspace !== null && row.state !== 'Disabled' && row.state !== 'Failed' && row.state !== 'Loading';
+          const selectable = openableRow(row) !== null;
           return <li key={row.namespace} className="extension-row" data-extension={row.namespace}>
             <div className="extension-row-text">
               <strong>{row.label}</strong>
@@ -76,7 +82,7 @@ export function ExtensionsList({ rows, onOpen, enabled }: {
 }
 
 export function ExtensionWorkspace({ row, metadata, workspaces, active, controller, conversation, status, onBack }: {
-  readonly row: ExtensionRow & { readonly owner: NonNullable<ExtensionRow['owner']>; readonly workspace: WorkspaceContribution };
+  readonly row: OpenableRow;
   readonly metadata: ServiceMetadata | null;
   readonly workspaces: Readonly<Record<string, WorkspaceConversations>>;
   readonly active: OpenConversation | null;
@@ -111,9 +117,10 @@ export function ExtensionWorkspace({ row, metadata, workspaces, active, controll
     },
     async call(installationId: string, operation: string, input: Json): Promise<ExtensionCallValue> {
       const request = { namespace, installationId, operation, input };
-      try { parseExtensionCallRequest(request); }
-      catch (error) {
-        if (error instanceof ExtensionCallTooLarge) return { kind: 'failed', cause: 'too-large' };
+      try {
+        const call = classifyExtensionCall(request);
+        if (call.kind === 'failed') return call;
+      } catch (error) {
         // A malformed operation name or input is the extension's own bug, not an outage: say so where its author looks.
         console.error(`[${namespace}] invalid extension call to "${String(operation)}": ${error instanceof Error ? error.message : 'invalid request'}`);
         return { kind: 'failed', cause: 'unavailable' };

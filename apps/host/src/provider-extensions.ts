@@ -86,7 +86,7 @@ export async function verifyArtifactPins(pins: readonly ArtifactPin[], grants: r
 }
 
 export function providerExtensionSource(database: AccessDatabase, selected: ProviderExtensionSelection): ServerExtensionSource {
-  return { async prepare() {
+  return { namespaces: () => selectedNamespaces(selected), async prepare() {
     const loaded: { readonly loaded: LoadedServerEntry; readonly installations: readonly ProviderInstallation[] }[] = [];
     const extensions: ProviderExtension[] = [];
     const cleanup = async () => {

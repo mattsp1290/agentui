@@ -10,6 +10,7 @@ import { bindingSchema, choiceSchema, decisionKey, presentation, reference, runO
 import type { CrewModel } from './provider-model.js';
 import { observation } from './provider-observation.js';
 import { decide, decisionReceipts } from './provider-decisions.js';
+import { eachMemberPage, MAX_CREW_MEMBERS } from './members.js';
 
 export interface CrewProviderOptions {
   readonly service: string;
@@ -17,8 +18,7 @@ export interface CrewProviderOptions {
   readonly memberId?: string;
   readonly instance: ProviderInstance<string>;
 }
-/** The host rejects a discovery with more agents than this. */
-export const MAX_CREW_MEMBERS = 1000;
+export { MAX_CREW_MEMBERS } from './members.js';
 const unavailable = () => ({ kind: 'unavailable', reason: 'Crew is unavailable.' } as const);
 type CrewError = 'credential' | 'forbidden' | 'invalid-request' | 'unsupported' | 'transient';
 function classify(error: unknown): CrewError {
@@ -81,242 +81,235 @@ export function registerCrewProvider(context: ServerExtensionContext, id: string
   if (options.instance.protocolVersion !== '1') throw new Error('Unsupported Crew protocol version');
   const fixed = options.memberId === undefined ? null : z.uuid().parse(options.memberId), instance = Object.freeze({ ...options.instance });
   const memberOf = (binding: ProviderConversation<string>) => binding.creation.agent.opaqueId;
-  {
-    const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
-      if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
-      if (!request.credential || canonicalJson(request.instance) !== canonicalJson(instance) ||
-        canonicalJson(request.credential.instance) !== canonicalJson(instance)) throw new Error('Crew installation is misconfigured');
-      const credential = request.credential;
-      let capabilities: Capabilities;
-      let naming: ReturnType<typeof decisionReceipts> = null;
-      let closed = false;
-      const observations = new Map<string, ReturnType<typeof observation>>();
-      const use = <T>(action: (client: CrewClient, token: string) => Promise<T>): Promise<T> => {
-        if (closed) return Promise.reject(new Error('Crew provider closed'));
-        return context.credentials.use({ credential, service: service.origin }, token => action(new CrewClient({ baseUrl: service.origin, token }), token));
-      };
-      const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean, submit = false): Promise<ProviderOutcome<T>> =>
-        use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error, submit) : uncertain(); } }).catch(() => uncertain());
-      // Structural only: Crew rejects an unknown member when the call is made.
-      function member(operation: CreationIntent<string>): string {
-        if (!z.uuid().safeParse(operation.agent.opaqueId).success || (fixed !== null && operation.agent.opaqueId !== fixed) ||
-          operation.agent.kind !== 'agent' || canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
-        return operation.agent.opaqueId;
+  const provider: BackendProvider<CrewModel, string> = { apiVersion: 1, async connect(request) {
+    if (request.apiVersion !== 1) return { kind: 'version-unsupported', reason: 'Unsupported provider contract.' };
+    if (!request.credential || canonicalJson(request.instance) !== canonicalJson(instance) ||
+      canonicalJson(request.credential.instance) !== canonicalJson(instance)) throw new Error('Crew installation is misconfigured');
+    const credential = request.credential;
+    let capabilities: Capabilities;
+    let naming: ReturnType<typeof decisionReceipts> = null;
+    let closed = false;
+    const observations = new Map<string, ReturnType<typeof observation>>();
+    const use = <T>(action: (client: CrewClient, token: string) => Promise<T>): Promise<T> => {
+      if (closed) return Promise.reject(new Error('Crew provider closed'));
+      return context.credentials.use({ credential, service: service.origin }, token => action(new CrewClient({ baseUrl: service.origin, token }), token));
+    };
+    const call = <T>(action: (client: CrewClient) => Promise<ProviderOutcome<T>>, fresh: boolean, submit = false): Promise<ProviderOutcome<T>> =>
+      use(async client => { try { return await action(client); } catch (error) { return fresh ? negative(error, submit) : uncertain(); } }).catch(() => uncertain());
+    // Structural only: Crew rejects an unknown member when the call is made.
+    function member(operation: CreationIntent<string>): string {
+      if (!z.uuid().safeParse(operation.agent.opaqueId).success || (fixed !== null && operation.agent.opaqueId !== fixed) ||
+        operation.agent.kind !== 'agent' || canonicalJson(operation.agent.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew member');
+      return operation.agent.opaqueId;
+    }
+    function predecessor(from: NonNullable<CreationIntent<string>['from']>): string {
+      if (from.binding.namespace !== instance.namespace || from.binding.installationId !== instance.installationId) throw new Error('Foreign Crew predecessor');
+      return from.binding.opaqueSessionId;
+    }
+    // A successor's session and carrying turn are what Crew drew, so only confirm() can supply them; everything else derives from the intent.
+    function creation(operation: CreationIntent<string>, target = operation.operationId, carryingTurn?: string): ProviderConversation<string> {
+      member(operation);
+      if (operation.from) {
+        const source = predecessor(operation.from);
+        if (target === operation.operationId || target === source) throw new Error('Foreign Crew predecessor');
+        if (!carryingTurn) throw new Error('Foreign Crew conversation');
       }
-      function predecessor(from: NonNullable<CreationIntent<string>['from']>): string {
-        if (from.binding.namespace !== instance.namespace || from.binding.installationId !== instance.installationId) throw new Error('Foreign Crew predecessor');
-        return from.binding.opaqueSessionId;
+      return bindingSchema.parse({ kind: 'agentui-created', creation: operation, authority: { kind: 'remote-provider',
+        binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: target } },
+        ...(operation.from && { carryingTurn }) });
+    }
+    function validate(binding: ProviderConversation<string>) {
+      const target = binding.creation.from && binding.authority.binding.opaqueSessionId;
+      if (canonicalJson(binding) !== canonicalJson(creation(binding.creation, target, binding.carryingTurn))) throw new Error('Foreign Crew conversation');
+    }
+    function settle(operation: CreationIntent<string>, source: string, record: HandoffRecord | null): ProviderOutcome<ProviderConversation<string>> {
+      if (!record || record.source.conversationId !== source) return uncertain();
+      if (record.requestId !== operation.operationId) return refused('continued-elsewhere', 'handed_off');
+      if (record.target.memberId !== operation.agent.opaqueId) return uncertain();
+      const evidence = { handoffId: record.handoffId, firstRequestId: record.firstRequestId, carriedTurns: record.carriedTurns,
+        omittedTurns: record.omittedTurns, uncertainTurns: record.uncertainTurns, transcriptBytes: record.transcriptBytes };
+      return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId, record.firstRequestId), evidence }
+        : { kind: 'pending', evidence };
+    }
+    // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.
+    const post = (operation: CreationIntent<string>, source: string): Promise<Posted> => use<Posted>(async client => {
+      try {
+        return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId: member(operation) },
+          { signal: AbortSignal.timeout(15000) }) };
+      } catch (error) { return { error }; }
+    });
+    // Only the first create() posts. Lookups and every later call read the source's outgoing handoff.
+    const handoff = async (operation: CreationIntent<string>, source: string, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
+      if (!fresh) {
+        return use(async client => settle(operation, source,
+          (await client.handoff({ conversationId: source }, { signal: AbortSignal.timeout(10000) })).outgoing)).catch(() => uncertain());
       }
-      // A successor's session and carrying turn are what Crew drew, so only confirm() can supply them; everything else derives from the intent.
-      function creation(operation: CreationIntent<string>, target = operation.operationId, carryingTurn?: string): ProviderConversation<string> {
+      let committed: HandoffRecord | undefined, unresolved = false;
+      try {
+        for (let attempt = 1; ; attempt++) {
+          const posted = await post(operation, source);
+          if ('record' in posted) {
+            committed = posted.record;
+            if (committed.firstRequestAdmitted) break;
+          } else if (redrivable(posted.error)) unresolved = true;
+          else if (committed) break;
+          // After an unknown outcome only a 409 proves the earlier POST wrote nothing: Crew raises those after its requestId lookup.
+          else return (!unresolved || (posted.error instanceof CrewHttpError && posted.error.status === 409) ? handoffRefusal(posted.error) : null) ?? uncertain();
+          if (attempt === 3) break;
+          await delay(5000);
+        }
+        return committed ? settle(operation, source, committed) : uncertain();
+      } catch { return uncertain(); }
+    };
+    const confirm = async (operation: CreationIntent<string>, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
+      if (operation.from) {
         member(operation);
-        if (operation.from) {
-          const source = predecessor(operation.from);
-          if (target === operation.operationId || target === source) throw new Error('Foreign Crew predecessor');
-          if (!carryingTurn) throw new Error('Foreign Crew conversation');
-        }
-        return bindingSchema.parse({ kind: 'agentui-created', creation: operation, authority: { kind: 'remote-provider',
-          binding: { namespace: instance.namespace, installationId: instance.installationId, opaqueSessionId: target } },
-          ...(operation.from && { carryingTurn }) });
+        return handoff(operation, predecessor(operation.from), fresh);
       }
-      function validate(binding: ProviderConversation<string>) {
-        const target = binding.creation.from && binding.authority.binding.opaqueSessionId;
-        if (canonicalJson(binding) !== canonicalJson(creation(binding.creation, target, binding.carryingTurn))) throw new Error('Foreign Crew conversation');
-      }
-      function settle(operation: CreationIntent<string>, source: string, record: HandoffRecord | null): ProviderOutcome<ProviderConversation<string>> {
-        if (!record || record.source.conversationId !== source) return uncertain();
-        if (record.requestId !== operation.operationId) return refused('continued-elsewhere', 'handed_off');
-        if (record.target.memberId !== operation.agent.opaqueId) return uncertain();
-        const evidence = { handoffId: record.handoffId, firstRequestId: record.firstRequestId, carriedTurns: record.carriedTurns,
-          omittedTurns: record.omittedTurns, uncertainTurns: record.uncertainTurns, transcriptBytes: record.transcriptBytes };
-        return record.firstRequestAdmitted ? { kind: 'confirmed', value: creation(operation, record.target.conversationId, record.firstRequestId), evidence }
-          : { kind: 'pending', evidence };
-      }
-      // One credential use per POST, so a closed authority or a withdrawn credential refuses the next POST and ends the repeat.
-      const post = (operation: CreationIntent<string>, source: string): Promise<Posted> => use<Posted>(async client => {
-        try {
-          return { record: await client.createHandoff({ conversationId: source, requestId: operation.operationId, memberId: member(operation) },
-            { signal: AbortSignal.timeout(15000) }) };
-        } catch (error) { return { error }; }
-      });
-      // Only the first create() posts. Lookups and every later call read the source's outgoing handoff.
-      const handoff = async (operation: CreationIntent<string>, source: string, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
-        if (!fresh) {
-          return use(async client => settle(operation, source,
-            (await client.handoff({ conversationId: source }, { signal: AbortSignal.timeout(10000) })).outgoing)).catch(() => uncertain());
+      const binding = creation(operation), memberId = member(operation);
+      return call(async client => {
+        const remote = fresh ? await client.openConversation({ conversationId: operation.operationId, memberId }, { signal: AbortSignal.timeout(15000) })
+          : await client.conversation({ conversationId: operation.operationId }, { signal: AbortSignal.timeout(10000) });
+        if (remote.memberId !== memberId || remote.conversationId !== operation.operationId) return uncertain();
+        return { kind: 'confirmed', value: binding, evidence: { conversationId: remote.conversationId, memberId } };
+      }, fresh);
+    };
+    const command = async (operation: ProviderCommand<CrewModel, string>, fresh: boolean): Promise<ProviderOutcome<ProviderCommandEffect<string>>> => {
+      validate(operation.binding);
+      const conversationId = operation.binding.authority.binding.opaqueSessionId;
+      return call<ProviderCommandEffect<string>>(async client => {
+        if (operation.kind === 'decide') {
+          if (canonicalJson(operation.decision.binding) !== canonicalJson(operation.binding) ||
+            canonicalJson(operation.choice.binding) !== canonicalJson(operation.binding) ||
+            canonicalJson(operation.decision.ref.instance) !== canonicalJson(instance) ||
+            canonicalJson(operation.choice.ref.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew decision');
+          const [requestId, invocationId, approvalId, version] = decisionKey.parse(JSON.parse(operation.decision.ref.opaqueId));
+          const [key, choice] = z.tuple([z.string(), choiceSchema]).parse(JSON.parse(operation.choice.ref.opaqueId));
+          if (key !== operation.decision.ref.opaqueId) throw new Error('Foreign Crew choice');
+          const decisionId = naming?.(choice) ? z.uuid().parse(operation.operationId).toLowerCase() : null;
+          return decide(client, { conversationId, memberId: memberOf(operation.binding), requestId, invocationId, approvalId, version, choice, decisionId }, fresh);
         }
-        let committed: HandoffRecord | undefined, unresolved = false;
-        try {
-          for (let attempt = 1; ; attempt++) {
-            const posted = await post(operation, source);
-            if ('record' in posted) {
-              committed = posted.record;
-              if (committed.firstRequestAdmitted) break;
-            } else if (redrivable(posted.error)) unresolved = true;
-            else if (committed) break;
-            // After an unknown outcome only a 409 proves the earlier POST wrote nothing: Crew raises those after its requestId lookup.
-            else return (!unresolved || (posted.error instanceof CrewHttpError && posted.error.status === 409) ? handoffRefusal(posted.error) : null) ?? uncertain();
-            if (attempt === 3) break;
-            await delay(5000);
-          }
-          return committed ? settle(operation, source, committed) : uncertain();
-        } catch { return uncertain(); }
-      };
-      const confirm = async (operation: CreationIntent<string>, fresh: boolean): Promise<ProviderOutcome<ProviderConversation<string>>> => {
-        if (operation.from) {
-          member(operation);
-          return handoff(operation, predecessor(operation.from), fresh);
+        const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
+        if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
+          canonicalJson(operation.run.ref.instance) !== canonicalJson(instance))) throw new Error('Foreign Crew run');
+        const key = { conversationId, requestId }, timeout = { signal: AbortSignal.timeout(15000) };
+        const receipt = !fresh ? await client.requestStatus(key, timeout) : operation.kind === 'send'
+          ? await client.submit({ ...key, text: operation.request.text }, timeout) : await client.cancel(key, timeout);
+        if (operation.kind === 'cancel') {
+          if (!receipt.cancellation) return uncertain();
+          return { kind: 'confirmed', value: { kind: 'cancel', state: receipt.cancellation.nativeTermination === 'confirmed' ? 'completed' : 'accepted' },
+            evidence: { requestId, receiptId: receipt.cancellation.receiptId, nativeTermination: receipt.cancellation.nativeTermination } };
         }
-        const binding = creation(operation), memberId = member(operation);
-        return call(async client => {
-          const remote = fresh ? await client.openConversation({ conversationId: operation.operationId, memberId }, { signal: AbortSignal.timeout(15000) })
-            : await client.conversation({ conversationId: operation.operationId }, { signal: AbortSignal.timeout(10000) });
-          if (remote.memberId !== memberId || remote.conversationId !== operation.operationId) return uncertain();
-          return { kind: 'confirmed', value: binding, evidence: { conversationId: remote.conversationId, memberId } };
-        }, fresh);
-      };
-      const command = async (operation: ProviderCommand<CrewModel, string>, fresh: boolean): Promise<ProviderOutcome<ProviderCommandEffect<string>>> => {
+        return { kind: 'confirmed', value: { kind: 'send', run: reference(operation.binding, 'run', requestId),
+          state: runOutcome(receipt) ? 'completed' : 'accepted' },
+          evidence: { requestId, status: receipt.status, ...(receipt.cancellation && { cancellation: receipt.cancellation }) } };
+      }, fresh, operation.kind === 'send');
+    };
+    function source(binding: ProviderConversation<string>, after: CrewModel['cursor'] | null) {
+      validate(binding);
+      const id = binding.authority.binding.opaqueSessionId;
+      let current = observations.get(id);
+      if (!current) {
+        current = observation(binding, memberOf(binding), use, service.origin, after,
+          capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'), supportsStanding);
+        observations.set(id, current);
+        const captured = current;
+        void current.ended.then(() => { if (observations.get(id) === captured) observations.delete(id); });
+      }
+      return current;
+    }
+    const probe = await use(async client => {
+      try { return { kind: 'available', capabilities: await client.capabilities({ signal: AbortSignal.timeout(10000) }) } as const; }
+      catch (error) { return failure(error); }
+    });
+    if (probe.kind !== 'available') return probe;
+    capabilities = probe.capabilities;
+    const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
+    const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
+      standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
+    naming = decisionReceipts(capabilities);
+    const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
+      validate(binding);
+      const list = await client.listGrants({ memberId: memberOf(binding) }, { signal: AbortSignal.timeout(10000) });
+      return list.active.filter(grant => grant.toolName === 'record_work_item' && grant.policyVersion === 1 &&
+        (grant.scope === 'member' || grant.conversationId === binding.authority.binding.opaqueSessionId));
+    };
+    const permissions: ProviderPermissions<string> = {
+      async read(binding) {
+        try { return await use(async client => ({ kind: 'available', permissions: (await grants(client, binding)).map(grant => ({
+          ref: reference(binding, 'permission', grant.grantId), scope: grant.scope === 'member' ? 'agent' : 'conversation',
+          actionLabel: 'Record work items', detail: grant.scope === 'member'
+            ? 'This Crew member can record owner-initiated work items in all conversations.'
+            : 'This Crew member can record owner-initiated work items in this conversation.',
+        })) })); } catch { return unavailable(); }
+      },
+      async revoke(operation) {
         validate(operation.binding);
-        const conversationId = operation.binding.authority.binding.opaqueSessionId;
-        return call<ProviderCommandEffect<string>>(async client => {
-          if (operation.kind === 'decide') {
-            if (canonicalJson(operation.decision.binding) !== canonicalJson(operation.binding) ||
-              canonicalJson(operation.choice.binding) !== canonicalJson(operation.binding) ||
-              canonicalJson(operation.decision.ref.instance) !== canonicalJson(instance) ||
-              canonicalJson(operation.choice.ref.instance) !== canonicalJson(instance)) throw new Error('Foreign Crew decision');
-            const [requestId, invocationId, approvalId, version] = decisionKey.parse(JSON.parse(operation.decision.ref.opaqueId));
-            const [key, choice] = z.tuple([z.string(), choiceSchema]).parse(JSON.parse(operation.choice.ref.opaqueId));
-            if (key !== operation.decision.ref.opaqueId) throw new Error('Foreign Crew choice');
-            const decisionId = naming?.(choice) ? z.uuid().parse(operation.operationId).toLowerCase() : null;
-            return decide(client, { conversationId, memberId: memberOf(operation.binding), requestId, invocationId, approvalId, version, choice, decisionId }, fresh);
-          }
-          const requestId = operation.kind === 'send' ? z.uuid().parse(operation.operationId) : z.uuid().parse(operation.run.ref.opaqueId);
-          if (operation.kind === 'cancel' && (canonicalJson(operation.run.binding) !== canonicalJson(operation.binding) ||
-            canonicalJson(operation.run.ref.instance) !== canonicalJson(instance))) throw new Error('Foreign Crew run');
-          const key = { conversationId, requestId }, timeout = { signal: AbortSignal.timeout(15000) };
-          const receipt = !fresh ? await client.requestStatus(key, timeout) : operation.kind === 'send'
-            ? await client.submit({ ...key, text: operation.request.text }, timeout) : await client.cancel(key, timeout);
-          if (operation.kind === 'cancel') {
-            if (!receipt.cancellation) return uncertain();
-            return { kind: 'confirmed', value: { kind: 'cancel', state: receipt.cancellation.nativeTermination === 'confirmed' ? 'completed' : 'accepted' },
-              evidence: { requestId, receiptId: receipt.cancellation.receiptId, nativeTermination: receipt.cancellation.nativeTermination } };
-          }
-          return { kind: 'confirmed', value: { kind: 'send', run: reference(operation.binding, 'run', requestId),
-            state: runOutcome(receipt) ? 'completed' : 'accepted' },
-            evidence: { requestId, status: receipt.status, ...(receipt.cancellation && { cancellation: receipt.cancellation }) } };
-        }, fresh, operation.kind === 'send');
-      };
-      function source(binding: ProviderConversation<string>, after: CrewModel['cursor'] | null) {
-        validate(binding);
-        const id = binding.authority.binding.opaqueSessionId;
-        let current = observations.get(id);
-        if (!current) {
-          current = observation(binding, memberOf(binding), use, service.origin, after,
-            capabilities.approvalDetails?.version === 1 && capabilities.approvalDetails.tools.includes('record_work_item'), supportsStanding);
-          observations.set(id, current);
-          const captured = current;
-          void current.ended.then(() => { if (observations.get(id) === captured) observations.delete(id); });
+        if (canonicalJson(operation.permission.binding) !== canonicalJson(operation.binding) ||
+          canonicalJson(operation.permission.ref.instance) !== canonicalJson(instance) || operation.permission.ref.kind !== 'permission') {
+          return { kind: 'rejected', reason: 'Foreign Crew permission.', evidence: null };
         }
-        return current;
-      }
-      const probe = await use(async client => {
-        try { return { kind: 'available', capabilities: await client.capabilities({ signal: AbortSignal.timeout(10000) }) } as const; }
-        catch (error) { return failure(error); }
-      });
-      if (probe.kind !== 'available') return probe;
-      capabilities = probe.capabilities;
-      const standing = standingGrantsCapabilityV1Schema.safeParse(capabilities.standingGrants);
-      const supportsStanding = standing.success && standing.data.choices.includes('allow_conversation') &&
-        standing.data.tools.includes('record_work_item') && standing.data.initiatorKinds.includes('owner');
-      naming = decisionReceipts(capabilities);
-      const grants = async (client: CrewClient, binding: ProviderConversation<string>) => {
-        validate(binding);
-        const list = await client.listGrants({ memberId: memberOf(binding) }, { signal: AbortSignal.timeout(10000) });
-        return list.active.filter(grant => grant.toolName === 'record_work_item' && grant.policyVersion === 1 &&
-          (grant.scope === 'member' || grant.conversationId === binding.authority.binding.opaqueSessionId));
-      };
-      const permissions: ProviderPermissions<string> = {
-        async read(binding) {
-          try { return await use(async client => ({ kind: 'available', permissions: (await grants(client, binding)).map(grant => ({
-            ref: reference(binding, 'permission', grant.grantId), scope: grant.scope === 'member' ? 'agent' : 'conversation',
-            actionLabel: 'Record work items', detail: grant.scope === 'member'
-              ? 'This Crew member can record owner-initiated work items in all conversations.'
-              : 'This Crew member can record owner-initiated work items in this conversation.',
-          })) })); } catch { return unavailable(); }
-        },
-        async revoke(operation) {
-          validate(operation.binding);
-          if (canonicalJson(operation.permission.binding) !== canonicalJson(operation.binding) ||
-            canonicalJson(operation.permission.ref.instance) !== canonicalJson(instance) || operation.permission.ref.kind !== 'permission') {
-            return { kind: 'rejected', reason: 'Foreign Crew permission.', evidence: null };
+        return call(async client => {
+          const grantId = z.uuid().parse(operation.permission.ref.opaqueId);
+          const grant = (await grants(client, operation.binding)).find(row => row.grantId === grantId);
+          if (!grant || operation.scope !== (grant.scope === 'member' ? 'agent' : 'conversation')) {
+            return { kind: 'rejected', reason: 'Refresh permissions and confirm the active permission’s scope.', evidence: null };
           }
-          return call(async client => {
-            const grantId = z.uuid().parse(operation.permission.ref.opaqueId);
-            const grant = (await grants(client, operation.binding)).find(row => row.grantId === grantId);
-            if (!grant || operation.scope !== (grant.scope === 'member' ? 'agent' : 'conversation')) {
-              return { kind: 'rejected', reason: 'Refresh permissions and confirm the active permission’s scope.', evidence: null };
-            }
-            const memberId = memberOf(operation.binding);
-            const { grant: revoked } = await client.revokeGrant({ memberId, grantId }, { signal: AbortSignal.timeout(15000) });
-            if (revoked.grantId !== grantId || revoked.memberId !== memberId || revoked.scope !== grant.scope ||
-              revoked.conversationId !== grant.conversationId || revoked.status !== 'revoked') return uncertain();
-            return { kind: 'confirmed', value: { kind: 'revoke-permission', state: 'completed' }, evidence: { grantId } };
-          }, true);
-        },
-        async reconcileRevoke(operation) {
-          validate(operation.binding);
-          return uncertain();
-        },
-      };
-      const backend: ConnectedProvider<CrewModel, string> = { instance, ...(supportsStanding && { permissions }),
-        capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
-          decide: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' } },
-        async discover() {
-          const found = await use(async client => {
-            try {
-              let after: string | undefined;
-              const seen = new Set<string>();
-              const agents: { ref: { instance: ProviderInstance<string>; kind: 'agent'; opaqueId: string }; name: string }[] = [];
-              do {
-                const page = await client.listMembers(after ? { after } : {}, { signal: AbortSignal.timeout(10000) });
-                if (fixed !== null) {
-                  const member = page.members.find(member => member.memberId === fixed);
-                  if (member) return { kind: 'available', agents: [{ ref: { instance, kind: 'agent', opaqueId: fixed },
-                    name: `Crew · ${member.engine} · ${member.profile}` }] } as const;
-                } else {
-                  for (const member of page.members) {
-                    if (agents.length >= MAX_CREW_MEMBERS) break;
-                    agents.push({ ref: { instance, kind: 'agent', opaqueId: member.memberId }, name: `${member.engine} · ${member.profile}` });
-                  }
-                  if (agents.length >= MAX_CREW_MEMBERS) return { kind: 'available', agents } as const;
-                }
-                if (!page.next) return fixed === null ? { kind: 'available', agents } as const : null;
-                if (seen.has(page.next) || seen.size >= 100) return { kind: 'version-unsupported', reason: 'Crew returned invalid member pagination.' } as const;
-                seen.add(page.next); after = page.next;
-              } while (after);
-              return null;
-            } catch (error) { return failure(error); }
-          });
-          if (!found) throw new Error('Configured Crew member is not available');
-          return found;
-        },
-        create: operation => confirm(operation, true), reconcileCreation: operation => confirm(operation, false),
-        submit: operation => command(operation, true), reconcileCommand: operation => command(operation, false),
-        async snapshot(binding) {
-          try { return { kind: 'available', snapshot: await source(binding, null).ready }; }
-          catch { return unavailable(); }
-        },
-        observe({ binding, after }, receive) {
-          if (after && canonicalJson(after.binding) !== canonicalJson(binding)) throw new Error('Foreign Crew cursor');
-          const active = source(binding, after?.opaque ?? null);
-          active.attach(receive);
-          return active;
-        },
-        async close() { closed = true; const active = [...observations.values()]; active.forEach(item => item.close());
-          await Promise.all(active.map(item => item.ended)); observations.clear(); },
-      };
-      return { kind: 'connected', backend };
-    } };
-    context.providers.add(id, provider, presentation(instance));
-  }
+          const memberId = memberOf(operation.binding);
+          const { grant: revoked } = await client.revokeGrant({ memberId, grantId }, { signal: AbortSignal.timeout(15000) });
+          if (revoked.grantId !== grantId || revoked.memberId !== memberId || revoked.scope !== grant.scope ||
+            revoked.conversationId !== grant.conversationId || revoked.status !== 'revoked') return uncertain();
+          return { kind: 'confirmed', value: { kind: 'revoke-permission', state: 'completed' }, evidence: { grantId } };
+        }, true);
+      },
+      async reconcileRevoke(operation) {
+        validate(operation.binding);
+        return uncertain();
+      },
+    };
+    const backend: ConnectedProvider<CrewModel, string> = { instance, ...(supportsStanding && { permissions }),
+      capabilities: { create: { kind: 'supported' }, send: { kind: 'supported' }, cancel: { kind: 'supported' },
+        decide: { kind: 'supported' }, reconcile: { kind: 'supported' }, observe: { kind: 'supported' } },
+      async discover() {
+        const found = await use(async client => {
+          try {
+            const agents: { ref: { instance: ProviderInstance<string>; kind: 'agent'; opaqueId: string }; name: string }[] = [];
+            // A fixed member stops at the page that lists it; otherwise every member is read, up to MAX_CREW_MEMBERS.
+            const read = await eachMemberPage(client, () => AbortSignal.timeout(10000), page => {
+              if (fixed !== null) {
+                const member = page.find(member => member.memberId === fixed);
+                return member && [{ ref: { instance, kind: 'agent' as const, opaqueId: fixed }, name: `Crew · ${member.engine} · ${member.profile}` }];
+              }
+              for (const member of page) {
+                if (agents.length >= MAX_CREW_MEMBERS) break;
+                agents.push({ ref: { instance, kind: 'agent', opaqueId: member.memberId }, name: `${member.engine} · ${member.profile}` });
+              }
+              return agents.length >= MAX_CREW_MEMBERS ? agents : undefined;
+            });
+            if (read.kind === 'invalid') return { kind: 'version-unsupported', reason: 'Crew returned invalid member pagination.' } as const;
+            if (read.kind === 'stopped') return { kind: 'available', agents: read.value } as const;
+            return fixed === null ? { kind: 'available', agents } as const : null;
+          } catch (error) { return failure(error); }
+        });
+        if (!found) throw new Error('Configured Crew member is not available');
+        return found;
+      },
+      create: operation => confirm(operation, true), reconcileCreation: operation => confirm(operation, false),
+      submit: operation => command(operation, true), reconcileCommand: operation => command(operation, false),
+      async snapshot(binding) {
+        try { return { kind: 'available', snapshot: await source(binding, null).ready }; }
+        catch { return unavailable(); }
+      },
+      observe({ binding, after }, receive) {
+        if (after && canonicalJson(after.binding) !== canonicalJson(binding)) throw new Error('Foreign Crew cursor');
+        const active = source(binding, after?.opaque ?? null);
+        active.attach(receive);
+        return active;
+      },
+      async close() { closed = true; const active = [...observations.values()]; active.forEach(item => item.close());
+        await Promise.all(active.map(item => item.ended)); observations.clear(); },
+    };
+    return { kind: 'connected', backend };
+  } };
+  context.providers.add(id, provider, presentation(instance));
 }

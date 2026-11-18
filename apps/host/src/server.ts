@@ -42,8 +42,7 @@ import type { ExtensionStartup } from './server-selection.js';
 import { createServerExtensions } from '@agentui/host/extensions';
 import type { ServerExtensionReplacement } from '@agentui/host/extensions';
 import type { SelectionControl } from './selection-protocol.js';
-import { providerExtensionSource, selectedNamespaces } from './provider-extensions.js';
-import type { ExtensionDescriptor } from '@agentui/contracts/service';
+import { providerExtensionSource } from './provider-extensions.js';
 import type { BrowserProviderExtension, ProviderExtensionSelection } from './provider-extensions.js';
 export type { BrowserProviderExtension } from './provider-extensions.js';
 
@@ -102,21 +101,6 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
   const providers = createServerExtensions(options.operationDeadlineMs === undefined ? {} : { operationDeadlineMs: options.operationDeadlineMs });
-  let configuredNamespaces: readonly string[] = [];
-  /** The descriptors of the generation a replacement is retiring, with every installation unavailable. */
-  let retiringDescriptors: readonly ExtensionDescriptor[] = [];
-  /**
-   * Active namespaces come from the registry. While a replacement is changing, the retiring generation's namespaces stay
-   * listed with unavailable installations, so a client does not show them as unconfigured. A failed generation reports
-   * each configured namespace without detail.
-   */
-  const extensionDescriptors = (): readonly ExtensionDescriptor[] => {
-    const status = providers.status();
-    if (status.kind === 'active') return providers.extensions();
-    if (status.kind === 'changing') return retiringDescriptors;
-    if (status.kind !== 'failed') return [];
-    return configuredNamespaces.map(namespace => ({ namespace, state: 'failed' as const, operations: [], installations: [] }));
-  };
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let refresh: RefreshController | undefined;
   let resolveFatal!: () => void;
@@ -161,18 +145,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const browser = readArtifactBytes(options.assetsDirectory, 'browser-development');
     const artifact = readInstalledArtifact(options.hostArtifactDirectory ?? dirname(fileURLToPath(import.meta.url)));
     async function replaceExtensions(readyHost: LocalHost<TranscriptEvent, Transcript>, selected: ProviderExtensionSelection) {
-      // Capture before replace: an admitted replacement turns the state to changing synchronously.
-      const retiring = providers.status().kind === 'active' ? providers.extensions().map(descriptor => ({ ...descriptor,
-        installations: descriptor.installations.map(item => ({ installationId: item.installationId, status: 'unavailable' as const })) })) : null;
-      if (retiring) retiringDescriptors = retiring;
-      let replacement: Awaited<ReturnType<typeof providers.replace>>;
-      try { replacement = await providers.replace(providerExtensionSource(database, selected)); }
-      finally { if (retiring && retiringDescriptors === retiring) retiringDescriptors = []; }
-      // Read the selection only after it was admitted: a deferred replacement must not inspect its candidate.
-      if (replacement.kind === 'replaced' || replacement.kind === 'failed') {
-        try { configuredNamespaces = replacement.kind === 'replaced' && replacement.generation === null ? [] : selectedNamespaces(selected); }
-        catch { configuredNamespaces = []; }
-      }
+      const replacement = await providers.replace(providerExtensionSource(database, selected));
       if (replacement.kind !== 'replaced' || replacement.generation === null) return replacement;
       const generation = replacement.generation;
       const current = () => { const status = providers.status(); return !closing && status.kind === 'active' && status.generation === generation; };
@@ -344,7 +317,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
     const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing,
-      extensions: { describe: extensionDescriptors, call: providers.callOperation } });
+      extensions: { describe: providers.extensions, call: providers.callOperation } });
     const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
     const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;

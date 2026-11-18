@@ -2,7 +2,7 @@ import { finishOutputRead } from './output-read.js';
 import { canonicalJson, FeedMismatchError, parseFeedItem, parseScope, sameScope } from '@agentui/contracts';
 import { utf8Bytes } from '@agentui/contracts/decode';
 import type { ConversationScope, Feed, FeedEnd, FeedItem, Projection } from '@agentui/contracts';
-import { ExtensionCallTooLarge, ServiceError, parseExtensionCallRequest, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
+import { classifyExtensionCall, ServiceError, parseServiceRequest, parseServiceResponse, SERVICE_MAX_REQUEST_BYTES, SERVICE_MAX_RESPONSE_BYTES, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import type { ServiceConnection, ServiceRequest, ServiceResponse, ServiceValueMap } from '@agentui/contracts/service';
 import { IMAGE_MAX_BYTES, IMAGE_TRANSFER_MAX_BYTES } from '@agentui/contracts/image';
 
@@ -196,12 +196,11 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
     reconcile: (scope, id) => request({ op: 'reconcile', scope, id }),
     abandon: (scope, id) => request({ op: 'abandon', scope, id }),
     async extensionCall(input) {
-      try { parseExtensionCallRequest(input); }
-      catch (error) {
-        // An over-limit input never leaves the client; every other invalid request is a caller error.
-        if (error instanceof ExtensionCallTooLarge) return { kind: 'failed', cause: 'too-large' };
-        throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request');
-      }
+      // An over-limit input never leaves the client; every other invalid request is a caller error.
+      let call: ReturnType<typeof classifyExtensionCall>;
+      try { call = classifyExtensionCall(input); }
+      catch (error) { throw new ServiceRequestRejected(error instanceof Error ? error.message : 'Invalid service request'); }
+      if (call.kind === 'failed') return call;
       return request({ op: 'extension-call', namespace: input.namespace, installationId: input.installationId, operation: input.operation, input: input.input });
     },
     conversation(value) {

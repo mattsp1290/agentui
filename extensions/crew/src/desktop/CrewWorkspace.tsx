@@ -4,6 +4,7 @@ import { useTheme } from '@agentui/theme/react';
 import { ThemeScope } from '@agentui/ui-primitives/desktop';
 import { MemberForm } from './MemberForm.js';
 import { initials } from './initials.js';
+import { membersListOutput } from '../operation-output.js';
 
 const CONFIGURATION = '~/.local/share/agentui/extensions.json';
 const TOKEN = 'AGENTUI_EXTENSION_CREW_TOKEN';
@@ -39,7 +40,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
     let current = true;
     void props.call(installation.installationId, 'members.list', {}).then(result => {
       if (!current || result.kind !== 'ok') return;
-      const listed = (result.output as { members?: readonly { memberId: string; engine: string; profile: string }[] } | null)?.members ?? [];
+      const listed = membersListOutput(result.output)?.members ?? [];
       setDetails(new Map(listed.map(member => [member.memberId, { engine: member.engine, profile: member.profile }])));
     });
     return () => { current = false; };
