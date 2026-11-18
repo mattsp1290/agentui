@@ -7,7 +7,8 @@ import type { LocalHost } from '@agentui/host';
 export function searchConversations(host: LocalHost<TranscriptEvent, Transcript>, request: {
   readonly hostId: string; readonly query: string; readonly after: string | null;
 }): ConversationSearchPage {
-  const candidates = host.listConversations(request.hostId, request.after, SERVICE_CATALOG_PAGE);
+  // Text in an earlier segment of a continued chat stays findable; opening the hit follows the chain to its newest segment.
+  const candidates = host.listConversations(request.hostId, request.after, SERVICE_CATALOG_PAGE, { everySegment: true });
   const query = request.query.toLowerCase();
   const items: ConversationSearchPage['items'][number][] = [];
   for (const scope of candidates) {

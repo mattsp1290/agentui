@@ -133,6 +133,10 @@
 .composer-footer button { background: var(--aui-color-accent); color: var(--aui-color-on-accent); border: 0; border-radius: 20px; padding: 6px 14px; font-size: 12px; }
 .decision-card, .permissions-panel { flex: none; max-height: 30vh; overflow-y: auto; padding: 14px; margin-top: 12px; background: var(--aui-color-surface); font-size: 12px; }
 .outbox { flex: none; max-height: 22vh; overflow-y: auto; }
+.continuation-history { flex: none; display: flex; flex-direction: column; align-items: flex-start; gap: 12px; padding-top: 16px; }
+.continuation-history .earlier-segment { flex: none; align-self: stretch; overflow-y: visible; padding: 0 4px; }
+.continuation-boundary { align-self: stretch; margin: 0; padding: 10px 0; border-top: 1px solid var(--aui-color-border); border-bottom: 1px solid var(--aui-color-border); color: var(--aui-color-muted); font-size: 12px; line-height: 1.5; }
+.continuation-choices p { margin: 8px 0 0; }
 .empty-workspace { padding: 24px; max-width: 38rem; justify-content: center; }
 .empty-workspace .eyebrow { font-size: 11px; }
 .empty-workspace h1 { font-size: 28px; }

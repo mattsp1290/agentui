@@ -472,6 +472,16 @@ The answer is a `ContinuationView` for the requested scope: `predecessor` (the s
 
 `check` and `start` answer within the `continuationReplyMs` host budget, 10 seconds by default, well under the 20-second client deadline. Work still running then continues, and the answer is the current view, which reads `starting` until the start lease ends. While no loaded provider serves the conversation's installation, because its extension is not loaded, failed to load or is being replaced, the host cannot read the saved closure: `check` and `start` answer `unavailable`, and `read` reports `closure` as `unknown`, `carried` as `null` and recorded refusals as `unavailable`.
 
-The successor's provider creation row is the durable record of an attempt; no table is added. The catalog omits any conversation with a confirmed successor, so a chain lists only its newest segment. Search candidates follow the catalog.
+The successor's provider creation row is the durable record of an attempt; no table is added. The catalog omits any conversation with a confirmed successor, so a chain lists only its newest segment. Search reads every segment, so text in an earlier segment stays findable. A hit names the segment that holds the text.
 
-SDK compatibility 0.11.0, core DB 9, transcript projection 4 and backend provider contract 1 are unchanged. The desktop does not offer Continue yet.
+SDK compatibility 0.11.0, core DB 9, transcript projection 4 and backend provider contract 1 are unchanged.
+
+### Desktop
+
+Opening any segment, from the catalog, a search hit or a saved route, reads `continuation` and follows each confirmed successor to the newest segment. The saved route moves with it.
+
+A concluded conversation shows its closure notice, then what Continue does, then **Continue** and **Start a new chat**. Nothing starts until one is clicked. Continue sends `start`. While the answer or the read view is `starting`, the notice reads "Continuing…" and the desktop polls `read` with backoff, from 0.5 to 4 seconds, until the view settles. A `start` that times out or fails with anything but `invalid` is followed by a `read`, and is not reported as a failure when that read shows `starting` or `confirmed`. A confirmed successor opens in place of the closed conversation. `pending` offers **Check again** and **Start a new chat**; `unconfirmed` offers **Check again**, which sends `check`, and **Try again**, which sends `start`. A refusal shows its own text: `busy` offers **Try again**, `unavailable` and `continued-elsewhere` offer **Start a new chat**, and `limit` offers neither. **Start a new chat** uses the ordinary create flow with the same agent, so it makes an unrelated conversation and sends nothing from the closed one. In both moves the unsent draft goes to the new composer and is never sent.
+
+A segment with a predecessor shows a boundary note above its messages. It names how the earlier segment ended and the provider's carried, omitted and uncertain turn counts and carried KiB, and drops any sentence whose count is zero. **Show earlier messages** loads one earlier segment per click, up to five, each through one `watch`, its first snapshot and `close`. Loaded segments are read-only.
+
+Once a scope reports its closure, the desktop keeps showing it when a later status read fails or reports `stopped`, so a closed conversation never offers an update check. Any other status the host reports replaces it.

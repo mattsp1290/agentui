@@ -293,14 +293,15 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.onProviderCommit?.(original.intent.scope);
     return committed;
   }
-  /** A conversation with a confirmed successor is listed only through its newest segment. */
-  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
-    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? AND conversation NOT IN (
+  /** A conversation with a confirmed successor is listed only through its newest segment, unless `everySegment` is set. */
+  listConversations(hostId: string, after: string | null, limit: number, everySegment = false): readonly ConversationScope[] {
+    const rows = everySegment
+      ? this.db.prepare('SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ORDER BY conversation LIMIT ?').all(hostId, after ?? '', limit)
+      : this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? AND conversation NOT IN (
       SELECT json_extract(original,'$.intent.from.scope.conversationId') FROM provider_creations INDEXED BY provider_creations_from
       WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId') IS NOT NULL AND json_extract(observation,'$.kind')='confirmed')
-      ORDER BY conversation LIMIT ?`)
-      .all(hostId, after ?? '', hostId, limit)
-      .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
+      ORDER BY conversation LIMIT ?`).all(hostId, after ?? '', hostId, limit);
+    return rows.map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   snapshot(scope: ConversationScope): Snapshot<P> {
     const row = this.conversation(scope), cursor = integer(row.head);

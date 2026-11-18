@@ -5,11 +5,11 @@ import type { ServiceConnectionOptions } from '@agentui/client/service';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
-import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions } from '@agentui/contracts';
+import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions, ContinuationCarried, ConversationClosure } from '@agentui/contracts';
 import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ContinuationAction, ContinuationView, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
@@ -40,6 +40,31 @@ export type PermissionState =
   | { readonly kind: 'fresh'; readonly listing: AvailablePermissions }
   | { readonly kind: 'loading' | 'stale'; readonly listing: AvailablePermissions | null; readonly reason: string }
   | { readonly kind: 'unsupported'; readonly reason: string };
+/** What the boundary above one segment of a continued chat reports. */
+export interface ContinuationBoundary {
+  /** How the earlier segment ended; `unknown` or `null` when that could not be read. */
+  readonly closure: ConversationClosure | 'unknown' | null;
+  readonly carried: ContinuationCarried | null;
+}
+export interface EarlierSegment {
+  readonly scope: ConversationScope;
+  readonly messages: Transcript['messages'];
+  /** The boundary above this segment when it continues an even earlier one. */
+  readonly boundary: ContinuationBoundary | null;
+}
+export const EARLIER_SEGMENT_LIMIT = 5;
+export interface ConversationContinuation {
+  /** `null` until the host answers the first read. */
+  readonly view: ContinuationView | null;
+  readonly action: 'start' | 'check' | 'move' | 'earlier' | null;
+  readonly error: string;
+  /** The boundary above the open segment's own messages, when it continues an earlier one. */
+  readonly boundary: ContinuationBoundary | null;
+  /** Earlier segments loaded on request, oldest first. */
+  readonly earlier: readonly EarlierSegment[];
+  readonly earlierError: string;
+  readonly more: boolean;
+}
 export interface ApplicationSnapshot {
   readonly host: HostState;
   readonly catalog: Page<ConversationCatalogEntry>;
@@ -48,6 +73,7 @@ export interface ApplicationSnapshot {
   readonly savedViewNotice: string;
   readonly active: OpenConversation | null;
   readonly observation: ConversationObservation | null;
+  readonly continuation: ConversationContinuation | null;
   readonly permissionState: PermissionState;
   readonly error: string;
   readonly storageFailure: string;
@@ -62,6 +88,13 @@ export interface ConversationActions {
   /** Stops waiting on an unconfirmed send so the conversation can take new work. Says nothing about whether it ran. */
   abandon(id: string): Promise<void>;
   retryObservation(): Promise<void>;
+  /** Continue and Try again: the host starts this closed conversation's successor, or answers with the one it has. */
+  continueConversation(): Promise<void>;
+  /** Check again: looks up unsettled attempts and never starts another. */
+  checkContinuation(): Promise<void>;
+  /** Starts an unrelated new chat with the same agent through the ordinary create flow; only the unsent draft moves. */
+  startNewChat(): Promise<void>;
+  loadEarlierSegment(): Promise<void>;
   /** Reads an image of this conversation for preview; failures never mark the application failed. */
   readImage(imageId: ImageId): Promise<Uint8Array>;
 }
@@ -92,8 +125,24 @@ interface ActiveStoreOwner { readonly borrow: StoreBorrow; readonly target: Open
 interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends; readonly images: ImageTransfers }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+  observation: null, continuation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'observation' | 'continuation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+interface ChainLink { readonly scope: ConversationScope; view: ContinuationView | null }
+interface ContinuationRecord {
+  readonly owner: Session;
+  readonly target: OpenConversation;
+  /** The open segment, then each predecessor read so far. */
+  readonly chain: ChainLink[];
+  earlier: readonly EarlierSegment[];
+  action: ConversationContinuation['action'];
+  error: string;
+  earlierError: string;
+  timer: ReturnType<typeof setTimeout> | undefined;
+  delay: number;
+  failures: number;
+  stopped: boolean;
+}
+const CONTINUATION_POLL_MS = 500, CONTINUATION_POLL_MAX_MS = 4_000, CONTINUATION_READ_ATTEMPTS = 6, CHAIN_HOP_LIMIT = 64;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -159,6 +208,7 @@ export function createApplicationController(deps: {
   const listeners = new Set<() => void>();
   const recovery = createFrontendRecovery();
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
+  let continuation: ContinuationRecord | null = null;
   const concludedScopes = new Map<string, Extract<ProviderObservationStatus, { readonly kind: 'concluded' }>>();
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
@@ -205,10 +255,15 @@ export function createApplicationController(deps: {
     if (session === owner && state.active === target && state.host.kind === 'ready') void readPermissions(owner, target).catch(() => {});
   }
   function stopObservation(): void { observationPoll?.stop(); observationPoll = null; }
+  function stopContinuation(): void {
+    if (continuation) { continuation.stopped = true; clearTimeout(continuation.timer); }
+    continuation = null;
+  }
   function disconnectActive(): void {
     const target = state.active;
     stalePermissions('Reconnect to refresh permissions.');
     stopObservation();
+    stopContinuation();
     unsubscribeActive?.();
     unsubscribeActive = null;
     target?.store.disconnect();
@@ -291,7 +346,9 @@ export function createApplicationController(deps: {
     function observed(status: ConversationObservation['status']): void {
       if (status.kind === 'concluded') concludedScopes.set(key, status);
       // The host never clears a closure, so a later failed read or a stopped status during an extension change is transient.
-      publish({ observation: { status: concludedScopes.get(key) ?? status, retrying } });
+      // Only those are masked: any live status the host reports wins.
+      const sticky = status.kind === 'unknown' || status.kind === 'stopped' ? concludedScopes.get(key) : undefined;
+      publish({ observation: { status: sticky ?? status, retrying } });
     }
     function read(action: 'read' | 'retry'): Promise<void> {
       const task = (async () => {
@@ -322,6 +379,210 @@ export function createApplicationController(deps: {
     };
     void read('read');
   }
+  function readContinuation(owner: Session, scope: ConversationScope, action: ContinuationAction = 'read'): Promise<ContinuationView> {
+    return current(owner, Promise.resolve().then(() => owner.connection.continuation({ scope, action })));
+  }
+  /** Follows confirmed successors to the newest segment of the chain; a link that cannot be read ends the walk. */
+  async function newestSegment(owner: Session, scope: ConversationScope): Promise<ConversationScope> {
+    let segment = scope;
+    for (let hop = 0; hop < CHAIN_HOP_LIMIT; hop++) {
+      let view: ContinuationView;
+      try { view = await readContinuation(owner, segment); }
+      catch (cause) { if (session !== owner) throw cause; break; }
+      if (view.successor?.kind !== 'confirmed') break;
+      segment = view.successor.scope;
+    }
+    return segment;
+  }
+  /** Reopens a saved route at the newest segment of its chain, saving the route only when it moved. */
+  async function reopenNewest(owner: Session, route: ConversationScope): Promise<void> {
+    const newest = await newestSegment(owner, route);
+    if (!sameScope(newest, route)) await save(owner, { ...requireSaved(owner).saved, route: newest });
+    await install(owner, newest);
+  }
+  function liveContinuation(record: ContinuationRecord): boolean {
+    return !record.stopped && continuation === record && session === record.owner && state.active?.store === record.target.store;
+  }
+  function boundaryAt(record: ContinuationRecord, index: number): ContinuationBoundary | null {
+    const link = record.chain[index];
+    if (!link?.view?.predecessor) return null;
+    return { closure: record.chain[index + 1]?.view?.closure ?? 'unknown', carried: link.view.carried };
+  }
+  function publishContinuation(record: ContinuationRecord): void {
+    if (continuation !== record) return;
+    publish({ continuation: { view: record.chain[0]?.view ?? null, action: record.action, error: record.error, boundary: boundaryAt(record, 0),
+      earlier: record.earlier, earlierError: record.earlierError,
+      more: record.earlier.length < EARLIER_SEGMENT_LIMIT && record.chain[record.earlier.length + 1] !== undefined } });
+  }
+  function watchContinuation(owner: Session, target: OpenConversation): void {
+    if (continuation && liveContinuation(continuation) && continuation.target.store === target.store) {
+      void refreshContinuation(continuation);
+      return;
+    }
+    stopContinuation();
+    const record: ContinuationRecord = { owner, target, chain: [{ scope: target.scope, view: null }], earlier: [], action: null,
+      error: '', earlierError: '', timer: undefined, delay: CONTINUATION_POLL_MS, failures: 0, stopped: false };
+    continuation = record;
+    publishContinuation(record);
+    void refreshContinuation(record);
+  }
+  function pollContinuation(record: ContinuationRecord): void {
+    clearTimeout(record.timer);
+    const delay = record.delay;
+    record.delay = Math.min(delay * 2, CONTINUATION_POLL_MAX_MS);
+    record.timer = setTimeout(() => { void refreshContinuation(record); }, delay);
+  }
+  /** Records the open segment's view, reads its predecessor's closure for the boundary, and polls while the host holds a start. */
+  async function settleContinuation(record: ContinuationRecord, view: ContinuationView): Promise<ConversationScope | null> {
+    const [own] = record.chain;
+    if (!own) return null;
+    own.view = view;
+    record.failures = 0;
+    const kind = view.successor?.kind;
+    if (kind === 'starting' || kind === 'confirmed') record.error = '';
+    if (view.predecessor && !record.chain[1]) {
+      const link: ChainLink = { scope: view.predecessor, view: null };
+      record.chain.push(link);
+      link.view = await readContinuation(record.owner, link.scope).catch(() => null);
+    }
+    if (!liveContinuation(record)) return null;
+    publishContinuation(record);
+    if (kind === 'starting') pollContinuation(record);
+    return view.successor?.kind === 'confirmed' ? view.successor.scope : null;
+  }
+  /** Background reads; a click owns the record while its action runs. */
+  async function refreshContinuation(record: ContinuationRecord): Promise<void> {
+    if (!liveContinuation(record) || record.action) return;
+    let view: ContinuationView;
+    try { view = await readContinuation(record.owner, record.target.scope); }
+    catch {
+      if (liveContinuation(record) && !record.action && ++record.failures < CONTINUATION_READ_ATTEMPTS) pollContinuation(record);
+      return;
+    }
+    if (!liveContinuation(record) || record.action) return;
+    const successor = await settleContinuation(record, view);
+    if (!successor || !liveContinuation(record)) return;
+    if (state.busy) pollContinuation(record);
+    else void run(owner => moveToSuccessor(owner, record, successor));
+  }
+  /** Moves the unsent draft into whichever chat `open` makes active. It is never sent. */
+  async function carryDraft(owner: Session, from: OpenConversation, open: () => Promise<void>): Promise<void> {
+    const text = from.store.getSnapshot().draft, lease = owner.view?.borrow;
+    // Holding the earlier store keeps it writable after the new chat replaces it, so its copy can be cleared.
+    const held = text && lease ? await owner.pool.recovery(lease, from.scope) : null;
+    try {
+      await open();
+      const next = state.active;
+      if (!held || session !== owner || !next || next.store === from.store || next.store.getSnapshot().draft) return;
+      await next.store.setDraft(text);
+      await held.store.setDraft('');
+    } finally { held?.release(); }
+  }
+  async function moveToSuccessor(owner: Session, record: ContinuationRecord, successor: ConversationScope): Promise<void> {
+    if (!liveContinuation(record)) return;
+    const from = record.target;
+    record.action = 'move';
+    publishContinuation(record);
+    try {
+      await carryDraft(owner, from, async () => {
+        const newest = await newestSegment(owner, successor);
+        await save(owner, { ...requireSaved(owner).saved, route: newest });
+        const items = state.catalog.items.filter(entry => !sameScope(entry.scope, newest));
+        const at = items.findIndex(entry => sameScope(entry.scope, from.scope));
+        const entry = { scope: newest, preview: null };
+        publish({ catalog: { ...state.catalog, items: at < 0 ? [entry, ...items] : items.map((item, index) => index === at ? entry : item) } });
+        await install(owner, newest);
+      });
+    } catch (cause) {
+      if (liveContinuation(record)) {
+        record.action = null;
+        publishContinuation(record);
+        if (++record.failures < CONTINUATION_READ_ATTEMPTS) pollContinuation(record);
+      }
+      throw cause;
+    }
+  }
+  async function continuationAction(owner: Session, target: OpenConversation, action: 'start' | 'check'): Promise<void> {
+    requireTarget(owner, target);
+    const record = continuation;
+    if (!record || !liveContinuation(record) || record.action) return;
+    clearTimeout(record.timer);
+    record.action = action;
+    record.error = '';
+    record.delay = CONTINUATION_POLL_MS;
+    record.failures = 0;
+    publishContinuation(record);
+    let view: ContinuationView | null = null, error = '', lost = false;
+    try { view = await readContinuation(owner, target.scope, action); }
+    catch (cause) {
+      if (session !== owner) throw cause;
+      error = message(cause);
+      lost = !(cause instanceof ServiceError && cause.kind === 'invalid');
+      // A lost or late reply says nothing about what the host did, so its saved record decides.
+      if (lost) view = await readContinuation(owner, target.scope).catch(() => null);
+    }
+    if (!liveContinuation(record)) return;
+    record.action = null;
+    record.error = error;
+    if (!view) {
+      publishContinuation(record);
+      if (lost && action === 'start') pollContinuation(record);
+      return;
+    }
+    const successor = await settleContinuation(record, view);
+    if (successor) await moveToSuccessor(owner, record, successor);
+  }
+  /** Reads one earlier segment's saved messages through a short-lived watch. */
+  async function readSegment(owner: Session, scope: ConversationScope): Promise<Transcript> {
+    let resolve: (transcript: Transcript) => void = () => {};
+    const snapshot = new Promise<Transcript>(done => { resolve = done; });
+    const feed = owner.connection.conversation(scope).watch({ after: null, projectionVersion: transcriptProjection.version }, async item => {
+      if (item.kind === 'snapshot') resolve(item.snapshot.document.domain);
+    });
+    try {
+      return await current(owner, Promise.race([snapshot, feed.ended.then(end => { throw new Error(end.reason); })]));
+    } finally { feed.close(); }
+  }
+  async function readEarlierSegment(owner: Session, target: OpenConversation): Promise<void> {
+    const record = continuation;
+    if (!record || !liveContinuation(record) || record.target.store !== target.store || record.action) return;
+    const index = record.earlier.length + 1, link = record.chain[index];
+    if (!link || record.earlier.length >= EARLIER_SEGMENT_LIMIT) return;
+    record.action = 'earlier';
+    record.earlierError = '';
+    publishContinuation(record);
+    try {
+      const transcript = await readSegment(owner, link.scope);
+      link.view ??= await readContinuation(owner, link.scope);
+      if (link.view.predecessor && !record.chain[index + 1]) {
+        const previous: ChainLink = { scope: link.view.predecessor, view: null };
+        record.chain.push(previous);
+        previous.view = await readContinuation(owner, previous.scope).catch(() => null);
+      }
+      if (!liveContinuation(record)) return;
+      record.earlier = [{ scope: link.scope, messages: transcript.messages, boundary: boundaryAt(record, index) }, ...record.earlier];
+    } catch (cause) {
+      if (liveContinuation(record)) record.earlierError = `Earlier messages could not load. ${message(cause)}`;
+    } finally {
+      if (liveContinuation(record)) {
+        record.action = null;
+        publishContinuation(record);
+      }
+    }
+  }
+  async function createConversation(owner: Session, agentId?: string): Promise<void> {
+    const host = requireHost(owner);
+    const { saved } = requireSaved(owner);
+    if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
+    const selected = agentId ?? host.defaultAgentId;
+    if (selected === null) throw new Error('No agent is available to start a conversation.');
+    const agent = host.agents.find(agent => agent.id === selected);
+    if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
+    const scope = { hostId: host.hostId, conversationId: deps.createId() };
+    await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
+    requireHost(owner);
+    await completeCreation(owner, scope, selected);
+  }
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
     const found = await current(owner, owner.connection.conversationAgent(scope));
@@ -340,6 +601,7 @@ export function createApplicationController(deps: {
         publish({});
         local(owner);
         observeActive(owner, active);
+        watchContinuation(owner, active);
         await current(owner, store.connect());
         refreshPermissions(owner, active); return;
       }
@@ -350,6 +612,7 @@ export function createApplicationController(deps: {
       publish({ permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
       local(owner);
       observeActive(owner, active);
+      watchContinuation(owner, active);
       let connected = false;
       unsubscribeActive = store.subscribe(() => {
         if (session !== owner || state.active?.store !== store) return;
@@ -431,7 +694,7 @@ export function createApplicationController(deps: {
       publish({ host: { kind: 'ready', metadata } });
       const { hostId } = metadata;
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
-        saved.route ? install(owner, saved.route) : Promise.resolve()]);
+        saved.route ? reopenNewest(owner, saved.route) : Promise.resolve()]);
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') fail(owner, failed.reason);
     } catch (cause) { fail(owner, cause, 'handshake'); }
@@ -542,7 +805,7 @@ export function createApplicationController(deps: {
       unsubscribeActive = null;
       session = null;
       for (const close of [() => owner?.frontend.dispose(), () => owner?.pool.dispose(),
-        () => recovery.retarget(null), () => observation?.stop(), () => unsubscribe?.(),
+        () => recovery.retarget(null), () => observation?.stop(), stopContinuation, () => unsubscribe?.(),
         () => { if (owner) setActive(owner, null); },
         () => { if (session === null && disposal === closing) stalePermissions('Reconnect to refresh permissions.'); }]) {
         try { drains.push(close()); } catch (error) { drains.push(Promise.reject(error)); }
@@ -579,19 +842,7 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       if (state.savedViews.after !== null) await readSavedViews(owner, host.hostId, state.savedViews.after);
     }),
-    create: (agentId) => run(async owner => {
-      const host = requireHost(owner);
-      const { saved } = requireSaved(owner);
-      if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
-      const selected = agentId ?? host.defaultAgentId;
-      if (selected === null) throw new Error('No agent is available to start a conversation.');
-      const agent = host.agents.find(agent => agent.id === selected);
-      if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
-      const scope = { hostId: host.hostId, conversationId: deps.createId() };
-      await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
-      requireHost(owner);
-      await completeCreation(owner, scope, selected);
-    }),
+    create: agentId => run(owner => createConversation(owner, agentId)),
     recoverCreation: (selected) => run(async owner => {
       const view = requireSaved(owner), { saved } = view;
       const pending = saved.pendingCreation;
@@ -620,8 +871,10 @@ export function createApplicationController(deps: {
     open: scope => run(async owner => {
       const host = requireHost(owner);
       if (scope.hostId !== host.hostId) throw new Error('Conversation belongs to another host.');
-      await save(owner, { ...requireSaved(owner).saved, route: scope });
-      await install(owner, scope);
+      requireSaved(owner);
+      const newest = await newestSegment(owner, scope);
+      await save(owner, { ...requireSaved(owner).saved, route: newest });
+      await install(owner, newest);
     }),
     conversationActions(target) {
       const owner = session;
@@ -642,6 +895,16 @@ export function createApplicationController(deps: {
         },
         async retryObservation() {
           if (owner && session === owner && state.active === target) await observationPoll?.retry();
+        },
+        continueConversation: () => run(async active => { if (active === owner) await continuationAction(active, target, 'start'); }),
+        checkContinuation: () => run(async active => { if (active === owner) await continuationAction(active, target, 'check'); }),
+        startNewChat: () => run(async active => {
+          if (active !== owner) return;
+          requireTarget(active, target);
+          await carryDraft(active, target, () => createConversation(active, target.agent.id));
+        }),
+        async loadEarlierSegment() {
+          if (owner && session === owner) await readEarlierSegment(owner, target);
         },
         permissions: { async read() {
           if (!owner) throw new Error('Connect the conversation before continuing.');

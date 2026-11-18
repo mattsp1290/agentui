@@ -51,7 +51,8 @@ export interface LocalHost<E, P> {
   observeProvider(scope: ConversationScope): Promise<void>;
   observationStatus(scope: ConversationScope): ProviderObservationStatus;
   retryObservation(scope: ConversationScope): Promise<ProviderObservationStatus>;
-  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[];
+  /** Lists each continuation chain once, through its newest segment; `everySegment` also lists the earlier segments. */
+  listConversations(hostId: string, after: string | null, limit: number, listing?: { readonly everySegment?: boolean }): readonly ConversationScope[];
   installation(scope: ConversationScope): ConversationInstallation | null;
   inspect(scope: ConversationScope): { readonly installation: ConversationInstallation; readonly snapshot: Snapshot<P> };
   append(scope: ConversationScope, output: HostOutput<E>): void;
@@ -381,11 +382,11 @@ export function openLocalHost<E, P>(options: LocalHostOptions<E, P>): LocalHost<
     },
     installation(scope) { return store.findInstallation(authorized(scope)); },
     inspect(scope) { return store.inspect(authorized(scope)); },
-    listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
+    listConversations(hostId: string, after: string | null, limit: number, listing?: { readonly everySegment?: boolean }): readonly ConversationScope[] {
       const hostIdValue = identifier(hostId), cursor = after === null ? null : identifier(after);
       if (!Number.isSafeInteger(limit) || limit < 1 || limit > CORE_CATALOG_PAGE) throw new Error('Invalid catalog limit');
       if (closed) throw new Error('Host is closed');
-      return store.listConversations(hostIdValue, cursor, limit).map(scope => {
+      return store.listConversations(hostIdValue, cursor, limit, listing?.everySegment === true).map(scope => {
         if (!options.authorize(scope)) throw new Error('Unauthorized scope');
         return scope;
       });

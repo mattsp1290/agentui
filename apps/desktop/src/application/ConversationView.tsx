@@ -3,7 +3,8 @@ import type { ConversationClosure, ObservationStopReason } from '@agentui/contra
 import { IMAGE_MAX_BYTES } from '@agentui/contracts/image';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useConversation } from '@agentui/client/react';
-import type { ConversationActions, OpenConversation, ConversationObservation, PermissionState } from './application-controller.js';
+import type { ConversationActions, ConversationContinuation, OpenConversation, ConversationObservation, PermissionState } from './application-controller.js';
+import { ContinuationChoices, ContinuationHistory } from './ContinuationNotice.js';
 import { ConversationPermissions } from './ConversationPermissions.js';
 import { CommandRecovery } from './CommandRecovery.js';
 import { recoveryModel } from './recovery.js';
@@ -43,10 +44,11 @@ export function ConversationStatus({ active }: { readonly active: OpenConversati
   return <span role="status">Conversation {view.connection.kind}{'reason' in view.connection ? ` · ${view.connection.reason}` : ''}</span>;
 }
 
-export function ConversationView({ actions, active, enabled, storageFailure, observation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' }, activity = { kind: 'default' }, contentLayout = { kind: 'default' }, modules = null }: {
+export function ConversationView({ actions, active, enabled, storageFailure, observation = null, continuation = null, permissionState, agent = 'recorded', composerControls, transcript = { kind: 'default' }, activity = { kind: 'default' }, contentLayout = { kind: 'default' }, modules = null }: {
   readonly actions: ConversationActions; readonly active: OpenConversation; readonly enabled: boolean; readonly storageFailure: string; readonly agent?: keyof typeof AGENT_PRESENTATION;
   readonly permissionState?: PermissionState;
   readonly observation?: ConversationObservation | null;
+  readonly continuation?: ConversationContinuation | null;
   readonly transcript?: TranscriptSelection;
   readonly activity?: ActivitySelection;
   readonly contentLayout?: ContentLayoutSelection;
@@ -159,8 +161,10 @@ export function ConversationView({ actions, active, enabled, storageFailure, obs
     </div>}
     {observationStatus?.kind === 'concluded' && <div role="status" className="observation-notice">
       <p>This conversation ended: {CLOSURE_NOTICE[observationStatus.cause]}. Earlier messages and your draft stay available.</p>
+      {continuation && <ContinuationChoices continuation={continuation} actions={actions} enabled={enabled && available} />}
     </div>}
     {permissionState && <ConversationPermissions retained={recoveryModel(view).retained} state={permissionState} actions={actions} enabled={connected} />}
+    {continuation && <ContinuationHistory continuation={continuation} actions={actions} enabled={enabled} assistant={presentation.assistant} />}
     <CustomizationContent selection={contentLayout} conversationKey={conversationKey} modules={modules} nativeTranscript={nativeTranscript}
       transcript={<CustomizationTranscript selection={transcript} conversationKey={conversationKey}
         context={context}
