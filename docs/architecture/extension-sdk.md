@@ -41,6 +41,7 @@ SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It read
 SDK 0.11.0 adds the optional `CreationIntent.from`, which names the confirmed conversation a new creation continues, and the optional `ProviderPresentation.continuation(evidence)` hook. The host copies `from` from its own record of that conversation: the scope must be on the same host and the binding must belong to the same provider installation. A presentation opts its provider in to continuation by declaring `continuation`. A presentation may omit it; the host then refuses a successor for that provider and never passes it `from`. A provider that receives `from` must continue that predecessor or refuse the creation. It derives the binding of a `from` creation from its intent except for what the provider service assigns: the session and, optionally, `carryingTurn`, the provider's ID for the turn that carried the predecessor. The host refuses a successor whose session equals the predecessor's and any other binding that names `carryingTurn`. `continuation(evidence)` reads the creation's saved evidence without I/O and returns the carried turn and byte counts, `{ refused }` or `null`. Core DB 8 adds an index of creations by predecessor, and format 7 hosts refuse it. Wire 12, backend contract 1 and transcript 4 are unchanged.
 Wire 13 later adds the `abandon` service operation and wire 14 the `continuation` operation, both without an SDK change.
 SDK 0.12.0 adds `ServerExtensionContext.installations` and `ServerExtensionContext.operations`, and wire 15 adds the `extension-call` service operation and `ServiceMetadata.extensions`. See [Call server operations from the client](#call-server-operations-from-the-client).
+Wire 16 adds `installationId` and `providerAgentId` to provider agent descriptors, `provider` to catalog and search entries, and an optional `filter` (`namespace` or `provider-agent`) to `catalog`. The filter reads the installation stored with each conversation, so conversations of retired, replaced or earlier-generation agents stay listed. No stored data format changes.
 
 SDK 0.8.0 adds an optional fourth `providers.addAgui` argument, `AguiObservations<Model, Installation>`.
 Its `event(event)` callback returns ordered `AguiRunBatch` values. Its `snapshot(state, originals)` callback returns complete prefixes or explicit unavailable histories for the supplied original operations.
@@ -54,7 +55,7 @@ This contract does not add browser consent, execution or continuation. Existing 
 
 SDK 0.7.0 adds the optional `overrides.activity` contribution.
 Authors supply a presentation and hosts supply the credential capability.
-Workspace package versions are `0.0.0`, service wire version is 15, and transcript projection version is 4.
+Workspace package versions are `0.0.0`, service wire version is 16, and transcript projection version is 4.
 
 Desktop contributions may arrange transcript and module presentation with `contentLayout`.
 The composer, approvals, Stop, recovery, agent selection and protected navigation remain host-owned.

@@ -123,3 +123,25 @@ test('the client keeps an over-limit extension input local and refuses malformed
   assert.deepEqual(await connection.extensionCall({ namespace: 'fixture', installationId: 'i', operation: 'echo', input: {} }), { kind: 'ok', output: 1 });
   assert.equal(sent, 1);
 });
+
+test('catalog filters and provider identities round-trip; unknown filter kinds and missing fields are rejected', async () => {
+  const { parseServiceRequest, parseServiceResponse } = await import('@agentui/contracts/service');
+  const filters = [{ kind: 'namespace', namespace: 'crew-like' }, { kind: 'provider-agent', namespace: 'ns', installationId: 'personal', providerAgentId: 'agent-1' }];
+  for (const filter of filters) {
+    const request = { op: 'catalog', after: null, limit: 10, filter };
+    assert.deepEqual(parseServiceRequest(request), request);
+  }
+  assert.deepEqual(parseServiceRequest({ op: 'catalog', after: null, limit: 10 }), { op: 'catalog', after: null, limit: 10 });
+  for (const filter of [{ kind: 'agent', namespace: 'ns' }, { kind: 'namespace' }, { kind: 'namespace', namespace: 'NS' }, { ...filters[1], extra: 1 },
+    { kind: 'provider-agent', namespace: 'ns', installationId: 'i' }, null]) {
+    assert.throws(() => parseServiceRequest({ op: 'catalog', after: null, limit: 10, filter }), JSON.stringify(filter));
+  }
+  const scope = { hostId: 'host', conversationId: 'c' }, provider = { namespace: 'ns', installationId: 'i', providerAgentId: 'a' };
+  const catalog = [{ scope, preview: null, provider }, { scope: { ...scope, conversationId: 'd' }, preview: 'Hi', provider: null }];
+  assert.deepEqual(parseServiceResponse({ op: 'catalog' }, { ok: true, value: catalog }).value, catalog);
+  assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview: null }] }));
+  assert.throws(() => parseServiceResponse({ op: 'catalog' }, { ok: true, value: [{ scope, preview: null, provider: { ...provider, generation: '1' } }] }));
+  const search = { items: [{ scope, preview: null, provider, excerpt: null }], after: null };
+  assert.deepEqual(parseServiceResponse({ op: 'search' }, { ok: true, value: search }).value, search);
+  assert.throws(() => parseServiceResponse({ op: 'search' }, { ok: true, value: { items: [{ scope, preview: null, excerpt: null }], after: null } }));
+});

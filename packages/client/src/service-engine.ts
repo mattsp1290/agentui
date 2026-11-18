@@ -185,7 +185,7 @@ export function createServiceConnection<E, P>(execute: ServiceExecutor,
       return { attachment: result.attachment, bytes: Uint8Array.from(atob(result.base64), character => character.charCodeAt(0)) };
     },
     metadata: () => request({ op: 'metadata' }),
-    catalog: (after = null, limit = SERVICE_CATALOG_PAGE) => request({ op: 'catalog', after, limit }),
+    catalog: (after = null, limit = SERVICE_CATALOG_PAGE, filter) => request({ op: 'catalog', after, limit, ...(filter ? { filter } : {}) }),
     search: (query, after = null) => request({ op: 'search', query, after }),
     create: (scope, agentId) => request({ op: 'create', scope, agentId }),
     frontendBinding: input => request({ op: 'frontend-binding', ...input }),

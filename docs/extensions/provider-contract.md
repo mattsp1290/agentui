@@ -56,6 +56,7 @@ A provider without `reconcile` advertises no commands.
 An unadvertised cancel or approval is refused at admission with `provider-command-unavailable`. It never reaches the backend.
 Fresh dispatch rechecks the current capability.
 A provider owns its own identifiers. The host never interprets `opaqueId`, `opaqueSessionId` or cursor contents.
+An agent `opaqueId` is visible to clients: provider agent descriptors carry it as `providerAgentId`, and catalog and search entries carry it in `provider`. It must not carry a secret.
 Decisions reach the host only through `snapshot.decisions`. Each choice reference must belong to its decision.
 Transcript output and run outcomes come only from snapshots and `apply` events. Command effects carry no output.
 

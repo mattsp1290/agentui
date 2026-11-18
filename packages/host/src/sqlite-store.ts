@@ -1,3 +1,4 @@
+import type { CatalogFilter } from '@agentui/contracts/service';
 import type { createFrontendCoordinator } from './frontend-tools/coordinator.js';
 import type { FrontendCoordinatorWriter } from './frontend-tools/coordinator.js';
 import type { FrontendObservations, PreparedProviderObservations } from './frontend-observations.js';
@@ -293,13 +294,18 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.onProviderCommit?.(original.intent.scope);
     return committed;
   }
-  /** A conversation with a confirmed successor is listed only through its newest segment. */
-  listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
-    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? AND conversation NOT IN (
+  /** A conversation with a confirmed successor is listed only through its newest segment.
+   * A filter reads the provider installation stored with each conversation, so it keeps conversations whose agent or
+   * generation has since changed. */
+  listConversations(hostId: string, after: string | null, limit: number, filter?: CatalogFilter): readonly ConversationScope[] {
+    const predicates = filter ? [`json_extract(installation,'$.kind')='provider'`, `json_extract(installation,'$.instance.namespace')=?`,
+      ...(filter.kind === 'provider-agent' ? [`json_extract(installation,'$.instance.installationId')=?`, `json_extract(installation,'$.agent.opaqueId')=?`] : [])] : [];
+    const values = !filter ? [] : filter.kind === 'namespace' ? [filter.namespace] : [filter.namespace, filter.installationId, filter.providerAgentId];
+    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ${predicates.map(predicate => `AND ${predicate} `).join('')}AND conversation NOT IN (
       SELECT json_extract(original,'$.intent.from.scope.conversationId') FROM provider_creations INDEXED BY provider_creations_from
       WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId') IS NOT NULL AND json_extract(observation,'$.kind')='confirmed')
       ORDER BY conversation LIMIT ?`)
-      .all(hostId, after ?? '', hostId, limit)
+      .all(hostId, after ?? '', ...values, hostId, limit)
       .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   snapshot(scope: ConversationScope): Snapshot<P> {

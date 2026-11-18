@@ -10,7 +10,7 @@ import type { Principal } from './principal.js';
 import { ServiceError } from '@agentui/contracts/service';
 import type { FeedRegistry } from './feed-registry.js';
 import { searchConversations } from './conversation-search.js';
-import { describeAgent, describeProviderAgent, describeUnavailableProvider } from './agents.js';
+import { conversationProvider, describeAgent, describeProviderAgent, describeUnavailableProvider } from './agents.js';
 import type { InstalledAgent } from './agents.js';
 import { canonicalJson } from '@agentui/contracts';
 
@@ -96,9 +96,10 @@ export function createApi(options: {
         return { hostId: principal.hostId, principalId: principal.id, compatibility: options.compatibility, agents: [...[...agents().values()].filter(agent => selectable.has(agent.id)), ...[...providerAgents.values()].map(entry => entry.descriptor), ...unavailable.map(provider => describeUnavailableProvider(provider, host.imageInput(null)))], defaultAgentId,
           extensions: options.extensions?.describe() ?? [] } satisfies ServiceValueMap['metadata'];
       }
-      case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit).map(scope => ({
-        scope, preview: conversationPreview(host.inspect(scope).snapshot.document.domain),
-      })) satisfies ServiceValueMap['catalog'];
+      case 'catalog': return host.listConversations(principal.hostId, request.after, request.limit, request.filter).map(scope => {
+        const inspected = host.inspect(scope);
+        return { scope, preview: conversationPreview(inspected.snapshot.document.domain), provider: conversationProvider(inspected.installation) };
+      }) satisfies ServiceValueMap['catalog'];
       case 'search': return searchConversations(host, { hostId: principal.hostId, query: request.query, after: request.after });
       case 'conversation-permissions': return host.conversationPermissions(request.scope);
       case 'provider-observation': return request.action === 'retry' ? host.retryObservation(request.scope) : host.observationStatus(request.scope);

@@ -39,7 +39,7 @@ test('canonical service schema rejects unknown operations, fields, and out of ra
 });
 
 test('catalog entries keep bounded display previews separate from scope identity', async () => {
-  const entries = [{ scope, preview: 'A recognizable first prompt' }, { scope: { ...scope, conversationId: 'empty' }, preview: null }];
+  const entries = [{ scope, preview: 'A recognizable first prompt', provider: null }, { scope: { ...scope, conversationId: 'empty' }, preview: null, provider: { namespace: 'example', installationId: 'personal', providerAgentId: 'agent' } }];
   const connection = createBrowserConnection({ fetch: async () => reply(entries) });
   assert.deepEqual(await connection.catalog(), entries);
   for (const preview of ['', 'x'.repeat(81), ' leading', 'trailing ', 'two\nlines', 42]) {
@@ -49,7 +49,7 @@ test('catalog entries keep bounded display previews separate from scope identity
 });
 
 test('search wire values are bounded and use the authenticated browser service', async () => {
-  const page = { items: [{ scope, preview: 'Garden', excerpt: 'Water the herbs' }], after: 'scanned-through' };
+  const page = { items: [{ scope, preview: 'Garden', provider: null, excerpt: 'Water the herbs' }], after: 'scanned-through' };
   let sent;
   const connection = createBrowserConnection({ fetch: async (url, init) => {
     sent = { url, credentials: init.credentials, body: JSON.parse(init.body) };
@@ -262,7 +262,7 @@ test('HTTP status interpretation retains classified failures and refuses a non-O
 });
 
 test('provider descriptors have a strict independent shape and retain native descriptor bytes', () => {
-  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', installationId: 'personal', providerAgentId: 'remote-agent', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
   assert.deepEqual(parse(provider), provider);
   assert.equal(JSON.stringify(parse(agent)), JSON.stringify({ imageInput: agent.imageInput, frontendOffers: agent.frontendOffers, id: agent.id, label: agent.label, commands: agent.commands, availability: agent.availability, runtime: agent.runtime }));
@@ -282,7 +282,7 @@ test('native model metadata retains host labels and rejects malformed selections
 
 test('both descriptor variants require exact bounded image capability and reject legacy public modalities', () => {
   const parse = value => parseServiceResponse({ op: 'conversation-agent' }, { ok: true, value }).value;
-  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1',
+  const provider = { kind: 'provider', id: 'remote', label: 'Remote', namespace: 'example', protocolVersion: 'v1', installationId: 'personal', providerAgentId: 'remote-agent',
     frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   const { imageInput: _imageInput, ...native } = agent;
   for (const base of [native, provider]) {

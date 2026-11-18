@@ -364,7 +364,7 @@ export function createApplicationController(deps: {
         const preview = conversationPreview(snapshot.document.domain);
         const existing = state.catalog.items.find(entry => sameScope(entry.scope, scope));
         if (existing && existing.preview !== preview) publish({ catalog: { ...state.catalog,
-          items: state.catalog.items.map(entry => entry === existing ? { scope: entry.scope, preview } : entry) } });
+          items: state.catalog.items.map(entry => entry === existing ? { ...entry, preview } : entry) } });
       });
       await current(owner, store.connect());
       refreshPermissions(owner, active);
@@ -474,7 +474,10 @@ export function createApplicationController(deps: {
     }
     if (!matches()) throw new Error('The creation view changed. Recover it in its original view.');
     await save(owner, { version: 2, route: scope, pendingCreation: null });
-    publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
+    const created = host.agents.find(agent => agent.id === agentId);
+    const provider = created && 'kind' in created && created.providerAgentId !== null
+      ? { namespace: created.namespace, installationId: created.installationId, providerAgentId: created.providerAgentId } : null;
+    publish({ catalog: { ...state.catalog, items: [{ scope, preview: null, provider }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
     await install(owner, scope);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {

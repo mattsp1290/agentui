@@ -191,6 +191,23 @@ enum ContinuationAction {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum CatalogFilter {
+    Namespace {
+        namespace: String,
+    },
+    ProviderAgent {
+        namespace: String,
+        installation_id: Id,
+        provider_agent_id: Id,
+    },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(
     tag = "op",
     rename_all = "kebab-case",
     rename_all_fields = "camelCase",
@@ -220,6 +237,12 @@ enum Request {
         #[serde(deserialize_with = "nullable")]
         after: Option<Id>,
         limit: Count,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        filter: Option<CatalogFilter>,
     },
     Search {
         query: String,
@@ -453,8 +476,15 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
             }
             Some(&mut command.scope)
         }
-        Request::Catalog { limit, .. } => {
-            if !(1..=100).contains(&limit.0) {
+        Request::Catalog { limit, filter, .. } => {
+            let namespace = match filter {
+                Some(CatalogFilter::Namespace { namespace })
+                | Some(CatalogFilter::ProviderAgent { namespace, .. }) => Some(namespace),
+                None => None,
+            };
+            if !(1..=100).contains(&limit.0)
+                || namespace.is_some_and(|namespace| !extension_name(namespace, 32, false))
+            {
                 return Err(INVALID);
             }
             None
@@ -587,6 +617,8 @@ mod tests {
             json!({"op":"metadata"}),
             json!({"op":"catalog", "after":null, "limit":100}),
             json!({"op":"catalog", "after":"cursor", "limit":1}),
+            json!({"op":"catalog", "after":null, "limit":5, "filter":{"kind":"namespace", "namespace":"fixture"}}),
+            json!({"op":"catalog", "after":"c", "limit":5, "filter":{"kind":"provider-agent", "namespace":"fixture", "installationId":"personal", "providerAgentId":"agent"}}),
             json!({"op":"search", "query":"find text", "after":null}),
             json!({"op":"search", "query":"find text", "after":"cursor"}),
             json!({"op":"create", "scope":scope(), "agentId":"agent"}),
@@ -616,6 +648,21 @@ mod tests {
             json!({"op":"extension-call", "namespace":"a", "installationId":"i", "operation":"echo-2", "input":[1, "two", null, {"x":true}]}),
         ] {
             valid(value);
+        }
+    }
+
+    #[test]
+    fn catalog_filters_reject_unknown_kinds_and_fields() {
+        for filter in [
+            json!({"kind":"agent", "namespace":"fixture"}),
+            json!({"kind":"namespace"}),
+            json!({"kind":"namespace", "namespace":"Fixture"}),
+            json!({"kind":"namespace", "namespace":"fixture", "installationId":"i"}),
+            json!({"kind":"provider-agent", "namespace":"fixture", "installationId":"i"}),
+            json!({"kind":"provider-agent", "namespace":"fixture", "installationId":"", "providerAgentId":"a"}),
+            json!(null),
+        ] {
+            invalid(json!({"op":"catalog", "after":null, "limit":5, "filter":filter}));
         }
     }
 

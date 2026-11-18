@@ -72,7 +72,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
     if (command.kind === 'connect') return { observation: current };
     if (command.observation === 'old') return old.promise;
     const request = command.request;
-    const value = request.op === 'metadata' ? metadata : request.op === 'search' ? { items: [{ scope, preview: 'Hello', excerpt: 'Message match' }], after: null }
+    const value = request.op === 'metadata' ? metadata : request.op === 'search' ? { items: [{ scope, preview: 'Hello', provider: null, excerpt: 'Message match' }], after: null }
       : request.op === 'provider-observation' ? { kind: 'stopped', reason: 'provider-disconnected' } : request.op === 'create' ? scope : request.op === 'conversation-agent' ? descriptor : [];
     return { status: 200, body: JSON.stringify({ ok: true, value }) };
   };
@@ -93,7 +93,7 @@ test('Mac adapter uses immutable native observations through the real shared eng
 
 test('native bridge transports provider descriptors and accepts creation refusal only with create HTTP 409', async () => {
   const scope = { hostId: 'host', conversationId: 'chat' };
-  const descriptor = { kind: 'provider', id: 'provider', label: 'Remote', namespace: 'example', protocolVersion: '1', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
+  const descriptor = { kind: 'provider', id: 'provider', label: 'Remote', namespace: 'example', protocolVersion: '1', installationId: 'personal', providerAgentId: 'agent', imageInput: { kind: 'unsupported', reason: 'This agent cannot receive images.' }, frontendOffers: 'unsupported', commands: [], availability: { kind: 'ready' } };
   let status = 409, mode = 'negative';
   const connection = createMacConnection(access, async command => {
     assert.equal(command.kind, 'execute');

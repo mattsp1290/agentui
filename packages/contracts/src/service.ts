@@ -128,7 +128,7 @@ export type ServiceRequest =
   | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
   | { readonly op: 'image-read'; readonly scope: ConversationScope; readonly imageId: ImageId }
   | { readonly op: 'metadata' }
-  | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
+  | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number; readonly filter?: CatalogFilter }
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
   | { readonly op: 'conversation-permissions'; readonly scope: ConversationScope }
@@ -141,6 +141,16 @@ export type ServiceRequest =
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
   | { readonly op: 'close'; readonly feedId: string }
   | ({ readonly op: 'extension-call' } & ExtensionCallRequest);
+/** Narrows `catalog` to one namespace or one provider agent, read from the installation stored with each conversation. */
+export type CatalogFilter =
+  | { readonly kind: 'namespace'; readonly namespace: string }
+  | { readonly kind: 'provider-agent'; readonly namespace: string; readonly installationId: string; readonly providerAgentId: string };
+/** The provider identity stored with a conversation; `null` for native and recorded conversations. */
+export interface ConversationProvider {
+  readonly namespace: string;
+  readonly installationId: string;
+  readonly providerAgentId: string;
+}
 interface AgentDescription {
   readonly imageInput: ImageInputCapability;
   readonly frontendOffers: FrontendEligibility;
@@ -155,6 +165,10 @@ export type NativeAgentDescriptor = AgentDescription & {
 };
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
+  /** `ProviderInstance.installationId`. */
+  readonly installationId: string;
+  /** The provider's agent `opaqueId`, visible to clients; `null` for an installation-level descriptor. */
+  readonly providerAgentId: string | null;
 });
 export interface ServiceMetadata {
   readonly agents: readonly AgentDescriptor[];
@@ -172,6 +186,7 @@ export type ServicePull =
 export interface ConversationCatalogEntry {
   readonly scope: ConversationScope;
   readonly preview: string | null;
+  readonly provider: ConversationProvider | null;
 }
 export interface ConversationSearchEntry extends ConversationCatalogEntry {
   readonly excerpt: string | null;
@@ -216,7 +231,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
   readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
   metadata(): Promise<ServiceMetadata>;
-  catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
+  catalog(after?: string | null, limit?: number, filter?: CatalogFilter): Promise<readonly ConversationCatalogEntry[]>;
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
@@ -261,10 +276,11 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       return { op: 'search', query, after: input.after === null ? null : identifier(input.after) };
     }
     case 'catalog': {
-      exact(input, ['op', 'after', 'limit']);
+      const filtered = Object.hasOwn(input, 'filter');
+      exact(input, filtered ? ['op', 'after', 'limit', 'filter'] : ['op', 'after', 'limit']);
       const limit = count(input.limit);
       if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
-      return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
+      return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit, ...(filtered ? { filter: parseCatalogFilter(input.filter) } : {}) };
     }
     case 'conversation-permissions': exact(input, ['op', 'scope']); return { op: 'conversation-permissions', scope: parseScope(input.scope) };
     case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
@@ -303,9 +319,25 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
     default: throw new Error('Unknown service operation');
   }
 }
+export function parseCatalogFilter(value: unknown): CatalogFilter {
+  const input = record(value);
+  if (input.kind === 'namespace') {
+    exact(input, ['kind', 'namespace']);
+    return { kind: 'namespace', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace') };
+  }
+  if (input.kind !== 'provider-agent') throw new Error('Invalid catalog filter');
+  exact(input, ['kind', 'namespace', 'installationId', 'providerAgentId']);
+  return { kind: 'provider-agent', namespace: patterned(input.namespace, EXTENSION_NAMESPACE, 'namespace'),
+    installationId: identifier(input.installationId), providerAgentId: identifier(input.providerAgentId) };
+}
+function conversationProvider(value: unknown): ConversationProvider | null {
+  if (value === null) return null;
+  const input = record(value, ['namespace', 'installationId', 'providerAgentId']);
+  return { namespace: identifier(input.namespace), installationId: identifier(input.installationId), providerAgentId: identifier(input.providerAgentId) };
+}
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
-  exact(input, input.kind === 'provider' ? ['imageInput', 'frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
+  exact(input, input.kind === 'provider' ? ['imageInput', 'frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'installationId', 'providerAgentId', 'commands', 'availability']
     : ['imageInput', 'frontendOffers', 'id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
@@ -322,7 +354,8 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   });
   if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
   const common: AgentDescription = { imageInput: parseImageInputCapability(input.imageInput), frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
-  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
+  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion),
+    installationId: identifier(input.installationId), providerAgentId: input.providerAgentId === null ? null : identifier(input.providerAgentId) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
   if (model) exact(model, ['id', 'label']);
@@ -374,12 +407,12 @@ export function parseServicePull(value: unknown): ServicePull {
 function catalogEntries(value: unknown) {
   if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
   return value.map(value => {
-    const entry = record(value, ['scope', 'preview']);
+    const entry = record(value, ['scope', 'preview', 'provider']);
     if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
       entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
       throw new Error('Invalid conversation preview');
     }
-    return { scope: parseScope(entry.scope), preview: entry.preview };
+    return { scope: parseScope(entry.scope), preview: entry.preview, provider: conversationProvider(entry.provider) };
   });
 }
 /** Linked segments share the requested conversation's host and are never that conversation. */
@@ -442,8 +475,8 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
     const input = record(value, ['items', 'after']);
     if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
     const entries = input.items.map(value => {
-      const entry = record(value, ['scope', 'preview', 'excerpt']);
-      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview }]);
+      const entry = record(value, ['scope', 'preview', 'provider', 'excerpt']);
+      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview, provider: entry.provider }]);
       if (!catalog) throw new Error('Missing search entry');
       if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
         entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');
