@@ -1,12 +1,15 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { writeFile } from 'node:fs/promises';
+import { basename, join } from 'node:path';
 import { digest, forkFile, parseJson } from './agui-fork/bytes.mjs';
 import { resolveLockedFork } from './agui-fork/identity.mjs';
 import { verifyArchive } from './agui-fork/archives.mjs';
 import { verifyLedger } from './agui-fork/ledger.mjs';
 
 const aguiPackages = ['core', 'proto', 'encoder', 'client', 'codex-sdk', 'pi'].map((name) => `@ag-ui/${name}`);
+
+export const OFFLINE_RECORD_SCOPE = 'retained archives, evidence, source lock, fixtures and frozen consumer lock; no install';
 
 export const consumerScripts = ['all-imports.mjs', 'codex-esm.mjs', 'codex-commonjs.cjs']
   .map((name) => `tests/dependencies/ag-ui/${name}`);
@@ -17,6 +20,13 @@ export function measureVerifierSources(root) {
   const bytes = new Map(['scripts/lib/agui-fork.mjs', 'scripts/verify-agui-fork.mjs', ...library, ...consumerScripts]
     .map((file) => [file, readFileSync(join(root, file))]));
   return { bytes, sha256: Object.fromEntries([...bytes].map(([file, body]) => [file, digest(body)])) };
+}
+
+export async function writeConsumerScripts(directory, sources) {
+  for (const file of consumerScripts) {
+    assert.ok(sources.bytes.has(file), `consumer script ${file} was not measured`);
+    await writeFile(join(directory, basename(file)), sources.bytes.get(file));
+  }
 }
 
 function countByteLines(body) {

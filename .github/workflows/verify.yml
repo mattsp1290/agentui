@@ -32,5 +32,30 @@ jobs:
       - name: Install theme test browser
         run: npm run setup:browser
       - run: npm run verify
-      - name: Verify frozen AG-UI fork packages
-        run: node scripts/verify-agui-fork.mjs
+
+  agui-fork:
+    name: AG-UI fork qualification
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version-file: .node-version
+      - name: Verify pinned toolchain
+        run: node scripts/check-toolchain.mjs
+      - name: Qualify frozen AG-UI fork packages in a controlled consumer
+        run: |
+          set -o pipefail
+          node scripts/verify-agui-fork.mjs 2>&1 | tee "$RUNNER_TEMP/agui-fork-qualification.log"
+      - name: Retain the complete qualification log
+        if: always()
+        # actions/upload-artifact v5.0.0
+        uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4
+        with:
+          name: agui-fork-qualification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agui-fork-qualification.log
+          if-no-files-found: warn
+          retention-days: 90
