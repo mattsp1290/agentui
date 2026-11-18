@@ -547,6 +547,8 @@ export function createApplicationController(deps: {
     record.action = null;
     record.error = error;
     if (!view) {
+      // A failed Check again keeps the give-up state; a kept starting or confirmed view would otherwise show Continuing… with nothing to press.
+      if (lost && action === 'check') record.failures = CONTINUATION_READ_ATTEMPTS;
       publishContinuation(record);
       if (lost && action === 'start') pollContinuation(record);
       return;

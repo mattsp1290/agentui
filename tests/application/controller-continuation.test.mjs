@@ -207,6 +207,36 @@ test('a move that keeps failing stops after three tries though reads succeed; Ch
   assert.equal(actions.includes('start'), false);
 });
 
+test('a Check again that fails after a move gave up keeps Check again and Start a new chat', async t => {
+  t.mock.timers.enable({ apis: ['setTimeout'] });
+  const after = segment('after');
+  let failing = false, lookups = 0;
+  const f = opened(fixture()); t.after(() => f.app.dispose());
+  f.behavior.observation = async () => ({ kind: 'concluded', cause: 'cancelled' });
+  f.behavior.continuation = async input => {
+    if (input.scope.conversationId === 'after') return { predecessor: scope, carried, closure: null, successor: null };
+    if (failing) throw new Error('Service request timed out');
+    return { ...none, closure: 'cancelled', successor: { kind: 'confirmed', scope: after } };
+  };
+  f.behavior.agentLookup = async value => {
+    if (value.conversationId !== 'after') return f.descriptor();
+    lookups++;
+    throw new Error('The agent could not be read.');
+  };
+  await f.app.start();
+  for (let move = 1; move <= 3; move++) {
+    t.mock.timers.tick(4_000);
+    await eventually(() => lookups >= move && !f.app.getSnapshot().busy && f.app.getSnapshot().continuation?.action === null);
+  }
+  await eventually(() => f.app.getSnapshot().continuation.stalled === true);
+  const giveUp = { status: 'AgentUI could not confirm this continuation yet.', disclosure: false, choices: ['Check again', 'Start a new chat'] };
+  failing = true;
+  await f.app.conversationActions(f.app.getSnapshot().active).checkContinuation();
+  assert.equal(f.app.getSnapshot().continuation.view.successor.kind, 'confirmed');
+  assert.equal(f.app.getSnapshot().continuation.stalled, true);
+  assert.deepEqual(continuationNotice(f.app.getSnapshot().continuation), giveUp);
+});
+
 test('failing reads on a closed chat stop after six tries and leave Check again and Start a new chat', async t => {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const actions = [];
