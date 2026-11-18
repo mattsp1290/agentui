@@ -30,11 +30,11 @@ Its context supplies `providers.add(id, provider, presentation)`, a generic meth
 `providers.addAgui` uses the same registration and authority with a model whose request is the actual `RunAgentInput`.
 The backend must send that exact input and confirm its preallocated `runId`.
 Allocate a fresh run ID for each independent offered send. Exact retries keep the saved input and original run ID.
-SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.12.0 must rebuild; exact-version hosts refuse them before activation.
+SDK 0.5.0 introduced this required activation-context method. Extensions built before SDK 0.13.0 must rebuild; exact-version hosts refuse them before activation.
 A provider-only entry requires no React import or UI bootstrap.
 The [provider contract](provider-contracts.md) stays independent of UI activation.
 The server-only `credentials.use({ credential, service }, action)` resolves a host-issued handle for an authorized callback.
-SDK compatibility is `0.12.0`. Both the manifest and loaded entry must match this version exactly.
+SDK compatibility is `0.13.0`. Both the manifest and loaded entry must match this version exactly.
 SDK 0.6.0 adds the optional `contentLayout` contribution and requires rebuilding older extensions.
 SDK 0.9.0 adds optional provider text outputs through `ConnectedProvider.outputs`. Hosts enumerate complete scoped descriptors and read verified UTF-8 bytes through `LocalHost.conversationOutputs` and `LocalHost.readOutput`. Existing providers may omit the capability. This in-process addition keeps backend contract 1, wire 10, core DB 7 and transcript 4.
 SDK 0.10.0 adds the optional `ProviderPresentation.closure(state)` hook. It reads a provider-confirmed end of the conversation from saved state without I/O and returns `{ cause }` or `null`. Hosts report such a conversation as `concluded`, start no observation for it and refuse its sends. Existing presentations may omit the hook. The new observation status requires wire 12; backend contract 1, core DB 7 and transcript 4 are unchanged.
@@ -246,7 +246,7 @@ Each installed package supplies its canonical manifest at `package.json.agentui.
 		"extension": {
 			"namespace": "example-crew",
 			"trust": "full",
-			"sdkVersion": "0.12.0",
+			"sdkVersion": "0.13.0",
 			"entries": [{ "kind": "server", "module": "./dist/server.mjs" }]
 		}
 	}
@@ -377,6 +377,18 @@ Captured commands still validate the active conversation and availability at inv
 The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.
+
+## Contribute a workspace view
+
+SDK 0.13.0 adds the optional `workspace` contribution: `{ label, component, transcript? }`. The label has 1 to 40 characters and names the extension in the Extensions view. `component` and the optional `transcript` follow the same function, memo, forwardRef and lazy rules as transcript overrides. Unknown keys are rejected.
+The desktop rail shows Chats, Extensions and Settings. The Extensions view lists every namespace in the desktop selection and in `ServiceMetadata.extensions`, sorted by namespace, with a state of `Ready`, `Not configured`, `Unavailable`, `No view`, `Failed` or `Disabled`. Selecting a row with a workspace renders its component inside an element with `data-extension-workspace="<namespace>"`; scope every stylesheet selector under that attribute.
+
+`WorkspaceViewProps` gives the component its namespace, installation status, this namespace's agents (with `installationId` and `providerAgentId`), its conversations (catalog order, paged with `more()`), the selected conversation and a host-rendered `conversation` node.
+`open(scope)` and `create(agentId)` reject a conversation or agent outside the namespace. `call(installationId, operation, input)` calls the extension's own server operations and never rejects: a transport failure resolves as `{ kind: 'failed', cause: 'unavailable' }`. `refresh()` re-reads metadata and the conversation list.
+The host-rendered conversation keeps the composer, approvals, Stop, recovery and permissions. Inside a workspace it uses the workspace `transcript` when one is supplied, no `contentLayout` and no modules, and its agent control lists only the namespace's agents.
+
+The application has one active conversation (decision D4). Opening a conversation in a workspace changes that same active conversation, so switching to Chats shows it selected. At most one conversation view is mounted at a time, and the draft is kept in the persisted draft store across views.
+A workspace render failure retires its namespace once and returns the Extensions list with the row `Failed`. Restore default view disables workspaces with the other presentation contributions.
 
 ## Arrange conversation content
 

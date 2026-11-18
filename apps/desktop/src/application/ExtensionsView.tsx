@@ -1,0 +1,134 @@
+import { Suspense, useEffect, type ReactNode } from 'react';
+import type { ConversationScope, Json } from '@agentui/contracts';
+import { sameScope } from '@agentui/contracts';
+import type { AgentDescriptor, ExtensionCallValue, ServiceMetadata } from '@agentui/contracts/service';
+import type { WorkspaceAgent, WorkspaceContribution, WorkspaceConversation, WorkspaceViewProps } from '@agentui/sdk/react';
+import { CustomizationBoundary, type DesktopCustomization, type NamespaceActivation } from './DesktopCustomizations.js';
+import type { ApplicationController, OpenConversation, WorkspaceConversations } from './application-controller.js';
+
+export type ExtensionRowState = 'Ready' | 'Not configured' | 'Unavailable' | 'No view' | 'Failed' | 'Disabled' | 'Loading';
+export interface ExtensionRow {
+  readonly namespace: string;
+  readonly label: string;
+  readonly state: ExtensionRowState;
+  readonly detail: string | null;
+  readonly owner: Extract<NamespaceActivation, { readonly kind: 'ready' }> | null;
+  readonly workspace: WorkspaceContribution | null;
+}
+type ProviderAgent = Extract<AgentDescriptor, { readonly kind: 'provider' }>;
+const SERVER_FAILURE = 'The server extension failed to load. Check the extension configuration, then restart the host.';
+const UNAVAILABLE = 'The provider service is offline or unreachable. AgentUI checks again automatically.';
+
+export function namespaceAgents(metadata: ServiceMetadata | null, namespace: string): readonly ProviderAgent[] {
+  return (metadata?.agents ?? []).filter((agent): agent is ProviderAgent => 'kind' in agent && agent.namespace === namespace);
+}
+
+/** One row per namespace in the static desktop selection or the host's configured server extensions, sorted by namespace. */
+export function extensionRows({ customizations, activations, enabled, metadata }: {
+  readonly customizations: readonly DesktopCustomization[]; readonly activations: readonly NamespaceActivation[];
+  readonly enabled: boolean; readonly metadata: ServiceMetadata | null;
+}): readonly ExtensionRow[] {
+  const bundled = new Set(customizations.map(item => item.manifest.namespace));
+  const names = [...new Set([...bundled, ...(metadata?.extensions ?? []).map(item => item.namespace)])].sort();
+  return names.map(namespace => {
+    const activation = activations.find(item => item.namespace === namespace);
+    const descriptor = metadata?.extensions.find(item => item.namespace === namespace);
+    const owner = activation?.kind === 'ready' ? activation : null;
+    const workspace = owner?.presentation.workspace ?? null;
+    const row = (state: ExtensionRowState, detail: string | null = null): ExtensionRow =>
+      ({ namespace, label: workspace?.label ?? namespace, state, detail, owner, workspace });
+    if (!bundled.has(namespace)) return row(descriptor?.state === 'failed' ? 'Failed' : 'No view', descriptor?.state === 'failed' ? SERVER_FAILURE : null);
+    if (!enabled) return row('Disabled', 'Customizations are off. Turn on Enable customizations in Settings to open this extension.');
+    if (activation?.kind === 'failed') return row('Failed', activation.message);
+    if (descriptor?.state === 'failed') return row('Failed', SERVER_FAILURE);
+    if (!activation || activation.kind === 'loading') return row('Loading');
+    if (!workspace) return row('No view');
+    if (!descriptor || descriptor.installations.length === 0) return row('Not configured');
+    if (descriptor.installations.every(item => item.status === 'unavailable')) {
+      const reason = namespaceAgents(metadata, namespace).find(agent => agent.availability.kind === 'unavailable');
+      return row('Unavailable', reason?.availability.kind === 'unavailable' ? reason.availability.reason : UNAVAILABLE);
+    }
+    return row('Ready');
+  });
+}
+
+export function ExtensionsList({ rows, onOpen, enabled }: {
+  readonly rows: readonly ExtensionRow[]; readonly onOpen: (namespace: string) => void; readonly enabled: boolean;
+}) {
+  return <section className="extensions-panel" aria-label="Extensions">
+    <h1>Extensions</h1>
+    {rows.length === 0 ? <p className="empty-state">No extensions are installed in this build or configured on this host.</p>
+      : <ul className="extension-list">
+        {rows.map(row => {
+          const selectable = row.workspace !== null && row.state !== 'Disabled' && row.state !== 'Failed' && row.state !== 'Loading';
+          return <li key={row.namespace} className="extension-row" data-extension={row.namespace}>
+            <div className="extension-row-text">
+              <strong>{row.label}</strong>
+              <span className="extension-state" data-state={row.state}>{row.state}</span>
+              {row.detail && <p>{row.detail}</p>}
+            </div>
+            {selectable && <button type="button" disabled={!enabled} aria-label={`Open ${row.label}`} onClick={() => onOpen(row.namespace)}>Open</button>}
+          </li>;
+        })}
+      </ul>}
+  </section>;
+}
+
+export function ExtensionWorkspace({ row, metadata, workspaces, active, controller, conversation, status, onBack }: {
+  readonly row: ExtensionRow & { readonly owner: NonNullable<ExtensionRow['owner']>; readonly workspace: WorkspaceContribution };
+  readonly metadata: ServiceMetadata | null;
+  readonly workspaces: Readonly<Record<string, WorkspaceConversations>>;
+  readonly active: OpenConversation | null;
+  readonly controller: ApplicationController;
+  readonly conversation: ReactNode;
+  readonly status: ReactNode;
+  readonly onBack: () => void;
+}) {
+  const namespace = row.namespace;
+  const hostKey = metadata ? `${metadata.hostId}/${metadata.principalId}` : null;
+  useEffect(() => { if (hostKey !== null) void controller.loadWorkspace(namespace); }, [controller, namespace, hostKey]);
+  const agents: readonly WorkspaceAgent[] = namespaceAgents(metadata, namespace).map(agent => ({ id: agent.id, label: agent.label,
+    installationId: agent.installationId, providerAgentId: agent.providerAgentId, availability: agent.availability }));
+  const listed = workspaces[namespace];
+  const entries: readonly WorkspaceConversation[] = (listed?.entries ?? []).flatMap(entry => entry.provider?.namespace === namespace
+    ? [{ scope: entry.scope, preview: entry.preview, provider: { installationId: entry.provider.installationId, providerAgentId: entry.provider.providerAgentId } }] : []);
+  const selected = active && 'kind' in active.agent && active.agent.namespace === namespace ? active.scope : null;
+  const props: WorkspaceViewProps = {
+    namespace,
+    installations: metadata?.extensions.find(item => item.namespace === namespace)?.installations ?? [],
+    agents,
+    conversations: { entries, hasMore: listed?.hasMore ?? false, loading: listed?.loading ?? hostKey !== null, more: () => void controller.moreWorkspace(namespace) },
+    selected,
+    conversation: selected ? conversation : null,
+    async open(scope: ConversationScope) {
+      if (!entries.some(entry => sameScope(entry.scope, scope)) && !(selected && sameScope(selected, scope))) throw new Error('This conversation is not in this extension.');
+      await controller.open(scope);
+    },
+    async create(agentId: string) {
+      if (!agents.some(agent => agent.id === agentId)) throw new Error('This agent is not part of this extension.');
+      await controller.create(agentId);
+    },
+    async call(installationId: string, operation: string, input: Json): Promise<ExtensionCallValue> {
+      try { return await controller.extensionCall({ namespace, installationId, operation, input }); }
+      catch { return { kind: 'failed', cause: 'unavailable' }; }
+    },
+    async refresh() {
+      await controller.refreshMetadata();
+      await controller.loadWorkspace(namespace);
+    },
+  };
+  const View = row.workspace.component;
+  return <div className="extension-workspace-frame">
+    <div className="extension-status-strip">
+      <button type="button" className="extension-back" onClick={onBack}>All extensions</button>
+      {status}
+    </div>
+    <div className="extension-workspace" data-extension-workspace={namespace}>
+      <Suspense fallback={<p role="status" className="extension-loading">Loading {row.label}…</p>}>
+        <CustomizationBoundary key={row.owner.lifetime} fail={row.owner.fail} fallback={<p role="alert">{row.label} could not load.</p>}>
+          <View {...props} />
+        </CustomizationBoundary>
+      </Suspense>
+    </div>
+  </div>;
+}

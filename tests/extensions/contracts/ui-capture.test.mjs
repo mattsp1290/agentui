@@ -150,7 +150,7 @@ for (const callable of [false, true]) test(`presentation-only parser never inspe
   const source = callable ? Object.setPrototypeOf(function contribution() {}, fields) : Object.create(fields);
   Object.defineProperty(source, 'dispose', { get() { reads.dispose = (reads.dispose ?? 0) + 1; throw new Error('Unexpected disposal lookup'); } });
   const presentation = parseUiExtensionPresentation(source);
-  assert.deepEqual(Object.keys(presentation).sort(), ['activity', 'contentLayout', 'modules', 'transcript']);
+  assert.deepEqual(Object.keys(presentation).sort(), ['activity', 'contentLayout', 'modules', 'transcript', 'workspace']);
   assert.equal(presentation.modules[0].component, View); assert.equal(presentation.transcript, View);
   assert.deepEqual(reads, {});
 });
@@ -181,4 +181,23 @@ test('content layout capture observes the first getter once, retains wrappers an
   const throwing = parseUiExtensionContributions({ modules: [], get contentLayout() { throw failure; }, dispose() { disposed++; } });
   assert.equal(throwing.kind, 'invalid-presentation'); assert.equal(throwing.error, failure); await throwing.dispose(); assert.equal(disposed, 2);
   assert.equal(parseUiExtensionContributions({ modules: [], overrides: { contentLayout: View }, dispose() {} }).kind, 'invalid-presentation');
+});
+
+test('workspace contributions capture label, component and transcript and reject unknown keys and bad labels', () => {
+  const Transcript = () => null;
+  for (const component of [View, memo(View), forwardRef(() => null), lazy(async () => ({ default: View }))]) {
+    const captured = parseUiExtensionPresentation({ modules: [], workspace: { label: 'Ledger', component, transcript: Transcript } });
+    assert.deepEqual(captured.workspace, { label: 'Ledger', component, transcript: Transcript });
+  }
+  assert.equal(parseUiExtensionPresentation({ modules: [] }).workspace, undefined);
+  assert.deepEqual(parseUiExtensionPresentation({ modules: [], workspace: { label: 'x'.repeat(40), component: View } }).workspace, { label: 'x'.repeat(40), component: View });
+  for (const workspace of [{ label: '', component: View }, { label: '   ', component: View }, { label: 'x'.repeat(41), component: View },
+    { label: 'Ledger' }, { label: 'Ledger', component: {} }, { label: 'Ledger', component: View, transcript: 'no' },
+    { label: 'Ledger', component: View, route: '/x' }, { label: 1, component: View }, null]) {
+    assert.throws(() => parseUiExtensionPresentation({ modules: [], workspace }), JSON.stringify(workspace));
+  }
+  const source = { label: 'Before', component: View };
+  const captured = parseUiExtensionPresentation({ modules: [], workspace: source });
+  source.label = 'After';
+  assert.equal(captured.workspace.label, 'Before');
 });

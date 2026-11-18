@@ -95,11 +95,36 @@ export async function customRuntime(page, host, selection, breakDefault = false,
           (await readFile(join(root, 'apps/desktop/src/application/ConversationView.tsx'), 'utf8')).replace('export function ConversationView(', 'function HealthyConversationView(') +
           `\nexport function ConversationView(props) { if (window.failDefault) throw new Error('Default view failed'); return createElement(HealthyConversationView, props); }`, loader: 'tsx' }));
       plugin.onLoad({ filter: /customization-selection\.ts$/ }, () => ({ contents: `import * as React from 'react';
-        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.12.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
+        const manifest = { namespace: 'fixture', trust: 'full', sdkVersion: '0.13.0', entries: [{ kind: 'desktop', module: './desktop.js' }] };
         export default [{ manifest, ${selection} }${extra}];`, loader: 'tsx' }));
     } }] });
   await page.route('**/custom.html', route => route.fulfill({ contentType: 'text/html', body: '<div id="root"></div><script src="/custom.js"></script>' }));
   await page.route('**/custom.js', route => route.fulfill({ contentType: 'text/javascript', body: Buffer.from(bundled.outputFiles.find(file => file.path.endsWith('.js')).contents) }));
   await page.goto(`${host.origin}/custom.html`);
   if (!breakDefault) await connected(page);
+}
+
+/**
+ * Starts a host in process with transient server extensions, as the provider conformance harness does, and serves the
+ * built browser assets. It returns the shape `fixture(t)` returns, so `customRuntime` and `page` work with it.
+ * `page({ ready })` waits for the named button instead of the recorded conversation button.
+ */
+export async function extensionFixture(t, { extensions = [], agentStartup = { kind: 'recorded' } } = {}) {
+  const { startBrowserHost } = await import('../host/extensions/fixtures.mjs');
+  const directory = await mkdtemp(join(tmpdir(), 'agentui-extension-browser-'));
+  const browser = await chromium.launch();
+  let running = await startBrowserHost({ agentStartup, directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
+    extensions: { kind: 'transient', entries: extensions } });
+  let stopped = false;
+  const stop = async () => { if (!stopped) { stopped = true; await running.close(); } };
+  t.after(async () => { await browser.close(); await stop(); await rm(directory, { recursive: true, force: true }); });
+  const page = async ({ ready = 'New recorded conversation' } = {}) => {
+    const context = await browser.newContext();
+    const page = await context.newPage();
+    page.setDefaultTimeout(20_000);
+    await page.goto(`${running.origin}/browser.html`);
+    if (ready) await wait(() => page.getByRole('button', { name: ready }).isEnabled(), 'connected host');
+    return page;
+  };
+  return { origin: running.origin, hostId: running.hostId, directory, browser, page, stop, get host() { return running; } };
 }

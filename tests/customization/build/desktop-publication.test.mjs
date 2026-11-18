@@ -15,7 +15,7 @@ for (const [label, activate] of [
 ]) test(`desktop qualification rejects ${label} without publication`, { timeout: 30_000 }, async t => {
   const f = repository();
   t.after(() => rm(f.directory, { recursive: true, force: true }));
-  f.write('desktop/index.tsx', `export default {kind:'desktop',sdkVersion:'0.12.0',activate(){${activate}}};`);
+  f.write('desktop/index.tsx', `export default {kind:'desktop',sdkVersion:'0.13.0',activate(){${activate}}};`);
   assert.throws(() => buildCustom(f));
   assert.deepEqual(await readdir(f.directory), ['source']);
 });

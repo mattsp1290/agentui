@@ -1508,3 +1508,31 @@ test('image previews and uploads share one host transfer slot, reusing concurren
   assert.equal(refusals, 4);
   assert.equal(f.app.getSnapshot().error, '');
 });
+
+test('workspace lists page by namespace filter, refresh replaces metadata and extension calls forward once', async t => {
+  const f = fixture(); t.after(() => f.app.dispose());
+  await f.app.start();
+  const entry = n => ({ scope: { hostId: 'host', conversationId: `w-${String(n).padStart(3, '0')}` }, preview: null,
+    provider: { namespace: 'ledger', installationId: 'books', providerAgentId: 'desk' } });
+  f.behavior.workspaceCatalog = async after => after === null ? Array.from({ length: 100 }, (_, n) => entry(n)) : [entry(100)];
+  await f.app.loadWorkspace('ledger');
+  let workspace = f.app.getSnapshot().workspaces.ledger;
+  assert.deepEqual([workspace.entries.length, workspace.hasMore, workspace.loading], [100, true, false]);
+  assert.deepEqual(f.filters.at(-1), { after: null, filter: { kind: 'namespace', namespace: 'ledger' } });
+  await f.app.moreWorkspace('ledger');
+  workspace = f.app.getSnapshot().workspaces.ledger;
+  assert.deepEqual([workspace.entries.length, workspace.hasMore], [101, false]);
+  assert.equal(f.filters.at(-1).after, 'w-099');
+  await f.app.moreWorkspace('ledger');
+  assert.equal(f.filters.length, 2, 'no request after the last page');
+  f.behavior.workspaceCatalog = async () => [{ ...entry(1), provider: { ...entry(1).provider, namespace: 'other' } }];
+  await f.app.loadWorkspace('ledger');
+  assert.match(f.app.getSnapshot().error, /another namespace/);
+  const before = f.metadataCalls();
+  f.behavior.extensions = [{ namespace: 'ledger', state: 'active', operations: ['echo'], installations: [] }];
+  await f.app.refreshMetadata();
+  assert.equal(f.metadataCalls(), before + 1);
+  assert.deepEqual(f.app.getSnapshot().host.metadata.extensions, f.behavior.extensions);
+  assert.deepEqual(await f.app.extensionCall({ namespace: 'ledger', installationId: 'books', operation: 'echo', input: { a: 1 } }), { kind: 'ok', output: { a: 1 } });
+  assert.equal(f.calls.length, 1);
+});

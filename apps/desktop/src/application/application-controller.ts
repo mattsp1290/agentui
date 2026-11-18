@@ -9,7 +9,7 @@ import type { ConversationScope, SubmitResult, ProviderObservationStatus, Conver
 import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
@@ -40,9 +40,16 @@ export type PermissionState =
   | { readonly kind: 'fresh'; readonly listing: AvailablePermissions }
   | { readonly kind: 'loading' | 'stale'; readonly listing: AvailablePermissions | null; readonly reason: string }
   | { readonly kind: 'unsupported'; readonly reason: string };
+/** One extension namespace's conversations, read with a namespace catalog filter in catalog order. */
+export interface WorkspaceConversations {
+  readonly entries: readonly ConversationCatalogEntry[];
+  readonly hasMore: boolean;
+  readonly loading: boolean;
+}
 export interface ApplicationSnapshot {
   readonly host: HostState;
   readonly catalog: Page<ConversationCatalogEntry>;
+  readonly workspaces: Readonly<Record<string, WorkspaceConversations>>;
   readonly saved: SavedView;
   readonly savedViews: Page<string>;
   readonly savedViewNotice: string;
@@ -81,6 +88,14 @@ export interface ApplicationController {
   recoverCreation(agentId?: string): Promise<void>;
   open(scope: ConversationScope): Promise<void>;
   conversationActions(target: OpenConversation): ConversationActions;
+  /** Reads the first page of one namespace's conversations. */
+  loadWorkspace(namespace: string): Promise<void>;
+  /** Reads the next page of one namespace's conversations. */
+  moreWorkspace(namespace: string): Promise<void>;
+  /** Re-reads host metadata and replaces it when the host is ready. */
+  refreshMetadata(): Promise<void>;
+  /** Forwards one extension operation call. No retry. */
+  extensionCall(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
 }
 interface LoadedView { readonly borrow: ViewBorrow; readonly saved: SavedView; readonly hostId: string }
 type OwnedView = { readonly borrow: ViewBorrow; readonly saved: null } | LoadedView;
@@ -92,8 +107,9 @@ interface ActiveStoreOwner { readonly borrow: StoreBorrow; readonly target: Open
 interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends; readonly images: ImageTransfers }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'savedViews' | 'savedViewNotice'>;
+  observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, workspaces: {}, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'workspaces' | 'savedViews' | 'savedViewNotice'>;
+const WORKSPACE_PAGE = SERVICE_CATALOG_PAGE;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -365,6 +381,10 @@ export function createApplicationController(deps: {
         const existing = state.catalog.items.find(entry => sameScope(entry.scope, scope));
         if (existing && existing.preview !== preview) publish({ catalog: { ...state.catalog,
           items: state.catalog.items.map(entry => entry === existing ? { ...entry, preview } : entry) } });
+        const namespace = 'kind' in agent ? agent.namespace : null, workspace = namespace === null ? undefined : state.workspaces[namespace];
+        const listed = workspace?.entries.find(entry => sameScope(entry.scope, scope));
+        if (namespace !== null && workspace && listed && listed.preview !== preview) publish({ workspaces: { ...state.workspaces,
+          [namespace]: { ...workspace, entries: workspace.entries.map(entry => entry === listed ? { ...entry, preview } : entry) } } });
       });
       await current(owner, store.connect());
       refreshPermissions(owner, active);
@@ -378,6 +398,23 @@ export function createApplicationController(deps: {
     const loaded = new Map((after === null ? [] : state.catalog.items).map(entry => [JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry]));
     for (const entry of items) loaded.set(JSON.stringify([entry.scope.hostId, entry.scope.conversationId]), entry);
     publish({ catalog: { items: [...loaded.values()], after: next } });
+  }
+  async function readWorkspace(owner: Session, namespace: string, more: boolean): Promise<void> {
+    const { hostId } = requireHost(owner);
+    const previous = state.workspaces[namespace];
+    if (previous?.loading || (more && (!previous || !previous.hasMore))) return;
+    const after = more ? previous?.entries.at(-1)?.scope.conversationId ?? null : null;
+    publish({ workspaces: { ...state.workspaces, [namespace]: { entries: previous?.entries ?? [], hasMore: previous?.hasMore ?? false, loading: true } } });
+    try {
+      const items = await current(owner, owner.connection.catalog(after, WORKSPACE_PAGE, { kind: 'namespace', namespace }));
+      if (items.some(entry => entry.scope.hostId !== hostId || entry.provider?.namespace !== namespace)) throw new Error('Workspace catalog belongs to another namespace or host.');
+      const loaded = new Map((more ? state.workspaces[namespace]?.entries ?? [] : []).map(entry => [entry.scope.conversationId, entry]));
+      for (const entry of items) loaded.set(entry.scope.conversationId, entry);
+      publish({ workspaces: { ...state.workspaces, [namespace]: { entries: [...loaded.values()], hasMore: items.length === WORKSPACE_PAGE, loading: false } } });
+    } catch (cause) {
+      if (session === owner) publish({ workspaces: { ...state.workspaces, [namespace]: { entries: state.workspaces[namespace]?.entries ?? [], hasMore: false, loading: false } } });
+      throw cause;
+    }
   }
   async function readSavedViews(owner: Session, hostId: string, after: string | null = null): Promise<void> {
     try {
@@ -477,7 +514,11 @@ export function createApplicationController(deps: {
     const created = host.agents.find(agent => agent.id === agentId);
     const provider = created && 'kind' in created && created.providerAgentId !== null
       ? { namespace: created.namespace, installationId: created.installationId, providerAgentId: created.providerAgentId } : null;
-    publish({ catalog: { ...state.catalog, items: [{ scope, preview: null, provider }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
+    const entry = { scope, preview: null, provider };
+    const workspace = provider ? state.workspaces[provider.namespace] : undefined;
+    publish({ catalog: { ...state.catalog, items: [entry, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] },
+      ...(provider && workspace ? { workspaces: { ...state.workspaces, [provider.namespace]: { ...workspace,
+        entries: [entry, ...workspace.entries.filter(item => !sameScope(item.scope, scope))] } } } : {}) });
     await install(owner, scope);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {
@@ -626,6 +667,31 @@ export function createApplicationController(deps: {
       await save(owner, { ...requireSaved(owner).saved, route: scope });
       await install(owner, scope);
     }),
+    async loadWorkspace(namespace) {
+      const owner = session;
+      if (!owner) return;
+      try { await readWorkspace(owner, namespace, false); } catch (cause) { fail(owner, cause); }
+    },
+    async moreWorkspace(namespace) {
+      const owner = session;
+      if (!owner) return;
+      try { await readWorkspace(owner, namespace, true); } catch (cause) { fail(owner, cause); }
+    },
+    async refreshMetadata() {
+      const owner = session;
+      if (!owner || state.host.kind !== 'ready') return;
+      try {
+        const received = await current(owner, owner.connection.metadata());
+        const previous = requireHost(owner);
+        if (received.hostId !== previous.hostId || received.principalId !== previous.principalId) { await run(refresh); return; }
+        publish({ host: { kind: 'ready', metadata: { ...received, agents: received.agents.map(compatibleAgent) } } });
+      } catch (cause) { fail(owner, cause); }
+    },
+    async extensionCall(request) {
+      const owner = session;
+      if (!owner) return { kind: 'failed', cause: 'unavailable' };
+      return owner.connection.extensionCall(request);
+    },
     conversationActions(target) {
       const owner = session;
       const invoke = (kind: 'send' | 'approve' | 'cancel', operation: () => Promise<SubmitResult>) => submitCommand(owner, target, () => {

@@ -16,7 +16,7 @@ function fixture(t) {
   return value;
 }
 const entry = (source, activation = '') => `${source}
-export default { kind: 'desktop', sdkVersion: '0.12.0', async activate() {
+export default { kind: 'desktop', sdkVersion: '0.13.0', async activate() {
   ${activation}
   return { modules: [], dispose() {} };
 } };`;
@@ -150,7 +150,7 @@ for (const query of ['', '?no-inline']) test(`a locked CSS package rejects brows
   const dependencies = { value: dependency.resolved };
   await write(repo.directory, 'package.json', {
     name: 'fixture', version: '1.0.0', type: 'module', packageManager: 'npm@11.19.1', dependencies,
-    agentui: { extension: { namespace: 'browser-assets', trust: 'full', sdkVersion: '0.12.0',
+    agentui: { extension: { namespace: 'browser-assets', trust: 'full', sdkVersion: '0.13.0',
       entries: [{ kind: 'desktop', module: './desktop.js' }] }, sources: { './desktop.js': './index.ts' } },
   });
   await write(repo.directory, 'package-lock.json', {
@@ -222,7 +222,7 @@ for (const [target, contents, error] of [
   await write(f.root, 'outside.css', '@value secret: HARMLESS_AMBIENT_MODULE_CANARY;');
   await write(repo.directory, 'package.json', {
     name: 'fixture', version: '1.0.0', type: 'module', packageManager: 'npm@11.19.1', dependencies,
-    agentui: { extension: { namespace: 'worker-export', trust: 'full', sdkVersion: '0.12.0',
+    agentui: { extension: { namespace: 'worker-export', trust: 'full', sdkVersion: '0.13.0',
       entries: [{ kind: 'desktop', module: './desktop.js' }] }, sources: { './desktop.js': './index.ts' } },
   });
   await write(repo.directory, 'package-lock.json', {
