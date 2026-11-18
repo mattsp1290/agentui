@@ -53,7 +53,7 @@ Tokens never go in the file. Each installation names an environment variable, fo
 
 - No file: the host starts with native agents only.
 - Every named variable set and nonblank: the launcher passes `--extensions <file>` to `desktop`.
-- A missing or blank variable: the launcher prints one line naming each missing variable (never a value) and starts without server extensions. The Extensions view then shows `Not configured`.
+- A missing or blank variable: the launcher prints a single warning line that names every missing variable (never a value) and starts without server extensions. The Extensions view then shows `Not configured`.
 - A file that is not valid JSON: one warning, and no server extensions.
 - A remote (`--ssh`) session ignores the file and prints one line that says so. Server extensions and their tokens are supported for a local host only.
 

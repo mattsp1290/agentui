@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from 'react';
+import { useEffect, useRef, useState, type FormEvent } from 'react';
 import type { WorkspaceViewProps } from '@agentui/sdk/react';
 
 const ENGINES = ['pi', 'claude', 'codex'] as const;
@@ -12,7 +12,7 @@ const REFUSALS: Readonly<Record<string, string>> = {
 };
 /** Outcomes that leave it unknown whether Crew created the member. The retry reuses the same request. */
 const UNKNOWN = new Set(['unreachable', 'unknown-outcome']);
-const UNCONFIRMED = 'Crew may already have created this member. Retry to confirm it; the retry sends the same request and cannot create a second member. Cancel to discard it.';
+const UNCONFIRMED = 'Crew may already have created this member. Retry to confirm it; the retry sends the same request and cannot create a second member. Cancel stops retrying; Crew may still have created the member, so check the member list.';
 const NO_ID = 'Crew created the member but did not return its ID. Find it in the member list.';
 
 const utf8Bytes = (value: string) => new TextEncoder().encode(value).byteLength;
@@ -32,6 +32,9 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
   const locked = pending || unconfirmed !== null;
+  // A request that settles after Cancel or unmount must not close a newer form or change the selection.
+  const active = useRef(true);
+  useEffect(() => { active.current = true; return () => { active.current = false; }; }, []);
   const tooLong = utf8Bytes(profile.trim()) > PROFILE_BYTES;
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -42,11 +45,13 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
     if (result.kind === 'ok') {
       const output = result.output as { member?: { memberId?: unknown } } | null;
       await refresh();
+      if (!active.current) return;
       setPending(false); setUnconfirmed(null);
       if (typeof output?.member?.memberId === 'string') { onCreated(output.member.memberId); return; }
       setProfile(''); setInstructions(''); setMessage(NO_ID);
       return;
     }
+    if (!active.current) return;
     setPending(false);
     if (result.kind === 'refused' && !UNKNOWN.has(result.code)) {
       setUnconfirmed(null);

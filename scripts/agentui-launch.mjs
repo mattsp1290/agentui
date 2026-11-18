@@ -74,7 +74,7 @@ function tokenVariables(configuration) {
 }
 /**
  * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when every named token
- * variable is set; otherwise it warns once per missing name (never a value) and starts with native agents only.
+ * variable is set; otherwise it prints one warning naming every missing variable (never a value) and starts with native agents only.
  * A remote profile never loads bundled server extensions (decision D13).
  */
 export function extensionArguments({ setupRoot, kind, env = process.env, warn = line => process.stderr.write(`${line}\n`) }) {
@@ -88,7 +88,7 @@ export function extensionArguments({ setupRoot, kind, env = process.env, warn = 
   try { configuration = JSON.parse(readFileSync(file, 'utf8')); }
   catch { warn('extensions.json is not valid JSON. Starting without server extensions.'); return []; }
   const missing = tokenVariables(configuration).filter(name => !env[name]?.trim());
-  for (const name of missing) warn(`Set ${name} to load server extensions. Starting without server extensions.`);
+  if (missing.length) warn(`Set ${missing.join(', ')} to load server extensions. Starting without server extensions.`);
   return missing.length ? [] : ['--extensions', file];
 }
 

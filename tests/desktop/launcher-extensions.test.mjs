@@ -37,6 +37,7 @@ test('a missing or blank variable starts without extensions and names only the v
   assert.deepEqual(result.args, []);
   assert.deepEqual(result.lines, ['Set AGENTUI_EXTENSION_TWO_TOKEN to load server extensions. Starting without server extensions.']);
   assert.equal(result.lines.join('\n').includes('secret-one'), false);
+  assert.deepEqual(run(directory, 'local', {}).lines, ['Set AGENTUI_EXTENSION_ONE_TOKEN, AGENTUI_EXTENSION_TWO_TOKEN to load server extensions. Starting without server extensions.']);
   assert.deepEqual(run(await root(t, '{not json'), 'local', {}).lines, ['extensions.json is not valid JSON. Starting without server extensions.']);
 });
 

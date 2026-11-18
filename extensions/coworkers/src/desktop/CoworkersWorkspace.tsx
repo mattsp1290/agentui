@@ -24,11 +24,13 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const coworkers = props.agents.filter((agent): agent is Coworker => agent.providerAgentId !== null);
   const [details, setDetails] = useState<ReadonlyMap<string, CoworkerSummary>>(new Map());
   const [management, setManagement] = useState(false);
+  const [truncated, setTruncated] = useState(false);
   const [tab, setTab] = useState<'chat' | 'coworkers'>('chat');
   const [pill, setPill] = useState<'chat' | 'about'>('chat');
   const [filter, setFilter] = useState<string | null>(null);
   const [narrowPane, setNarrowPane] = useState<'list' | 'conversation'>('list');
   // The narrow layout moves to the conversation only once `selected` changes: open and create resolve without one on failure.
+  // Navigating elsewhere drops the wait, so a later unrelated selection does not move the pane.
   const [awaiting, setAwaiting] = useState<{ readonly before: string | null } | null>(null);
   const [notice, setNotice] = useState('');
   const selectedKey = props.selected ? `${props.selected.hostId}/${props.selected.conversationId}` : null;
@@ -44,6 +46,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
       const output = coworkersListOutput(result.output);
       setDetails(new Map((output?.coworkers ?? []).map(item => [item.coworkerId, item])));
       setManagement(output?.management === true);
+      setTruncated(output?.truncated === true);
     });
     return () => { current = false; };
   }, [available, installation?.installationId, key]);
@@ -87,8 +90,8 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   return <ThemeScope className="coworkers-workspace" colors={PALETTE[theme.appearance]} data-pane={narrowPane}>
     <nav className="coworkers-app-bar" aria-label="Coworkers app bar">
       <div role="group" aria-label="Coworkers sections" className="coworkers-sections">
-        <button type="button" aria-pressed={tab === 'chat'} onClick={() => setTab('chat')}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat</button>
-        <button type="button" aria-pressed={tab === 'coworkers'} onClick={() => setTab('coworkers')}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3.3 2.7-5 6-5s6 1.7 6 5M14 19c0-2 1.5-3.5 4-3.5s3 1 3 3.5"/></svg>Coworkers</button>
+        <button type="button" aria-pressed={tab === 'chat'} onClick={() => { setAwaiting(null); setTab('chat'); }}><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 5h16v11H9l-5 4z"/></svg>Chat</button>
+        <button type="button" aria-pressed={tab === 'coworkers'} onClick={() => { setAwaiting(null); setTab('coworkers'); }}><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="9" cy="8" r="3"/><circle cx="17" cy="9" r="2.5"/><path d="M3 19c0-3.3 2.7-5 6-5s6 1.7 6 5M14 19c0-2 1.5-3.5 4-3.5s3 1 3 3.5"/></svg>Coworkers</button>
       </div>
     </nav>
     {tab === 'coworkers' ? <section className="coworkers-directory" aria-label="Coworker directory">
@@ -96,6 +99,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
         <h2>Coworkers</h2>
         <button type="button" disabled={!management} title={management ? undefined : NEWER}>New coworker</button>
       </header>
+      {truncated && <p role="status" className="coworkers-notice">Details for some coworkers were not loaded.</p>}
       <ul className="coworkers-cards">
         {coworkers.map(item => {
           const info = details.get(item.providerAgentId);
@@ -122,7 +126,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
           {target && <button type="button" onClick={() => void attempt(() => props.create(target.id))}>New chat</button>}
         </header>
         {notice && <p role="alert" className="coworkers-notice">{notice}</p>}
-        {filter && <button type="button" className="coworkers-filter" onClick={() => setFilter(null)}>Showing {byId.get(filter)?.label ?? filter} · Show all</button>}
+        {filter && <button type="button" className="coworkers-filter" onClick={() => { setAwaiting(null); setFilter(null); }}>Showing {byId.get(filter)?.label ?? filter} · Show all</button>}
         {chats.length === 0 && <p className="coworkers-empty">No chats yet. Open the Coworkers tab and choose Chat.</p>}
         <ul className="coworkers-chat-cards">
           {chats.map(entry => {
@@ -142,7 +146,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
       <section className="coworkers-main" aria-label="Coworker conversation">
         {current ? <>
           <header className="coworkers-header">
-            <button type="button" className="coworkers-back" onClick={() => setNarrowPane('list')}>Chats</button>
+            <button type="button" className="coworkers-back" onClick={() => { setAwaiting(null); setNarrowPane('list'); }}>Chats</button>
             <span className="coworkers-avatar" aria-hidden="true">{initials(current.label)}</span>
             <div className="coworkers-header-text"><h2>{current.label}</h2>{detail && <span className="coworkers-role">{detail.role}</span>}</div>
             <div className="coworkers-pills" role="group" aria-label="Conversation views">
