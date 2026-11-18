@@ -111,7 +111,7 @@ async function harness(t, remote) {
     credentialRevision: 'one', tokenFile, directory: hostDirectory, port: 0 }), { mode: 0o600 });
   let child, origin;
   const start = async () => {
-    child = launchProcess(t, ['examples/crew/run.mjs', config]);
+    child = launchProcess(t, ['extensions/crew/run.mjs', config]);
     const ready = await startup(child, line => {
       const match = /^AgentUI with Crew is ready at (http:\/\/[^/]+)\/browser\.html$/.exec(line);
       return match && { origin: match[1] };

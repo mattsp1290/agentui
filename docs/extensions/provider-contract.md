@@ -124,12 +124,12 @@ An expired or unbridgeable cursor ends the feed with `resync`.
 
 ## Conformance suite
 
-The suite runs the real host in process through `startBrowserHost`, the same entry `examples/crew/run.mjs` uses, with transient extension entries. Each row is driven only through its public extension entry, and clients reach the host through the desktop client store.
-Transient entries skip module import and manifest resolution. `examples/crew/tests/installed-example.test.mjs` covers loading an installed extension.
+The suite runs the real host in process through `startBrowserHost`, the same entry `extensions/crew/run.mjs` uses, with transient extension entries. Each row is driven only through its public extension entry, and clients reach the host through the desktop client store.
+Transient entries skip module import and manifest resolution. `extensions/crew/tests/installed-example.test.mjs` covers loading an installed extension.
 
 | Row | Request ids | Cursor | Event encoding | Supports |
 | --- | --- | --- | --- | --- |
-| Crew example (`examples/crew`, shared controlled Crew service) | AgentUI operation UUIDs | `{ epoch, sequence, requests }` | SSE AG-UI, folded into authoritative snapshots | cancel, decide |
+| Crew example (`extensions/crew`, shared controlled Crew service) | AgentUI operation UUIDs | `{ epoch, sequence, requests }` | SSE AG-UI, folded into authoritative snapshots | cancel, decide |
 | Ledger fake (`ledger.mjs`) | Service-assigned `room-n` and `ticket-n` | `[epoch, offset]` | NDJSON log entries folded by `apply` | cancel, decide |
 | Ledger fake without controls | Same as ledger | Same as ledger | Same as ledger | none |
 

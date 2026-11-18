@@ -232,3 +232,16 @@ test('installed host rejects a declared artifact runtime that differs from the r
   f.put('apps/host/dist/artifact.json', JSON.stringify(different));
   assert.throws(() => readInstalledArtifact(f.directory), /runtime does not match/);
 });
+
+test('in-repo extension sources mark the source dirty while their build output does not', t => {
+  const f = fixture(t);
+  f.put('extensions/crew/src/provider.ts', 'export const value = 1;\n');
+  f.git('add', 'extensions/crew/src/provider.ts');
+  f.git('-c', 'user.name=Artifact test', '-c', 'user.email=artifact@example.invalid', 'commit', '-m', 'Add extension source');
+  const clean = f.build();
+  assert.deepEqual(clean.sourceDirty, { kind: 'clean' });
+  f.put('extensions/crew/dist/provider.js', 'export const value = 2;\n');
+  assert.deepEqual(f.build().sourceDirty, { kind: 'clean' });
+  f.put('extensions/crew/src/provider.ts', 'export const value = 2;\n');
+  assert.equal(f.build().sourceDirty.kind, 'dirty');
+});

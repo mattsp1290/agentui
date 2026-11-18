@@ -20,9 +20,9 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
   t.after(() => rmSync(directory, { recursive: true, force: true }));
   const root = fileURLToPath(new URL('../../../', import.meta.url));
   const env = { ...process.env, npm_config_cache: join(directory, 'cache') };
-  const archives = ['packages/contracts', 'packages/protocol', 'packages/sdk', 'examples/crew'].map(path => {
+  const archives = ['packages/contracts', 'packages/protocol', 'packages/sdk', 'extensions/crew'].map(path => {
     const [packed] = JSON.parse(execFileSync('npm', ['pack', `./${path}`, '--pack-destination', directory, '--json', '--ignore-scripts'], { cwd: root, env, encoding: 'utf8' }));
-    if (path === 'examples/crew') {
+    if (path === 'extensions/crew') {
       const paths = packed.files.map(file => file.path);
       for (const name of ['index', 'file-intents', 'provider']) {
         assert.ok(paths.includes(`dist/${name}.js`), `packed ${name} runtime`);
@@ -53,9 +53,9 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     import assert from 'node:assert/strict';
     import { createRequire } from 'node:module';
     import { join } from 'node:path';
-    import { connectCrewConversation } from '@agentui/example-crew';
-    import { fileIntents } from '@agentui/example-crew/file-intents';
-    import { crewProvider } from '@agentui/example-crew/provider';
+    import { connectCrewConversation } from 'agentui-extension-crew';
+    import { fileIntents } from 'agentui-extension-crew/file-intents';
+    import { crewProvider } from 'agentui-extension-crew/provider';
     import { CrewClient } from '@birbcrew/client';
     import { decisionReceiptsCapabilityV1Schema, decisionRecordSchema, handoffsCapabilityV1Schema } from '@birbcrew/client/contract';
     assert.equal(typeof connectCrewConversation, 'function');
@@ -71,7 +71,7 @@ test('packed Crew example imports all exports with the retained SDK archive', t 
     assert.equal(typeof decisionReceiptsCapabilityV1Schema.safeParse, 'function');
     assert.equal(typeof decisionRecordSchema.parse, 'function');
     const consumerRequire = createRequire(join(process.cwd(), 'package.json'));
-    const exampleRequire = createRequire(consumerRequire.resolve('@agentui/example-crew'));
+    const exampleRequire = createRequire(consumerRequire.resolve('agentui-extension-crew'));
     const crewRequire = createRequire(exampleRequire.resolve('@birbcrew/client'));
     assert.equal(exampleRequire('zod/package.json').version, '4.6.6');
     assert.equal(crewRequire('zod/package.json').version, '4.6.6');

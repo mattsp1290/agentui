@@ -1,6 +1,6 @@
 # Crew public provider example
 
-`crewProvider` from `@agentui/example-crew/provider` supplies a public `ServerExtensionEntry`, `BackendProvider`, and `ProviderPresentation`. It discovers one configured existing member and creates fresh AgentUI conversations. The ordinary provider chooser, transcript, approval buttons, and Stop control use the host's existing durable command store.
+`crewProvider` from `agentui-extension-crew/provider` supplies a public `ServerExtensionEntry`, `BackendProvider`, and `ProviderPresentation`. It discovers one configured existing member and creates fresh AgentUI conversations. The ordinary provider chooser, transcript, approval buttons, and Stop control use the host's existing durable command store.
 
 ## Run the provider
 
@@ -19,7 +19,7 @@ Build the repository with its pinned Node 24 runtime using `npm ci && npm run bu
 }
 ```
 
-Run `node examples/crew/run.mjs /absolute/private/crew-provider.json`. Open the printed URL. Select **Provider**, select the Crew member, and start a new chat. Set `nativeConfig` to an existing AgentUI agent configuration path to keep native agents available in the same host.
+Run `node extensions/crew/run.mjs /absolute/private/crew-provider.json`. Open the printed URL. Select **Provider**, select the Crew member, and start a new chat. Set `nativeConfig` to an existing AgentUI agent configuration path to keep native agents available in the same host.
 
 Keep the installation, generation, credential revision, member, and service stable when reopening. The token is read only through the host's configured credential resolver. The provider uses the original creation UUID as the remote conversation UUID and the original send operation UUID as the remote request UUID. Recovery uses GET for those original identities. Missing status and conflicting admission remain uncertain. When observation shows that an accepted send's run ended, the host reads that request's original status once per host run and settles the receipt from it. The run end itself is not settlement evidence, and a pending, unknown or failed read leaves the receipt `accepted` without another automatic read. When a new Send is blocked by an accepted or uncertain earlier send, the host checks that earlier request through its original status route before retrying admission once. If that settles it so nothing blocks, the follow-up is admitted; a pending, unknown or failed lookup preserves the refusal and saved draft. **Check pending command** and **Reconcile command** remain available for explicit recovery. A request that never reached Crew has no status, so it stays uncertain: Reconcile cannot settle it, cancel is refused because no run exists, and the conversation refuses every later Send. Choose **Stop waiting** under Command recovery to release the conversation; an `accepted` request whose status never settles can be released the same way from Pending commands. The receipt becomes `abandoned`, which does not say whether Crew ran the request; the host never does this on its own and never replays the request. Conversations that already hold an uncertain request when you upgrade start refusing new Sends the same way. Completed, failed, and cancelled requests settle the send receipt; their transcript outcomes remain distinct. Confirmed native termination also settles the send command and ends the visible run as interrupted. The saved request status can still be uncertain, and cancellation effects remain unassessed. Settling the command does not prove that a protected action did or did not occur. Missing or unconfirmed termination evidence leaves an uncertain request active.
 
@@ -33,7 +33,7 @@ The persistent **Permissions** panel shows applicable conversation and member pe
 
 Without that capability, or with an unsupported version or tool, approval cards retain their existing behavior. **Approve once** requires Crew's public completeness proof and matching `record_work_item` arguments. Incomplete cards show a warning and offer only **Deny**. Open cards can acquire richer details; reserved cards retain their original material and captured command, and closed cards stay closed. Questions use the known empty `choose_next_step` argument contract and retain the offered **Inspect** and **Test** choices, including after reopening a paused child call. Child transcripts remain hidden. When Crew advertises `decisionReceipts` version 1 and every tool the chosen choice can belong to, the decision is named with the host command UUID as `decisionId`. A reply that echoes the approval, the exact choice and that id completes the decision command without claiming that the protected tool completed. `409 decision_conflict` rejects the command: Crew settled the card with a competing decision, which may have chosen the same option. `409 decision_unverifiable` and every other refusal or unknown outcome stay uncertain. Reconciling a named decision reads Crew's decision record for the card. `decided` with this id and choice confirms it. `decided` with another id, `auto_approved` and `closed` reject it, naming the competing decision or closure. `decided` with this id and another choice, `decided` without an id and `undecided` stay uncertain, as do `404`, `503` and transport failures. Reconciliation never sends the decision again, and the host never dispatches one command ID twice, so a decision sent without an id is never later named. If the host stops before Crew accepts a decision, the command stays uncertain until a later reconcile reads a definitive record: Crew committing that decision, a competing decision, or the card closing or expiring. The host never resends it. Without the capability, decisions behave as before: the receipt route is never read, and a lost or mismatched reply remains uncertain even if its card disappears or the request finishes. Older accepted decisions without an exact-choice lookup remain unresolved; the adapter does not replay them or rewrite their history. Stop retains the original request ID and reports native termination only when Crew confirms it. Real protected-write, cancellation-race, cold-worker replacement, and broad provider-availability qualification remain separate work.
 
-The provider imports the retained `@birbcrew/client/agui` observer and the frozen AG-UI client/core/encoder/proto archives. The owner-detail update changes the source-pinned Crew client artifact while retaining wire, SDK, projection, and npm versions. `examples/crew/tests/provider.test.mjs` exercises the public HTTP/SSE boundary, SQLite reopen, approvals, Stop, callback drain, and GET-only uncertainty recovery. Controlled responses do not qualify a production Crew deployment.
+The provider imports the retained `@birbcrew/client/agui` observer and the frozen AG-UI client/core/encoder/proto archives. The owner-detail update changes the source-pinned Crew client artifact while retaining wire, SDK, projection, and npm versions. `extensions/crew/tests/provider.test.mjs` exercises the public HTTP/SSE boundary, SQLite reopen, approvals, Stop, callback drain, and GET-only uncertainty recovery. Controlled responses do not qualify a production Crew deployment.
 
 ## Trace the host and Crew worker
 
@@ -43,7 +43,7 @@ The launcher reads the same [host observability settings](../../docs/development
 OTEL_TRACES_EXPORTER=otlp \
 OTEL_EXPORTER_OTLP_ENDPOINT=http://127.0.0.1:4318 \
 OTEL_SERVICE_NAME=agentui-host \
-node examples/crew/run.mjs /absolute/private/crew-provider.json
+node extensions/crew/run.mjs /absolute/private/crew-provider.json
 ```
 
 Open the printed URL, select the Crew member, and send a message. The `agentui-host` service records admitted host requests. Tracing is disabled unless `OTEL_TRACES_EXPORTER=otlp` is set. Invalid enabled settings stop the launcher before host startup. Collector failure does not change a command result.
@@ -60,8 +60,8 @@ Run `npm ci` and `npm run build` from the repository root. Use a separate journa
 
 ```js
 import { CrewClient } from '@birbcrew/client';
-import { connectCrewConversation } from '@agentui/example-crew';
-import { fileIntents } from '@agentui/example-crew/file-intents';
+import { connectCrewConversation } from 'agentui-extension-crew';
+import { fileIntents } from 'agentui-extension-crew/file-intents';
 
 const conversation = await connectCrewConversation({
   client: new CrewClient({

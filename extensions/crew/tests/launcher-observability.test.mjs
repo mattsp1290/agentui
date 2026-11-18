@@ -39,7 +39,7 @@ async function fixture(t, collector, settings) {
   await writeFile(configFile, JSON.stringify({ service, memberId, installationId, generation,
     credentialRevision: 'private-revision-c4e2', tokenFile, directory: hostDirectory, port: 0 }), { mode: 0o600 });
   const environment = { OTEL_EXPORTER_OTLP_ENDPOINT: collector.endpoint, ...settings };
-  const host = launchProcess(t, ['examples/crew/run.mjs', configFile], environment);
+  const host = launchProcess(t, ['extensions/crew/run.mjs', configFile], environment);
   t.after(() => rm(directory, { recursive: true, force: true }));
   const started = startup(host, line => {
     const match = /^AgentUI with Crew is ready at (http:\/\/[^/]+)\/browser\.html$/.exec(line);

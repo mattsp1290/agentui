@@ -2,7 +2,7 @@
 
 Assessment date is 2026-11-17. This assessment covers `agentui-osyo`, the Crew example provider extension. It qualifies creation, streaming, host restart and resume against a real Crew service. It lists the capability gaps that remain.
 
-The extension is `crewProvider` from `@agentui/example-crew/provider`. It is a registered public provider contribution. It discovers one configured existing Crew member and creates fresh AgentUI-owned conversations against it. It never imports existing Crew conversation history. Crew remains the execution, approval, cancellation and recovery authority. The [example README](../../examples/crew/README.md) describes configuration and behavior.
+The extension is `crewProvider` from `agentui-extension-crew/provider`. It is a registered public provider contribution. It discovers one configured existing Crew member and creates fresh AgentUI-owned conversations against it. It never imports existing Crew conversation history. Crew remains the execution, approval, cancellation and recovery authority. The [example README](../../extensions/crew/README.md) describes configuration and behavior.
 
 The deployment model is the one in [AGENTS.md](../../AGENTS.md). One owner runs AgentUI and Crew on a private overlay network. There is no device pairing or service attestation.
 
@@ -35,7 +35,7 @@ The run did not exercise protected approvals, Stop, cancellation races, owner-de
 
 The controlled tests drive the extension through its public HTTP and SSE boundary against a local fixture. They do not start Crew PostgreSQL, Temporal, workers or native engines.
 
-[`examples/crew/tests/provider.test.mjs`](../../examples/crew/tests/provider.test.mjs) covers the Crew extension:
+[`extensions/crew/tests/provider.test.mjs`](../../extensions/crew/tests/provider.test.mjs) covers the Crew extension:
 
 - Creation, streaming, approval, Stop and SQLite reopen: `Crew public entry creates, observes actual SSE text, approves, stops and replaces its baseline on SQLite reopen`.
 - No external history: `Crew discovery, creation and host restart touch only the member, owned conversation and its observation, never a listing`. It records every request path. Connection, discovery and creation call exactly `GET /v1/capabilities`, `GET /v1/members`, `POST /v1/conversations` and `POST /v1/conversations/{owned}/events`. After a host restart the calls are exactly `GET /v1/capabilities`, `GET /v1/members` and `POST /v1/conversations/{owned}/events`. The fixture serves the excluded listing route `GET /v1/conversations` with a foreign conversation in it, so a listing call or any foreign conversation path fails the assertion.
@@ -47,7 +47,7 @@ The controlled tests drive the extension through its public HTTP and SSE boundar
 - Permissions: `Crew lists every applicable active scope and refuses foreign or changed-scope revocation before POST`, `Crew lost revoke ACK stays uncertain after list absence and host restart without another POST` and the browser permission tests.
 - Failure mapping: `Crew maps HTTP, transport and contract failures to typed provider failures without leaking details`.
 
-[`examples/crew/tests/decision-reconciliation.test.mjs`](../../examples/crew/tests/decision-reconciliation.test.mjs) runs `examples/crew/run.mjs` as a child process against a controlled Crew with a decision ledger. It kills the host with `SIGKILL` after Crew committed a named decision, and in other runs before Crew committed it, then restarts it on the same SQLite directory. It also covers a dropped reply, a competing decision, an expired card, a receipt read that returns `404`, `503` or a dropped connection, an absent capability, and fresh `decision_conflict` and `decision_unverifiable` refusals. A decision whose host stopped before Crew committed it stays uncertain until a later reconcile reads a definitive record: Crew committing that decision, a competing decision, or the card closing or expiring. The host never resends it. Each process test counts decide POSTs, receipt reads and ledger effects. `decision verdict table follows Crew decision-receipt semantics` checks the classification table directly.
+[`extensions/crew/tests/decision-reconciliation.test.mjs`](../../extensions/crew/tests/decision-reconciliation.test.mjs) runs `extensions/crew/run.mjs` as a child process against a controlled Crew with a decision ledger. It kills the host with `SIGKILL` after Crew committed a named decision, and in other runs before Crew committed it, then restarts it on the same SQLite directory. It also covers a dropped reply, a competing decision, an expired card, a receipt read that returns `404`, `503` or a dropped connection, an absent capability, and fresh `decision_conflict` and `decision_unverifiable` refusals. A decision whose host stopped before Crew committed it stays uncertain until a later reconcile reads a definitive record: Crew committing that decision, a competing decision, or the card closing or expiring. The host never resends it. Each process test counts decide POSTs, receipt reads and ledger effects. `decision verdict table follows Crew decision-receipt semantics` checks the classification table directly.
 
 The generic provider host tests in `tests/application/provider-*.test.mjs` cover the contract the extension relies on:
 
@@ -78,10 +78,10 @@ npm ci
 npm run build
 npm run check
 npm run lint
-node --test examples/crew/tests/provider.test.mjs
+node --test extensions/crew/tests/provider.test.mjs
 npm test
 ```
 
-`node --test examples/crew/tests/provider.test.mjs` passed 94 of 94 tests. `npm test` passed 3225 of 3230 tests, with 5 skipped and none failed.
+`node --test extensions/crew/tests/provider.test.mjs` passed 94 of 94 tests. `npm test` passed 3225 of 3230 tests, with 5 skipped and none failed.
 
 The real run above is the live evidence. It is recorded in the `agentui-osyo` log. No logs from it are committed.

@@ -74,7 +74,7 @@ React module props carry conversation scope, activity snapshots, and model-neutr
 The shell retains recovery and compatibility controls.
 
 Pets, MCP control, and Crew are the three planned example extensions.
-Crew transport, authentication, and cursors belong in `examples/crew` when implemented.
+Crew transport, authentication, and cursors belong in `extensions/crew` when implemented.
 Core host code uses generic provider identities.
 The SDK exports [backend provider contracts](provider-contracts.md) and [extension authoring contracts](extension-sdk.md).
 Typed frontend-tool registration is a contract only. Provider lifecycle runtime, frontend-tool registration runtime, and frontend-tool delivery remain downstream tasks.

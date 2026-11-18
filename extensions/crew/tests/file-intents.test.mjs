@@ -3,7 +3,7 @@ import test from 'node:test';
 import { chmod, mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fileIntents } from '@agentui/example-crew/file-intents';
+import { fileIntents } from 'agentui-extension-crew/file-intents';
 
 test('file adapter replaces an existing broad temporary-file mode with private permissions', async t => {
   const directory = await mkdtemp(join(tmpdir(), 'agentui-intent-mode-'));

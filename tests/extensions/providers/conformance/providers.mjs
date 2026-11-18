@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, request as forward } from 'node:http';
-import { crewProvider } from '@agentui/example-crew/provider';
-import { crewService } from '../../../../examples/crew/tests/support/crew-service.mjs';
+import { crewProvider } from 'agentui-extension-crew/provider';
+import { crewService } from '../../../../extensions/crew/tests/support/crew-service.mjs';
 import { instrument } from './instrument.mjs';
 import { ledgerExtension, ledgerService } from './ledger.mjs';
 
