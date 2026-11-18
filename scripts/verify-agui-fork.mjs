@@ -1,15 +1,14 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { chmod, copyFile, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
+import { chmod, copyFile, mkdir, mkdtemp, readdir, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, delimiter, dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-import { consumerScripts, measureVerifierSources, verifyFork } from './lib/agui-fork.mjs';
+import { CONSUMER_RECORD_SCOPE, OFFLINE_RECORD_SCOPE, consumerScripts, measureVerifierSources, verifyFork, writeConsumerScripts } from './lib/agui-fork.mjs';
 import { digest } from './lib/agui-fork/bytes.mjs';
 import { verifyConsumerLock, verifyInstalled } from './lib/agui-fork/consumer.mjs';
 import { tarVersion } from './lib/agui-fork/archives.mjs';
-import { RETAINED_CONSUMER_RECORD_SCOPE, verifyCurrentReceipt } from './lib/agui-fork/ledger.mjs';
 
 const args = process.argv.slice(2);
 assert.ok(args.length === 0 || (args.length === 1 && args[0] === '--offline'), 'Usage: node scripts/verify-agui-fork.mjs [--offline]');
@@ -30,10 +29,7 @@ const baseRecord = { result: 'PASS', sourceRevision: fork.metadata.sourceRevisio
   qualificationSha256: fork.ledger.sha256, ...runtime, sourceSha256: sources.sha256, tar };
 verifyConsumerLock(join(checks, 'consumer'), fork);
 if (offline) {
-  const receipt = verifyCurrentReceipt(fork, sources.sha256);
-  console.log(JSON.stringify({ ...baseRecord, scope: 'retained archives, evidence, source lock, fixtures, frozen consumer lock and current full-consumer receipt',
-    currentReplay: { log: fork.ledger.currentReplay.log, platform: receipt.platform, arch: receipt.arch },
-    localAguiArchives: fork.packages.size, installed: false }));
+  console.log(JSON.stringify({ ...baseRecord, scope: OFFLINE_RECORD_SCOPE, localAguiArchives: fork.packages.size, installed: false }));
 } else {
   await qualifyInstalledConsumer(fork, sources);
 }
@@ -74,9 +70,7 @@ async function qualifyInstalledConsumer(fork, sources) {
     await copyExactly(join(fork.folder, 'qualification-fixtures/pi'), join(consumer, 'test'), piFixtures, 'Pi fixtures');
     await copyFile(join(fork.folder, fork.codexFixture), env.AGUI49_CODEX_FIXTURE);
     await chmod(env.AGUI49_CODEX_FIXTURE, 0o755);
-    for (const file of consumerScripts) {
-      await writeFile(join(consumer, basename(file)), sources.bytes.get(file));
-    }
+    await writeConsumerScripts(consumer, sources);
     npm = run('npm', ['--version'], { capture: true }).trim();
     run('npm', ['ci', '--ignore-scripts', '--include=optional', '--no-audit', '--no-fund']);
     verifyConsumerLock(consumer, fork);
@@ -89,5 +83,5 @@ async function qualifyInstalledConsumer(fork, sources) {
     throw error;
   }
   await rm(directory, { recursive: true, force: true });
-  console.log(JSON.stringify({ ...baseRecord, scope: RETAINED_CONSUMER_RECORD_SCOPE, npm, temporaryDirectory: tmpdir(), results }));
+  console.log(JSON.stringify({ ...baseRecord, scope: CONSUMER_RECORD_SCOPE, npm, temporaryDirectory: tmpdir(), results }));
 }

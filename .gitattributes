@@ -2,8 +2,3 @@ tests/protocol/fixtures/upstream/** -text
 vendor/ag-ui/** -text
 tests/dependencies/ag-ui/consumer/** -text
 docs/protocol/conformance.json text eol=lf
-scripts/verify-agui-fork.mjs -text
-scripts/lib/agui-fork.mjs -text
-scripts/lib/agui-fork/** -text
-tests/dependencies/ag-ui/*.mjs -text
-tests/dependencies/ag-ui/*.cjs -text

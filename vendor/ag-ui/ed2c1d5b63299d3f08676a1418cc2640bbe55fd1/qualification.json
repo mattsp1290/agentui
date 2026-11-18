@@ -14,11 +14,6 @@
       "successfulCondition": "The controlled consumer passed with an external temporary directory outside an ESM package scope."
     }
   ],
-  "currentReplay": {
-    "log": "evidence/current-receipt-node-qualification.log.gz",
-    "inputLedger": "evidence/current-receipt-input-ledger.json.gz",
-    "measuredBase": "180a4091943c97724b03f0a70b69128cb4cacac4"
-  },
   "evidence": [
     {
       "path": "evidence/node-qualification.log.gz",
