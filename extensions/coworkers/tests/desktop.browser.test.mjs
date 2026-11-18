@@ -16,8 +16,8 @@ async function coworkersEntry(remote) {
   return { kind: 'installed', directory: fileURLToPath(new URL('coworkers/', root)), manifest: await manifestOf('coworkers'), installations: [{ id: 'team',
     instance: coworkersInstance, service: remote.origin, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: '1', resolve: async () => remote.token } }] };
 }
-async function page(t, host, colorScheme = 'light') {
-  const context = await host.browser.newContext({ colorScheme, viewport: { width: 1280, height: 800 } });
+async function page(t, host, colorScheme = 'light', viewport = { width: 1280, height: 800 }) {
+  const context = await host.browser.newContext({ colorScheme, viewport });
   const page = await context.newPage();
   page.setDefaultTimeout(20_000);
   const violations = [];
@@ -116,6 +116,86 @@ test('Chat on a coworker card opens the first of several chats in list order; Ne
   assert.equal(selected, 0, 'the first chat in catalog order is opened');
   assert.equal(await view.page.evaluate(() => window.location.hash), '', 'no route change');
 });
+
+test('the directory says when coworkers.list was truncated, and only then', { timeout: 90_000 }, async t => {
+  for (const truncated of [false, true]) {
+    // The server lists at most 500 coworkers, so 501 is the smallest directory that truncates.
+    const coworkers = truncated ? Array.from({ length: 501 }, (_, n) => ({ coworkerId: `c-${n}`, name: `Coworker ${n}`, role: 'Helper',
+      workspace: 'read_write', slack: false, instructions: 'i' })) : undefined;
+    const remote = await coworkersService(t, coworkers ? { coworkers } : {});
+    const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+    const view = await page(t, host);
+    await openWorkspace(view, 'Coworkers');
+    const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
+    await workspace.getByRole('navigation', { name: 'Coworkers app bar' }).getByRole('button', { name: 'Coworkers', exact: true }).click();
+    const directory = workspace.getByRole('region', { name: 'Coworker directory' });
+    // Badges come from coworkers.list, so once one shows the list result has been applied.
+    await directory.getByText('Read and write workspace').first().waitFor();
+    const notice = directory.getByRole('status').filter({ hasText: 'Details for some coworkers were not loaded.' });
+    if (truncated) await notice.waitFor();
+    assert.equal(await notice.count(), truncated ? 1 : 0, `truncated: ${truncated}`);
+  }
+});
+
+// Narrow layout: the pane moves to the conversation only when a selection arrives for an attempt still being waited on.
+const narrowNavigations = [
+  { name: 'a section toggle', async start(workspace, remote) {
+    const release = remote.holdConversations();
+    await workspace.getByRole('button', { name: 'New chat', exact: true }).click();
+    await wait(() => remote.calls.some(call => call.method === 'POST' && call.path === '/v1/conversations'), 'create held');
+    // A second attempt while the app is busy resolves at once without changing the selection.
+    await workspace.getByRole('button', { name: 'New chat', exact: true }).click();
+    return release;
+  }, async leave(workspace) {
+    const sections = workspace.getByRole('group', { name: 'Coworkers sections' });
+    await sections.getByRole('button', { name: 'Coworkers', exact: true }).click();
+    await sections.getByRole('button', { name: 'Chat', exact: true }).click();
+  } },
+  { name: 'Show all', async start(workspace, remote) {
+    await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+    const release = remote.holdConversations();
+    await workspace.getByRole('button', { name: 'Chat with Grace' }).click();
+    await wait(() => remote.calls.some(call => call.method === 'POST' && call.path === '/v1/conversations'), 'create held');
+    return release;
+  }, async leave(workspace) {
+    await workspace.getByRole('button', { name: /Show all$/ }).click();
+  } },
+  { name: 'the Chats back button', async start(workspace, remote) {
+    await workspace.getByRole('button', { name: 'New chat', exact: true }).click();
+    await wait(async () => await workspace.locator('.coworkers-workspace').getAttribute('data-pane') === 'conversation', 'first chat opens the conversation pane');
+    await workspace.getByRole('button', { name: 'Coworkers', exact: true }).click();
+    const release = remote.holdConversations();
+    await workspace.getByRole('button', { name: 'Chat with Grace' }).click();
+    await wait(() => remote.calls.filter(call => call.method === 'POST' && call.path === '/v1/conversations').length === 2, 'create held');
+    return release;
+  }, async leave(workspace) {
+    await workspace.locator('.coworkers-main').getByRole('button', { name: 'Chats', exact: true }).click();
+  } },
+];
+for (const navigation of narrowNavigations) {
+  test(`in the narrow layout ${navigation.name} drops the wait, so a later selection keeps the chat list`, { timeout: 60_000 }, async t => {
+    const remote = await coworkersService(t);
+    const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+    const view = await page(t, host, 'light', { width: 560, height: 800 });
+    await openWorkspace(view, 'Coworkers');
+    const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
+    const pane = () => workspace.locator('.coworkers-workspace').getAttribute('data-pane');
+    assert.ok(await workspace.evaluate(node => node.getBoundingClientRect().width) < 640, 'the workspace is narrow');
+    assert.equal(await pane(), 'list');
+    assert.equal(await workspace.locator('.coworkers-main').evaluate(node => getComputedStyle(node).display), 'none', 'narrow layout shows one pane');
+    const release = await navigation.start(workspace, remote);
+    const current = workspace.locator('.coworkers-chat-card[aria-current="page"]');
+    assert.equal(await current.count(), 0, 'the held chat is not selected yet');
+    await navigation.leave(workspace);
+    await wait(async () => await pane() === 'list', 'back on the chat list');
+    release();
+    // The held creation completes and becomes the selection after the wait was dropped.
+    await wait(async () => (await current.count()) === 1, 'the created chat is selected');
+    await new Promise(resolve => setTimeout(resolve, 500));
+    assert.equal(await pane(), 'list', 'the pane stays on the chat list');
+    assert.equal(await workspace.locator('.coworkers-chat-list').isVisible(), true);
+  });
+}
 
 test('without a Coworkers installation the workspace names the configuration and token variable', { timeout: 60_000 }, async t => {
   const host = await extensionFixture(t, { extensions: [] });

@@ -103,6 +103,9 @@ test('after an unknown outcome the member form locks its fields and retries the 
   await form.getByRole('button', { name: 'Create member' }).click();
   // The host deadline replies before Crew does; Crew still has the request.
   await form.getByRole('alert').getByText('Crew may already have created this member').waitFor();
+  const unconfirmed = await form.getByRole('alert').textContent();
+  assert.match(unconfirmed, /Cancel stops retrying; Crew may still have created the member, so check the member list\./, 'Cancel does not claim to discard the request');
+  assert.doesNotMatch(unconfirmed, /Cancel to discard/);
   for (const field of [form.getByRole('textbox', { name: 'Profile' }), form.getByRole('combobox', { name: 'Engine' }), form.getByRole('textbox', { name: 'Instructions' })]) {
     assert.equal(await field.isDisabled(), true, 'fields stay locked while the outcome is unknown');
   }
@@ -113,6 +116,40 @@ test('after an unknown outcome the member form locks its fields and retries the 
   await wait(async () => !(await form.isVisible()), 'the form closes once Crew confirms');
   assert.equal(f.remote.members.length, 3, 'the retry created no second member');
   await wait(async () => (await sidebar.locator('.crew-member-row[aria-current="true"]').textContent()).includes('claude · test'), 'created member selected');
+});
+
+test('a create request that settles after Cancel neither closes a newly opened member form nor changes the selection', { timeout: 90_000 }, async t => {
+  const f = await open(t);
+  const row = f.page.locator('[data-extension="crew"]');
+  await wait(async () => (await row.locator('.extension-state').textContent().catch(() => '')) === 'Ready', 'Crew ready');
+  await f.page.getByRole('button', { name: 'Open Crew' }).click();
+  const sidebar = f.page.getByRole('navigation', { name: 'Crew members' });
+  await sidebar.getByText('pi · research').waitFor();
+  const current = sidebar.locator('.crew-member-row[aria-current="true"]');
+  await wait(async () => (await current.count()) === 1, 'a member selected');
+  const before = await current.textContent();
+  await sidebar.getByRole('button', { name: 'Add member', exact: true }).first().click();
+  const form = f.page.getByRole('form', { name: 'Add member' });
+  const release = Promise.withResolvers();
+  f.remote.holdMembers(release.promise);
+  await form.getByRole('combobox', { name: 'Engine' }).selectOption('claude');
+  await form.getByRole('textbox', { name: 'Profile' }).fill('test');
+  await form.getByRole('button', { name: 'Create member' }).click();
+  await form.getByRole('button', { name: 'Creating…' }).waitFor();
+  await form.getByRole('button', { name: 'Cancel', exact: true }).click();
+  await wait(async () => !(await form.isVisible()), 'Cancel closes the form while the request is held');
+
+  await sidebar.getByRole('button', { name: 'Add member', exact: true }).first().click();
+  await form.getByRole('textbox', { name: 'Profile' }).fill('research');
+  f.remote.holdMembers(null);
+  release.resolve();
+  // The first request completes and the workspace refreshes to show the new member; only then can the old form react.
+  await wait(() => f.remote.members.length === 3, 'Crew created the held request');
+  await sidebar.getByText('claude · test').waitFor();
+  await new Promise(resolve => setTimeout(resolve, 1_000));
+  assert.equal(await form.isVisible(), true, 'the newer form stays open');
+  assert.equal(await form.getByRole('textbox', { name: 'Profile' }).inputValue(), 'research', 'the newer form keeps its input');
+  assert.equal(await current.textContent(), before, 'the selection is unchanged');
 });
 
 test('without a Crew installation the workspace shows setup guidance and calls nothing but the host', { timeout: 60_000 }, async t => {

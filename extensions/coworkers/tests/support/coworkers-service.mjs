@@ -8,13 +8,14 @@ const sha = text => createHash('sha256').update(text).digest('hex');
  * `run`, `complete`, `fail`, `markUncertain`. With `autoReply` every submission completes at once with `Reply: <text>`.
  * `down()` resets every connection until `up()`. `loseNext(route)` commits the next matching command and drops its reply.
  * `invisible(requestId)` hides a request from snapshots and receipts (a read that returns 404 for a committed send).
+ * `holdConversations()` holds conversation creation until the returned function releases it.
  */
 export async function coworkersService(t, { token = 'coworkers-test-token', coworkers = [
   { coworkerId: 'ada', name: 'Ada', role: 'Researcher', workspace: 'read_only', slack: false, instructions: 'Research carefully.' },
   { coworkerId: 'grace', name: 'Grace', role: 'Engineer', workspace: 'read_write', slack: true, instructions: 'Ship small changes.' },
 ], autoReply = false, requestContract = 'sqlite-outbox-keyed-admission-v1', maxPromptBytes = 16384, maxQueued = 4 } = {}) {
   const conversations = new Map(), requests = new Map(), hidden = new Set(), calls = [];
-  let isDown = false, lose = null, loseSends = false;
+  let isDown = false, lose = null, loseSends = false, conversationHold = null;
   const coworkerView = coworker => ({ coworkerId: coworker.coworkerId, name: coworker.name, role: coworker.role, workspace: coworker.workspace,
     slack: coworker.slack, instructions: { bytes: Buffer.byteLength(coworker.instructions), digest: sha(coworker.instructions) } });
   const receipt = request => ({ apiVersion: '1', conversationId: request.conversationId, requestId: request.requestId,
@@ -52,6 +53,7 @@ export async function coworkersService(t, { token = 'coworkers-test-token', cowo
     if (method === 'GET' && url.pathname === '/v1/conversations') return json(200, { apiVersion: '1',
       conversations: [...conversations.values()].map(conversation => snapshot(conversation).state), next: null });
     if (method === 'POST' && url.pathname === '/v1/conversations') {
+      await conversationHold;
       if (!coworkers.some(coworker => coworker.coworkerId === input?.coworkerId)) return json(404, { error: 'not_found' });
       const existing = conversations.get(input.conversationId);
       if (existing && existing.coworkerId !== input.coworkerId) return json(409, { error: 'conflict' });
@@ -94,6 +96,7 @@ export async function coworkersService(t, { token = 'coworkers-test-token', cowo
     invisible: requestId => hidden.add(requestId), visible: requestId => hidden.delete(requestId),
     loseNext(method, match) { lose = { method, match }; },
     loseReplies(on) { loseSends = on; },
+    holdConversations() { const hold = Promise.withResolvers(); conversationHold = hold.promise; return () => { conversationHold = null; hold.resolve(); }; },
     down() { isDown = true; server.closeAllConnections(); }, up() { isDown = false; },
     addRequest(conversationId, request) { requests.set(request.requestId, { conversationId, ...request }); conversations.get(conversationId).requests.push(request.requestId); },
   };
