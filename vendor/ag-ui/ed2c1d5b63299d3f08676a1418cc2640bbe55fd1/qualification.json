@@ -228,6 +228,17 @@
       "compressedSha256": "0aa1e51194b1dca1a7bb8c7e95a6ac2d2737d60de750851777597ad4b1bc5ad7",
       "encoding": "gzip; raw retained without edits",
       "role": "Exact qualification ledger bytes copied before the corresponding full-consumer invocation; the receipt qualificationSha256 binds to these bytes before its own evidence is appended."
+    },
+    {
+      "path": "evidence/qualification-ledger-pre-ci-migration.json.gz",
+      "rawBytes": 13305,
+      "rawSha256": "ee4427c5d3d59acbcd279ac0c70485db2682c886f591d04094a276c074ac5490",
+      "retainedBytes": 13305,
+      "retainedSha256": "ee4427c5d3d59acbcd279ac0c70485db2682c886f591d04094a276c074ac5490",
+      "compressedBytes": 3869,
+      "compressedSha256": "87802564daefa541d893e5b799c7fe48262d9e4ec8e5d73137255640b13de1e8",
+      "encoding": "gzip; raw retained without edits",
+      "role": "Byte-exact qualification ledger before the CI-qualification migration, including its currentReplay index naming the last manually recorded receipt; superseded by the CI full-run artifact as the current qualification."
     }
   ],
   "metadataHistory": "evidence/qualification-node-replay-index.json.gz"
