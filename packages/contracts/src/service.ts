@@ -8,8 +8,8 @@ import { IMAGE_FAILURE_KINDS, parseImageInputCapability, parseImageAttachment, p
 import type { ImageAttachment, ImageId, ImageInputCapability, UploadId } from './image.js';
 import { parseConversationPermissions } from './permissions.js';
 import type { ConversationPermissions } from './permissions.js';
-import { parseProviderObservationStatus } from './observation.js';
-import type { ProviderObservationStatus } from './observation.js';
+import { parseContinuationCarried, parseContinuationRefusal, parseConversationClosure, parseProviderObservationStatus } from './observation.js';
+import type { ContinuationCarried, ContinuationRefusal, ConversationClosure, ProviderObservationStatus } from './observation.js';
 import { record, exact, identifier, count, utf8Bytes } from './decode.js';
 import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
@@ -35,6 +35,16 @@ export type ServiceFailureKind = typeof SERVICE_FAILURE_KINDS[number];
 export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
 }
+export type ContinuationAction = 'read' | 'check' | 'start';
+export interface ContinuationView {
+  readonly predecessor: ConversationScope | null;
+  readonly carried: ContinuationCarried | null;
+  /** `unknown` while no loaded provider can read the conversation's saved closure; `null` means it is open. */
+  readonly closure: ConversationClosure | 'unknown' | null;
+  readonly successor: null | { readonly kind: 'starting' | 'pending' | 'unconfirmed' }
+    | { readonly kind: 'refused'; readonly refusal: ContinuationRefusal }
+    | { readonly kind: 'confirmed'; readonly scope: ConversationScope };
+}
 export type ServiceRequest =
   | { readonly op: 'output-list'; readonly scope: ConversationScope }
   | { readonly op: 'output-read'; readonly scope: ConversationScope; readonly outputId: OutputId }
@@ -48,6 +58,7 @@ export type ServiceRequest =
   | { readonly op: 'conversation-permissions'; readonly scope: ConversationScope }
   | { readonly op: 'conversation-agent'; readonly scope: ConversationScope }
   | { readonly op: 'provider-observation'; readonly scope: ConversationScope; readonly action: 'read' | 'retry' }
+  | { readonly op: 'continuation'; readonly scope: ConversationScope; readonly action: ContinuationAction }
   | { readonly op: 'submit'; readonly command: ClientCommand }
   | { readonly op: 'receipt' | 'reconcile' | 'abandon'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
@@ -102,6 +113,7 @@ export interface ServiceValueMap {
   readonly 'conversation-permissions': ConversationPermissions;
   readonly 'conversation-agent': AgentDescriptor | null;
   readonly 'provider-observation': ProviderObservationStatus;
+  readonly continuation: ContinuationView;
   readonly create: ConversationScope;
   readonly submit: SubmitResult;
   readonly receipt: Receipt | null;
@@ -130,6 +142,8 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
   conversationAgent(scope: ConversationScope): Promise<AgentDescriptor | null>;
   providerObservation(input: { readonly scope: ConversationScope; readonly action: 'read' | 'retry' }): Promise<ProviderObservationStatus>;
+  /** `read` reports stored state, `check` only looks up unsettled attempts, and `start` continues a concluded conversation once. */
+  continuation(input: { readonly scope: ConversationScope; readonly action: ContinuationAction }): Promise<ContinuationView>;
   conversation(scope: ConversationScope): ConversationPort<E, P>;
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
   /** Stop waiting on a provider send that blocks its conversation. The result says nothing about whether the send took effect. */
@@ -176,6 +190,10 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       exact(input, ['op', 'scope', 'action']);
       if (input.action !== 'read' && input.action !== 'retry') throw new Error('Invalid observation action');
       return { op: 'provider-observation', scope: parseScope(input.scope), action: input.action };
+    case 'continuation':
+      exact(input, ['op', 'scope', 'action']);
+      if (input.action !== 'read' && input.action !== 'check' && input.action !== 'start') throw new Error('Invalid continuation action');
+      return { op: 'continuation', scope: parseScope(input.scope), action: input.action };
     case 'create': exact(input, ['op', 'scope', 'agentId']); return { op: 'create', scope: parseScope(input.scope), agentId: identifier(input.agentId) };
     case 'submit': {
       exact(input, ['op', 'command']);
@@ -278,7 +296,31 @@ function catalogEntries(value: unknown) {
     return { scope: parseScope(entry.scope), preview: entry.preview };
   });
 }
-type ContextualOp = 'frontend-binding' | 'output-list' | 'output-read';
+/** Linked segments share the requested conversation's host and are never that conversation. */
+function parseContinuationView(value: unknown, scope: ConversationScope): ContinuationView {
+  const input = record(value, ['predecessor', 'carried', 'closure', 'successor']);
+  const linked = (candidate: unknown): ConversationScope => {
+    const other = parseScope(candidate);
+    if (other.hostId !== scope.hostId || sameScope(other, scope)) throw new Error('Foreign continuation scope');
+    return other;
+  };
+  const predecessor = input.predecessor === null ? null : linked(input.predecessor);
+  const carried = input.carried === null ? null : parseContinuationCarried(input.carried);
+  if (carried && !predecessor) throw new Error('Carried turns require a predecessor');
+  let successor: ContinuationView['successor'] = null;
+  if (input.successor !== null) {
+    const next = record(input.successor);
+    switch (next.kind) {
+      case 'starting': case 'pending': case 'unconfirmed': exact(next, ['kind']); successor = { kind: next.kind }; break;
+      case 'refused': exact(next, ['kind', 'refusal']); successor = { kind: 'refused', refusal: parseContinuationRefusal(next.refusal) }; break;
+      case 'confirmed': exact(next, ['kind', 'scope']); successor = { kind: 'confirmed', scope: linked(next.scope) }; break;
+      default: throw new Error('Invalid continuation successor');
+    }
+  }
+  if (predecessor && successor?.kind === 'confirmed' && sameScope(predecessor, successor.scope)) throw new Error('Cyclic continuation');
+  return { predecessor, carried, closure: input.closure === null || input.closure === 'unknown' ? input.closure : parseConversationClosure(input.closure), successor };
+}
+type ContextualOp = 'frontend-binding' | 'output-list' | 'output-read' | 'continuation';
 type ResponseRequest = { readonly op: Exclude<keyof ServiceValueMap, ContextualOp> } | Extract<ServiceRequest, { readonly op: ContextualOp }>;
 type RequestFor<K extends keyof ServiceValueMap> = ResponseRequest & { readonly op: K };
 const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, request: RequestFor<K>) => ServiceValueMap[K] } = {
@@ -321,6 +363,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   },
   'conversation-permissions': parseConversationPermissions,
   'provider-observation': parseProviderObservationStatus,
+  continuation: (value, request) => parseContinuationView(value, request.scope),
   'conversation-agent': value => value === null ? null : agentDescriptor(value),
   create: parseScope,
   submit(value) {

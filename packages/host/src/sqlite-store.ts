@@ -160,6 +160,14 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if ((row.status === 'observed') !== (observation !== null)) throw new Error('Invalid creation status');
     return { ...original, status: row.status, observation };
   }
+  /** Every creation that names this conversation as its predecessor, oldest first. */
+  successors(scope: ConversationScope): readonly StoredCreation[] {
+    return this.db.prepare(`SELECT conversation FROM provider_creations INDEXED BY provider_creations_from
+      WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId')=? ORDER BY rowid`).all(...key(scope)).flatMap(row => {
+      const successor = this.creation(parseScope({ hostId: scope.hostId, conversationId: row.conversation }));
+      return successor ? [successor] : [];
+    });
+  }
   reserveCreation(original: ProviderCreation): void {
     this.transaction(() => {
       const scope = original.intent.scope;
@@ -285,9 +293,13 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.onProviderCommit?.(original.intent.scope);
     return committed;
   }
+  /** A conversation with a confirmed successor is listed only through its newest segment. */
   listConversations(hostId: string, after: string | null, limit: number): readonly ConversationScope[] {
-    return this.db.prepare('SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ORDER BY conversation LIMIT ?')
-      .all(hostId, after ?? '', limit)
+    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? AND conversation NOT IN (
+      SELECT json_extract(original,'$.intent.from.scope.conversationId') FROM provider_creations INDEXED BY provider_creations_from
+      WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId') IS NOT NULL AND json_extract(observation,'$.kind')='confirmed')
+      ORDER BY conversation LIMIT ?`)
+      .all(hostId, after ?? '', hostId, limit)
       .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   snapshot(scope: ConversationScope): Snapshot<P> {

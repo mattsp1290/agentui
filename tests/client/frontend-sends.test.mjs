@@ -57,7 +57,7 @@ test('public response parsing requires binding and output context while preservi
     export const outputId = parseOutputId('output-' + 'a'.repeat(64));`,
   cases: [
     ["const response: ServiceResponse<ServiceValueMap['metadata']> = parseServiceResponse({ op: 'metadata' }, null); void response;", null],
-    ["function transport<K extends Exclude<ServiceRequest['op'], 'frontend-binding' | 'output-list' | 'output-read'>>(request: { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
+    ["function transport<K extends Exclude<ServiceRequest['op'], 'frontend-binding' | 'output-list' | 'output-read' | 'continuation'>>(request: { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
     ["const response: ServiceResponse<FrontendBinding> = parseServiceResponse({ op: 'frontend-binding', scope, id: 'command', action: 'recover' }, null); void response;", null],
     ["function transport<K extends ServiceRequest['op']>(request: ServiceRequest & { readonly op: K }): ServiceResponse<ServiceValueMap[K]> { return parseServiceResponse<K>(request, null); } void transport;", null],
     ["const response: ServiceResponse<ServiceValueMap['output-list']> = parseServiceResponse({ op: 'output-list', scope }, null); void response;", null],

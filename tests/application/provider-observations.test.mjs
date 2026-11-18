@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { canonicalJson } from '@agentui/contracts';
+import { ContinuationRefused } from '@agentui/host';
 import { observationFixture, actor, scope, events } from './provider-observations-fixture.mjs';
 import { until } from '../host/fixture.mjs';
 
@@ -248,4 +249,19 @@ test('a provider runs row alone does not confirm the offered original',async t=>
   const run={kind:'provider',identity:{conversation:scope,runId:operation.request.runId,authority:f.binding.authority},reference:{binding:f.binding,ref:{kind:'run',instance:f.provider.presentation.instance,opaqueId:operation.request.runId}}};
   f.database(db=>db.prepare('INSERT INTO runs(host,conversation,id,data) VALUES(?,?,?,?)').run(scope.hostId,scope.conversationId,operation.request.runId,canonicalJson(run)));
   await f.emit([f.batch()]);assert.equal(f.dump().frontend_runs.length,0);assert.throws(()=>f.inspect(),/Unknown frontend run/);
+});
+
+test('a concluded conversation whose send registered frontend observations is never continued', async t => {
+  let ended = false;
+  const f = await observationFixture(t, { configure(provider) {
+    provider.presentation.closure = () => ended ? { cause: 'cancelled' } : null;
+    provider.presentation.continuation = () => null;
+  } });
+  await f.submit();
+  assert.equal(JSON.parse(f.dump().commands[0].target).operation.observationProtocol, 'ag-ui-v1');
+  ended = true;
+  assert.equal(f.host.observationStatus(scope).kind, 'concluded');
+  await assert.rejects(f.host.continuation(scope, 'start', f.registry), ContinuationRefused);
+  assert.deepEqual(await f.host.continuation(scope, 'read'), { predecessor: null, carried: null, closure: 'cancelled', successor: null });
+  assert.equal(f.requests.filter(request => request.path === '/create').length, 1);
 });

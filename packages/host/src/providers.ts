@@ -5,10 +5,10 @@ import { aguiInput, offerInput } from './agui-input.js';
 import { observeProvider, ObservationFailure } from './provider-stream.js';
 import type { ProviderStream, ProviderStreamStore } from './provider-stream.js';
 import { randomUUID } from 'node:crypto';
-import { canonicalJson, copyJson, isOutputId, parseConversationClosure, parseConversationPermissions } from '@agentui/contracts';
+import { canonicalJson, copyJson, isOutputId, parseContinuationCarried, parseContinuationRefusal, parseConversationClosure, parseConversationPermissions } from '@agentui/contracts';
 import { identifier, record } from '@agentui/contracts/decode';
 import { backendProviderContractVersion, checkExtensionEntrypoint, parseExtensionManifest, validateExtensionLifetime } from '@agentui/sdk';
-import type { ConversationClosure, ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
+import type { ContinuationCarried, ContinuationRefusal, ConversationClosure, ConversationPermissions, ConversationScope, RunAuthority, FrontendEligibility, OutputId, OutputListing, OutputRead } from '@agentui/contracts';
 import { parseProviderCapture, providerOutcome, providerReference } from './provider-commands.js';
 import type { ProviderCapture, MatchedProviderCommand, ProviderTarget, ProviderObservation, ProviderAction } from './provider-commands.js';
 import { creationBinding, creationIntent, creationObservation, providerCreation, providerIdentity } from './provider-creation.js';
@@ -89,6 +89,7 @@ const outputsUnavailable = Object.freeze({ kind: 'unavailable', reason: 'outputs
 const outputsInvalid = Object.freeze({ kind: 'invalid', reason: 'outputs-invalid' } as const);
 const outputsUnsupported = Object.freeze({ kind: 'unsupported', reason: 'outputs-unsupported' } as const);
 const outputMissing = Object.freeze({ kind: 'missing', reason: 'output-missing' } as const);
+export type ContinuationOutcome = ContinuationCarried | { readonly refused: ContinuationRefusal };
 interface BoundProvider {
   outputs(original: StoredCreation): Promise<OutputListing>;
   outputs(original: StoredCreation, id: OutputId): Promise<OutputRead>;
@@ -101,6 +102,7 @@ interface BoundProvider {
   executeCommand(capture: ProviderCapture, fresh: boolean, beforeEffect: () => void): Promise<ProviderObservation>;
   observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream>;
   closure(original: StoredCreation, store: ProviderStreamStore): ConversationClosure | null;
+  continuation(original: StoredCreation): ContinuationOutcome | null;
   matches(selected: ProviderInstallation): boolean;
   close(): Promise<void>;
 }
@@ -321,6 +323,14 @@ function bindProvider<M extends ProviderModel, I extends string>(id: string, bac
         if (!checkpoint) return null;
         const result = copyJson(presentation.closure(presentation.decodeState(copyJson(checkpoint.state))));
         return result === null ? null : parseConversationClosure(record(result, ['cause']).cause);
+      } catch { return null; }
+    },
+    continuation(original) {
+      try {
+        if (!presentation.continuation || !original.intent.from || !original.observation) return null;
+        const result = copyJson(presentation.continuation(copyJson(original.observation.evidence)));
+        if (result === null) return null;
+        return Object.hasOwn(record(result), 'refused') ? { refused: parseContinuationRefusal(record(result, ['refused']).refused) } : parseContinuationCarried(result);
       } catch { return null; }
     },
     async readPermissions(original) {
@@ -666,6 +676,9 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
     closure(original: StoredCreation, store: ProviderStreamStore): ConversationClosure | null {
       return bindings.find(binding => binding.matches(original.installation))?.closure(original, store) ?? null;
     },
+    continuation(original: StoredCreation): ContinuationOutcome | null {
+      return bindings.find(binding => binding.matches(original.installation))?.continuation(original) ?? null;
+    },
     observe(original: StoredCreation, store: ProviderStreamStore, freshSnapshot?: boolean): Promise<ProviderStream> {
       return track(async () => {
         const binding = bindings.find(binding => binding.matches(original.installation));
@@ -702,4 +715,4 @@ export function createProviderRegistry(extensions: readonly ProviderExtension[])
 
 export type ProviderCreationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'capture' | 'execute'>;
 export type ProviderConversationOperations = Pick<ReturnType<typeof createProviderRegistry>, 'captureCommand' | 'executeCommand' | 'observe' | 'readPermissions' | 'assertFrontendInput' | 'conversationOutputs' | 'readOutput'>
-  & Partial<Pick<ReturnType<typeof createProviderRegistry>, 'closure'>>;
+  & Partial<Pick<ReturnType<typeof createProviderRegistry>, 'closure' | 'continuation' | 'statusOf'>>;

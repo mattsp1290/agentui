@@ -1,4 +1,4 @@
-import { record } from './decode.js';
+import { count, record } from './decode.js';
 
 const STOP_REASONS = ['unsupported', 'snapshot-unavailable', 'invalid-projection', 'recovery-failed',
   'retry-exhausted', 'provider-disconnected', 'original-provider-unavailable',
@@ -6,7 +6,8 @@ const STOP_REASONS = ['unsupported', 'snapshot-unavailable', 'invalid-projection
 const CLOSURES = ['cancelled', 'failed', 'exhausted'] as const;
 export type ObservationStopReason = typeof STOP_REASONS[number];
 export type ConversationClosure = typeof CLOSURES[number];
-export type ContinuationRefusal = 'busy' | 'limit' | 'unavailable' | 'continued-elsewhere';
+const REFUSALS = ['busy', 'limit', 'unavailable', 'continued-elsewhere'] as const;
+export type ContinuationRefusal = typeof REFUSALS[number];
 /** Counts of the earlier conversation's turns that a provider carried into its successor. */
 export interface ContinuationCarried {
   readonly carriedTurns: number;
@@ -24,6 +25,18 @@ export function parseConversationClosure(value: unknown): ConversationClosure {
   const cause = CLOSURES.find(cause => cause === value);
   if (!cause) throw new Error('Invalid conversation closure');
   return cause;
+}
+export function parseContinuationRefusal(value: unknown): ContinuationRefusal {
+  const refusal = REFUSALS.find(refusal => refusal === value);
+  if (!refusal) throw new Error('Invalid continuation refusal');
+  return refusal;
+}
+export function parseContinuationCarried(value: unknown): ContinuationCarried {
+  const input = record(value, ['carriedTurns', 'omittedTurns', 'uncertainTurns', 'carriedBytes', 'limitBytes']);
+  const carried = { carriedTurns: count(input.carriedTurns), omittedTurns: count(input.omittedTurns), uncertainTurns: count(input.uncertainTurns),
+    carriedBytes: count(input.carriedBytes), limitBytes: count(input.limitBytes) };
+  if (carried.carriedBytes > carried.limitBytes) throw new Error('Carried bytes exceed limit');
+  return carried;
 }
 export function parseProviderObservationStatus(value: unknown): ProviderObservationStatus {
   const input = record(value);

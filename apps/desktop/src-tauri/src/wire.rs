@@ -183,6 +183,13 @@ enum ObservationAction {
     Retry,
 }
 #[derive(Deserialize, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum ContinuationAction {
+    Read,
+    Check,
+    Start,
+}
+#[derive(Deserialize, Serialize)]
 #[serde(
     tag = "op",
     rename_all = "kebab-case",
@@ -231,6 +238,10 @@ enum Request {
     ProviderObservation {
         scope: Scope,
         action: ObservationAction,
+    },
+    Continuation {
+        scope: Scope,
+        action: ContinuationAction,
     },
     ConversationPermissions {
         scope: Scope,
@@ -389,6 +400,7 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
         | Request::ConversationAgent { scope }
         | Request::FrontendBinding { scope, .. }
         | Request::ProviderObservation { scope, .. }
+        | Request::Continuation { scope, .. }
         | Request::Receipt { scope, .. }
         | Request::Reconcile { scope, .. }
         | Request::Abandon { scope, .. } => Some(scope),
@@ -557,6 +569,9 @@ mod tests {
             json!({"op":"conversation-agent", "scope":scope()}),
             json!({"op":"provider-observation", "scope":scope(), "action":"read"}),
             json!({"op":"provider-observation", "scope":scope(), "action":"retry"}),
+            json!({"op":"continuation", "scope":scope(), "action":"read"}),
+            json!({"op":"continuation", "scope":scope(), "action":"check"}),
+            json!({"op":"continuation", "scope":scope(), "action":"start"}),
             command(json!({"kind":"send", "text":"Hello"})),
             command(json!({"kind":"approve", "pendingId":"pending", "choiceId":"yes"})),
             command(json!({"kind":"cancel", "runId":"run"})),
@@ -644,6 +659,7 @@ mod tests {
             "create",
             "conversation-permissions",
             "conversation-agent",
+            "continuation",
             "receipt",
             "reconcile",
             "abandon",
@@ -652,6 +668,7 @@ mod tests {
             let mut value = json!({"op":op, "scope":foreign});
             match op {
                 "create" => value["agentId"] = json!("agent"),
+                "continuation" => value["action"] = json!("start"),
                 "receipt" | "reconcile" | "abandon" => value["id"] = json!("command"),
                 "watch" => {
                     value["after"] = Value::Null;
@@ -788,6 +805,25 @@ mod tests {
             "foreign"
         )
         .is_err());
+    }
+
+    #[test]
+    fn continuation_shares_the_typescript_golden_cases() {
+        let cases: Vec<Value> = serde_json::from_str(include_str!(
+            "../../../../tests/client/fixtures/continuation-requests.json"
+        ))
+        .unwrap();
+        for case in cases {
+            let value = case["request"].clone();
+            let result = request(value.clone(), "host");
+            assert_eq!(result.is_ok(), case["valid"].as_bool().unwrap(), "{value}");
+            if let Ok(output) = result {
+                assert_eq!(output, value);
+                let mut foreign = value;
+                foreign["scope"]["hostId"] = json!("foreign");
+                assert!(request(foreign, "host").is_err());
+            }
+        }
     }
 
     #[test]

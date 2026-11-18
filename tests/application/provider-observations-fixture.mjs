@@ -67,7 +67,7 @@ export async function observationFixture(t, options = {}) {
   t.after(async () => { for (const entry of waiting.filter(item => item.kind === 'submit')) entry.finish(); await close(); server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); rmSync(directory, { recursive: true, force: true }); });
   const database = fn => { const db = new DatabaseSync(path); try { return fn(db); } finally { db.close(); } };
   const dump = () => database(db => Object.fromEntries(['conversations','commands','runs','provider_checkpoints','provider_event_ids','frontend_observation_runs','frontend_observation_events','frontend_runs','frontend_events','frontend_receipts','frontend_send_owners'].map(table => [table, db.prepare(`SELECT * FROM ${table} ORDER BY rowid`).all()])));
-  return { directory, path, requests, submissions, histories, database, dump, get host() { return host; }, get provider() { return provider; },
+  return { directory, path, requests, submissions, histories, database, dump, get host() { return host; }, get provider() { return provider; }, get registry() { return registry; },
     get binding() { return binding; }, retire: () => registry.close(),
     async restart(nextEnabled = enabled) { await close(); enabled = nextEnabled; await start(); },
     async resnapshot() { provider.disconnect(); await until(() => host.observationStatus(scope).kind === 'stopped'); return host.retryObservation(scope); },

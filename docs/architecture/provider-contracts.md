@@ -121,7 +121,7 @@ Pending and accepted evidence survives weaker lookup outcomes. A changed run ref
 Accepted and completed send effects persist their scoped provider run reference atomically with the receipt in the same database.
 These effects contain no transcript output and do not establish a terminal run outcome.
 Provider observation supplies transcript output independently of command acceptance. Approval and cancellation capture the scoped references retained by observation.
-The current integration uses wire version 12, SDK compatibility 0.11.0, package versions 0.0 and transcript projection 4.
+The current integration uses wire version 14, SDK compatibility 0.11.0, package versions 0.0 and transcript projection 4.
 It does not qualify a complete provider conversation or upgrade an existing Mac installation.
 
 ## Captured frontend offers
@@ -204,7 +204,7 @@ Formats 5 and 6 require both ownership tables, their command keys, owner run uni
 Private mixed-owner format-5 databases are unsupported. The host does not migrate unmerged capture schemas.
 Transcript migration precedes this schema transaction. A later schema failure can leave a successful transcript migration committed.
 Format 9 adds the terminal `abandoned` receipt state without changing the schema; format-8 openers refuse it.
-Wire 13 and SDK 0.11.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
+Wire 13 adds the `abandon` request. Wire 14 and SDK 0.11.0 require matching host/client releases and rebuilt extensions. Transcript projection remains 4.
 Desktop sends retain the original frontend tools before saving the exact offered command and its principal in the conversation's local journal.
 The composer and extension send actions share this admission path. Retrying never captures a replacement generation.
 There are at most 32 live or provisional captures. Released tools free their slot even when their original principal cannot acknowledge the unavailable notification.
@@ -262,7 +262,7 @@ A recovery snapshot that changes a reserved or closed decision is a validation e
 Shutdown or provider retirement during recovery waits for the pending snapshot and prevents its late result from committing or opening a replacement feed.
 The SDK has no snapshot cancellation operation, so a provider that does not settle its snapshot can delay shutdown or retirement.
 Automatic reconnect after `disconnected`, projection migration and generation replacement remain open work.
-The current integration uses wire version 12, transcript projection 4, SDK compatibility 0.11.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
+The current integration uses wire version 14, transcript projection 4, SDK compatibility 0.11.0 and package versions 0.0. It does not upgrade the installed Mac app or qualify the full provider lifecycle.
 
 ## Durable approval and Stop
 
@@ -412,7 +412,7 @@ The existing outbox and command store retain the original creation, provider gen
 `reconcileRevoke` resolves the original acknowledgement only when the provider has matching evidence.
 A later empty permission listing leaves an uncertain receipt unresolved. Retry of the same command ID preserves the saved intent without dispatching again.
 
-SDK compatibility 0.11.0 and wire 12 require rebuilt extensions and matching host and client releases.
+SDK compatibility 0.11.0 and wire 14 require rebuilt extensions and matching host and client releases.
 The host advances SQLite format 2 to 3 transactionally while preserving existing rows. Earlier hosts refuse format 3.
 Conversation modules receive a bound `permissions.read()` service and `commands.revokePermission(permissionId, scope)`.
 
@@ -461,3 +461,17 @@ Checkpoints saved before this change have no closure and decode unchanged.
 The desktop states that the conversation ended and why, offers no update check, disables Send and hides Stop. An incomplete message reads "Did not finish". Saved messages and the draft remain.
 
 Wire 12 and SDK compatibility 0.10.0 require matching host and client releases and rebuilt extensions. Core DB 7, transcript projection 4 and backend provider contract 1 are unchanged.
+
+## Same-chat continuation
+
+Service wire 14 adds the authenticated `continuation` operation. Its exact request contains only `op`, `scope` and `action`, where action is `read`, `check` or `start`. The browser never names a predecessor, agent, binding or attempt: the host continues the requested scope from its own confirmed record, with that record's installation and credential. Clients and the native request whitelist must update together.
+
+The answer is a `ContinuationView` for the requested scope: `predecessor` (the scope it continues, or `null`), `carried` (the counts its provider reported for the carried turns, or `null`), its own `closure` (`null` while open), and `successor`. A successor is `confirmed` with its scope, `starting` while this host holds the start lease, `pending` when the provider committed the continuation but has not delivered the carried context, `unconfirmed` when an attempt is reserved, attempted or uncertain, or `refused` with `busy`, `limit`, `unavailable` or `continued-elsewhere`. `confirmed`, `starting` and `pending` win in that order. Otherwise the newest attempt decides: a provider refusal of it outranks older unsettled attempts, because the provider had not sealed the predecessor for them. A `continued-elsewhere` refusal, a refusal the host cannot read and a refusal by the host never hide an older unsettled attempt, which may be the successor the provider sealed; the view then reads `unconfirmed`. With no unsettled attempt, the newest refusal applies. A provider can refuse before it checks its seal, so an older attempt it did commit can briefly read as refused; the next `check` or `start` looks it up and shows it `confirmed`. `carried` and refusals come from the provider's `continuation(evidence)` hook; a rejection without a readable refusal, a creation that was not dispatched, and a start the host refused before recording any attempt all read as `unavailable`. Linked scopes share the requested host and are never the requested scope, and a successor is never the predecessor.
+
+`read` touches only the store and makes no provider call. `check` looks up every unsettled successor attempt with the provider's reconcile operation and never creates again. `start` requires a confirmed predecessor with a recorded closure and no frontend observations; otherwise the host answers `invalid`. It holds one in-memory lease per predecessor, so concurrent starts share one attempt. Under the lease it first checks, then returns any confirmed, pending or in-flight attempt. Only when every attempt is uncertain or refused does it create a new successor scope and operation ID through the existing creation path with the predecessor. A refusal as `continued-elsewhere` checks the other attempts again, and the first confirmed attempt wins. After a restart a reserved or attempted successor is only looked up. An uncertain attempt never blocks a deliberate new one, because the provider service seals the predecessor for one successor.
+
+`check` and `start` answer within the `continuationReplyMs` host budget, 10 seconds by default, well under the 20-second client deadline. Work still running then continues, and the answer is the current view, which reads `starting` until the start lease ends. While no loaded provider serves the conversation's installation, because its extension is not loaded, failed to load or is being replaced, the host cannot read the saved closure: `check` and `start` answer `unavailable`, and `read` reports `closure` as `unknown`, `carried` as `null` and recorded refusals as `unavailable`.
+
+The successor's provider creation row is the durable record of an attempt; no table is added. The catalog omits any conversation with a confirmed successor, so a chain lists only its newest segment. Search candidates follow the catalog.
+
+SDK compatibility 0.11.0, core DB 9, transcript projection 4 and backend provider contract 1 are unchanged. The desktop does not offer Continue yet.
