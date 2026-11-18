@@ -58,7 +58,7 @@ Tokens never go in the file. Each installation names an environment variable, fo
 - A file the host would refuse (not version 2, or an extension `directory` that does not exist or has no `package.json`): one warning, and no server extensions. Relative directories resolve against the file's own directory.
 - A remote (`--ssh`) session ignores the file and prints one line that says so. Server extensions and their tokens are supported for a local host only.
 
-Bundled server entries load from the working tree. After rebuilding an extension, restart the launcher: a running host keeps the module it imported.
+These server entries load from the working tree. The default desktop build no longer contains the extensions' workspaces; they come from a connected customization repository, which will also replace this file. After rebuilding an extension, restart the launcher: a running host keeps the module it imported.
 
 ## Start a remote workspace
 

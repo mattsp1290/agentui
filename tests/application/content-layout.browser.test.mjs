@@ -36,9 +36,9 @@ test('committed layout arranges selected transcript and nested action with prote
   const main = await page.locator('.review-layout > .review-transcript').boundingBox(), aside = await page.locator('.review-layout > aside').boundingBox();
   assert.ok(main.x + main.width <= aside.x); assert.ok(Math.abs(main.y - aside.y) < 2);
   assert.equal(await page.locator('.review-layout > .review-transcript').evaluate(node => getComputedStyle(node).padding), '0px');
-  // The bundled in-repo extensions activate beside the two external namespaces.
+  // Only the external customization's namespaces activate: the product build bundles no extension.
   assert.deepEqual(await page.locator('.conversation-content [data-customization-state]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-customization-namespace')).sort()),
-    ['coworkers', 'crew', 'personal', 'transcript']);
+    ['personal', 'transcript']);
   assert.equal(await page.locator('.conversation-content').evaluate(node => {
     const authored = document.createElement('main'); node.append(authored);
     const padding = getComputedStyle(authored).padding; authored.remove(); return padding;

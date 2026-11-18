@@ -36,7 +36,7 @@ function isProductSource(path) {
   const parts = path.split('/');
   if (parts.some(part => ['node_modules', '.audit', '.git'].includes(part))) return false;
   if (/^(?:apps|packages|examples|extensions)\/[^/]+\/dist\//.test(path) ||
-      ['apps/host/build/', 'apps/desktop/web-dist/', 'apps/desktop/web-dist-browser/',
+      ['apps/host/build/', 'apps/desktop/web-dist/', 'apps/desktop/web-dist-browser/', 'apps/desktop/web-dist-extensions-test/',
         'apps/desktop/src-tauri/target/', 'apps/desktop/src-tauri/gen/'].some(output => path.startsWith(output))) return false;
   if (parts.some(part => /^\.env|\.pem$|\.key$|\.p12$/i.test(part))) return false;
   return ['apps', 'packages', 'scripts', 'tests', 'examples', 'extensions'].includes(parts[0]) ||

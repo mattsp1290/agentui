@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import axe from 'axe-core';
-import { extensionFixture, wait } from '../../../tests/application/browser-support.mjs';
+import { extensionFixture, extensionTestAssets, wait } from '../../../tests/application/browser-support.mjs';
 import { coworkersService } from './support/coworkers-service.mjs';
 import { crewService } from '../../crew/tests/support/crew-service.mjs';
 
@@ -42,7 +42,7 @@ async function audit(page, label) {
 for (const colorScheme of ['light', 'dark']) {
   test(`the Coworkers workspace (${colorScheme}) lists coworkers, chats with a typing indicator and bubbles, and keeps management disabled`, { timeout: 90_000 }, async t => {
     const remote = await coworkersService(t);
-    const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+    const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote)] });
     const view = await page(t, host, colorScheme);
     await openWorkspace(view, 'Coworkers');
     const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
@@ -94,7 +94,7 @@ for (const colorScheme of ['light', 'dark']) {
 
 test('Chat on a coworker card opens the first of several chats in list order; New chat always creates', { timeout: 60_000 }, async t => {
   const remote = await coworkersService(t, { autoReply: true });
-  const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote)] });
   const view = await page(t, host);
   await openWorkspace(view, 'Coworkers');
   const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
@@ -123,7 +123,7 @@ test('the directory says when coworkers.list was truncated, and only then', { ti
     const coworkers = truncated ? Array.from({ length: 501 }, (_, n) => ({ coworkerId: `c-${n}`, name: `Coworker ${n}`, role: 'Helper',
       workspace: 'read_write', slack: false, instructions: 'i' })) : undefined;
     const remote = await coworkersService(t, coworkers ? { coworkers } : {});
-    const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+    const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote)] });
     const view = await page(t, host);
     await openWorkspace(view, 'Coworkers');
     const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
@@ -175,7 +175,7 @@ const narrowNavigations = [
 for (const navigation of narrowNavigations) {
   test(`in the narrow layout ${navigation.name} drops the wait, so a later selection keeps the chat list`, { timeout: 60_000 }, async t => {
     const remote = await coworkersService(t);
-    const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+    const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote)] });
     const view = await page(t, host, 'light', { width: 560, height: 800 });
     await openWorkspace(view, 'Coworkers');
     const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
@@ -207,7 +207,7 @@ async function twoInstallations(t, prepare) {
   const otherInstance = { ...coworkersInstance, installationId: 'zeta' };
   entry.installations.push({ id: 'zeta', instance: otherInstance, service: other.origin, expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: '1', resolve: async () => other.token } });
-  const host = await extensionFixture(t, { extensions: [entry] });
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [entry] });
   const context = await host.browser.newContext({ viewport: { width: 1280, height: 800 } });
   const view = { page: await context.newPage() };
   view.page.setDefaultTimeout(20_000);
@@ -299,7 +299,7 @@ test('with every Coworkers installation unavailable the workspace shows the show
 
 test('the selected chat still shows when its coworker is no longer listed', { timeout: 90_000 }, async t => {
   const remote = await coworkersService(t);
-  const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote)] });
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote)] });
   const view = await page(t, host);
   await openWorkspace(view, 'Coworkers');
   const workspace = view.page.locator('[data-extension-workspace="coworkers"]');
@@ -323,7 +323,7 @@ test('the selected chat still shows when its coworker is no longer listed', { ti
 });
 
 test('without a Coworkers installation the workspace names the configuration and token variable', { timeout: 60_000 }, async t => {
-  const host = await extensionFixture(t, { extensions: [] });
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [] });
   const view = await page(t, host);
   await view.rail.getByRole('button', { name: 'Extensions', exact: true }).click();
   const row = view.page.locator('[data-extension="coworkers"]');
@@ -340,7 +340,7 @@ test('with both extensions each workspace renders its own transcript style and C
   const memberId = randomUUID(), crewToken = 'PRIVATE_CROSS_CREW_TOKEN_5';
   const crewInstance = { namespace: 'crew', installationId: 'personal', generation: '1', protocolVersion: '1' };
   const crew = await crewService(t, { memberId, token: crewToken, instance: crewInstance });
-  const host = await extensionFixture(t, { extensions: [await coworkersEntry(remote), { kind: 'installed', directory: fileURLToPath(new URL('crew/', root)),
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [await coworkersEntry(remote), { kind: 'installed', directory: fileURLToPath(new URL('crew/', root)),
     manifest: await manifestOf('crew'), installations: [{ id: 'personal', instance: crewInstance, service: crew.origin, expectedAuthority: 'remote-provider',
       authentication: { kind: 'secret', revision: '1', resolve: async () => crewToken } }] }] });
   const view = await page(t, host);

@@ -1,0 +1,27 @@
+{
+  "name": "agentui-example-customization",
+  "version": "0.0.0",
+  "private": true,
+  "agentui": {
+    "extensions": [
+      { "subdirectory": "extensions/crew", "enabled": true },
+      { "subdirectory": "extensions/coworkers", "enabled": true }
+    ],
+    "installations": [
+      {
+        "id": "personal",
+        "instance": { "namespace": "crew", "installationId": "personal", "generation": "1", "protocolVersion": "1" },
+        "service": "http://127.0.0.1:18089",
+        "expectedAuthority": "remote-provider",
+        "authentication": { "kind": "environment", "variable": "AGENTUI_EXTENSION_CREW_TOKEN", "revision": "1" }
+      },
+      {
+        "id": "personal",
+        "instance": { "namespace": "coworkers", "installationId": "personal", "generation": "1", "protocolVersion": "1" },
+        "service": "http://127.0.0.1:8787",
+        "expectedAuthority": "remote-provider",
+        "authentication": { "kind": "environment", "variable": "AGENTUI_EXTENSION_COWORKERS_TOKEN", "revision": "1" }
+      }
+    ]
+  }
+}

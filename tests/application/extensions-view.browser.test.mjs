@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import axe from 'axe-core';
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
-import { customRuntime, draft, extensionFixture, fixture, revealRecovery, wait } from './browser-support.mjs';
+import { customRuntime, draft, extensionFixture, extensionTestAssets, fixture, revealRecovery, wait } from './browser-support.mjs';
 import { ledgerExtension, ledgerService } from '../extensions/providers/conformance/ledger.mjs';
 
 /** The ledger conformance provider plus one echo operation. Its namespace is `ledger`, so the UI entry uses it too. */
@@ -172,8 +172,18 @@ test('a throwing workspace fails its row and leaves Chats usable; Restore defaul
   assert.match(await row(f.page, 'ledger').textContent(), /Enable customizations in Settings/);
 });
 
-test('the real browser build bundles the in-repo Crew workspace, lists it Not configured and loads without CSP violations', { timeout: 60_000 }, async t => {
+test('the product browser build lists no extension', { timeout: 60_000 }, async t => {
   const host = await fixture(t);
+  const page = await (await host.browser.newContext()).newPage();
+  await page.goto(`${host.origin}/browser.html`);
+  await page.getByRole('navigation', { name: 'Workspace views' }).getByRole('button', { name: 'Extensions', exact: true }).click();
+  await page.locator('.extensions-panel .empty-state').waitFor();
+  assert.equal(await page.locator('.extension-row').count(), 0);
+  assert.equal(await page.locator('[data-extension-workspace]').count(), 0);
+});
+
+test('the extension test bundle lists the in-repo Crew workspace Not configured and loads without CSP violations', { timeout: 60_000 }, async t => {
+  const host = await fixture(t, extensionTestAssets);
   const context = await host.browser.newContext();
   const page = await context.newPage();
   const violations = [], errors = [];

@@ -4,8 +4,8 @@
 
 ## Set up
 
-1. Build AgentUI (`npm run build`). The default desktop build already contains the Crew workspace.
-2. Create `~/.local/share/agentui/extensions.json`:
+1. Build AgentUI (`npm run build`). The default desktop build contains no extensions; Crew is enabled through a customization repository such as [`examples/customization`](../../examples/customization/README.md), which references `extensions/crew`.
+2. Until the connected customization repository replaces it, the launcher loads the server entry from `~/.local/share/agentui/extensions.json`:
 
 ```json
 {

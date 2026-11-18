@@ -9,6 +9,8 @@ import { build } from 'esbuild';
 import { chromium } from 'playwright';
 
 export const root = fileURLToPath(new URL('../../', import.meta.url));
+/** The browser bundle with every working-tree extension (`npm run build:test-extensions`). The product bundle has none. */
+export const extensionTestAssets = join(root, 'apps/desktop/web-dist-extensions-test');
 const cli = join(root, 'apps/host/dist/main.js');
 export const wait = async (predicate, label) => {
   const deadline = Date.now() + 20_000;
@@ -107,13 +109,14 @@ export async function customRuntime(page, host, selection, breakDefault = false,
 /**
  * Starts a host in process with transient server extensions, as the provider conformance harness does, and serves the
  * built browser assets. It returns the shape `fixture(t)` returns, so `customRuntime` and `page` work with it.
- * `page({ ready })` waits for the named button instead of the recorded conversation button.
+ * `page({ ready })` waits for the named button instead of the recorded conversation button. `assets` defaults to the
+ * product browser bundle; extension tests pass `extensionTestAssets`.
  */
-export async function extensionFixture(t, { extensions = [], agentStartup = { kind: 'recorded' }, operationDeadlineMs } = {}) {
+export async function extensionFixture(t, { extensions = [], agentStartup = { kind: 'recorded' }, operationDeadlineMs, assets = join(root, 'apps/desktop/web-dist-browser') } = {}) {
   const { startBrowserHost } = await import('../host/extensions/fixtures.mjs');
   const directory = await mkdtemp(join(tmpdir(), 'agentui-extension-browser-'));
   const browser = await chromium.launch();
-  let running = await startBrowserHost({ agentStartup, directory, port: 0, assetsDirectory: join(root, 'apps/desktop/web-dist-browser'),
+  let running = await startBrowserHost({ agentStartup, directory, port: 0, assetsDirectory: assets,
     extensions: { kind: 'transient', entries: extensions }, ...(operationDeadlineMs ? { operationDeadlineMs } : {}) });
   let stopped = false;
   const stop = async () => { if (!stopped) { stopped = true; await running.close(); } };

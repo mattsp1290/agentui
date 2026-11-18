@@ -2,17 +2,15 @@ import { defineConfig } from 'vite';
 import { fileURLToPath } from 'node:url';
 import { cssUrlExpressions } from '../../scripts/lib/css-url-expressions.mjs';
 import { customizationPlugin } from '../../scripts/lib/customization-plugin.mjs';
-import { bundledPlan } from '../../scripts/bundled-extensions.mjs';
 
 /**
- * The desktop Vite configuration. It adds the only customization plugin, for `plan`: the bundled first-party plan by
- * default. scripts/build-local-customization.mjs passes the bundled plan already merged with its external plan, so the
- * plan it builds is the one it qualifies.
+ * The desktop Vite configuration. With no plan (the product build) it adds no customization plugin and the selection
+ * module stays the committed empty array. scripts/build-local-customization.mjs passes the plan it builds and qualifies.
  */
-export function desktopConfig(mode, plan = bundledPlan()) {
+export function desktopConfig(mode, plan = null) {
   return {
     base: './',
-    plugins: [cssUrlExpressions(), customizationPlugin(plan)],
+    plugins: [cssUrlExpressions(), ...(plan ? [customizationPlugin(plan)] : [])],
     build: mode === 'browser' ? { outDir: 'web-dist-browser', target: 'safari14', rollupOptions: {
       input: ['index.html', 'browser.html'].map(entry => fileURLToPath(new URL(entry, import.meta.url))),
     } } : { outDir: 'web-dist', target: 'safari14', rollupOptions: {

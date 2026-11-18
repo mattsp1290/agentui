@@ -4,8 +4,8 @@
 
 ## Set up
 
-1. Build AgentUI (`npm run build`).
-2. Add an entry to `~/.local/share/agentui/extensions.json`:
+1. Build AgentUI (`npm run build`). The default desktop build contains no extensions; Coworkers is enabled through a customization repository such as [`examples/customization`](../../examples/customization/README.md), which references `extensions/coworkers`.
+2. Until the connected customization repository replaces it, the launcher loads the server entry from an entry in `~/.local/share/agentui/extensions.json`:
 
 ```json
 {

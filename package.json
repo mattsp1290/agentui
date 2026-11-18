@@ -29,7 +29,8 @@
   ],
   "scripts": {
     "clean": "node scripts/clean.mjs",
-    "build": "npm run clean && npm run build --workspaces && npm run build:browser --workspace=@agentui/desktop",
+    "build": "npm run clean && npm run build --workspaces && npm run build:browser --workspace=@agentui/desktop && npm run build:test-extensions",
+    "build:test-extensions": "node tests/support/build-extensions-test-bundle.mjs",
     "check": "npm run check --workspaces",
     "lint": "oxlint --deny-warnings packages apps scripts tests examples extensions",
     "test": "node --test packages/adapter-tests/tests/*.test.mjs tests/theme/*.test.mjs tests/protocol/*.test.mjs tests/desktop/shell/*.test.mjs tests/host/*.test.mjs tests/host/frontend-tools/*.test.mjs tests/host/extensions/*.test.mjs tests/client/*.test.mjs extensions/crew/tests/*.test.mjs extensions/coworkers/tests/*.test.mjs tests/application/*.test.mjs tests/desktop/*.test.mjs tests/fork/*.test.mjs tests/extensions/providers/contracts/*.test.mjs tests/extensions/providers/conformance/*.test.mjs tests/extensions/contracts/*.test.mjs tests/customization/repository/*.test.mjs tests/extensions/tools/contracts/*.test.mjs tests/customization/build/*.test.mjs tests/customization/sources/*.test.mjs tests/examples/mcp/read/*.test.mjs examples/generated-text-output/tests/*.test.mjs tests/examples/mcp/refresh/*.test.mjs",

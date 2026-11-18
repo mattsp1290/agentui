@@ -4,6 +4,7 @@ dist/
 .DS_Store
 apps/desktop/web-dist/
 apps/desktop/web-dist-browser/
+apps/desktop/web-dist-extensions-test/
 apps/host/build/
 apps/desktop/src-tauri/target/
 apps/desktop/src-tauri/gen/

@@ -379,9 +379,9 @@ The client owns command IDs, persisted intent, and retries of captured commands.
 The SDK supplies no second command identity mechanism and never retries arbitrary extension action callbacks.
 Theme and platform controls remain direct imports from `@agentui/theme/react` and `@agentui/ui-primitives/desktop` or `/native`.
 
-## Bundled in-repo extensions
+## In-repo extensions
 
-Every package under the repository's `extensions/` directory is first-party. Its `package.json.agentui.extension` is its canonical manifest, its package name stays outside the `@agentui/` scope, and the default desktop build bundles its `desktop` entry through `agentui.sources` (`scripts/bundled-extensions.mjs`). Its server entry loads as an installed entry from the working tree through `serve --extensions` or `desktop --extensions`; the [launcher](../development/launcher.md#load-server-extensions-on-a-local-host) passes the file when every token variable is set. Restart the host after rebuilding an extension: Node keeps the module it imported.
+Every package under the repository's `extensions/` directory is first-party. Its `package.json.agentui.extension` is its canonical manifest, its package name stays outside the `@agentui/` scope, and `agentui.sources` maps both its `desktop` and `server` entries. The default desktop build contains no extension. A customization repository enables them: [`examples/customization`](../../examples/customization/README.md) references both in-repo extensions and builds them like any other customization package. The setup-root `extensions.json` that the launcher still reads for server entries is being replaced by the connected customization repository and will be removed.
 
 ## Contribute a workspace view
 

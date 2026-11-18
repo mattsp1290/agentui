@@ -4,7 +4,7 @@ import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 import { fileURLToPath } from 'node:url';
 import axe from 'axe-core';
-import { extensionFixture, wait } from '../../../tests/application/browser-support.mjs';
+import { extensionFixture, extensionTestAssets, wait } from '../../../tests/application/browser-support.mjs';
 import { crewService } from './support/crew-service.mjs';
 
 const directory = fileURLToPath(new URL('../', import.meta.url));
@@ -16,7 +16,7 @@ const shots = process.env.AGENTUI_SCREENSHOT_DIRECTORY;
 async function open(t, { configured = true, colorScheme = 'light', operationDeadlineMs } = {}) {
   const first = randomUUID(), second = randomUUID();
   const remote = configured ? await crewService(t, { memberId: first, token, instance, members: [{ memberId: second, engine: 'pi', profile: 'research' }] }) : null;
-  const host = await extensionFixture(t, { extensions: remote ? [{ kind: 'installed', directory, manifest, installations: [{ id: 'personal', instance,
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: remote ? [{ kind: 'installed', directory, manifest, installations: [{ id: 'personal', instance,
     service: remote.origin, expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: '1', resolve: async () => token } }] }] : [], operationDeadlineMs });
   const context = await host.browser.newContext({ colorScheme, viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();
@@ -248,7 +248,7 @@ async function twoInstallations(t, { shared = false, prepare, state = 'Ready' } 
   const other = await crewService(t, { token: otherToken, instance: otherInstance, members: [{ memberId: shared ? personalId : randomUUID(), engine: 'claude', profile: 'other' }] });
   const grant = (id, value, remote, secret) => ({ id, instance: value, service: remote.origin, expectedAuthority: 'remote-provider',
     authentication: { kind: 'secret', revision: '1', resolve: async () => secret } });
-  const host = await extensionFixture(t, { extensions: [{ kind: 'installed', directory, manifest,
+  const host = await extensionFixture(t, { assets: extensionTestAssets, extensions: [{ kind: 'installed', directory, manifest,
     installations: [grant('personal', instance, personal, token), grant('second', otherInstance, other, otherToken)] }] });
   const context = await host.browser.newContext({ viewport: { width: 1280, height: 800 } });
   const page = await context.newPage();

@@ -1,6 +1,6 @@
 import { EXTENSION_SDK_VERSION } from '@agentui/sdk';
 import { desktopCustomizationIdentity, planCustomizationCatalog } from '@agentui/host/customization';
-export { customizationPlugin, mergePlans } from './lib/customization-plugin.mjs';
+export { customizationPlugin } from './lib/customization-plugin.mjs';
 
 export function desktopPlan(root) {
   const plan = planCustomizationCatalog(root, EXTENSION_SDK_VERSION, 'desktop');
