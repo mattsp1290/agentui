@@ -64,7 +64,7 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
     if (probe.value.apiVersion !== COWORKERS_API_VERSION || probe.value.requestContract !== COWORKERS_REQUEST_CONTRACT) {
       return { kind: 'unsupported', reason: 'This Coworkers service uses an unsupported API contract.' };
     }
-    limits.maxPromptBytes = probe.value.limits.maxPromptBytes || DEFAULT_MAX_PROMPT_BYTES;
+    limits.maxPromptBytes = probe.value.limits.maxPromptBytes;
     const conversationOf = (binding: ProviderConversation<string>) => binding.authority.binding.opaqueSessionId;
     function creation(operation: CreationIntent<string>): ProviderConversation<string> {
       if (operation.agent.kind !== 'agent' || canonicalJson(operation.agent.instance) !== canonicalJson(instance) ||
@@ -173,7 +173,10 @@ export function registerCoworkersProvider(context: ServerExtensionContext, id: s
       async discover() {
         const result = await use(client => client.coworkers());
         if (result.kind !== 'ok') return failure(result);
-        return { kind: 'available', agents: result.value.coworkers.map(coworker => ({ ref: { instance, kind: 'agent', opaqueId: coworker.coworkerId }, name: coworker.name })) };
+        return { kind: 'available', agents: result.value.coworkers.map(coworker => ({
+          ref: { instance, kind: 'agent' as const, opaqueId: coworker.coworkerId },
+          name: coworker.name.trim() && coworker.name.length <= 1024 ? coworker.name : coworker.coworkerId,
+        })) };
       },
       create: operation => open(operation, true),
       reconcileCreation: operation => open(operation, false),

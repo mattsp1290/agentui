@@ -82,7 +82,9 @@ export function extensionRows({ customizations, activations, enabled, metadata }
     if (metadata === null) return row('Loading', 'Waiting for the host to report its extensions.');
     if (!descriptor || descriptor.installations.length === 0) return row('Not configured');
     if (descriptor.installations.every(item => item.status === 'unavailable')) {
-      const reason = namespaceAgents(metadata, namespace).find(agent => agent.availability.kind === 'unavailable');
+      const shown = descriptor.installations[0];
+      const reason = namespaceAgents(metadata, namespace).find(agent =>
+        agent.installationId === shown?.installationId && agent.availability.kind === 'unavailable');
       return row('Unavailable', reason?.availability.kind === 'unavailable' ? reason.availability.reason : UNAVAILABLE);
     }
     return row('Ready');

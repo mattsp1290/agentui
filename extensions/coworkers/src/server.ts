@@ -46,7 +46,7 @@ const entry: ServerExtensionEntry = {
           return await context.credentials.use({ credential: call.credential, service: call.installation.service }, async token => {
             const result = await new CoworkersClient({ origin: call.installation.service, token }).coworkers(signal);
             if (result.kind === 'ok') return { kind: 'ok' as const, output: listedCoworkers(result.value.coworkers) };
-            if (result.kind === 'transport') return refused('unreachable');
+            if (result.kind === 'transport' || (result.kind === 'http' && result.status >= 500)) return refused('unreachable');
             if (result.kind === 'http' && (result.status === 401 || result.status === 403)) return refused('unauthorized');
             return refused('rejected');
           });

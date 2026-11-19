@@ -153,11 +153,13 @@ const withPreview = (scope: ConversationScope, preview: string | null): EntriesU
 };
 /** Puts `entry` first, replacing any entry for the same scope. */
 const prepended = (entry: ConversationCatalogEntry): EntriesUpdate => entries => [entry, ...entries.filter(item => !sameScope(item.scope, entry.scope))];
+function entryKey(entry: ConversationCatalogEntry): string {
+  return JSON.stringify([entry.scope.hostId, entry.scope.conversationId]);
+}
 /** A catalog page merged into what is loaded: the first page replaces it, a later page adds or replaces by scope. */
 function mergePage(loaded: readonly ConversationCatalogEntry[], items: readonly ConversationCatalogEntry[], first: boolean): ConversationCatalogEntry[] {
-  const key = (entry: ConversationCatalogEntry) => JSON.stringify([entry.scope.hostId, entry.scope.conversationId]);
-  const merged = new Map((first ? [] : loaded).map(entry => [key(entry), entry]));
-  for (const entry of items) merged.set(key(entry), entry);
+  const merged = new Map((first ? [] : loaded).map(entry => [entryKey(entry), entry]));
+  for (const entry of items) merged.set(entryKey(entry), entry);
   return [...merged.values()];
 }
 function initialSnapshot(): ApplicationSnapshot {
@@ -417,6 +419,10 @@ export function createApplicationController(deps: {
   }
   /** The latest load per namespace. A first-page load supersedes any load in flight; a superseded load publishes nothing. */
   const workspaceLoads = new Map<string, number>();
+  /** A cleared workspace must not accept a page that started on the previous host or view. */
+  function invalidateWorkspaceLoads(): void {
+    for (const namespace of [...workspaceLoads.keys()]) workspaceLoads.set(namespace, (workspaceLoads.get(namespace) ?? 0) + 1);
+  }
   async function readWorkspace(owner: Session, namespace: string, more: boolean): Promise<void> {
     const { hostId } = requireHost(owner);
     const previous = state.workspaces[namespace];
@@ -425,16 +431,28 @@ export function createApplicationController(deps: {
     workspaceLoads.set(namespace, load);
     const latest = () => workspaceLoads.get(namespace) === load;
     const after = more ? previous?.entries.at(-1)?.scope.conversationId ?? null : null;
+    const baseline = new Set((previous?.entries ?? []).map(entryKey));
     publish({ workspaces: { ...state.workspaces, [namespace]: { entries: previous?.entries ?? [], hasMore: previous?.hasMore ?? false, loading: true } } });
     try {
       const items = await current(owner, owner.connection.catalog(after, SERVICE_CATALOG_PAGE, { kind: 'namespace', namespace }));
       if (!latest()) return;
       if (items.some(entry => entry.scope.hostId !== hostId || entry.provider?.namespace !== namespace)) throw new Error('Workspace catalog belongs to another namespace or host.');
-      const entries = mergePage(state.workspaces[namespace]?.entries ?? [], items, !more);
-      publish({ workspaces: { ...state.workspaces, [namespace]: { entries, hasMore: items.length === SERVICE_CATALOG_PAGE, loading: false } } });
+      const page = mergePage(state.workspaces[namespace]?.entries ?? [], items, !more);
+      const arrived = new Set(page.map(entryKey));
+      // A first page replaces what was loaded, but keeps a conversation added after this request started.
+      const kept = !more ? (state.workspaces[namespace]?.entries ?? []).filter(entry => {
+        const key = entryKey(entry);
+        return !baseline.has(key) && !arrived.has(key);
+      }) : [];
+      publish({ workspaces: { ...state.workspaces, [namespace]: {
+        entries: [...kept, ...page], hasMore: items.length === SERVICE_CATALOG_PAGE, loading: false,
+      } } });
     } catch (cause) {
       if (!latest()) return;
-      if (session === owner) publish({ workspaces: { ...state.workspaces, [namespace]: { entries: state.workspaces[namespace]?.entries ?? [], hasMore: false, loading: false } } });
+      const current = state.workspaces[namespace];
+      if (session === owner) publish({ workspaces: { ...state.workspaces, [namespace]: {
+        entries: current?.entries ?? [], hasMore: current?.hasMore ?? false, loading: false,
+      } } });
       throw cause;
     }
   }
@@ -482,6 +500,7 @@ export function createApplicationController(deps: {
         disconnectActive();
         setActive(owner, null);
         owner.view = { borrow: previous.borrow, saved: null };
+        invalidateWorkspaceLoads();
         publish(DETACHED_VIEW);
       }
       if (issues.length) {
@@ -628,6 +647,7 @@ export function createApplicationController(deps: {
       if (previous?.borrow.storage === next) { await refresh(owner); return; }
       disconnectActive();
       setActive(owner, null);
+      invalidateWorkspaceLoads();
       publish({ ...DETACHED_VIEW, host: { kind: 'loading' } });
       await refresh(owner);
     }),

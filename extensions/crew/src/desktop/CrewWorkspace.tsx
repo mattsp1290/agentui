@@ -16,6 +16,9 @@ const SIDEBAR = {
 } as const;
 type MemberDetail = { readonly engine: string; readonly profile: string };
 const NO_DETAILS: ReadonlyMap<string, MemberDetail> = new Map();
+/** A lost or overloaded member list is read again. A definitive refusal stays until the owner retries. */
+const RETRYABLE_LIST = new Set(['unreachable', 'unavailable', 'timeout']);
+const LIST_RETRY_MS = 1_000;
 
 function status(agent: WorkspaceAgent): 'ready' | 'unavailable' {
   return agent.availability.kind === 'ready' ? 'ready' : 'unavailable';
@@ -39,6 +42,9 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   // Member details belong to the installation they were listed for; another installation's never show.
   const [listed, setListed] = useState<{ readonly installationId: string; readonly details: ReadonlyMap<string, MemberDetail> } | null>(null);
   const details = listed && listed.installationId === installationId ? listed.details : NO_DETAILS;
+  const [listFailure, setListFailure] = useState<{ readonly installationId: string; readonly code: string } | null>(null);
+  const listError = listFailure && listFailure.installationId === installationId ? listFailure.code : '';
+  const [listAttempt, setListAttempt] = useState(0);
   const selectedKey = props.selected ? `${props.selected.hostId}/${props.selected.conversationId}` : null;
   // A new selection (opened here, started from the composer's agent control, or opened in Chats) or installation shows its
   // own member, so an earlier member click must not hide it. Clicking a member row after that chooses again.
@@ -63,14 +69,22 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
   useEffect(() => {
     if (!available || !installationId) return;
     let current = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     void props.call(installationId, 'members.list', {}).then(result => {
-      if (!current || result.kind !== 'ok') return;
+      if (!current) return;
+      if (result.kind !== 'ok') {
+        const code = result.kind === 'refused' ? result.code : result.cause;
+        setListFailure({ installationId, code });
+        if (RETRYABLE_LIST.has(code)) retry = setTimeout(() => { if (current) setListAttempt(attempt => attempt + 1); }, LIST_RETRY_MS);
+        return;
+      }
+      setListFailure(failure => failure?.installationId === installationId ? null : failure);
       const members = membersListOutput(result.output)?.members ?? [];
       setListed({ installationId, details: new Map(members.map(member => [member.memberId, { engine: member.engine, profile: member.profile }])) });
     });
-    return () => { current = false; };
-    // Re-read details when the member set changes.
-  }, [available, installationId, memberKey]);
+    return () => { current = false; clearTimeout(retry); };
+    // Re-read details when the member set changes, or when a retryable failure is read again.
+  }, [available, installationId, memberKey, listAttempt]);
   const selectedEntry = props.selected ? entries.find(entry => entry.scope.conversationId === props.selected?.conversationId) : undefined;
   // A chosen or selected member that is not listed (just created and not yet rediscovered, or deleted upstream) falls back
   // to the first member, so the pane never claims the owner has no members while the sidebar lists some.
@@ -132,6 +146,7 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
           })}
           <li><button type="button" className="crew-member-row crew-add-row" onClick={() => { setAdding(true); setDrawer(false); }}>Add member</button></li>
         </ul>
+        {listError && <p role="status" className="crew-section-title">{listError} <button type="button" onClick={() => setListAttempt(attempt => attempt + 1)}>Retry</button></p>}
         {props.conversations.hasMore && <button type="button" className="crew-more" onClick={() => props.conversations.more()}>More conversations</button>}
       </nav>
     </ThemeScope>
@@ -154,7 +169,11 @@ export function CrewWorkspace(props: WorkspaceViewProps) {
                 <button type="button" onClick={() => setAdding(true)}>Add member</button></div>
             : showing ? props.conversation
             : <div className="crew-empty-state">
-                <p>{conversations.length ? `Pick a conversation with ${member.label}, or start a new one.` : `No conversation with ${member.label} yet.`}</p>
+                <p>{conversations.length
+                  ? `Pick a conversation with ${member.label}, or start a new one.`
+                  : props.conversations.hasMore
+                    ? `No conversation with ${member.label} is on the loaded pages.`
+                    : `No conversation with ${member.label} yet.`}</p>
                 <button type="button" disabled={member.availability.kind !== 'ready'} onClick={() => attempt(() => props.create(member.id))}>Start conversation</button>
               </div>}
         </div>

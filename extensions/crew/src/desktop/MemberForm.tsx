@@ -46,6 +46,7 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
   const [instructions, setInstructions] = useState('');
   const [pending, setPending] = useState(false);
   const [message, setMessage] = useState('');
+  const submitting = useRef(false);
   const locked = pending || unconfirmed !== null;
   // A request that settles after Cancel or unmount must not close a newer form or change the selection.
   const active = useRef(true);
@@ -58,36 +59,41 @@ export function MemberForm({ installationId, call, refresh, onCreated, onCancel 
   const invalid = tooLong || instructionsTooLong || instructionsControl;
   async function submit(event: FormEvent) {
     event.preventDefault();
-    if (pending || !profile.trim() || invalid) return;
+    if (submitting.current || pending || !profile.trim() || invalid) return;
+    submitting.current = true;
     const retrying = unconfirmed !== null;
     const requestId = unconfirmed ?? crypto.randomUUID();
     setPending(true); setMessage(''); setUnconfirmed(requestId);
-    const result = await call(installationId, 'members.create', { requestId, engine, profile: profile.trim(), ...(instructions.trim() ? { instructions } : {}) });
-    if (result.kind === 'ok') {
-      const memberId = createdMemberId(result.output);
-      await refresh();
+    try {
+      const result = await call(installationId, 'members.create', { requestId, engine, profile: profile.trim(), ...(instructions.trim() ? { instructions } : {}) });
+      if (result.kind === 'ok') {
+        const memberId = createdMemberId(result.output);
+        await refresh();
+        if (!active.current) return;
+        setPending(false); setUnconfirmed(null);
+        if (memberId !== null) { onCreated(memberId); return; }
+        setProfile(''); setInstructions(''); setMessage(NO_ID);
+        return;
+      }
       if (!active.current) return;
-      setPending(false); setUnconfirmed(null);
-      if (memberId !== null) { onCreated(memberId); return; }
-      setProfile(''); setInstructions(''); setMessage(NO_ID);
-      return;
+      setPending(false);
+      const notSent = result.kind === 'failed' ? NOT_SENT[result.cause] : undefined;
+      if (notSent && !retrying) {
+        setUnconfirmed(null);
+        setMessage(notSent.first);
+        return;
+      }
+      // A retry that was not sent leaves the earlier outcome unknown: keep its requestId and the locked fields.
+      if (notSent) { setMessage(`The retry was not sent: ${notSent.retry}. ${UNCONFIRMED}`); return; }
+      if (result.kind === 'refused' && !UNKNOWN.has(result.code)) {
+        setUnconfirmed(null);
+        setMessage(REFUSALS[result.code] ?? REFUSALS.rejected!);
+        return;
+      }
+      setMessage(UNCONFIRMED);
+    } finally {
+      submitting.current = false;
     }
-    if (!active.current) return;
-    setPending(false);
-    const notSent = result.kind === 'failed' ? NOT_SENT[result.cause] : undefined;
-    if (notSent && !retrying) {
-      setUnconfirmed(null);
-      setMessage(notSent.first);
-      return;
-    }
-    // A retry that was not sent leaves the earlier outcome unknown: keep its requestId and the locked fields.
-    if (notSent) { setMessage(`The retry was not sent: ${notSent.retry}. ${UNCONFIRMED}`); return; }
-    if (result.kind === 'refused' && !UNKNOWN.has(result.code)) {
-      setUnconfirmed(null);
-      setMessage(REFUSALS[result.code] ?? REFUSALS.rejected!);
-      return;
-    }
-    setMessage(UNCONFIRMED);
   }
   return <form className="crew-member-form" aria-label="Add member" onSubmit={event => void submit(event)}>
     <h2>Add member</h2>

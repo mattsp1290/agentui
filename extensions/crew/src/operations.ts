@@ -21,10 +21,15 @@ const LIST_BUDGET_BYTES = 200_000;
 type Refusal = { readonly kind: 'refused'; readonly code: string };
 const refused = (code: string): Refusal => ({ kind: 'refused', code });
 
+/** `listMembers` sends no command, so an aborted fetch throws the signal reason rather than `CrewTransportError`. */
+function aborted(error: unknown): boolean {
+  return error instanceof Error && (error.name === 'AbortError' || error.name === 'TimeoutError');
+}
+
 /** Crew errors never cross the credential boundary: each is classified into a fixed refusal code inside the action. */
 function refusal(error: unknown, create: boolean): Refusal {
   if (error instanceof CrewUnknownOutcomeError) return refused('unknown-outcome');
-  if (error instanceof CrewTransportError) return refused('unreachable');
+  if (error instanceof CrewTransportError || aborted(error)) return refused(create ? 'unknown-outcome' : 'unreachable');
   if (error instanceof CrewHttpError) {
     if (error.code === 'unknown_profile') return refused('unknown-profile');
     if (error.status === 401 || error.status === 403) return refused('unauthorized');

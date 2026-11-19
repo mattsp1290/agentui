@@ -17,6 +17,9 @@ const PALETTE = {
 const WORKSPACE_ACCESS: Readonly<Record<string, string>> = { disabled: 'No workspace', read_only: 'Read-only workspace', read_write: 'Read and write workspace' };
 type Coworker = WorkspaceAgent & { readonly providerAgentId: string };
 const NO_DETAILS: ReadonlyMap<string, CoworkerSummary> = new Map();
+/** A lost or overloaded coworker list is read again. A definitive refusal stays until the owner retries. */
+const RETRYABLE_LIST = new Set(['unreachable', 'unavailable', 'timeout']);
+const LIST_RETRY_MS = 1_000;
 
 export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const theme = useTheme();
@@ -39,6 +42,9 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   const details = own?.details ?? NO_DETAILS;
   const management = own?.management ?? false;
   const truncated = own?.truncated ?? false;
+  const [listFailure, setListFailure] = useState<{ readonly installationId: string; readonly code: string } | null>(null);
+  const listError = listFailure && listFailure.installationId === installationId ? listFailure.code : '';
+  const [listAttempt, setListAttempt] = useState(0);
   const [tab, setTab] = useState<'chat' | 'coworkers'>('chat');
   const [pill, setPill] = useState<'chat' | 'about'>('chat');
   const [filtered, setFiltered] = useState<{ readonly installationId: string | undefined; readonly coworkerId: string | null }>({ installationId, coworkerId: null });
@@ -57,14 +63,22 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   useEffect(() => {
     if (!available || !installationId) return;
     let current = true;
+    let retry: ReturnType<typeof setTimeout> | undefined;
     void props.call(installationId, 'coworkers.list', {}).then(result => {
-      if (!current || result.kind !== 'ok') return;
+      if (!current) return;
+      if (result.kind !== 'ok') {
+        const code = result.kind === 'refused' ? result.code : result.cause;
+        setListFailure({ installationId, code });
+        if (RETRYABLE_LIST.has(code)) retry = setTimeout(() => { if (current) setListAttempt(attempt => attempt + 1); }, LIST_RETRY_MS);
+        return;
+      }
+      setListFailure(failure => failure?.installationId === installationId ? null : failure);
       const output = coworkersListOutput(result.output);
       setListed({ installationId, details: new Map((output?.coworkers ?? []).map(item => [item.coworkerId, item])),
         management: output?.management === true, truncated: output?.truncated === true });
     });
-    return () => { current = false; };
-  }, [available, installationId, key]);
+    return () => { current = false; clearTimeout(retry); };
+  }, [available, installationId, key, listAttempt]);
 
   if (!installation) {
     return <div className="coworkers-workspace coworkers-setup" role="region" aria-label="Coworkers setup">
@@ -101,7 +115,12 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
   function chatWith(coworker: Coworker) {
     setTab('chat'); setFilter(coworker.providerAgentId); setPill('chat');
     const first = entries.find(entry => entry.provider.providerAgentId === coworker.providerAgentId);
-    if (first) openChat(first.scope); else void attempt(() => props.create(coworker.id));
+    if (first) { openChat(first.scope); return; }
+    if (props.conversations.hasMore) {
+      setNotice(`No chat with ${coworker.label} is on the loaded pages. Use More chats to keep looking, or New chat to start one.`);
+      return;
+    }
+    void attempt(() => props.create(coworker.id));
   }
   const target = current ?? (filter ? byId.get(filter) : coworkers[0]);
   return <ThemeScope className="coworkers-workspace" colors={PALETTE[theme.appearance]} data-pane={narrowPane}>
@@ -117,6 +136,7 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
         <button type="button" disabled={!management} title={management ? undefined : NEWER}>New coworker</button>
       </header>
       {truncated && <p role="status" className="coworkers-notice">Details for some coworkers were not loaded.</p>}
+      {listError && <p role="status" className="coworkers-notice">{listError} <button type="button" onClick={() => setListAttempt(attempt => attempt + 1)}>Retry</button></p>}
       <ul className="coworkers-cards">
         {coworkers.map(item => {
           const info = details.get(item.providerAgentId);
@@ -143,8 +163,11 @@ export function CoworkersWorkspace(props: WorkspaceViewProps) {
           {target && <button type="button" onClick={() => void attempt(() => props.create(target.id))}>New chat</button>}
         </header>
         {notice && <p role="alert" className="coworkers-notice">{notice}</p>}
+        {listError && <p role="status" className="coworkers-notice">{listError} <button type="button" onClick={() => setListAttempt(attempt => attempt + 1)}>Retry</button></p>}
         {filter && <button type="button" className="coworkers-filter" onClick={() => { setAwaiting(null); setFilter(null); }}>Showing {byId.get(filter)?.label ?? filter} · Show all</button>}
-        {chats.length === 0 && <p className="coworkers-empty">No chats yet. Open the Coworkers tab and choose Chat.</p>}
+        {chats.length === 0 && <p className="coworkers-empty">{props.conversations.hasMore
+          ? 'No matching chats on the loaded pages. Load more chats to keep looking.'
+          : 'No chats yet. Open the Coworkers tab and choose Chat.'}</p>}
         <ul className="coworkers-chat-cards">
           {chats.map(entry => {
             const who = byId.get(entry.provider.providerAgentId);
