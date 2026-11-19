@@ -548,10 +548,13 @@ export function createApplicationController(deps: {
       await install(owner, newest, 'continue');
       await moveDraft(owner, from.scope);
       await save(owner, { ...requireSaved(owner).saved, route: newest });
+      const agent = from.agent;
+      const fromAgent = 'kind' in agent && agent.providerAgentId !== null
+        ? { namespace: agent.namespace, installationId: agent.installationId, providerAgentId: agent.providerAgentId }
+        : null;
+      const listed = listedProvider(from.scope);
+      const carriedProvider = listed !== undefined ? listed : fromAgent;
       const preview = conversationPreview(state.active?.store.getSnapshot().document.domain ?? { messages: [], currentRun: null });
-      const items = state.catalog.items.filter(entry => !sameScope(entry.scope, newest));
-      const at = items.findIndex(entry => sameScope(entry.scope, from.scope));
-      const carriedProvider = at < 0 ? null : items[at]?.provider ?? null;
       const entry = { scope: newest, preview, provider: carriedProvider };
       publish(patchEntries(carriedProvider?.namespace ?? null, entries => {
         const rest = entries.filter(item => !sameScope(item.scope, newest));
@@ -705,6 +708,14 @@ export function createApplicationController(deps: {
     const next = items.length === SERVICE_CATALOG_PAGE ? items.at(-1)?.scope.conversationId ?? null : null;
     if (next !== null && next === after) throw new Error('Catalog did not advance.');
     publish({ catalog: { items: mergePage(state.catalog.items, items, after === null), after: next } });
+  }
+  /** Provider from a loaded catalog or workspace row, or `undefined` when that scope is not loaded. An explicit `null` stays `null`. */
+  function listedProvider(scope: ConversationScope): ConversationCatalogEntry['provider'] | undefined {
+    for (const entries of [state.catalog.items, ...Object.values(state.workspaces).map(workspace => workspace.entries)]) {
+      const found = entries.find(entry => sameScope(entry.scope, scope));
+      if (found) return found.provider;
+    }
+    return undefined;
   }
   /**
    * Applies `update` to the catalog and, when that namespace's workspace is loaded, to its entries. Returns one partial

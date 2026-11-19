@@ -131,10 +131,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
-  // Outside the keyed conversation view, so a move to another chat cannot unmount it mid-announcement.
   const views = <div className="chat-view" inert={suspended}>
-      <div id="continuation-status" className="visually-hidden" aria-live="polite" aria-atomic="true">
-        {continuationAnnouncement(app.continuation, app.observation?.status.kind === 'concluded')}</div>
       {conversation}
       {!app.active && modules}
     </div>;
@@ -159,7 +156,11 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p><label><input type="checkbox" checked={customizationEnabled} onChange={event => setCustomizationEnabled(event.target.checked)} />Enable customizations</label></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>
     </section>;
+  // On the rail, outside the keyed conversation and outside the chats pane the shell hides while a workspace is open.
+  const continuationStatus = <div id="continuation-status" className="visually-hidden" aria-live="polite" aria-atomic="true">
+    {continuationAnnouncement(app.continuation, app.observation?.status.kind === 'concluded')}</div>;
   const rail = <nav className="view-rail" aria-label="Workspace views">
+    {continuationStatus}
     <button type="button" aria-label="Chats" title="Chats" aria-pressed={selectedView === 'chats'} onClick={() => setSelectedView('chats')}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-9.5A7.5 7.5 0 0 1 9.5 5H12"/><path d="M16 5h6m-3-3v6"/></svg>
     </button>
