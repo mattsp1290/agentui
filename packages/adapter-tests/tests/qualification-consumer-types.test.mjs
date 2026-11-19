@@ -1,8 +1,10 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, symlink, writeFile } from 'node:fs/promises';
 import { test } from 'node:test';
+import { dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { hostDependencyManifest } from '../../host/test-support/dependencies.mjs';
 
 const root = new URL('../../../', import.meta.url);
 const compiler = fileURLToPath(new URL('node_modules/typescript/bin/tsc', root));
@@ -35,10 +37,17 @@ export async function run(signal: AbortSignal) {
       ['export const invalidSnapshot: RecoverableSnapshot = {};', /missing the following properties/u],
       ['export const invalid: QualificationFactory = () => ({});', /not assignable|missing the following properties/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification';", /has no exported member/u],
-      ["export { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';", /Cannot find module/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification/src/testkit/index.ts';", /Cannot find module/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification/dist/testkit/fake.js';", /Cannot find module/u],
+      [[
+        "import { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';",
+        'type RejectAny<T> = 0 extends (1 & T) ? never : T;',
+        'export const productionUncertainty: QualificationContract =',
+        '  productionContracts.uncertainty satisfies RejectAny<typeof productionContracts.uncertainty>;',
+      ].join('\n'), null],
     ];
+    await mkdir(`${temporary}/node_modules/@mattsp1290`, { recursive: true });
+    await symlink(dirname(hostDependencyManifest('@mattsp1290/switchboard')), `${temporary}/node_modules/@mattsp1290/switchboard`);
     for (const [source, diagnostic] of cases) {
       await writeFile(`${temporary}/probe.ts`, prefix + source);
       const result = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
