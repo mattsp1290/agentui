@@ -2,10 +2,12 @@ import { Suspense, type ReactNode } from 'react';
 import type { ConversationContentLayoutProps } from '@agentui/sdk/react';
 import { CustomizationBoundary, type ContentLayoutSelection } from './DesktopCustomizations.js';
 
-export function CustomizationContent({ selection, conversationKey, transcript, nativeTranscript, modules }: ConversationContentLayoutProps & {
+export function CustomizationContent({ selection, conversationKey, transcript, nativeTranscript, modules, before = null }: ConversationContentLayoutProps & {
   readonly selection: ContentLayoutSelection;
   readonly conversationKey: string;
   readonly nativeTranscript: ReactNode;
+  /** Shown first inside the same scroll area, outside any claimed layout. */
+  readonly before?: ReactNode;
 }) {
   const fallback = <>{transcript}{modules}</>;
   let content = fallback;
@@ -19,5 +21,5 @@ export function CustomizationContent({ selection, conversationKey, transcript, n
       </CustomizationBoundary>
     </Suspense>;
   }
-  return <div className="conversation-content">{content}</div>;
+  return <div className="conversation-content">{before}{content}</div>;
 }

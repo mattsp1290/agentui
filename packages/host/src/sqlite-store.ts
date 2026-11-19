@@ -294,10 +294,10 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     this.onProviderCommit?.(original.intent.scope);
     return committed;
   }
-  /** A conversation with a confirmed successor is listed only through its newest segment.
+  /** A conversation with a confirmed successor is listed only through its newest segment, unless `everySegment` is set.
    * A filter reads the provider installation stored with each conversation, so it keeps conversations whose agent or
    * generation has since changed. */
-  listConversations(hostId: string, after: string | null, limit: number, filter?: CatalogFilter): readonly ConversationScope[] {
+  listConversations(hostId: string, after: string | null, limit: number, everySegment = false, filter?: CatalogFilter | undefined): readonly ConversationScope[] {
     // Each predicate carries its own bind values, so the SQL and the values cannot drift apart.
     const clauses: readonly (readonly [sql: string, values: readonly string[]])[] = !filter ? [] : [
       [`json_extract(installation,'$.kind')='provider'`, []],
@@ -308,11 +308,12 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
       ] as const : []),
     ];
     const values = clauses.flatMap(([, bound]) => bound);
-    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ${clauses.map(([predicate]) => `AND ${predicate} `).join('')}AND conversation NOT IN (
+    const successors = everySegment ? '' : `AND conversation NOT IN (
       SELECT json_extract(original,'$.intent.from.scope.conversationId') FROM provider_creations INDEXED BY provider_creations_from
       WHERE host=? AND json_extract(original,'$.intent.from.scope.conversationId') IS NOT NULL AND json_extract(observation,'$.kind')='confirmed')
-      ORDER BY conversation LIMIT ?`)
-      .all(hostId, after ?? '', ...values, hostId, limit)
+      `;
+    return this.db.prepare(`SELECT host, conversation FROM conversations WHERE host=? AND conversation>? ${clauses.map(([predicate]) => `AND ${predicate} `).join('')}${successors}ORDER BY conversation LIMIT ?`)
+      .all(hostId, after ?? '', ...values, ...(everySegment ? [] : [hostId]), limit)
       .map(row => parseScope({ hostId: row.host, conversationId: row.conversation }));
   }
   snapshot(scope: ConversationScope): Snapshot<P> {

@@ -65,6 +65,7 @@ This foundation models ownership without implementing storage or dispatch.
 
 Provider bindings name a namespace, existing installation, and opaque session.
 Only AgentUI-created conversations are exposed in v1.
+A continued conversation is one of them: AgentUI creates it through its predecessor's confirmed binding when the user chooses Continue. Its provider may carry earlier turns into it, but AgentUI still lists no conversation it did not create.
 Native discovery does not expand history scope.
 
 ## Extension ownership

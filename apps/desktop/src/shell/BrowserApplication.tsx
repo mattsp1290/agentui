@@ -11,6 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
+import { continuationAnnouncement } from '../application/continuation-copy.js';
 import { ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
@@ -61,7 +62,7 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const activeConversation = app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        transcript={slots.transcript} activity={custom.activity} contentLayout={slots.contentLayout} modules={slots.modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        transcript={slots.transcript} activity={custom.activity} contentLayout={slots.contentLayout} modules={slots.modules} permissionState={app.permissionState} observation={app.observation} continuation={app.continuation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
         composerControls={canSwitch => <ComposerAgentControls agents={slots.composerAgents} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
     : null;
@@ -130,7 +131,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     </div>
     {selectedView === 'settings' && <a className="settings-link" href="#connection-settings">Connection and app</a>}
   </div>;
-  const views = <div className="chat-view" inert={suspended}>{conversation}
+  const views = <div className="chat-view" inert={suspended}>
+      {conversation}
       {!app.active && modules}
     </div>;
   const settings = <section className="settings-panel" aria-label="Settings" id="connection-settings">
@@ -154,7 +156,11 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       <section className="settings-section"><h2>Appearance</h2><p>Follows system light or dark appearance.</p><label><input type="checkbox" checked={customizationEnabled} onChange={event => setCustomizationEnabled(event.target.checked)} />Enable customizations</label></section>
       <section className="settings-section"><h2>About this build</h2>{artifact}</section>
     </section>;
+  // On the rail, outside the keyed conversation and outside the chats pane the shell hides while a workspace is open.
+  const continuationStatus = <div id="continuation-status" className="visually-hidden" aria-live="polite" aria-atomic="true">
+    {continuationAnnouncement(app.continuation, app.observation?.status.kind === 'concluded')}</div>;
   const rail = <nav className="view-rail" aria-label="Workspace views">
+    {continuationStatus}
     <button type="button" aria-label="Chats" title="Chats" aria-pressed={selectedView === 'chats'} onClick={() => setSelectedView('chats')}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-9.5A7.5 7.5 0 0 1 9.5 5H12"/><path d="M16 5h6m-3-3v6"/></svg>
     </button>

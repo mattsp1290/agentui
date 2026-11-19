@@ -5,11 +5,11 @@ import type { ServiceConnectionOptions } from '@agentui/client/service';
 import { ServiceError, SERVICE_CATALOG_PAGE } from '@agentui/contracts/service';
 import { canRetryObservation, sameScope } from '@agentui/contracts';
 import { SOLO_CLIENT_COMPATIBILITY } from '@agentui/contracts/compatibility';
-import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions } from '@agentui/contracts';
+import type { ConversationScope, SubmitResult, ProviderObservationStatus, ConversationPermissions, ContinuationCarried, ConversationClosure } from '@agentui/contracts';
 import type { ImageId } from '@agentui/contracts/image';
 import { conversationPreview, transcriptProjection } from '@agentui/contracts/conversation';
 import type { Transcript } from '@agentui/contracts/conversation';
-import type { AgentDescriptor, ConversationCatalogEntry, ConversationSearchPage, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
+import type { AgentDescriptor, ContinuationView, ConversationCatalogEntry, ConversationSearchPage, ExtensionCallRequest, ExtensionCallValue, ServiceConnection, ServiceMetadata } from '@agentui/contracts/service';
 import type { ConversationCommands, ConversationModuleProps } from '@agentui/sdk/react';
 import type { OwnedViewStorage, SavedView, ViewStorageFactory } from './view-state.js';
 import { agentPresentation } from './agent-presentation.js';
@@ -19,6 +19,8 @@ import { createFrontendRecovery } from './frontend-recovery.js';
 import { createViewLeasePool } from './view-leases.js';
 import type { StoreBorrow, ViewBorrow } from './view-leases.js';
 import { conversationResponding } from './responding.js';
+import { createContinuationSession } from './continuation-session.js';
+export { EARLIER_SEGMENT_LIMIT } from './continuation-session.js';
 
 export interface Page<T> { readonly items: readonly T[]; readonly after: string | null }
 type HostState =
@@ -40,6 +42,34 @@ export type PermissionState =
   | { readonly kind: 'fresh'; readonly listing: AvailablePermissions }
   | { readonly kind: 'loading' | 'stale'; readonly listing: AvailablePermissions | null; readonly reason: string }
   | { readonly kind: 'unsupported'; readonly reason: string };
+/** What the boundary above one segment of a continued chat reports. */
+export interface ContinuationBoundary {
+  /** How the earlier segment ended; `unknown` or `null` when that could not be read. */
+  readonly closure: ConversationClosure | 'unknown' | null;
+  readonly carried: ContinuationCarried | null;
+}
+export interface EarlierSegment {
+  readonly scope: ConversationScope;
+  readonly messages: Transcript['messages'];
+  /** The boundary above this segment when it continues an even earlier one. */
+  readonly boundary: ContinuationBoundary | null;
+}
+export interface ConversationContinuation {
+  /** `null` until the host answers the first read. */
+  readonly view: ContinuationView | null;
+  readonly action: 'start' | 'check' | 'move' | 'earlier' | null;
+  readonly error: string;
+  /** Background reads or moves reached their bound; only a click tries again. */
+  readonly stalled: boolean;
+  /** Set when a Continue or Start a new chat click opened this chat, so its composer takes focus. */
+  readonly arrived: 'continue' | 'new-chat' | null;
+  /** The boundary above the open segment's own messages, when it continues an earlier one. */
+  readonly boundary: ContinuationBoundary | null;
+  /** Earlier segments loaded on request, oldest first. */
+  readonly earlier: readonly EarlierSegment[];
+  readonly earlierError: string;
+  readonly more: boolean;
+}
 /** One extension namespace's conversations, read with a namespace catalog filter in catalog order. */
 export interface WorkspaceConversations {
   readonly entries: readonly ConversationCatalogEntry[];
@@ -55,6 +85,7 @@ export interface ApplicationSnapshot {
   readonly savedViewNotice: string;
   readonly active: OpenConversation | null;
   readonly observation: ConversationObservation | null;
+  readonly continuation: ConversationContinuation | null;
   readonly permissionState: PermissionState;
   readonly error: string;
   readonly storageFailure: string;
@@ -69,6 +100,13 @@ export interface ConversationActions {
   /** Stops waiting on an unconfirmed send so the conversation can take new work. Says nothing about whether it ran. */
   abandon(id: string): Promise<void>;
   retryObservation(): Promise<void>;
+  /** Continue and Try again: the host starts this closed conversation's successor, or answers with the one it has. */
+  continueConversation(): Promise<void>;
+  /** Check again: looks up unsettled attempts and never starts another. */
+  checkContinuation(): Promise<void>;
+  /** Starts an unrelated new chat with the same agent through the ordinary create flow; only the unsent draft moves. */
+  startNewChat(): Promise<void>;
+  loadEarlierSegment(): Promise<void>;
   /** Reads an image of this conversation for preview; failures never mark the application failed. */
   readImage(imageId: ImageId): Promise<Uint8Array>;
 }
@@ -107,8 +145,8 @@ interface ActiveStoreOwner { readonly borrow: StoreBorrow; readonly target: Open
 interface Session { readonly pool: ReturnType<typeof createViewLeasePool>; activeOwner: ActiveStoreOwner | null; view: OwnedView | null; readonly connection: ServiceConnection; readonly frontend: FrontendSends; readonly images: ImageTransfers }
 const EMPTY_SAVED_VIEW: SavedView = { version: 2, route: null, pendingCreation: null };
 const DETACHED_VIEW = {
-  observation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, workspaces: {}, savedViews: { items: [], after: null }, savedViewNotice: '',
-} satisfies Pick<ApplicationSnapshot, 'observation' | 'permissionState' | 'catalog' | 'workspaces' | 'savedViews' | 'savedViewNotice'>;
+  observation: null, continuation: null, permissionState: { kind: 'stale', listing: null, reason: 'Open a conversation to read permissions.' }, catalog: { items: [], after: null }, workspaces: {}, savedViews: { items: [], after: null }, savedViewNotice: '',
+} satisfies Pick<ApplicationSnapshot, 'observation' | 'continuation' | 'permissionState' | 'catalog' | 'workspaces' | 'savedViews' | 'savedViewNotice'>;
 function compatibleAgent(agent: AgentDescriptor): AgentDescriptor {
   if ('kind' in agent) return agent;
   return SOLO_CLIENT_COMPATIBILITY.supportedNativeRuntimes.some(runtime => runtime.engine === agent.runtime.engine &&
@@ -192,6 +230,13 @@ export function createApplicationController(deps: {
   const recovery = createFrontendRecovery();
   let observationPoll: { stop(): void; retry(): Promise<void> } | null = null;
   const concludedScopes = new Map<string, Extract<ProviderObservationStatus, { readonly kind: 'concluded' }>>();
+  const continuations = createContinuationSession<Session>({
+    owner: () => session,
+    active: () => state.active,
+    busy: () => state.busy,
+    publish, current, install, save, requireSaved, requireTarget, message, patchEntries, run,
+    loadedLists: () => [state.catalog.items, ...Object.values(state.workspaces).map(workspace => workspace.entries)],
+  });
   let unsubscribeActive: (() => void) | null = null;
   function publish(update: Partial<Omit<ApplicationSnapshot, 'saved' | 'active'>>): void {
     state = Object.freeze({ ...state, ...update, saved: session?.view?.saved ?? EMPTY_SAVED_VIEW,
@@ -241,6 +286,7 @@ export function createApplicationController(deps: {
     const target = state.active;
     stalePermissions('Reconnect to refresh permissions.');
     stopObservation();
+    continuations.stop();
     unsubscribeActive?.();
     unsubscribeActive = null;
     target?.store.disconnect();
@@ -323,7 +369,9 @@ export function createApplicationController(deps: {
     function observed(status: ConversationObservation['status']): void {
       if (status.kind === 'concluded') concludedScopes.set(key, status);
       // The host never clears a closure, so a later failed read or a stopped status during an extension change is transient.
-      publish({ observation: { status: concludedScopes.get(key) ?? status, retrying } });
+      // Only those are masked: any live status the host reports wins.
+      const sticky = status.kind === 'unknown' || status.kind === 'stopped' ? concludedScopes.get(key) : undefined;
+      publish({ observation: { status: sticky ?? status, retrying } });
     }
     function read(action: 'read' | 'retry'): Promise<void> {
       const task = (async () => {
@@ -354,7 +402,27 @@ export function createApplicationController(deps: {
     };
     void read('read');
   }
-  async function install(owner: Session, scope: ConversationScope): Promise<void> {
+  /** Reopens a saved route at the newest segment, then saves that route only after its draft has moved. */
+  async function reopenNewest(owner: Session, route: ConversationScope): Promise<void> {
+    const newest = await continuations.newestSegment(owner, route);
+    await install(owner, newest);
+    await continuations.moveDraft(owner, route);
+    if (!sameScope(newest, route)) await save(owner, { ...requireSaved(owner).saved, route: newest });
+  }
+  async function createConversation(owner: Session, agentId?: string, carried?: ConversationScope, arrived: ConversationContinuation['arrived'] = null): Promise<void> {
+    const host = requireHost(owner);
+    const { saved } = requireSaved(owner);
+    if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
+    const selected = agentId ?? host.defaultAgentId;
+    if (selected === null) throw new Error('No agent is available to start a conversation.');
+    const agent = host.agents.find(agent => agent.id === selected);
+    if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
+    const scope = { hostId: host.hostId, conversationId: deps.createId() };
+    await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
+    requireHost(owner);
+    await completeCreation(owner, scope, selected, carried, arrived);
+  }
+  async function install(owner: Session, scope: ConversationScope, arrived: ConversationContinuation['arrived'] = null): Promise<void> {
     const storage = local(owner);
     const found = await current(owner, owner.connection.conversationAgent(scope));
     if (!found) throw new Error('Conversation does not exist.');
@@ -372,6 +440,7 @@ export function createApplicationController(deps: {
         publish({});
         local(owner);
         observeActive(owner, active);
+        continuations.watch(owner, active, arrived);
         await current(owner, store.connect());
         refreshPermissions(owner, active); return;
       }
@@ -382,6 +451,7 @@ export function createApplicationController(deps: {
       publish({ permissionState: { kind: 'loading', listing: null, reason: 'Reading permissions…' } });
       local(owner);
       observeActive(owner, active);
+      continuations.watch(owner, active, arrived);
       let connected = false;
       unsubscribeActive = store.subscribe(() => {
         if (session !== owner || state.active?.store !== store) return;
@@ -518,7 +588,7 @@ export function createApplicationController(deps: {
       publish({ host: { kind: 'ready', metadata } });
       const { hostId } = metadata;
       const results = await Promise.allSettled([readCatalog(owner, hostId), readSavedViews(owner, hostId),
-        saved.route ? install(owner, saved.route) : Promise.resolve()]);
+        saved.route ? reopenNewest(owner, saved.route) : Promise.resolve()]);
       const failed = results.find(result => result.status === 'rejected');
       if (failed?.status === 'rejected') fail(owner, failed.reason);
     } catch (cause) { fail(owner, cause, 'handshake'); }
@@ -548,7 +618,7 @@ export function createApplicationController(deps: {
       throw cause;
     } finally { if (session === owner) { publish({ busy: false }); refreshPermissions(owner, target); } }
   }
-  async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
+  async function completeCreation(owner: Session, scope: ConversationScope, agentId: string, carried?: ConversationScope, arrived: ConversationContinuation['arrived'] = null): Promise<void> {
     const view = requireSaved(owner), host = requireHost(owner);
     const matches = () => session === owner && state.host.kind === 'ready' && state.host.metadata.principalId === host.principalId && state.host.metadata.hostId === host.hostId && owner.view?.borrow.storage === view.borrow.storage && owner.view.saved !== null && owner.view.hostId === scope.hostId &&
       owner.view.saved?.pendingCreation?.agentId === agentId && sameScope(owner.view.saved.pendingCreation.scope, scope);
@@ -560,12 +630,17 @@ export function createApplicationController(deps: {
       throw error;
     }
     if (!matches()) throw new Error('The creation view changed. Recover it in its original view.');
+    // Start a new chat installs and moves the closed draft before this route is saved. A failed lookup leaves the route on the closed chat.
+    if (carried) {
+      await install(owner, scope, arrived);
+      await continuations.moveDraft(owner, carried);
+    }
     await save(owner, { version: 2, route: scope, pendingCreation: null });
     const created = host.agents.find(agent => agent.id === agentId);
     const provider = created && 'kind' in created && created.providerAgentId !== null
       ? { namespace: created.namespace, installationId: created.installationId, providerAgentId: created.providerAgentId } : null;
     publish(patchEntries(provider?.namespace ?? null, prepended({ scope, preview: null, provider })));
-    await install(owner, scope);
+    if (!carried) await install(owner, scope, arrived);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {
     requireHost(owner);
@@ -632,7 +707,7 @@ export function createApplicationController(deps: {
       unsubscribeActive = null;
       session = null;
       for (const close of [() => owner?.frontend.dispose(), () => owner?.pool.dispose(),
-        () => recovery.retarget(null), () => observation?.stop(), () => unsubscribe?.(),
+        () => recovery.retarget(null), () => observation?.stop(), () => continuations.stop(), () => unsubscribe?.(),
         () => { if (owner) setActive(owner, null); },
         () => { if (session === null && disposal === closing) stalePermissions('Reconnect to refresh permissions.'); }]) {
         try { drains.push(close()); } catch (error) { drains.push(Promise.reject(error)); }
@@ -670,19 +745,7 @@ export function createApplicationController(deps: {
       const host = requireHost(owner);
       if (state.savedViews.after !== null) await readSavedViews(owner, host.hostId, state.savedViews.after);
     }),
-    create: (agentId) => run(async owner => {
-      const host = requireHost(owner);
-      const { saved } = requireSaved(owner);
-      if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
-      const selected = agentId ?? host.defaultAgentId;
-      if (selected === null) throw new Error('No agent is available to start a conversation.');
-      const agent = host.agents.find(agent => agent.id === selected);
-      if (!agent || agent.availability.kind !== 'ready') throw new Error('Choose an available agent.');
-      const scope = { hostId: host.hostId, conversationId: deps.createId() };
-      await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
-      requireHost(owner);
-      await completeCreation(owner, scope, selected);
-    }),
+    create: agentId => run(owner => createConversation(owner, agentId)),
     recoverCreation: (selected) => run(async owner => {
       const view = requireSaved(owner), { saved } = view;
       const pending = saved.pendingCreation;
@@ -711,8 +774,11 @@ export function createApplicationController(deps: {
     open: scope => run(async owner => {
       const host = requireHost(owner);
       if (scope.hostId !== host.hostId) throw new Error('Conversation belongs to another host.');
-      await save(owner, { ...requireSaved(owner).saved, route: scope });
-      await install(owner, scope);
+      requireSaved(owner);
+      const newest = await continuations.newestSegment(owner, scope);
+      await install(owner, newest);
+      await continuations.moveDraft(owner, scope);
+      await save(owner, { ...requireSaved(owner).saved, route: newest });
     }),
     loadWorkspace: workspaceRead(false),
     moreWorkspace: workspaceRead(true),
@@ -756,6 +822,16 @@ export function createApplicationController(deps: {
         },
         async retryObservation() {
           if (owner && session === owner && state.active === target) await observationPoll?.retry();
+        },
+        continueConversation: () => run(async active => { if (active === owner) await continuations.act(active, target, 'start'); }),
+        checkContinuation: () => run(async active => { if (active === owner) await continuations.act(active, target, 'check'); }),
+        startNewChat: () => run(async active => {
+          if (active !== owner) return;
+          requireTarget(active, target);
+          await createConversation(active, target.agent.id, target.scope, 'new-chat');
+        }),
+        async loadEarlierSegment() {
+          if (owner && session === owner) await continuations.readEarlier(owner, target);
         },
         permissions: { async read() {
           if (!owner) throw new Error('Connect the conversation before continuing.');

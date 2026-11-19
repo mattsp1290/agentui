@@ -10,7 +10,8 @@ export function fixture() {
   const filters = [], calls = [];
   const behavior = { principalId: 'principal', frontendOffers: 'unsupported', binding: async request => ({ kind: 'pending', id: request.id }), select() {}, agents: null, runtime: RECORDED_RUNTIME, defaultId: 'default', agentLookup: null, catalog: async () => {}, metadata: async () => {}, acquire: async () => {}, reopen: async () => {}, close: () => {}, create: async () => {}, write: async () => {}, read: async () => {}, listing: async () => ({ ids: [], after: null, unreadable: 0 }),
     permissions: async () => ({ kind: 'available', observedAt: new Date().toISOString(), permissions: [] }),
-    observation: async () => ({ kind: 'not-applicable' }), search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
+    observation: async () => ({ kind: 'not-applicable' }), continuation: async () => ({ predecessor: null, carried: null, closure: null, successor: null }),
+    search: async () => ({ items: [], after: null }), submit: async () => { throw new Error('Reply lost'); } };
   function lease(viewId, failure) {
     const owner = { viewId, failure, closed: false, select() { behavior.select(); },
       async readView(host) { await behavior.read(); return views.get(`${viewId}/${host}`) ?? empty(); },
@@ -49,6 +50,7 @@ export function fixture() {
     async conversationAgent(value) { return behavior.agentLookup ? behavior.agentLookup(value) : captured.get(value.conversationId) ?? descriptor(); },
     conversationPermissions: input => behavior.permissions(input),
     providerObservation: input => behavior.observation(input),
+    continuation: input => behavior.continuation(input),
     search: (...args) => behavior.search(...args),
     async reconcile() { return null; },
     async abandon(...args) { return behavior.abandon ? behavior.abandon(...args) : null; },
