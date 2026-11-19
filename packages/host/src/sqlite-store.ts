@@ -361,11 +361,16 @@ export class SqliteStore<E, P> implements ProviderStreamStore {
     if (this.projection !== transcriptProjection) return null;
     const run = this.db.prepare("SELECT json_extract(document, '$.domain.currentRun.kind') AS kind, json_extract(document, '$.domain.currentRun.runId') AS id FROM conversations WHERE host=? AND conversation=?").get(...key(scope));
     if (run?.kind !== 'ended' || typeof run.id !== 'string') return null;
-    const rows = this.db.prepare("SELECT id FROM commands WHERE host=? AND conversation=? AND json_extract(intent, '$.body.kind')='send' AND json_extract(receipt, '$.state.kind')='accepted' ORDER BY rowid").all(...key(scope));
+    // A bare json_extract aborts the statement on one malformed observation, so each row is guarded by json_valid.
+    // Only the run id is filtered here: a row that names the run must decode, or the selection fails closed.
+    const rows = this.db.prepare(`SELECT id FROM commands WHERE host=? AND conversation=?
+      AND CASE WHEN json_valid(observation) THEN json_extract(observation, '$.evidence.source.run.identity.runId') END = ? ORDER BY rowid`).all(...key(scope), run.id);
     for (const row of rows) {
       const stored = this.command(scope, nonempty(row.id));
-      if (!stored || !('kind' in stored) || isOffered(stored) || !stored.observation || !('evidence' in stored.observation)) continue;
-      if (stored.observation.evidence.source.run?.identity.runId === run.id) return stored;
+      if (!stored || !('kind' in stored) || isOffered(stored) || stored.command.body.kind !== 'send' || stored.receipt.state.kind !== 'accepted' ||
+        !stored.observation || !('evidence' in stored.observation)) continue;
+      if (stored.observation.evidence.source.run?.identity.runId !== run.id) throw new Error('Corrupt command');
+      return stored;
     }
     return null;
   }
