@@ -49,13 +49,36 @@ export async function run(signal: AbortSignal) {
         assert.match(result.stdout, diagnostic, output);
       }
     }
-    // The production testkit exports contracts. A pin from before that export reports the module missing.
-    const production = "import { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';\nexport const productionUncertainty: QualificationContract = productionContracts.uncertainty;\n";
-    await writeFile(`${temporary}/probe.ts`, prefix + production);
-    const productionResult = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
-    assert.ifError(productionResult.error);
-    const productionOutput = `${productionResult.stdout}${productionResult.stderr}`;
-    if (productionResult.status !== 0) assert.match(productionOutput, /Cannot find module|has no exported member/u, productionOutput);
+    // The host pin's node_modules is visible from packages/host, not from this audit directory.
+    const hostAudit = new URL('packages/host/.audit/', root);
+    await mkdir(hostAudit, { recursive: true });
+    const productionDirectory = await mkdtemp(fileURLToPath(new URL('qualification-production-', hostAudit)));
+    try {
+      await writeFile(`${productionDirectory}/tsconfig.json`, JSON.stringify({
+        extends: fileURLToPath(new URL('tsconfig.base.json', root)),
+        compilerOptions: { noEmit: true, rootDir: productionDirectory, types: ['node'] },
+        files: [`${productionDirectory}/probe.ts`], include: [],
+      }));
+      const production = [
+        "import type { QualificationContract } from '@agentui/switchboard-qualification/testkit';",
+        "import { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';",
+        'type RejectAny<T> = 0 extends (1 & T) ? never : T;',
+        'export const productionUncertainty: QualificationContract =',
+        '  productionContracts.uncertainty satisfies RejectAny<typeof productionContracts.uncertainty>;',
+        '',
+      ].join('\n');
+      await writeFile(`${productionDirectory}/probe.ts`, production);
+      const productionResult = spawnSync(process.execPath, [compiler, '-p', `${productionDirectory}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
+      assert.ifError(productionResult.error);
+      const productionOutput = `${productionResult.stdout}${productionResult.stderr}`;
+      if (productionResult.status !== 0) {
+        const diagnostics = productionOutput.match(/^.+error TS\d+:.+$/gmu) ?? [];
+        assert.equal(diagnostics.length, 1, productionOutput);
+        assert.match(diagnostics[0], /Cannot find module '@mattsp1290\/switchboard\/testkit'/u, productionOutput);
+      }
+    } finally {
+      await rm(productionDirectory, { recursive: true, force: true });
+    }
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
