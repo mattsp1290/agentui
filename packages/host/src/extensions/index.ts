@@ -1,3 +1,4 @@
+import type { ExtensionCallRequest, ExtensionCallValue, ExtensionDescriptor } from '@agentui/contracts/service';
 import { createProviderRegistry } from '../providers.js';
 import type { ProviderStatus, ProviderConversationOperations, ProviderCreationOperations, ProviderExtension } from '../providers.js';
 
@@ -13,6 +14,8 @@ export type ServerExtensionPreparation =
   | ServerExtensionFailure;
 export interface ServerExtensionSource {
   prepare(): Promise<ServerExtensionPreparation>;
+  /** Namespaces this selection configures. Read only after the replacement is admitted and settles. */
+  namespaces?(): readonly string[];
 }
 export type ServerExtensionStatus =
   | { readonly kind: 'empty' | 'closing' | 'closed' }
@@ -31,6 +34,9 @@ interface Generation {
 interface Changing {
   readonly kind: 'changing';
   generation: Generation | null;
+  /** The retiring generation's descriptors, with every installation unavailable. */
+  readonly retiring: readonly ExtensionDescriptor[];
+  readonly source: ServerExtensionSource;
   readonly settled: Promise<ServerExtensionReplacement>;
 }
 type State =
@@ -40,13 +46,19 @@ type State =
   | ServerExtensionFailure;
 const cleanupFailure: ServerExtensionFailure = { kind: 'failed', failure: 'cleanup', recovery: 'restart' };
 
-export function createServerExtensions() {
+export function createServerExtensions(options: { readonly operationDeadlineMs?: number } = {}) {
   const inactive = createProviderRegistry([]);
   let state: State = { kind: 'empty' };
   let nextGeneration = 0;
   let closing: Promise<void> | undefined;
+  /** Namespaces the last settled replacement configured; a failed state reports each of them without detail. */
+  let configured: readonly string[] = [];
+  const namespacesOf = (source: ServerExtensionSource): readonly string[] => {
+    try { return source.namespaces?.() ?? []; } catch { return []; }
+  };
   function fail(change: Changing, failure: ServerExtensionFailure): ServerExtensionFailure {
     if (state === change) state = { ...failure };
+    configured = namespacesOf(change.source);
     return { ...failure };
   }
   async function retire(change: Changing): Promise<ServerExtensionFailure | null> {
@@ -67,15 +79,17 @@ export function createServerExtensions() {
     if (!prepared.extensions.length) {
       if (state !== change) return { kind: 'unavailable' };
       state = { kind: 'empty' };
+      configured = [];
       return { kind: 'replaced', generation: null };
     }
-    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions) };
+    const generation: Generation = { id: ++nextGeneration, registry: createProviderRegistry(prepared.extensions, options) };
     change.generation = generation;
     try {
       if (state === change) await generation.registry.activate();
       if (state === change) await generation.registry.discover();
       if (state === change) {
         state = { kind: 'active', generation };
+        configured = namespacesOf(source);
         return { kind: 'replaced', generation: generation.id };
       }
     } catch {
@@ -95,7 +109,9 @@ export function createServerExtensions() {
       if (activity.phase === 'closing') return Promise.resolve({ kind: 'deferred', reason: 'changing' });
       if (activity.pending) return Promise.resolve({ kind: 'deferred', reason: 'active-work' });
     }
-    const change: Changing = { kind: 'changing', generation: state.kind === 'active' ? state.generation : null,
+    const retiring = state.kind === 'active' ? state.generation.registry.extensions().map(descriptor => ({ ...descriptor,
+      installations: descriptor.installations.map(item => ({ installationId: item.installationId, status: 'unavailable' as const })) })) : [];
+    const change: Changing = { kind: 'changing', generation: state.kind === 'active' ? state.generation : null, retiring, source,
       settled: Promise.resolve().then(() => replaceGeneration(change, source)) };
     state = change;
     return change.settled.then(result => ({ ...result }));
@@ -104,6 +120,24 @@ export function createServerExtensions() {
     if (state.kind === 'empty') return Promise.resolve([]);
     if (state.kind !== 'active') return Promise.reject(new Error('Provider discovery unavailable'));
     return state.generation.registry.discover();
+  }
+  /** Changing, failed, closing and empty states refuse every call as unavailable. */
+  function callOperation(request: ExtensionCallRequest): Promise<ExtensionCallValue> {
+    if (state.kind !== 'active') return Promise.resolve({ kind: 'failed', cause: 'unavailable' });
+    return state.generation.registry.callOperation(request);
+  }
+  /**
+   * Active namespaces come from the registry. While a replacement is changing, the retiring generation's namespaces stay
+   * listed with unavailable installations, so a client does not show them as unconfigured. A failed state reports each
+   * configured namespace without detail.
+   */
+  function extensions(): readonly ExtensionDescriptor[] {
+    switch (state.kind) {
+      case 'active': return state.generation.registry.extensions();
+      case 'changing': return state.retiring;
+      case 'failed': return configured.map(namespace => ({ namespace, state: 'failed' as const, operations: [], installations: [] }));
+      default: return [];
+    }
   }
   function catalog(): readonly ProviderStatus[] {
     return current().catalog();
@@ -157,5 +191,5 @@ export function createServerExtensions() {
       default: return { ...state };
     }
   }
-  return { replace, discover, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, continuation, status, close };
+  return { replace, discover, callOperation, extensions, catalog, statusOf, capture, execute, captureCommand, executeCommand, assertFrontendInput, conversationOutputs, readOutput, readPermissions, observe, closure, continuation, status, close };
 }

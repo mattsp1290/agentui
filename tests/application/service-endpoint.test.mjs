@@ -25,7 +25,9 @@ for (const client of ['browser-development', 'native']) {
     const compatibility = { wireVersion: 1, extensionSdkVersion: EXTENSION_SDK_VERSION, nativeRuntime: RECORDED_RUNTIME,
       desiredGitRevision: 'test', appliedArtifact: { artifactId: 'test', gitRevision: 'test' } };
     let closing = false;
-    const options = { observability: NO_OBSERVABILITY, hostId: access.hostId, api: createApi({ host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, isClosing: () => closing }), isClosing: () => closing };
+    const options = { observability: NO_OBSERVABILITY, hostId: access.hostId, api: createApi({ host, feeds, agentSelection: { kind: 'native', defaultInstallation: recordedInstallation, agents: [{ installation: recordedInstallation, availability: { kind: 'ready' } }] }, compatibility, isClosing: () => closing,
+      extensions: { describe: () => [{ namespace: 'fixture', state: 'active', operations: ['echo'], installations: [{ installationId: 'personal', status: 'available' }] }],
+        call: async request => request.operation === 'echo' ? { kind: 'ok', output: request.input } : Promise.reject(new Error('private backend diagnostic')) } }), isClosing: () => closing };
     const handler = serviceEndpoint(client === 'native' ? { ...options, client } : { ...options, client, files: new Map() });
     const server = createServer((request, response) => { void handler(request, response).catch(() => response.destroy()); });
     t.after(async () => {
@@ -48,7 +50,14 @@ for (const client of ['browser-development', 'native']) {
       assert.equal(response.headers.get('set-cookie'), null);
       return { status: response.status, body: await response.json() };
     };
-    assert.equal((await call({ op: 'metadata' })).body.value.principalId, 'trusted-owner');
+    const metadata = await call({ op: 'metadata' });
+    assert.equal(metadata.body.value.principalId, 'trusted-owner');
+    assert.deepEqual(metadata.body.value.extensions, [{ namespace: 'fixture', state: 'active', operations: ['echo'], installations: [{ installationId: 'personal', status: 'available' }] }]);
+    assert.equal(JSON.stringify(metadata.body.value.extensions).includes('http'), false);
+    const extensionCall = { op: 'extension-call', namespace: 'fixture', installationId: 'personal', input: { value: 1 } };
+    assert.deepEqual(await call({ ...extensionCall, operation: 'echo' }), { status: 200, body: { ok: true, value: { kind: 'ok', output: { value: 1 } } } });
+    assert.deepEqual(await call({ ...extensionCall, operation: 'other' }), { status: 200, body: { ok: true, value: { kind: 'failed', cause: 'unavailable' } } });
+    assert.equal((await call({ ...extensionCall, operation: 'echo', url: 'http://elsewhere' })).status, 400);
     assert.deepEqual(await call({ op: 'search', query: 'missing', after: null }), {
       status: 200, body: { ok: true, value: { items: [], after: null } },
     });

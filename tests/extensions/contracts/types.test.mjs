@@ -79,9 +79,9 @@ test('slot selection requires a ready owner with its captured component', () => 
 import type { ActivitySelection, ContentLayoutSelection, TranscriptSelection } from ${JSON.stringify(fileURLToPath(new URL('../../../apps/desktop/dist/application/DesktopCustomizations.js', import.meta.url)))};
 declare const generation: import('@agentui/sdk/tools').FrontendToolGeneration;
 export const owner = { kind: 'ready', namespace: 'notes', lifetime: 1, generation, fail(_error: unknown) {},
-  presentation: { modules: [], transcript: () => null, activity: undefined, contentLayout: undefined } } as const;
+  presentation: { modules: [], transcript: () => null, activity: undefined, contentLayout: undefined, workspace: undefined } } as const;
 export const selection: TranscriptSelection = { kind: 'claimed', owner };
-export const layoutOwner = { ...owner, presentation: { modules: [], transcript: undefined, activity: undefined, contentLayout: () => null } } as const;
+export const layoutOwner = { ...owner, presentation: { modules: [], transcript: undefined, activity: undefined, contentLayout: () => null, workspace: undefined } } as const;
 export const layout: ContentLayoutSelection = { kind: 'claimed', owner: layoutOwner };
 export const activityOwner = { ...owner, presentation: { ...owner.presentation, activity: () => null } } as const;
 export const activity: ActivitySelection = { kind: 'claimed', owner: activityOwner };

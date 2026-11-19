@@ -91,7 +91,7 @@ test('a host answering a different host identity after startup fails tool calls'
     if (!foreign) {
       const forward = await fetch(`${f.origin}/native/v1`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(input) });
       response.end(await forward.text());
-    } else response.end(JSON.stringify({ ok: true, value: { hostId: 'foreign', principalId: 'trusted-owner', compatibility: foreignCompatibility, agents: [], defaultAgentId: null } }));
+    } else response.end(JSON.stringify({ ok: true, value: { hostId: 'foreign', principalId: 'trusted-owner', compatibility: foreignCompatibility, agents: [], defaultAgentId: null, extensions: [] } }));
   });
   const mcp = await connect(t, origin);
   data(await mcp.client.callTool({ name: 'agentui_agents', arguments: {} }));

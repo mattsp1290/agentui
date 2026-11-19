@@ -3,7 +3,8 @@ import { canonicalJson } from '@agentui/contracts';
 import { CLAUDE_SDK_CHAT_LABELS, CLAUDE_SDK_RUNTIMES, CODEX_RUNTIME, CODEX_SDK_CHAT_LABEL, CODEX_SDK_MODEL, CODEX_SDK_RUNTIME, PI_CHAT_LABEL, PI_RUNTIME, RECORDED_RUNTIME } from '@agentui/contracts/compatibility';
 import type { AgentDescriptor, NativeAgentDescriptor } from '@agentui/contracts/service';
 import { codexInstallationModel, providerInstallationKey, providerUnavailableReasons } from '@agentui/host';
-import type { Installation, ProviderInstallation, UnavailableProvider } from '@agentui/host';
+import type { ConversationInstallation, Installation, ProviderInstallation, UnavailableProvider } from '@agentui/host';
+import type { ConversationProvider } from '@agentui/contracts/service';
 
 export interface InstalledAgent {
   readonly name?: string;
@@ -35,11 +36,17 @@ export function describeAgent(installation: Installation, availability: AgentDes
 export function describeProviderAgent(installation: ProviderInstallation, availability: AgentDescriptor['availability'], imageInput: AgentDescriptor['imageInput'], commands: AgentDescriptor['commands'] = [], frontendOffers: AgentDescriptor['frontendOffers'] = 'unsupported'): AgentDescriptor {
   return { kind: 'provider', id: `provider-v1-${createHash('sha256').update(providerInstallationKey(installation)).digest('hex')}`,
     label: installation.agent.name, namespace: installation.instance.namespace, protocolVersion: installation.instance.protocolVersion,
-    commands, availability, frontendOffers, imageInput };
+    installationId: installation.instance.installationId, providerAgentId: installation.agent.opaqueId, commands, availability, frontendOffers, imageInput };
 }
 
 export function describeUnavailableProvider(provider: UnavailableProvider, imageInput: AgentDescriptor['imageInput']): AgentDescriptor {
   return { kind: 'provider', id: `provider-installation-v1-${createHash('sha256').update(canonicalJson({ contributionId: provider.contributionId, instance: provider.instance })).digest('hex')}`,
     label: `${provider.instance.namespace} · ${provider.instance.installationId}`, namespace: provider.instance.namespace, protocolVersion: provider.instance.protocolVersion,
-    imageInput, commands: [], frontendOffers: 'unsupported', availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
+    installationId: provider.instance.installationId, providerAgentId: null, imageInput, commands: [], frontendOffers: 'unsupported', availability: { kind: 'unavailable', reason: providerUnavailableReasons[provider.cause] } };
+}
+
+/** The provider identity stored with a conversation, read from its installation rather than the current descriptors. */
+export function conversationProvider(installation: ConversationInstallation): ConversationProvider | null {
+  return 'kind' in installation ? { namespace: installation.instance.namespace, installationId: installation.instance.installationId,
+    providerAgentId: installation.agent.opaqueId } : null;
 }

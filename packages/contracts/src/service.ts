@@ -15,8 +15,8 @@ import type { ConversationScope } from './index.js';
 import type { HostCompatibility, NativeRuntimeIdentity } from './compatibility.js';
 import { CONVERSATION_PREVIEW_LENGTH } from './conversation.js';
 import type { Transcript, TranscriptEvent } from './conversation.js';
-import { canonicalJson, DEFAULT_MAX_COMMAND_BYTES, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
-import type { ClientCommand, ConversationPort, FeedEnd, Receipt, SubmitResult } from './durable.js';
+import { canonicalJson, copyJson, DEFAULT_MAX_COMMAND_BYTES, JSON_MAX_DEPTH, JSON_MAX_NODES, JsonLimitError, parseCommand, parseReceipt, parseScope, sameScope } from './durable.js';
+import type { ClientCommand, ConversationPort, FeedEnd, Json, Receipt, SubmitResult } from './durable.js';
 import { CORE_CATALOG_PAGE, HOST_DEFAULT_PAGE_EVENTS, HOST_DEFAULT_PAGE_BYTES, HOST_DEFAULT_SNAPSHOT_BYTES } from './budgets.js';
 
 const JSON_STRING_ESCAPE_EXPANSION = 6;
@@ -36,6 +36,103 @@ export class ServiceError extends Error {
   constructor(readonly kind: ServiceFailureKind, message: string) { super(message); }
 }
 export type ContinuationAction = 'read' | 'check' | 'start';
+/** Canonical JSON byte limits for one extension operation call. */
+export const EXTENSION_CALL_INPUT_BYTES = DEFAULT_MAX_COMMAND_BYTES;
+export const EXTENSION_CALL_OUTPUT_BYTES = 256_000;
+export const EXTENSION_CALL_FAILURES = ['unknown-extension', 'unknown-installation', 'unknown-operation',
+  'unavailable', 'too-large', 'invalid-result', 'threw', 'timeout'] as const;
+export type ExtensionCallFailure = typeof EXTENSION_CALL_FAILURES[number];
+export interface ExtensionCallRequest {
+  readonly namespace: string;
+  /** `ProviderInstance.installationId` of the installation the operation runs for. */
+  readonly installationId: string;
+  readonly operation: string;
+  readonly input: Json;
+}
+export type ExtensionCallValue =
+  | { readonly kind: 'ok'; readonly output: Json }
+  | { readonly kind: 'refused'; readonly code: string }
+  | { readonly kind: 'failed'; readonly cause: ExtensionCallFailure };
+export interface ExtensionInstallationStatus {
+  readonly installationId: string;
+  readonly status: 'available' | 'unavailable';
+}
+/** A configured server extension namespace. It never carries a credential, handle or service origin. */
+export interface ExtensionDescriptor {
+  readonly namespace: string;
+  readonly state: 'active' | 'failed';
+  readonly operations: readonly string[];
+  readonly installations: readonly ExtensionInstallationStatus[];
+}
+/** The single source of the extension name patterns. The SDK re-exports these; the Rust validator mirrors them. */
+export const EXTENSION_NAMESPACE_PATTERN = /^[a-z][a-z0-9-]{0,31}$/u;
+export const EXTENSION_OPERATION_PATTERN = /^[a-z][a-z0-9.-]{0,63}$/u;
+export const EXTENSION_REFUSAL_PATTERN = /^[a-z][a-z0-9-]{0,63}$/u;
+function patterned(value: unknown, pattern: RegExp, name: string): string {
+  if (typeof value !== 'string' || !pattern.test(value)) throw new Error(`Invalid extension ${name}`);
+  return value;
+}
+/** An extension call input or output over its byte or structural limit. */
+export class ExtensionCallTooLarge extends Error {}
+/**
+ * Structural budgets for a call's input and output as they sit inside the wire envelope. Each value shares the
+ * envelope's depth and node limits: the input sits one level below `{ op, namespace, installationId, operation, input }`
+ * (four sibling nodes plus the root), the output two levels below `{ ok, value: { kind, output } }` (three other nodes
+ * plus the root). Measuring them alone would accept a value that the whole-request or whole-response bound then rejects.
+ */
+const EXTENSION_CALL_INPUT_BUDGET = { maxDepth: JSON_MAX_DEPTH - 1, maxNodes: JSON_MAX_NODES - 5 } as const;
+const EXTENSION_CALL_OUTPUT_BUDGET = { maxDepth: JSON_MAX_DEPTH - 2, maxNodes: JSON_MAX_NODES - 4 } as const;
+function boundedJson(value: unknown, limit: number, budget: { readonly maxDepth: number; readonly maxNodes: number }): Json {
+  let copy: Json;
+  try { copy = copyJson(value, budget); }
+  catch (error) { throw error instanceof JsonLimitError ? new ExtensionCallTooLarge('Extension call value exceeds limit') : error; }
+  if (utf8Bytes(canonicalJson(copy)) > limit) throw new ExtensionCallTooLarge('Extension call value exceeds byte limit');
+  return copy;
+}
+export function parseExtensionCallRequest(value: unknown): ExtensionCallRequest {
+  const input = record(value, ['namespace', 'installationId', 'operation', 'input']);
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), installationId: identifier(input.installationId),
+    operation: patterned(input.operation, EXTENSION_OPERATION_PATTERN, 'operation'), input: boundedJson(input.input, EXTENSION_CALL_INPUT_BYTES, EXTENSION_CALL_INPUT_BUDGET) };
+}
+/**
+ * Parses an extension call, mapping an over-limit call to the `too-large` failure every layer replies with. Any other
+ * invalid call throws the parse error, so each caller keeps its own policy for it.
+ */
+export function classifyExtensionCall(value: unknown):
+  { readonly kind: 'call'; readonly request: ExtensionCallRequest } | { readonly kind: 'failed'; readonly cause: 'too-large' } {
+  try { return { kind: 'call', request: parseExtensionCallRequest(value) }; }
+  catch (error) {
+    if (error instanceof ExtensionCallTooLarge) return { kind: 'failed', cause: 'too-large' };
+    throw error;
+  }
+}
+export function parseExtensionCallValue(value: unknown): ExtensionCallValue {
+  const input = record(value);
+  switch (input.kind) {
+    case 'ok': exact(input, ['kind', 'output']); return { kind: 'ok', output: boundedJson(input.output, EXTENSION_CALL_OUTPUT_BYTES, EXTENSION_CALL_OUTPUT_BUDGET) };
+    case 'refused': exact(input, ['kind', 'code']); return { kind: 'refused', code: patterned(input.code, EXTENSION_REFUSAL_PATTERN, 'refusal') };
+    case 'failed': {
+      exact(input, ['kind', 'cause']);
+      const cause = EXTENSION_CALL_FAILURES.find(cause => cause === input.cause);
+      if (!cause) throw new Error('Invalid extension call failure');
+      return { kind: 'failed', cause };
+    }
+    default: throw new Error('Invalid extension call result');
+  }
+}
+function extensionDescriptor(value: unknown): ExtensionDescriptor {
+  const input = record(value, ['namespace', 'state', 'operations', 'installations']);
+  if (input.state !== 'active' && input.state !== 'failed') throw new Error('Invalid extension state');
+  if (!Array.isArray(input.operations) || !Array.isArray(input.installations)) throw new Error('Invalid extension descriptor');
+  const operations = input.operations.map(operation => patterned(operation, EXTENSION_OPERATION_PATTERN, 'operation'));
+  if (new Set(operations).size !== operations.length || (input.state === 'failed' && operations.length)) throw new Error('Invalid extension operations');
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), state: input.state, operations,
+    installations: input.installations.map(item => {
+      const installation = record(item, ['installationId', 'status']);
+      if (installation.status !== 'available' && installation.status !== 'unavailable') throw new Error('Invalid extension installation status');
+      return { installationId: identifier(installation.installationId), status: installation.status };
+    }) };
+}
 export interface ContinuationView {
   readonly predecessor: ConversationScope | null;
   readonly carried: ContinuationCarried | null;
@@ -52,7 +149,7 @@ export type ServiceRequest =
   | { readonly op: 'image-upload'; readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly byteLength: number; readonly base64: string }
   | { readonly op: 'image-read'; readonly scope: ConversationScope; readonly imageId: ImageId }
   | { readonly op: 'metadata' }
-  | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number }
+  | { readonly op: 'catalog'; readonly after: string | null; readonly limit: number; readonly filter?: CatalogFilter }
   | { readonly op: 'search'; readonly query: string; readonly after: string | null }
   | { readonly op: 'create'; readonly scope: ConversationScope; readonly agentId: string }
   | { readonly op: 'conversation-permissions'; readonly scope: ConversationScope }
@@ -63,7 +160,18 @@ export type ServiceRequest =
   | { readonly op: 'receipt' | 'reconcile' | 'abandon'; readonly scope: ConversationScope; readonly id: string }
   | { readonly op: 'watch'; readonly scope: ConversationScope; readonly after: number | null; readonly projectionVersion: number }
   | { readonly op: 'pull'; readonly feedId: string; readonly ack: number | null }
-  | { readonly op: 'close'; readonly feedId: string };
+  | { readonly op: 'close'; readonly feedId: string }
+  | ({ readonly op: 'extension-call' } & ExtensionCallRequest);
+/** Narrows `catalog` to one namespace or one provider agent, read from the installation stored with each conversation. */
+export type CatalogFilter =
+  | { readonly kind: 'namespace'; readonly namespace: string }
+  | ({ readonly kind: 'provider-agent' } & ConversationProvider);
+/** The provider identity stored with a conversation; `null` for native and recorded conversations. */
+export interface ConversationProvider {
+  readonly namespace: string;
+  readonly installationId: string;
+  readonly providerAgentId: string;
+}
 interface AgentDescription {
   readonly imageInput: ImageInputCapability;
   readonly frontendOffers: FrontendEligibility;
@@ -78,6 +186,10 @@ export type NativeAgentDescriptor = AgentDescription & {
 };
 export type AgentDescriptor = NativeAgentDescriptor | (AgentDescription & {
   readonly kind: 'provider'; readonly namespace: string; readonly protocolVersion: string;
+  /** `ProviderInstance.installationId`. */
+  readonly installationId: string;
+  /** The provider's agent `opaqueId`, visible to clients; `null` for an installation-level descriptor. */
+  readonly providerAgentId: string | null;
 });
 export interface ServiceMetadata {
   readonly agents: readonly AgentDescriptor[];
@@ -85,6 +197,8 @@ export interface ServiceMetadata {
   readonly hostId: string;
   readonly principalId: string;
   readonly compatibility: HostCompatibility;
+  /** Sorted by namespace; each installation list is sorted by installation ID. */
+  readonly extensions: readonly ExtensionDescriptor[];
 }
 export type ServicePull =
   | { readonly kind: 'page'; readonly page: number; readonly item: unknown }
@@ -93,6 +207,7 @@ export type ServicePull =
 export interface ConversationCatalogEntry {
   readonly scope: ConversationScope;
   readonly preview: string | null;
+  readonly provider: ConversationProvider | null;
 }
 export interface ConversationSearchEntry extends ConversationCatalogEntry {
   readonly excerpt: string | null;
@@ -122,6 +237,7 @@ export interface ServiceValueMap {
   readonly watch: { readonly feedId: string };
   readonly pull: ServicePull;
   readonly close: null;
+  readonly 'extension-call': ExtensionCallValue;
 }
 export type ServiceResponse<T = ServiceValueMap[keyof ServiceValueMap]> =
   | { readonly ok: true; readonly value: T }
@@ -136,7 +252,7 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   uploadImage(input: { readonly scope: ConversationScope; readonly uploadId: UploadId; readonly name: string; readonly bytes: Uint8Array }): Promise<ImageAttachment>;
   readImage(scope: ConversationScope, imageId: ImageId): Promise<{ readonly attachment: ImageAttachment; readonly bytes: Uint8Array }>;
   metadata(): Promise<ServiceMetadata>;
-  catalog(after?: string | null, limit?: number): Promise<readonly ConversationCatalogEntry[]>;
+  catalog(after?: string | null, limit?: number, filter?: CatalogFilter): Promise<readonly ConversationCatalogEntry[]>;
   search(query: string, after?: string | null): Promise<ConversationSearchPage>;
   create(scope: ConversationScope, agentId: string): Promise<ConversationScope>;
   conversationPermissions(scope: ConversationScope): Promise<ConversationPermissions>;
@@ -148,6 +264,8 @@ export interface ServiceConnection<E = TranscriptEvent, P = Transcript> {
   reconcile(scope: ConversationScope, id: string): Promise<Receipt | null>;
   /** Stop waiting on a provider send that blocks its conversation. The result says nothing about whether the send took effect. */
   abandon(scope: ConversationScope, id: string): Promise<Receipt | null>;
+  /** Calls a server extension operation once. No retry and no outbox entry: a lost reply leaves the outcome unknown. */
+  extensionCall(request: ExtensionCallRequest): Promise<ExtensionCallValue>;
 }
 function cursor(value: unknown): number | null { return value === null ? null : count(value); }
 function nil(value: unknown): null {
@@ -179,10 +297,11 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       return { op: 'search', query, after: input.after === null ? null : identifier(input.after) };
     }
     case 'catalog': {
-      exact(input, ['op', 'after', 'limit']);
+      const filtered = Object.hasOwn(input, 'filter');
+      exact(input, filtered ? ['op', 'after', 'limit', 'filter'] : ['op', 'after', 'limit']);
       const limit = count(input.limit);
       if (limit < 1 || limit > SERVICE_CATALOG_PAGE) throw new Error(`Catalog limit must be between 1 and ${SERVICE_CATALOG_PAGE}`);
-      return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit };
+      return { op: 'catalog', after: input.after === null ? null : identifier(input.after), limit, ...(filtered ? { filter: parseCatalogFilter(input.filter) } : {}) };
     }
     case 'conversation-permissions': exact(input, ['op', 'scope']); return { op: 'conversation-permissions', scope: parseScope(input.scope) };
     case 'conversation-agent': exact(input, ['op', 'scope']); return { op: 'conversation-agent', scope: parseScope(input.scope) };
@@ -214,12 +333,34 @@ export function parseServiceRequest(value: unknown): ServiceRequest {
       exact(input, ['op', 'feedId', 'ack']);
       return { op: 'pull', feedId: identifier(input.feedId), ack: cursor(input.ack) };
     case 'close': exact(input, ['op', 'feedId']); return { op: 'close', feedId: identifier(input.feedId) };
+    case 'extension-call': {
+      const { op: _op, ...fields } = input;
+      return { op: 'extension-call', ...parseExtensionCallRequest(fields) };
+    }
     default: throw new Error('Unknown service operation');
   }
 }
+export function parseCatalogFilter(value: unknown): CatalogFilter {
+  const input = record(value);
+  if (input.kind === 'namespace') {
+    exact(input, ['kind', 'namespace']);
+    return { kind: 'namespace', namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace') };
+  }
+  if (input.kind !== 'provider-agent') throw new Error('Invalid catalog filter');
+  exact(input, ['kind', 'namespace', 'installationId', 'providerAgentId']);
+  return { kind: 'provider-agent', ...providerFields(input) };
+}
+/** The fields of a provider identity, shared by the catalog filter and catalog entries. */
+function providerFields(input: Readonly<Record<string, unknown>>): ConversationProvider {
+  return { namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), installationId: identifier(input.installationId),
+    providerAgentId: identifier(input.providerAgentId) };
+}
+function conversationProvider(value: unknown): ConversationProvider | null {
+  return value === null ? null : providerFields(record(value, ['namespace', 'installationId', 'providerAgentId']));
+}
 function agentDescriptor(value: unknown): AgentDescriptor {
   const input = record(value);
-  exact(input, input.kind === 'provider' ? ['imageInput', 'frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'commands', 'availability']
+  exact(input, input.kind === 'provider' ? ['imageInput', 'frontendOffers', 'id', 'label', 'kind', 'namespace', 'protocolVersion', 'installationId', 'providerAgentId', 'commands', 'availability']
     : ['imageInput', 'frontendOffers', 'id', 'label', 'runtime', 'commands', 'availability', ...(Object.hasOwn(input, 'model') ? ['model'] : [])]);
   const available = record(input.availability);
   let availability: AgentDescriptor['availability'];
@@ -236,7 +377,8 @@ function agentDescriptor(value: unknown): AgentDescriptor {
   });
   if (input.frontendOffers !== 'unsupported' && (input.frontendOffers !== 'ag-ui-capture-and-bind' || input.kind !== 'provider' || !commands.includes('send'))) throw new Error('Invalid frontend eligibility');
   const common: AgentDescription = { imageInput: parseImageInputCapability(input.imageInput), frontendOffers: input.frontendOffers, id: identifier(input.id), label: identifier(input.label), commands, availability };
-  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: identifier(input.namespace), protocolVersion: identifier(input.protocolVersion) };
+  if (input.kind === 'provider') return { ...common, kind: 'provider', namespace: patterned(input.namespace, EXTENSION_NAMESPACE_PATTERN, 'namespace'), protocolVersion: identifier(input.protocolVersion),
+    installationId: identifier(input.installationId), providerAgentId: input.providerAgentId === null ? null : identifier(input.providerAgentId) };
   const runtime = record(input.runtime, ['engine', 'version', 'format']);
   const model = Object.hasOwn(input, 'model') ? record(input.model) : null;
   if (model) exact(model, ['id', 'label']);
@@ -288,12 +430,12 @@ export function parseServicePull(value: unknown): ServicePull {
 function catalogEntries(value: unknown) {
   if (!Array.isArray(value) || value.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid service catalog');
   return value.map(value => {
-    const entry = record(value, ['scope', 'preview']);
+    const entry = record(value, ['scope', 'preview', 'provider']);
     if (entry.preview !== null && (typeof entry.preview !== 'string' || !entry.preview ||
       entry.preview.length > CONVERSATION_PREVIEW_LENGTH || entry.preview.replace(/\s+/gu, ' ').trim() !== entry.preview)) {
       throw new Error('Invalid conversation preview');
     }
-    return { scope: parseScope(entry.scope), preview: entry.preview };
+    return { scope: parseScope(entry.scope), preview: entry.preview, provider: conversationProvider(entry.provider) };
   });
 }
 /** Linked segments share the requested conversation's host and are never that conversation. */
@@ -341,19 +483,23 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   },
   close: nil,
   metadata(value) {
-    const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId']);
-    if (!Array.isArray(input.agents)) throw new Error('Invalid agents');
+    const input = record(value, ['hostId', 'principalId', 'compatibility', 'agents', 'defaultAgentId', 'extensions']);
+    if (!Array.isArray(input.agents) || !Array.isArray(input.extensions)) throw new Error('Invalid agents');
+    const extensions = input.extensions.map(extensionDescriptor);
+    if (extensions.some((extension, index) => index > 0 && extensions[index - 1]!.namespace >= extension.namespace) ||
+      extensions.some(extension => extension.installations.some((installation, index) =>
+        index > 0 && extension.installations[index - 1]!.installationId >= installation.installationId))) throw new Error('Unsorted extensions');
     const agents = input.agents.map(agentDescriptor), defaultAgentId = input.defaultAgentId === null ? null : identifier(input.defaultAgentId);
     if (defaultAgentId === null ? agents.some(agent => agent.availability.kind === 'ready') : !agents.some(agent => agent.id === defaultAgentId)) throw new Error('Missing default agent');
-    return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility) };
+    return { agents, defaultAgentId, hostId: identifier(input.hostId), principalId: identifier(input.principalId), compatibility: compatibility(input.compatibility), extensions };
   },
   catalog: catalogEntries,
   search(value) {
     const input = record(value, ['items', 'after']);
     if (!Array.isArray(input.items) || input.items.length > SERVICE_CATALOG_PAGE) throw new Error('Invalid search page');
     const entries = input.items.map(value => {
-      const entry = record(value, ['scope', 'preview', 'excerpt']);
-      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview }]);
+      const entry = record(value, ['scope', 'preview', 'provider', 'excerpt']);
+      const [catalog] = catalogEntries([{ scope: entry.scope, preview: entry.preview, provider: entry.provider }]);
       if (!catalog) throw new Error('Missing search entry');
       if (entry.excerpt !== null && (typeof entry.excerpt !== 'string' || !entry.excerpt ||
         entry.excerpt.length > SERVICE_SEARCH_EXCERPT_LENGTH)) throw new Error('Invalid search excerpt');
@@ -378,6 +524,7 @@ const valueParsers: { readonly [K in keyof ServiceValueMap]: (value: unknown, re
   abandon: value => value === null ? null : parseReceipt(value),
   watch(value) { const input = record(value, ['feedId']); return { feedId: identifier(input.feedId) }; },
   pull: parseServicePull,
+  'extension-call': parseExtensionCallValue,
 };
 export function parseServiceResponse<K extends keyof ServiceValueMap>(request: RequestFor<K>, value: unknown): ServiceResponse<ServiceValueMap[K]> {
   canonicalJson(value);

@@ -56,6 +56,7 @@ A provider without `reconcile` advertises no commands.
 An unadvertised cancel or approval is refused at admission with `provider-command-unavailable`. It never reaches the backend.
 Fresh dispatch rechecks the current capability.
 A provider owns its own identifiers. The host never interprets `opaqueId`, `opaqueSessionId` or cursor contents.
+An agent `opaqueId` is visible to clients: provider agent descriptors carry it as `providerAgentId`, and catalog and search entries carry it in `provider`. It must not carry a secret.
 Decisions reach the host only through `snapshot.decisions`. Each choice reference must belong to its decision.
 Transcript output and run outcomes come only from snapshots and `apply` events. Command effects carry no output.
 
@@ -111,6 +112,16 @@ Items and saved state are limited to one million encoded bytes.
 `close()` is idempotent and ends the feed with `closed`. `ended` never rejects.
 An expired or unbridgeable cursor ends the feed with `resync`.
 
+### Polling providers
+
+A service without an event stream can still implement `observe` by polling, as the [Coworkers provider](../../extensions/coworkers/src/provider.ts) does:
+
+- Run one scheduler per installation ([`poller.ts`](../../extensions/coworkers/src/poller.ts)) with an in-flight request limit, a short interval for conversations with unfinished work, a growing interval for idle ones, and a doubling backoff after failed polls. Wake a conversation's feed when the provider submits to it.
+- Deliver whole `snapshot` items and make the cursor a digest of the state, so `after` equal to the current cursor delivers nothing until something changes.
+- Do not end the feed on a failed poll: the host leaves a `disconnected` feed stopped until an explicit retry. End it only on `close()` or with `resync` when the service reports that the conversation is gone.
+- Keep terminal statuses in state so they are never fetched again, and bound the state well under the one-million-byte limit above. A first snapshot has no stored statuses, so it fetches one receipt for each request without a reply (up to 100 for Coworkers, one at a time behind the in-flight limit).
+- Present the newest request as `currentRun`. When it ends, the host's automatic run-end read settles the blocking send.
+
 ## What providers must never do
 
 - Read or send a secret outside `context.credentials.use({ credential, service }, action)`.
@@ -123,12 +134,12 @@ An expired or unbridgeable cursor ends the feed with `resync`.
 
 ## Conformance suite
 
-The suite runs the real host in process through `startBrowserHost`, the same entry `examples/crew/run.mjs` uses, with transient extension entries. Each row is driven only through its public extension entry, and clients reach the host through the desktop client store.
-Transient entries skip module import and manifest resolution. `examples/crew/tests/installed-example.test.mjs` covers loading an installed extension.
+The suite runs the real host in process through `startBrowserHost`, the same entry `extensions/crew/run.mjs` uses, with transient extension entries. Each row is driven only through its public extension entry, and clients reach the host through the desktop client store.
+Transient entries skip module import and manifest resolution. `extensions/crew/tests/installed-example.test.mjs` covers loading an installed extension.
 
 | Row | Request ids | Cursor | Event encoding | Supports |
 | --- | --- | --- | --- | --- |
-| Crew example (`examples/crew`, shared controlled Crew service) | AgentUI operation UUIDs | `{ epoch, sequence, requests }` | SSE AG-UI, folded into authoritative snapshots | cancel, decide |
+| Crew example (`extensions/crew`, shared controlled Crew service) | AgentUI operation UUIDs | `{ epoch, sequence, requests }` | SSE AG-UI, folded into authoritative snapshots | cancel, decide |
 | Ledger fake (`ledger.mjs`) | Service-assigned `room-n` and `ticket-n` | `[epoch, offset]` | NDJSON log entries folded by `apply` | cancel, decide |
 | Ledger fake without controls | Same as ledger | Same as ledger | Same as ledger | none |
 

@@ -191,6 +191,23 @@ enum ContinuationAction {
 }
 #[derive(Deserialize, Serialize)]
 #[serde(
+    tag = "kind",
+    rename_all = "kebab-case",
+    rename_all_fields = "camelCase",
+    deny_unknown_fields
+)]
+enum CatalogFilter {
+    Namespace {
+        namespace: String,
+    },
+    ProviderAgent {
+        namespace: String,
+        installation_id: Id,
+        provider_agent_id: Id,
+    },
+}
+#[derive(Deserialize, Serialize)]
+#[serde(
     tag = "op",
     rename_all = "kebab-case",
     rename_all_fields = "camelCase",
@@ -220,6 +237,12 @@ enum Request {
         #[serde(deserialize_with = "nullable")]
         after: Option<Id>,
         limit: Count,
+        #[serde(
+            default,
+            skip_serializing_if = "Option::is_none",
+            deserialize_with = "present"
+        )]
+        filter: Option<CatalogFilter>,
     },
     Search {
         query: String,
@@ -278,6 +301,21 @@ enum Request {
     Close {
         feed_id: Id,
     },
+    ExtensionCall {
+        namespace: String,
+        installation_id: Id,
+        operation: String,
+        input: Value,
+    },
+}
+fn extension_name(value: &str, max: usize, dot: bool) -> bool {
+    let bytes = value.as_bytes();
+    !bytes.is_empty()
+        && bytes.len() <= max
+        && bytes[0].is_ascii_lowercase()
+        && bytes.iter().all(|c| {
+            c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'-' || (dot && *c == b'.')
+        })
 }
 fn js_space(character: char) -> bool {
     matches!(character, '\t'..='\r' | ' ' | '\u{a0}' | '\u{1680}' | '\u{2000}'..='\u{200a}' |
@@ -438,8 +476,15 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
             }
             Some(&mut command.scope)
         }
-        Request::Catalog { limit, .. } => {
-            if !(1..=100).contains(&limit.0) {
+        Request::Catalog { limit, filter, .. } => {
+            let namespace = match filter {
+                Some(CatalogFilter::Namespace { namespace })
+                | Some(CatalogFilter::ProviderAgent { namespace, .. }) => Some(namespace),
+                None => None,
+            };
+            if !(1..=100).contains(&limit.0)
+                || namespace.is_some_and(|namespace| !extension_name(namespace, 32, false))
+            {
                 return Err(INVALID);
             }
             None
@@ -454,6 +499,20 @@ pub fn request(value: Value, host_id: &str) -> Result<Value, &'static str> {
                 .collect::<Vec<_>>()
                 .join(" ");
             if query.is_empty() {
+                return Err(INVALID);
+            }
+            None
+        }
+        Request::ExtensionCall {
+            namespace,
+            operation,
+            input,
+            ..
+        } => {
+            if !extension_name(namespace, 32, false)
+                || !extension_name(operation, 64, true)
+                || encoded_bytes(input)? > MAX_COMMAND_BYTES
+            {
                 return Err(INVALID);
             }
             None
@@ -558,6 +617,8 @@ mod tests {
             json!({"op":"metadata"}),
             json!({"op":"catalog", "after":null, "limit":100}),
             json!({"op":"catalog", "after":"cursor", "limit":1}),
+            json!({"op":"catalog", "after":null, "limit":5, "filter":{"kind":"namespace", "namespace":"fixture"}}),
+            json!({"op":"catalog", "after":"c", "limit":5, "filter":{"kind":"provider-agent", "namespace":"fixture", "installationId":"personal", "providerAgentId":"agent"}}),
             json!({"op":"search", "query":"find text", "after":null}),
             json!({"op":"search", "query":"find text", "after":"cursor"}),
             json!({"op":"create", "scope":scope(), "agentId":"agent"}),
@@ -583,6 +644,8 @@ mod tests {
             json!({"op":"pull", "feedId":"feed", "ack":null}),
             json!({"op":"pull", "feedId":"feed", "ack":9_007_199_254_740_991_u64}),
             json!({"op":"close", "feedId":"feed"}),
+            json!({"op":"extension-call", "namespace":"fixture", "installationId":"personal", "operation":"members.list", "input":{}}),
+            json!({"op":"extension-call", "namespace":"a", "installationId":"i", "operation":"echo-2", "input":[1, "two", null, {"x":true}]}),
         ] {
             valid(value);
         }
@@ -624,6 +687,7 @@ mod tests {
         for value in [
             json!({"op":"pair", "code":"code"}),
             json!({"op":"fetch"}),
+            json!({"op":"extensionCall", "namespace":"fixture", "installationId":"i", "operation":"echo", "input":{}}),
             json!({"op":"conversationAgent", "scope":scope()}),
             json!({"op":"create", "scope":scope()}),
             json!({"op":"create", "scope":scope(), "agent_id":"agent"}),
@@ -930,4 +994,5 @@ mod tests {
         assert!(image_response(&request, &response));
     }
     include!("wire_output_tests.rs");
+    include!("wire_extension_tests.rs");
 }

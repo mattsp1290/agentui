@@ -1,5 +1,6 @@
 import type { ComponentType, ReactNode } from 'react';
-import type { ConversationDocument, ConversationPermissions, ConversationScope, PermissionScope, SubmitResult } from '@agentui/contracts';
+import type { ConversationDocument, ConversationPermissions, ConversationScope, Json, PermissionScope, SubmitResult } from '@agentui/contracts';
+import type { AgentDescriptor, ConversationProvider, ExtensionCallValue, ExtensionInstallationStatus } from '@agentui/contracts/service';
 import type { Transcript } from '@agentui/contracts/conversation';
 import { nonempty } from '@agentui/contracts/decode';
 import type { UiExtensionContext } from './tool-contracts.js';
@@ -40,8 +41,70 @@ export interface ConversationContentLayoutProps {
   readonly modules: ReactNode;
 }
 
+export interface WorkspaceAgent {
+  readonly id: string;
+  readonly label: string;
+  readonly installationId: string;
+  readonly providerAgentId: string | null;
+  readonly availability: AgentDescriptor['availability'];
+}
+export interface WorkspaceConversation {
+  readonly scope: ConversationScope;
+  readonly preview: string | null;
+  readonly provider: Omit<ConversationProvider, 'namespace'>;
+}
+/** Props of a workspace view. Every list is limited to the extension's own namespace. */
+export interface WorkspaceViewProps {
+  readonly namespace: string;
+  readonly installations: readonly ExtensionInstallationStatus[];
+  readonly agents: readonly WorkspaceAgent[];
+  readonly conversations: {
+    /**
+     * Loaded pages in catalog order, except that a conversation created in this session is listed first until the list is
+     * next read from its first page, for example by `refresh()`. When the selected conversation's agent has a `providerAgentId`, the selected
+     * conversation is always included, after the pages when it is not on one yet. Otherwise it appears only if a loaded
+     * page lists it.
+     */
+    readonly entries: readonly WorkspaceConversation[];
+    /** The last page length equalled the page limit, so more may exist. Order is catalog order, not recency, apart from conversations created in this session. */
+    readonly hasMore: boolean;
+    readonly loading: boolean;
+    more(): void;
+  };
+  /** The application's single active conversation when it belongs to this namespace. */
+  readonly selected: ConversationScope | null;
+  /** The host-rendered conversation, composer and approvals for `selected`; `null` when nothing is selected. Render it once. */
+  readonly conversation: ReactNode;
+  /**
+   * Opens a conversation from this namespace's list. It becomes the application's active conversation.
+   * Rejects only for a scope outside this namespace. Otherwise it resolves once the attempt ends, also when the attempt
+   * did not open the conversation, and `selected` stays unchanged. A host refusal is shown in the host status strip. While
+   * the application is busy with another operation the attempt is ignored and nothing is shown, so disable or retry the
+   * control yourself. Watch `selected`, not the promise, to learn what opened.
+   */
+  open(scope: ConversationScope): Promise<void>;
+  /**
+   * Creates a conversation with one of this namespace's agents and makes it the active conversation.
+   * Rejects only for an agent outside this namespace. Like `open`, it resolves when the attempt ends, also without a new
+   * conversation (busy, pending creation to recover, agent unavailable, host refusal); `selected` changes only on success.
+   * As with `open`, a busy application ignores the attempt without a notice; the other reasons appear in the status strip.
+   */
+  create(agentId: string): Promise<void>;
+  /** Calls one of this extension's server operations. It never rejects: transport failures resolve as `unavailable`. */
+  call(installationId: string, operation: string, input: Json): Promise<ExtensionCallValue>;
+  /** Re-reads host metadata and this namespace's conversation list. */
+  refresh(): Promise<void>;
+}
+export interface WorkspaceContribution {
+  /** 1–40 characters, shown in the Extensions list. */
+  readonly label: string;
+  readonly component: ComponentType<WorkspaceViewProps>;
+  /** A transcript used only inside this workspace. */
+  readonly transcript?: ComponentType<ConversationModuleProps>;
+}
 export interface UiExtensionContributions extends ExtensionLifetime {
   readonly modules: readonly ConversationModule[];
+  readonly workspace?: WorkspaceContribution;
   readonly contentLayout?: ComponentType<ConversationContentLayoutProps>;
   readonly overrides?: {
     readonly transcript?: ComponentType<ConversationModuleProps>;
@@ -59,6 +122,7 @@ export interface UiExtensionPresentation {
   readonly transcript: ComponentType<ConversationModuleProps> | undefined;
   readonly activity: ComponentType<ConversationActivityProps> | undefined;
   readonly contentLayout: ComponentType<ConversationContentLayoutProps> | undefined;
+  readonly workspace: WorkspaceContribution | undefined;
 }
 export type UiExtensionCapture =
   | { readonly kind: 'invalid-lifetime'; readonly error: unknown }
@@ -137,12 +201,25 @@ function parseOverrides(value: unknown): Pick<UiExtensionPresentation, 'transcri
   return { transcript, activity };
 }
 
+function parseWorkspace(value: unknown): WorkspaceContribution | undefined {
+  if (value === undefined) return undefined;
+  const workspace = behaviour(value);
+  for (const key of Reflect.ownKeys(workspace)) {
+    if (key !== 'label' && key !== 'component' && key !== 'transcript') throw new Error(`Unknown workspace slot: ${String(key)}`);
+  }
+  const label = workspace.label, component = workspace.component, transcript = workspace.transcript;
+  if (typeof label !== 'string' || !label.trim() || label.length > 40) throw new Error('Expected a workspace label of 1 to 40 characters');
+  validateComponent<WorkspaceViewProps>(component);
+  if (transcript !== undefined) validateComponent<ConversationModuleProps>(transcript);
+  return { label, component, ...(transcript === undefined ? {} : { transcript }) };
+}
+
 /** Captures presentation without acquiring or inspecting disposal. */
 export function parseUiExtensionPresentation(value: unknown): UiExtensionPresentation {
   const contributions = behaviour(value);
   const modules = contributions.modules, overrides = contributions.overrides, contentLayout = contributions.contentLayout;
   if (contentLayout !== undefined) validateComponent<ConversationContentLayoutProps>(contentLayout);
-  return { modules: parseConversationModules(modules), ...parseOverrides(overrides), contentLayout };
+  return { modules: parseConversationModules(modules), ...parseOverrides(overrides), contentLayout, workspace: parseWorkspace(contributions.workspace) };
 }
 
 export function parseUiExtensionContributions(value: unknown): UiExtensionCapture {

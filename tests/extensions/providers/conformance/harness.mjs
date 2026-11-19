@@ -17,7 +17,7 @@ export async function until(predicate, message = 'Condition timed out', ms = 500
 }
 
 /**
- * The real browser host, run in process through the same `startBrowserHost` entry `examples/crew/run.mjs` uses, with
+ * The real browser host, run in process through the same `startBrowserHost` entry `extensions/crew/run.mjs` uses, with
  * transient provider extensions. Clients reach it through the same `createBrowserConnection` and
  * `createConversationStore` the desktop application builds in `apps/desktop/src/application`.
  */

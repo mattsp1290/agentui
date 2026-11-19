@@ -1,8 +1,10 @@
 import { randomUUID } from 'node:crypto';
 import { createServer, request as forward } from 'node:http';
-import { crewProvider } from '@agentui/example-crew/provider';
-import { crewService } from '../../../../examples/crew/tests/support/crew-service.mjs';
+import { crewProvider } from 'agentui-extension-crew/provider';
+import { crewService } from '../../../../extensions/crew/tests/support/crew-service.mjs';
 import { instrument } from './instrument.mjs';
+import coworkersEntry from 'agentui-extension-coworkers/server';
+import { coworkersService } from '../../../../extensions/coworkers/tests/support/coworkers-service.mjs';
 import { ledgerExtension, ledgerService } from './ledger.mjs';
 
 /**
@@ -119,6 +121,38 @@ async function ledger(t, supports) {
   };
 }
 
+/**
+ * The Coworkers provider polls instead of streaming. `subscriptions` counts its open feeds, and the row declares
+ * `streams: false`, so the dropped-stream case does not apply: a polling feed never ends on its own.
+ * @returns {Promise<Subject>}
+ */
+async function coworkers(t) {
+  const remote = await coworkersService(t, { token: 'coworkers-conformance-token-9b2e' }), proxy = await recordingProxy(t, remote.origin);
+  const instance = { namespace: 'coworkers', installationId: 'conformance', generation: 'one', protocolVersion: '1' };
+  const posted = suffix => remote.calls.filter(call => call.method === 'POST' && call.path.endsWith(suffix)).length;
+  let current;
+  return {
+    namespace: 'coworkers', traffic: proxy.traffic, credentialHeader: 'authorization', secrets: [remote.token],
+    extension() {
+      current = instrument({ value: { manifest: { namespace: 'coworkers', trust: 'full', sdkVersion: coworkersEntry.sdkVersion,
+        entries: [{ kind: 'server', module: './server.js' }] }, entry: coworkersEntry, installations: [{ id: 'conformance', instance, service: proxy.origin,
+        expectedAuthority: 'remote-provider', authentication: { kind: 'secret', revision: 'one', resolve: async () => remote.token } }] } });
+      return current;
+    },
+    get counts() { return current.counts; },
+    effects: () => ({ creates: remote.calls.filter(call => call.method === 'POST' && call.path === '/v1/conversations').length,
+      sends: posted('/requests'), cancels: posted('/cancel'), decisions: 0 }),
+    subscriptions: () => current?.counts.feeds ?? 0,
+    setDown: value => proxy.setDown(value),
+    loseSendReplies: lost => remote.loseReplies(lost),
+    dropSends: on => proxy.setDropped(on ? (method, path) => method === 'POST' && new URL(path, 'http://proxy').pathname.endsWith('/requests') : null),
+    dropStreams() { throw new Error('Coworkers polls; it has no stream to drop'); },
+    reply: text => remote.complete(text),
+    card() { throw new Error('Coworkers has no decisions'); },
+    answers: () => [],
+  };
+}
+
 const controlled = { cancel: true, decide: true };
 const ledgerRow = supports => t => ledger(t, supports);
 
@@ -133,4 +167,5 @@ export const providers = [
   { name: 'Crew example', supports: controlled, start: crew, peer: ledgerRow(controlled) },
   { name: 'ledger fake', supports: controlled, start: ledgerRow(controlled), peer: crew },
   { name: 'ledger fake without controls', supports: { cancel: false, decide: false }, start: ledgerRow({ cancel: false, decide: false }), peer: crew },
+  { name: 'Coworkers', supports: { cancel: true, decide: false }, streams: false, decisions: false, start: coworkers, peer: ledgerRow(controlled) },
 ];

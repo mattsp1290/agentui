@@ -1,14 +1,16 @@
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { createReadStream, realpathSync } from 'node:fs';
+import { createReadStream, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { cp, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { createServer } from 'node:net';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { bootstrapScript, distribution, profileFor, shellQuote } from './agentui-runtime.mjs';
 
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
+/** The local setup root, matching `root="$HOME/.local/share/agentui"` in agentui-runtime.mjs. */
+const LOCAL_SETUP_ROOT = join(homedir(), '.local/share/agentui');
 const sshOptions = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15', '-o', 'ServerAliveCountMax=2'];
 const usage = `Usage: ./agentui [--ssh USER@HOST] [--workspace PATH] [--agent codex|pi] [--port PORT]
                  [--no-open] [--skip-build]
@@ -60,6 +62,53 @@ export function parseLaunchArgs(args, cwd = process.cwd()) {
   return destination
     ? { kind: 'ssh', destination, workspace: workspace ?? null, agent, port, ...common }
     : { kind: 'local', workspace: resolve(cwd, workspace ?? '.'), agent, port, ...common };
+}
+
+/** Names of the environment variables an extension configuration reads its tokens from. */
+function tokenVariables(configuration) {
+  const names = new Set();
+  for (const extension of Array.isArray(configuration?.extensions) ? configuration.extensions : []) {
+    for (const installation of Array.isArray(extension?.installations) ? extension.installations : []) {
+      if (installation?.authentication?.kind === 'environment' && typeof installation.authentication.variable === 'string') names.add(installation.authentication.variable);
+    }
+  }
+  return [...names].sort();
+}
+/**
+ * Whether the launcher can hand this configuration to the host. The host refuses to start on an invalid file, so the
+ * launcher checks the parts that go stale: the version and each selected directory. The host still validates the rest.
+ */
+function loadableConfiguration(configuration, base) {
+  if (configuration?.version !== 2 || !Array.isArray(configuration.extensions)) return false;
+  return configuration.extensions.every(extension => {
+    if (typeof extension?.directory !== 'string' || !extension.directory) return false;
+    const directory = resolve(base, extension.directory);
+    return existsSync(extension.kind === 'artifact' ? directory : join(directory, 'package.json'));
+  });
+}
+/**
+ * Host arguments for `<setup root>/extensions.json`. A local profile passes `--extensions` only when the file names
+ * version 2 and existing extension directories and every named token variable is set. Otherwise it prints one warning
+ * (naming every missing variable, never a value) and starts with native agents only.
+ * A remote profile never loads bundled server extensions (decision D13).
+ */
+export function extensionArguments({ setupRoot, kind, env = process.env, warn = line => process.stderr.write(`${line}\n`) }) {
+  const file = join(setupRoot, 'extensions.json');
+  if (kind === 'ssh') {
+    if (existsSync(file)) warn('Server extensions run only with a local host. Ignoring extensions.json for this remote session.');
+    return [];
+  }
+  if (!existsSync(file)) return [];
+  let configuration;
+  try { configuration = JSON.parse(readFileSync(file, 'utf8')); }
+  catch { warn('extensions.json is not valid JSON. Starting without server extensions.'); return []; }
+  if (!loadableConfiguration(configuration, setupRoot)) {
+    warn('extensions.json is not a usable extension configuration (version 2 with existing extension directories). Starting without server extensions.');
+    return [];
+  }
+  const missing = tokenVariables(configuration).filter(name => !env[name]?.trim());
+  if (missing.length) warn(`Set ${missing.join(', ')} to load server extensions. Starting without server extensions.`);
+  return missing.length ? [] : ['--extensions', file];
 }
 
 export async function assertPortAvailable(port) {
@@ -235,6 +284,8 @@ export async function launch(options) {
     const origin = `http://127.0.0.1:${port}`;
     let session;
     if (options.kind === 'ssh') {
+      // A remote host never loads server extensions; this only warns when a local extensions.json would be ignored.
+      void extensionArguments({ setupRoot: LOCAL_SETUP_ROOT, kind: 'ssh' });
       const deploymentHash = createHash('sha256').update(await readFile(join(root, 'scripts/agentui-launch-session.mjs')))
         .update('\0').update(await readFile(fileURLToPath(import.meta.url))).digest('hex').slice(0, 12);
       const release = await deploy(options.destination, setup, `${host.artifactId.slice(0, 16)}-${browser.artifactId.slice(0, 16)}-${deploymentHash}`, lifecycle);
@@ -245,7 +296,7 @@ export async function launch(options) {
     } else {
       const args = [setup.node, join(root, 'apps/host/dist/main.js'), 'desktop', '--preferred', options.agent, '--workspace', workspace,
         '--data-dir', dataDir, '--assets', join(root, 'apps/desktop/web-dist-browser'), '--port', String(port),
-        ...(options.agent === 'codex' ? ['--executable', setup.codex] : [])];
+        ...(options.agent === 'codex' ? ['--executable', setup.codex] : []), ...extensionArguments({ setupRoot: setup.root, kind: 'local' })];
       session = command(setup.node, [join(root, 'scripts/agentui-launch-session.mjs'), ...args],
         { ...lifecycle, lease: true, env: { ...process.env, PATH: `${dirname(setup.node)}:${process.env.PATH}` } });
     }

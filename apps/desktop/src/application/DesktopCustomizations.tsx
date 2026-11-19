@@ -34,6 +34,10 @@ function selectSlot<S extends Slot>(owners: readonly NamespaceActivation[], slot
   const owner = claims[0];
   return owner ? { kind: 'claimed', owner } : DEFAULT_SLOT;
 }
+/** A workspace's own transcript, claimed for the conversation that workspace renders. */
+export function workspaceTranscript(owner: ReadyActivation, transcript: NonNullable<UiExtensionPresentation['transcript']>): TranscriptSelection {
+  return { kind: 'claimed', owner: { ...owner, presentation: { ...owner.presentation, transcript } } };
+}
 export function customizationMessage(error: unknown): string {
   const limit = 10;
   const pending: unknown[] = [error];

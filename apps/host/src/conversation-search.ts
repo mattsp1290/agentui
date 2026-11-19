@@ -3,6 +3,7 @@ import type { Transcript, TranscriptEvent } from '@agentui/contracts/conversatio
 import { SERVICE_CATALOG_PAGE, SERVICE_SEARCH_EXCERPT_LENGTH } from '@agentui/contracts/service';
 import type { ConversationSearchPage } from '@agentui/contracts/service';
 import type { LocalHost } from '@agentui/host';
+import { conversationProvider } from './agents.js';
 
 export function searchConversations(host: LocalHost<TranscriptEvent, Transcript>, request: {
   readonly hostId: string; readonly query: string; readonly after: string | null;
@@ -12,8 +13,8 @@ export function searchConversations(host: LocalHost<TranscriptEvent, Transcript>
   const query = request.query.toLowerCase();
   const items: ConversationSearchPage['items'][number][] = [];
   for (const scope of candidates) {
-    const transcript = host.inspect(scope).snapshot.document.domain;
-    const entry = { scope, preview: conversationPreview(transcript) };
+    const inspected = host.inspect(scope), transcript = inspected.snapshot.document.domain;
+    const entry = { scope, preview: conversationPreview(transcript), provider: conversationProvider(inspected.installation) };
     const match = transcript.messages.map(message => message.text.replace(/\s+/gu, ' ').trim())
       .find(text => text.toLowerCase().includes(query));
     if (match === undefined && !conversationLabel(entry).toLowerCase().includes(query)) continue;

@@ -34,9 +34,12 @@ async function fixture(t, service = 'https://example.com') {
   const module = `import { appendFileSync, writeFileSync } from 'node:fs';
     import { createCrewFixture } from ${JSON.stringify(new URL('../extensions/providers/contracts/crew.ts', import.meta.url).href)};
     writeFileSync(${JSON.stringify(marker)}, JSON.stringify({ credentialPresent: Object.hasOwn(process.env, 'AGENTUI_EXTENSION_CREW_TOKEN') }));
-    const instance = ${JSON.stringify(instance)}, service = ${JSON.stringify(service)};
+    const instance = ${JSON.stringify(instance)};
     const fixture = createCrewFixture(instance);
     export default { kind: 'server', sdkVersion: ${JSON.stringify(EXTENSION_SDK_VERSION)}, activate(context) {
+      // The service origin comes only from the configuration file, through context.installations.
+      writeFileSync(${JSON.stringify(marker + '.installations')}, JSON.stringify(context.installations));
+      const service = context.installations.find(installation => installation.id === 'service').service;
       let credential;
       const request = (path, body) => context.credentials.use({ credential, service }, async secret => {
         const response = await fetch(service + path, { method: body === undefined ? 'GET' : 'POST', signal: AbortSignal.timeout(5000),
@@ -161,6 +164,8 @@ test('bundled serve selects an installed public provider, creates and sends with
   assert.equal(metadata.defaultAgentId, metadata.agents[0].id);
   const provider = metadata.agents.find(agent => agent.label === 'Crew researcher'); assert.ok(provider);
   assert.equal(provider.kind, 'provider'); assert.equal(provider.namespace, instance.namespace);
+  assert.deepEqual(JSON.parse(await readFile(`${f.marker}.installations`, 'utf8')), [{ id: 'service', instance,
+    service: `http://127.0.0.1:${remote.address().port}`, expectedAuthority: 'remote-provider' }]);
   const scope = { hostId: info.hostId, conversationId: 'configured-provider' };
   const created = await call({ op: 'create', scope, agentId: provider.id }); assert.equal(created.ok, true, JSON.stringify(created));
   assert.deepEqual(created.value, scope);

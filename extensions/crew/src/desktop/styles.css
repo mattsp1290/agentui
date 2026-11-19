@@ -1,0 +1,67 @@
+/* Crew workspace: a Slack-style idiom (dark sidebar, flat message rows). Every selector is scoped to this workspace and
+   to Crew's own elements; the host-rendered conversation, composer and approvals inside it keep the host styles. */
+[data-extension-workspace="crew"] .crew-workspace { display: grid; grid-template-columns: 260px minmax(0, 1fr); height: 100%; min-height: 0; position: relative; }
+[data-extension-workspace="crew"] .crew-sidebar { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--aui-color-surface); color: var(--aui-color-text); }
+[data-extension-workspace="crew"] .crew-sidebar nav { display: flex; flex-direction: column; padding: 12px 8px; gap: 4px; }
+[data-extension-workspace="crew"] .crew-sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px 12px; border-bottom: 1px solid var(--aui-color-border); margin-bottom: 8px; }
+[data-extension-workspace="crew"] .crew-sidebar-header strong { font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-extension-workspace="crew"] .crew-section-title { margin: 8px 8px 4px; font-size: 13px; font-weight: 600; color: var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-member-list, [data-extension-workspace="crew"] .crew-conversation-list { list-style: none; margin: 0; padding: 0; }
+[data-extension-workspace="crew"] .crew-sidebar button { color: inherit; font: inherit; background: transparent; border: 0; cursor: pointer; }
+[data-extension-workspace="crew"] .crew-compose { width: 28px; height: 28px; border-radius: 6px; background: var(--aui-color-raised); font-size: 18px; line-height: 1; }
+[data-extension-workspace="crew"] .crew-member-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 5px 8px; border-radius: 6px; text-align: left; font-size: 14px; }
+[data-extension-workspace="crew"] .crew-member-row:hover, [data-extension-workspace="crew"] .crew-conversation-row:hover { background: var(--aui-color-raised); }
+[data-extension-workspace="crew"] .crew-member-row[aria-current="true"] { background: var(--aui-color-accent); color: var(--aui-color-on-accent); }
+[data-extension-workspace="crew"] .crew-member-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-extension-workspace="crew"] .crew-add-row { color: var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-conversation-row { display: block; width: 100%; padding: 4px 8px 4px 40px; border-radius: 6px; text-align: left; font-size: 13px; color: var(--aui-color-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-extension-workspace="crew"] .crew-conversation-row[aria-current="page"] { color: var(--aui-color-text); background: var(--aui-color-raised); }
+[data-extension-workspace="crew"] .crew-more { padding: 6px 8px; text-align: left; color: var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-sidebar button:focus-visible { outline: 2px solid var(--aui-color-focus); outline-offset: -2px; }
+[data-extension-workspace="crew"] .crew-avatar { display: inline-grid; place-items: center; flex: none; width: 24px; height: 24px; border-radius: 6px; font-size: 11px; font-weight: 700; background: var(--aui-color-raised); color: var(--aui-color-text); }
+[data-extension-workspace="crew"] .crew-status-dot { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #2bac76; }
+[data-extension-workspace="crew"] .crew-status-dot[data-status="unavailable"] { background: transparent; border: 1px solid var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: var(--aui-color-canvas); }
+[data-extension-workspace="crew"] .crew-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 20px; padding-right: 128px; border-bottom: 1px solid var(--aui-color-border); }
+[data-extension-workspace="crew"] .crew-header-title { margin: 0; font-size: 17px; font-weight: 700; }
+[data-extension-workspace="crew"] .crew-header-meta { color: var(--aui-color-muted); font-size: 13px; }
+/* Only Crew's own containers: `.crew-conversation` also holds the host-rendered conversation and composer, which keep host styles. */
+[data-extension-workspace="crew"] :is(.crew-header, .crew-empty-state, .crew-member-form, .crew-details, .crew-setup) button { padding: 6px 12px; border: 1px solid var(--aui-color-border); border-radius: 6px; background: var(--aui-color-surface); color: inherit; font: inherit; cursor: pointer; }
+[data-extension-workspace="crew"] :is(.crew-header, .crew-empty-state, .crew-member-form, .crew-details, .crew-setup) button:disabled { opacity: .5; cursor: default; }
+[data-extension-workspace="crew"] .crew-details-toggle { margin-left: auto; }
+[data-extension-workspace="crew"] .crew-drawer-toggle { display: none; }
+[data-extension-workspace="crew"] .crew-body { flex: 1; min-height: 0; display: flex; }
+[data-extension-workspace="crew"] .crew-conversation { flex: 1; min-width: 0; min-height: 0; display: flex; padding: 0 20px; }
+[data-extension-workspace="crew"] .crew-conversation > * { flex: 1; min-width: 0; }
+[data-extension-workspace="crew"] .crew-empty-state { align-self: center; text-align: center; color: var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-details { flex: none; width: 260px; padding: 16px; border-left: 1px solid var(--aui-color-border); overflow-y: auto; }
+[data-extension-workspace="crew"] .crew-details h3 { margin-top: 0; font-size: 15px; }
+[data-extension-workspace="crew"] .crew-details dt { font-size: 12px; color: var(--aui-color-muted); margin-top: 8px; }
+[data-extension-workspace="crew"] .crew-details dd { margin: 2px 0 0; overflow-wrap: anywhere; }
+[data-extension-workspace="crew"] .crew-detail-actions { display: flex; gap: 8px; margin-top: 16px; }
+[data-extension-workspace="crew"] .crew-note { font-size: 12px; color: var(--aui-color-muted); }
+[data-extension-workspace="crew"] .crew-transcript { flex: 1; overflow-y: auto; padding: 16px 0; }
+[data-extension-workspace="crew"] .crew-message-list { list-style: none; margin: 0; padding: 0; }
+[data-extension-workspace="crew"] .crew-message { display: flex; gap: 10px; padding: 8px 0; }
+[data-extension-workspace="crew"] .crew-message .crew-avatar { width: 36px; height: 36px; border-radius: 8px; font-size: 13px; }
+[data-extension-workspace="crew"] .crew-message[data-role="user"] .crew-avatar { background: var(--aui-color-accent); color: var(--aui-color-on-accent); }
+[data-extension-workspace="crew"] .crew-message-body { min-width: 0; }
+[data-extension-workspace="crew"] .crew-sender { display: block; font-size: 15px; }
+[data-extension-workspace="crew"] .crew-text { margin: 2px 0 0; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.5; }
+[data-extension-workspace="crew"] .crew-progress, [data-extension-workspace="crew"] .crew-empty { color: var(--aui-color-muted); font-size: 13px; }
+[data-extension-workspace="crew"] .crew-member-form { display: flex; flex-direction: column; gap: 12px; max-width: 480px; padding: 24px 0; }
+[data-extension-workspace="crew"] .crew-member-form h2 { margin: 0; font-size: 18px; }
+[data-extension-workspace="crew"] .crew-member-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; font-weight: 600; }
+[data-extension-workspace="crew"] .crew-member-form input, [data-extension-workspace="crew"] .crew-member-form select, [data-extension-workspace="crew"] .crew-member-form textarea { font: inherit; font-weight: 400; padding: 6px 8px; border: 1px solid var(--aui-color-control-border); border-radius: 6px; background: var(--aui-color-surface); color: var(--aui-color-text); }
+[data-extension-workspace="crew"] .crew-form-actions { display: flex; gap: 8px; }
+[data-extension-workspace="crew"] .crew-form-message { margin: 0; color: var(--aui-color-danger); }
+[data-extension-workspace="crew"] .crew-notice { margin: 0; padding: 6px 16px; color: var(--aui-color-danger); }
+[data-extension-workspace="crew"] .crew-setup { display: block; max-width: 640px; padding: 32px; }
+@container (max-width: 640px) {
+  [data-extension-workspace="crew"] .crew-workspace { grid-template-columns: minmax(0, 1fr); }
+  [data-extension-workspace="crew"] .crew-sidebar { position: absolute; inset: 0 auto 0 0; width: min(280px, 85%); z-index: 3; transform: translateX(-100%); visibility: hidden; }
+  [data-extension-workspace="crew"] .crew-workspace[data-drawer="open"] .crew-sidebar { transform: none; visibility: visible; }
+  [data-extension-workspace="crew"] .crew-drawer-toggle { display: inline-block; }
+  [data-extension-workspace="crew"] .crew-details { display: none; }
+  [data-extension-workspace="crew"] .crew-header { padding-right: 20px; }
+}
