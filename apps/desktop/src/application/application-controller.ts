@@ -421,7 +421,7 @@ export function createApplicationController(deps: {
   const workspaceLoads = new Map<string, number>();
   /** A cleared workspace must not accept a page that started on the previous host or view. */
   function invalidateWorkspaceLoads(): void {
-    for (const namespace of [...workspaceLoads.keys()]) workspaceLoads.set(namespace, (workspaceLoads.get(namespace) ?? 0) + 1);
+    for (const namespace of workspaceLoads.keys()) workspaceLoads.set(namespace, (workspaceLoads.get(namespace) ?? 0) + 1);
   }
   async function readWorkspace(owner: Session, namespace: string, more: boolean): Promise<void> {
     const { hostId } = requireHost(owner);
