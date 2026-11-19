@@ -37,7 +37,7 @@ test('an observed run end performs one admitted status read, and a later run end
   assert.equal(receiptKind(f), 'accepted');
 });
 
-test('an inconclusive run-end read is read again after a host restart', async t => {
+test('an inconclusive run-end read is read again after observation goes live on restart', async t => {
   let reads = 0;
   const { remote, a, f, binding } = await streaming(t, () => ++reads === 1 ? 'accepted' : 'completed');
   const final = remote.emit(remote.makeEvent(binding, 'Done', 2, true));
@@ -61,8 +61,7 @@ test('a reconcile that overlaps a run-end read joins it and makes one status rea
   await until(() => sendLookups(remote).length === 1);
   const reconciled = f.client.reconcile(scope, 'send');
   // A reconcile that did not join would post its own lookup while the first is held.
-  await new Promise(resolve => setTimeout(resolve, 200));
-  assert.equal(sendLookups(remote).length, 1);
+  await assert.rejects(until(() => sendLookups(remote).length > 1, 200), /Condition timed out/);
   gate.resolve();
   assert.equal((await reconciled).state.kind, 'accepted');
   assert.equal(sendLookups(remote).length, 1);
