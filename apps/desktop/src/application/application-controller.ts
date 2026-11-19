@@ -392,7 +392,7 @@ export function createApplicationController(deps: {
   function readContinuation(owner: Session, scope: ConversationScope, action: ContinuationAction = 'read'): Promise<ContinuationView> {
     return current(owner, Promise.resolve().then(() => owner.connection.continuation({ scope, action })));
   }
-  /** Follows confirmed successors to the newest segment of the chain; a link that cannot be read ends the walk. */
+  /** Follows confirmed successors to the newest segment. An unreadable link ends the walk; a loop or 64 confirmed hops throws. */
   async function newestSegment(owner: Session, scope: ConversationScope): Promise<ConversationScope> {
     let segment = scope;
     const seen = new Set<string>();
@@ -402,18 +402,20 @@ export function createApplicationController(deps: {
       seen.add(key);
       let view: ContinuationView;
       try { view = await readContinuation(owner, segment); }
-      catch (cause) { if (session !== owner) throw cause; break; }
-      if (view.successor?.kind !== 'confirmed') break;
-      segment = view.successor.scope;
+      catch (cause) { if (session !== owner) throw cause; return segment; }
+      if (view.successor?.kind !== 'confirmed') return segment;
+      const next = view.successor.scope;
+      if (seen.has(JSON.stringify([next.hostId, next.conversationId]))) throw new Error('The continuations of this chat form a loop, so its newest conversation cannot be opened.');
+      segment = next;
     }
-    return segment;
+    throw new Error('This chat has too many continuations, so its newest conversation cannot be opened.');
   }
-  /** Reopens a saved route at the newest segment of its chain, saving the route only when it moved. */
+  /** Reopens a saved route at the newest segment, then saves that route only after its draft has moved. */
   async function reopenNewest(owner: Session, route: ConversationScope): Promise<void> {
     const newest = await newestSegment(owner, route);
-    if (!sameScope(newest, route)) await save(owner, { ...requireSaved(owner).saved, route: newest });
     await install(owner, newest);
     await moveDraft(owner, route);
+    if (!sameScope(newest, route)) await save(owner, { ...requireSaved(owner).saved, route: newest });
   }
   function liveContinuation(record: ContinuationRecord): boolean {
     return !record.stopped && continuation === record && session === record.owner && state.active?.store === record.target.store;
@@ -456,8 +458,9 @@ export function createApplicationController(deps: {
     record.failures = 0;
     const kind = view.successor?.kind;
     if (kind === 'starting' || kind === 'confirmed') record.error = '';
-    if (view.predecessor && !record.chain[1]) {
-      const link: ChainLink = { scope: view.predecessor, view: null };
+    const predecessor = view.predecessor;
+    if (predecessor && !record.chain[1] && !record.chain.some(item => sameScope(item.scope, predecessor))) {
+      const link: ChainLink = { scope: predecessor, view: null };
       record.chain.push(link);
       link.view = await readContinuation(record.owner, link.scope).catch(() => null);
     }
@@ -479,11 +482,11 @@ export function createApplicationController(deps: {
     }
     if (!liveContinuation(record) || record.action) return;
     const successor = await settleContinuation(record, view);
-    if (!successor || !liveContinuation(record) || stalled(record)) return;
+    if (!successor || !liveContinuation(record) || record.action || stalled(record)) return;
     if (state.busy) pollContinuation(record);
     else void run(owner => moveToSuccessor(owner, record, successor));
   }
-  /** Moves the unsent draft of a chat that is no longer open into the empty composer of the open one. It is never sent. */
+  /** Moves the unsent draft of a chat that is no longer open into the open composer. It is never sent. */
   async function moveDraft(owner: Session, earlier: ConversationScope): Promise<void> {
     const lease = owner.view?.borrow, next = state.active;
     if (session !== owner || !lease || !next || sameScope(next.scope, earlier)) return;
@@ -491,9 +494,12 @@ export function createApplicationController(deps: {
     const held = await owner.pool.recovery(lease, earlier);
     try {
       const text = held.store.getSnapshot().draft;
-      if (!text || session !== owner || state.active?.store !== next.store || next.store.getSnapshot().draft) return;
-      await next.store.setDraft(text);
-      await held.store.setDraft('');
+      if (!text || session !== owner || state.active?.store !== next.store) return;
+      const typed = next.store.getSnapshot().draft;
+      const merged = !typed || typed.includes(text) ? (typed || text) : `${text}${typed}`;
+      if (merged !== typed) await next.store.setDraft(merged);
+      const visible = next.store.getSnapshot().draft;
+      if (session === owner && state.active?.store === next.store && visible.includes(text)) await held.store.setDraft('');
     } finally { held.release(); }
   }
   async function arrive(how: 'continue' | 'new-chat', open: () => Promise<void>): Promise<void> {
@@ -507,12 +513,14 @@ export function createApplicationController(deps: {
     publishContinuation(record);
     try {
       const newest = await newestSegment(owner, successor);
+      await arrive('continue', () => install(owner, newest));
+      await moveDraft(owner, from.scope);
       await save(owner, { ...requireSaved(owner).saved, route: newest });
+      const preview = conversationPreview(state.active?.store.getSnapshot().document.domain ?? { messages: [], currentRun: null });
       const items = state.catalog.items.filter(entry => !sameScope(entry.scope, newest));
       const at = items.findIndex(entry => sameScope(entry.scope, from.scope));
-      const entry = { scope: newest, preview: null };
+      const entry = { scope: newest, preview };
       publish({ catalog: { ...state.catalog, items: at < 0 ? [entry, ...items] : items.map((item, index) => index === at ? entry : item) } });
-      await arrive('continue', () => install(owner, newest));
     } catch (cause) {
       if (liveContinuation(record)) {
         record.action = null;
@@ -521,7 +529,6 @@ export function createApplicationController(deps: {
       }
       throw cause;
     }
-    await moveDraft(owner, from.scope);
   }
   async function continuationAction(owner: Session, target: OpenConversation, action: 'start' | 'check'): Promise<void> {
     requireTarget(owner, target);
@@ -547,8 +554,8 @@ export function createApplicationController(deps: {
     record.action = null;
     record.error = error;
     if (!view) {
-      // A failed Check again keeps the give-up state; a kept starting or confirmed view would otherwise show Continuing… with nothing to press.
-      if (lost && action === 'check') record.failures = CONTINUATION_READ_ATTEMPTS;
+      // Every failed Check again, including an invalid reply, keeps the give-up state. A kept starting or confirmed view would otherwise show Continuing… with nothing to press.
+      if (action === 'check') record.failures = CONTINUATION_READ_ATTEMPTS;
       publishContinuation(record);
       if (lost && action === 'start') pollContinuation(record);
       return;
@@ -578,8 +585,9 @@ export function createApplicationController(deps: {
     try {
       const transcript = await readSegment(owner, link.scope);
       link.view ??= await readContinuation(owner, link.scope);
-      if (link.view.predecessor && !record.chain[index + 1]) {
-        const previous: ChainLink = { scope: link.view.predecessor, view: null };
+      const previousScope = link.view.predecessor;
+      if (previousScope && !record.chain[index + 1] && !record.chain.some(item => sameScope(item.scope, previousScope))) {
+        const previous: ChainLink = { scope: previousScope, view: null };
         record.chain.push(previous);
         previous.view = await readContinuation(owner, previous.scope).catch(() => null);
       }
@@ -589,15 +597,15 @@ export function createApplicationController(deps: {
       if (liveContinuation(record)) record.earlierError = `Earlier messages could not load. ${message(cause)}`;
     } finally {
       if (liveContinuation(record)) {
-        record.action = null;
+        if (record.action === 'earlier') record.action = null;
         publishContinuation(record);
-        // A poll that fired during the load gave way to it without arming another.
+        // A poll that fired during the load gave way to it without arming another. A move that started during the load keeps its action.
         const kind = record.chain[0]?.view?.successor?.kind;
-        if ((kind === 'starting' || kind === 'confirmed') && !stalled(record)) pollContinuation(record);
+        if (record.action === null && (kind === 'starting' || kind === 'confirmed') && !stalled(record)) pollContinuation(record);
       }
     }
   }
-  async function createConversation(owner: Session, agentId?: string): Promise<void> {
+  async function createConversation(owner: Session, agentId?: string, carried?: ConversationScope): Promise<void> {
     const host = requireHost(owner);
     const { saved } = requireSaved(owner);
     if (saved.pendingCreation) throw new Error('Recover the pending creation before creating another conversation.');
@@ -608,7 +616,7 @@ export function createApplicationController(deps: {
     const scope = { hostId: host.hostId, conversationId: deps.createId() };
     await save(owner, { ...saved, pendingCreation: { scope, agentId: selected } });
     requireHost(owner);
-    await completeCreation(owner, scope, selected);
+    await completeCreation(owner, scope, selected, carried);
   }
   async function install(owner: Session, scope: ConversationScope): Promise<void> {
     const storage = local(owner);
@@ -751,7 +759,7 @@ export function createApplicationController(deps: {
       throw cause;
     } finally { if (session === owner) { publish({ busy: false }); refreshPermissions(owner, target); } }
   }
-  async function completeCreation(owner: Session, scope: ConversationScope, agentId: string): Promise<void> {
+  async function completeCreation(owner: Session, scope: ConversationScope, agentId: string, carried?: ConversationScope): Promise<void> {
     const view = requireSaved(owner), host = requireHost(owner);
     const matches = () => session === owner && state.host.kind === 'ready' && state.host.metadata.principalId === host.principalId && state.host.metadata.hostId === host.hostId && owner.view?.borrow.storage === view.borrow.storage && owner.view.saved !== null && owner.view.hostId === scope.hostId &&
       owner.view.saved?.pendingCreation?.agentId === agentId && sameScope(owner.view.saved.pendingCreation.scope, scope);
@@ -763,9 +771,14 @@ export function createApplicationController(deps: {
       throw error;
     }
     if (!matches()) throw new Error('The creation view changed. Recover it in its original view.');
+    // Start a new chat installs and moves the closed draft before this route is saved. A failed lookup leaves the route on the closed chat.
+    if (carried) {
+      await install(owner, scope);
+      await moveDraft(owner, carried);
+    }
     await save(owner, { version: 2, route: scope, pendingCreation: null });
     publish({ catalog: { ...state.catalog, items: [{ scope, preview: null }, ...state.catalog.items.filter(item => !sameScope(item.scope, scope))] } });
-    await install(owner, scope);
+    if (!carried) await install(owner, scope);
   }
   function requireTarget(owner: Session, target: OpenConversation): void {
     requireHost(owner);
@@ -900,9 +913,9 @@ export function createApplicationController(deps: {
       if (scope.hostId !== host.hostId) throw new Error('Conversation belongs to another host.');
       requireSaved(owner);
       const newest = await newestSegment(owner, scope);
-      await save(owner, { ...requireSaved(owner).saved, route: newest });
       await install(owner, newest);
       await moveDraft(owner, scope);
+      await save(owner, { ...requireSaved(owner).saved, route: newest });
     }),
     conversationActions(target) {
       const owner = session;
@@ -929,8 +942,7 @@ export function createApplicationController(deps: {
         startNewChat: () => run(async active => {
           if (active !== owner) return;
           requireTarget(active, target);
-          await arrive('new-chat', () => createConversation(active, target.agent.id));
-          await moveDraft(active, target.scope);
+          await arrive('new-chat', () => createConversation(active, target.agent.id, target.scope));
         }),
         async loadEarlierSegment() {
           if (owner && session === owner) await readEarlierSegment(owner, target);
