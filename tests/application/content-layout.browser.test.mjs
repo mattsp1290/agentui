@@ -36,7 +36,9 @@ test('committed layout arranges selected transcript and nested action with prote
   const main = await page.locator('.review-layout > .review-transcript').boundingBox(), aside = await page.locator('.review-layout > aside').boundingBox();
   assert.ok(main.x + main.width <= aside.x); assert.ok(Math.abs(main.y - aside.y) < 2);
   assert.equal(await page.locator('.review-layout > .review-transcript').evaluate(node => getComputedStyle(node).padding), '0px');
-  assert.equal(await page.locator('.conversation-content [data-customization-state]').count(), 2);
+  // The bundled in-repo extensions activate beside the two external namespaces.
+  assert.deepEqual(await page.locator('.conversation-content [data-customization-state]').evaluateAll(nodes => nodes.map(node => node.getAttribute('data-customization-namespace')).sort()),
+    ['coworkers', 'crew', 'personal', 'transcript']);
   assert.equal(await page.locator('.conversation-content').evaluate(node => {
     const authored = document.createElement('main'); node.append(authored);
     const padding = getComputedStyle(authored).padding; authored.remove(); return padding;
@@ -104,8 +106,8 @@ test('layout activation, initial and retained suspension preserve protected DOM 
       return broken ? <Broken /> : <div data-layout={version}><button onClick={() => fail(true)}>Fail live layout</button>{transcript}{modules}</div>;
     }
     function Broken() { throw new Error('Live failure'); }
-    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.11.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
-      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { window.activations++; return new Promise(resolve => { window.activateLayout = () => resolve({ contentLayout: Layout, modules: [{ id: 'tracked', label: 'Tracked', component() { return <Tracked kind="module" />; } }], overrides: { transcript() { return <Tracked kind="transcript" />; } }, dispose() { window.disposals++; } }); }); } } }) }];
+    const customizations = [{ manifest: { namespace: 'live', sdkVersion: '0.13.0', entries: [{kind: 'desktop', module: './desktop.js'}] },
+      load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.13.0', activate() { window.activations++; return new Promise(resolve => { window.activateLayout = () => resolve({ contentLayout: Layout, modules: [{ id: 'tracked', label: 'Tracked', component() { return <Tracked kind="module" />; } }], overrides: { transcript() { return <Tracked kind="transcript" />; } }, dispose() { window.disposals++; } }); }); } } }) }];
     function App() { const [enabled, setEnabled] = React.useState(true); window.disable = () => flushSync(() => setEnabled(false)); window.enable = () => flushSync(() => setEnabled(true));
       const custom = useDesktopCustomizations({ customizations, enabled });
       return <DesktopShell protectedContent={<aside className="application-controls">Protected navigation</aside>} defaultView={<div className="chat-view"><ConversationView active={active} actions={actions} enabled storageFailure="" agent="codex" transcript={custom.transcript} contentLayout={custom.contentLayout} modules={custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner} active={active} actions={actions} enabled agent="codex" />)} /></div>} restoreMode="managed" onRestore={() => setEnabled(false)} />; }
@@ -167,7 +169,7 @@ test('layout activation, initial and retained suspension preserve protected DOM 
   await page.screenshot({ path: join(root, '.audit/conversation-layout/implementation/short-controls.png'), fullPage: false });
 });
 
-const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.11.0', activate() { ${body} } } })`;
+const entry = body => `load: async () => ({ default: { kind: 'desktop', sdkVersion: '0.13.0', activate() { ${body} } } })`;
 const arranged = `function Layout({ transcript, modules }) { return <section aria-label="Selected layout"><main>{transcript}</main><aside>{modules}</aside></section>; }`;
 async function open(t) {
   const host = await fixture(t), page = await host.page();
@@ -287,8 +289,8 @@ test('StrictMode delayed same-array reactivation never remounts an obsolete layo
     import { CustomizationContent } from './apps/desktop/src/application/CustomizationContent.tsx';
     import { useDesktopCustomizations } from './apps/desktop/src/application/DesktopCustomizations.tsx';
     window.activations = 0; window.loads = 0; window.disposals = []; window.mounts = []; window.finish = {};
-    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.11.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
-      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.11.0', activate() {
+    const customizations = [{ manifest: { namespace: 'strict', sdkVersion: '0.13.0', entries: [{ kind: 'desktop', module: './desktop.js' }] },
+      load: async () => { window.loads++; return { default: { kind: 'desktop', sdkVersion: '0.13.0', activate() {
         const id = ++window.activations; let disposed = false;
         function Layout() { React.useLayoutEffect(() => { window.mounts.push({ id, disposed }); }, []); return <p>Owner {id}</p>; }
         return new Promise(resolve => { window.finish[id] = malformed => resolve({ modules: [],

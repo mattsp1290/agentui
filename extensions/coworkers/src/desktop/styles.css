@@ -1,0 +1,67 @@
+/* Coworkers workspace: a Teams-style idiom (inner app bar, chat cards, bubbles). Every selector is scoped to this workspace,
+   and generic element rules to Coworkers' own containers: the host-rendered conversation and composer keep the host styles. */
+[data-extension-workspace="coworkers"] .coworkers-workspace { display: grid; grid-template-columns: 72px 300px minmax(0, 1fr); height: 100%; min-height: 0; background: var(--aui-color-canvas); color: var(--aui-color-text); }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button { font: inherit; color: inherit; cursor: pointer; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button:disabled { opacity: .5; cursor: default; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) button:focus-visible { outline: 2px solid var(--aui-color-focus); outline-offset: 2px; }
+[data-extension-workspace="coworkers"] .coworkers-app-bar { background: var(--aui-color-raised); border-right: 1px solid var(--aui-color-border); padding: 8px 4px; }
+[data-extension-workspace="coworkers"] .coworkers-sections { display: flex; flex-direction: column; gap: 4px; }
+[data-extension-workspace="coworkers"] .coworkers-sections button { display: flex; flex-direction: column; align-items: center; gap: 2px; padding: 8px 2px; border: 0; border-radius: 6px; background: transparent; font-size: 11px; color: var(--aui-color-muted); }
+[data-extension-workspace="coworkers"] .coworkers-sections button[aria-pressed="true"] { color: var(--aui-color-accent); background: var(--aui-color-surface); box-shadow: inset 3px 0 0 var(--aui-color-accent); }
+[data-extension-workspace="coworkers"] .coworkers-app-bar svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+[data-extension-workspace="coworkers"] .coworkers-chat-list { display: flex; flex-direction: column; min-height: 0; overflow-y: auto; background: var(--aui-color-surface); border-right: 1px solid var(--aui-color-border); padding: 12px; gap: 6px; }
+[data-extension-workspace="coworkers"] .coworkers-chat-list-header, [data-extension-workspace="coworkers"] .coworkers-directory-header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+[data-extension-workspace="coworkers"] :is(.coworkers-app-bar, .coworkers-chat-list, .coworkers-directory, .coworkers-header, .coworkers-empty-state, .coworkers-setup) h2 { margin: 0; font-size: 18px; font-weight: 700; }
+[data-extension-workspace="coworkers"] .coworkers-chat-list-header button, [data-extension-workspace="coworkers"] .coworkers-directory-header button,
+[data-extension-workspace="coworkers"] .coworkers-card-actions button, [data-extension-workspace="coworkers"] .coworkers-empty-state button, [data-extension-workspace="coworkers"] .coworkers-setup button { padding: 5px 12px; border: 1px solid var(--aui-color-border); border-radius: 4px; background: var(--aui-color-surface); }
+[data-extension-workspace="coworkers"] .coworkers-filter, [data-extension-workspace="coworkers"] .coworkers-more { align-self: flex-start; padding: 2px 8px; border: 0; border-radius: 12px; background: var(--aui-color-raised); font-size: 12px; }
+[data-extension-workspace="coworkers"] .coworkers-chat-cards, [data-extension-workspace="coworkers"] .coworkers-cards, [data-extension-workspace="coworkers"] .coworkers-message-list { list-style: none; margin: 0; padding: 0; }
+[data-extension-workspace="coworkers"] .coworkers-chat-card { display: flex; align-items: center; gap: 10px; width: 100%; padding: 8px; border: 0; border-radius: 6px; background: transparent; text-align: left; }
+[data-extension-workspace="coworkers"] .coworkers-chat-card:hover, [data-extension-workspace="coworkers"] .coworkers-chat-card[aria-current="page"] { background: var(--aui-color-raised); }
+[data-extension-workspace="coworkers"] .coworkers-chat-text { display: flex; flex-direction: column; min-width: 0; }
+[data-extension-workspace="coworkers"] .coworkers-chat-text span { color: var(--aui-color-muted); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+[data-extension-workspace="coworkers"] .coworkers-avatar { display: inline-grid; place-items: center; flex: none; width: 32px; height: 32px; border-radius: 50%; background: var(--aui-color-accent); color: var(--aui-color-on-accent); font-size: 12px; font-weight: 700; }
+[data-extension-workspace="coworkers"] .coworkers-avatar-large { width: 56px; height: 56px; font-size: 18px; }
+[data-extension-workspace="coworkers"] .coworkers-main { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
+[data-extension-workspace="coworkers"] .coworkers-header { flex: none; display: flex; align-items: center; gap: 12px; padding: 10px 128px 10px 20px; background: var(--aui-color-surface); border-bottom: 1px solid var(--aui-color-border); }
+[data-extension-workspace="coworkers"] .coworkers-header-text { display: flex; flex-direction: column; min-width: 0; }
+[data-extension-workspace="coworkers"] .coworkers-header-text h2 { font-size: 16px; }
+[data-extension-workspace="coworkers"] .coworkers-role { color: var(--aui-color-muted); font-size: 12px; }
+[data-extension-workspace="coworkers"] .coworkers-pills { display: flex; gap: 4px; margin-left: 12px; }
+[data-extension-workspace="coworkers"] .coworkers-pills button { padding: 4px 14px; border: 0; border-radius: 16px; background: transparent; }
+[data-extension-workspace="coworkers"] .coworkers-pills button[aria-pressed="true"] { background: var(--aui-color-raised); color: var(--aui-color-accent); font-weight: 600; }
+[data-extension-workspace="coworkers"] .coworkers-back { display: none; }
+[data-extension-workspace="coworkers"] .coworkers-notice { margin: 0; padding: 6px 8px; border-radius: 4px; background: var(--aui-color-raised); font-size: 13px; }
+[data-extension-workspace="coworkers"] .coworkers-pane { flex: 1; min-height: 0; display: flex; padding: 0 20px; }
+[data-extension-workspace="coworkers"] .coworkers-pane > * { flex: 1; min-width: 0; }
+[data-extension-workspace="coworkers"] .coworkers-about { padding: 20px 0; }
+[data-extension-workspace="coworkers"] .coworkers-about dt { color: var(--aui-color-muted); font-size: 12px; margin-top: 12px; }
+[data-extension-workspace="coworkers"] .coworkers-about dd { margin: 2px 0 0; }
+[data-extension-workspace="coworkers"] .coworkers-empty-state { align-self: center; text-align: center; color: var(--aui-color-muted); }
+[data-extension-workspace="coworkers"] .coworkers-empty { color: var(--aui-color-muted); font-size: 13px; }
+[data-extension-workspace="coworkers"] .coworkers-transcript { flex: 1; overflow-y: auto; padding: 16px 0; }
+[data-extension-workspace="coworkers"] .coworkers-message { display: flex; flex-direction: column; margin: 4px 0; }
+[data-extension-workspace="coworkers"] .coworkers-message[data-side="mine"] { align-items: flex-end; }
+[data-extension-workspace="coworkers"] .coworkers-message[data-side="theirs"] { align-items: flex-start; }
+[data-extension-workspace="coworkers"] .coworkers-sender { display: flex; align-items: center; gap: 8px; margin: 8px 0 4px; font-size: 12px; }
+[data-extension-workspace="coworkers"] .coworkers-sender .coworkers-avatar { width: 24px; height: 24px; font-size: 10px; }
+[data-extension-workspace="coworkers"] .coworkers-bubble { max-width: 75%; padding: 8px 12px; border-radius: 8px; white-space: pre-wrap; overflow-wrap: anywhere; line-height: 1.45; }
+[data-extension-workspace="coworkers"] .coworkers-message[data-side="mine"] .coworkers-bubble { background: color-mix(in srgb, var(--aui-color-accent) 22%, var(--aui-color-surface)); }
+[data-extension-workspace="coworkers"] .coworkers-message[data-side="theirs"] .coworkers-bubble { background: var(--aui-color-surface); border: 1px solid var(--aui-color-border); margin-left: 32px; }
+[data-extension-workspace="coworkers"] .coworkers-typing .coworkers-bubble { display: flex; gap: 4px; }
+[data-extension-workspace="coworkers"] .coworkers-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--aui-color-muted); }
+[data-extension-workspace="coworkers"] .coworkers-directory { grid-column: 2 / -1; overflow-y: auto; padding: 20px 128px 20px 24px; }
+[data-extension-workspace="coworkers"] .coworkers-cards { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 12px; margin-top: 16px; }
+[data-extension-workspace="coworkers"] .coworkers-card { display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 16px; text-align: center; background: var(--aui-color-surface); border: 1px solid var(--aui-color-border); border-radius: 8px; }
+[data-extension-workspace="coworkers"] .coworkers-badges { display: flex; flex-wrap: wrap; justify-content: center; gap: 4px; }
+[data-extension-workspace="coworkers"] .coworkers-badge { padding: 2px 8px; border-radius: 10px; background: var(--aui-color-raised); font-size: 11px; }
+[data-extension-workspace="coworkers"] .coworkers-card-actions { display: flex; gap: 6px; margin-top: 6px; }
+[data-extension-workspace="coworkers"] .coworkers-setup { display: block; max-width: 640px; padding: 32px; }
+@container (max-width: 640px) {
+  [data-extension-workspace="coworkers"] .coworkers-workspace { grid-template-columns: 56px minmax(0, 1fr); }
+  [data-extension-workspace="coworkers"] .coworkers-workspace[data-pane="list"] .coworkers-main { display: none; }
+  [data-extension-workspace="coworkers"] .coworkers-workspace[data-pane="conversation"] .coworkers-chat-list { display: none; }
+  [data-extension-workspace="coworkers"] .coworkers-back { display: inline-block; }
+  [data-extension-workspace="coworkers"] .coworkers-header { padding-right: 20px; flex-wrap: wrap; }
+  [data-extension-workspace="coworkers"] .coworkers-directory { grid-column: 2; padding-right: 20px; }
+}

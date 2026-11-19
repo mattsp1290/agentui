@@ -74,7 +74,8 @@ for (const row of providers) {
     assert.equal(subject.counts.snapshots, 0);
   });
 
-  test(`${row.name}: a dropped stream stops until the observation retry resubscribes once from one fresh snapshot`, options, async t => {
+  // A polling provider has no stream to drop; its feed ends only when the host closes it or the conversation is gone.
+  if (row.streams !== false) test(`${row.name}: a dropped stream stops until the observation retry resubscribes once from one fresh snapshot`, options, async t => {
     const { subject, peer, f } = await setup(t, row);
     const scope = await f.create(subject.namespace);
     const { store } = await running(f, subject, scope, 'Before the stream drops');
@@ -197,7 +198,8 @@ for (const row of providers) {
       assert.deepEqual(subject.effects(), { ...none, creates: 1, sends: 1, decisions: 2 });
       assert.deepEqual(peer.effects(), none);
     });
-  } else {
+  } else if (row.decisions !== false) {
+    // A row whose service has no decisions at all (`decisions: false`) cannot raise a card to gate.
     test(`${row.name}: decisions are capability-gated`, options, async t => {
       const { subject, peer, f } = await setup(t, row);
       const scope = await f.create(subject.namespace);
@@ -259,9 +261,11 @@ for (const row of providers) {
     assert.deepEqual(await f.client.conversation(scope).submit(sendCommand(scope, 'outage', 'During the outage')),
       { kind: 'rejected', reason: 'send-awaiting-confirmation' }, 'the earlier send cannot be settled while the provider is offline');
     subject.reply('Reply during the outage');
-    await until(() => assistantTexts(store).includes('Reply during the outage'), 'a stream opened before the outage keeps delivering');
+    // A stream opened before the outage keeps delivering. A polling feed stays open and delivers the reply once polls reach the service again.
+    if (row.streams !== false) await until(() => assistantTexts(store).includes('Reply during the outage'), 'a stream opened before the outage keeps delivering');
     assert.equal(subject.subscriptions(), 2);
     subject.setDown(false);
+    if (row.streams === false) await until(() => assistantTexts(store).includes('Reply during the outage'), 'a polling feed delivers after the outage', 20_000);
     assert.deepEqual((await f.running.discoverProviders()).map(item => item.kind), ['available', 'available']);
     assert.deepEqual((await agent(f, scope)).availability, { kind: 'ready' });
     assert.deepEqual(subject.effects(), before);

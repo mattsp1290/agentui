@@ -159,6 +159,32 @@ test('chat workspace separates the icon rail and chat list and opens settings wi
   assert.equal(await page.locator('.settings-panel').isVisible(), false);
 });
 
+test('the rail lists Chats, Extensions and Settings in order and Extensions toggles its view at every width', async t => {
+  const server = await preview({
+    root: fileURLToPath(desktop), mode: 'browser',
+    configFile: fileURLToPath(new URL('vite.config.mjs', desktop)),
+    preview: { host: '127.0.0.1', port: 0 },
+  });
+  const browser = await chromium.launch();
+  t.after(async () => { await browser.close(); await server.close(); });
+  const page = await browser.newPage({ viewport: { width: 1120, height: 780 } });
+  await page.goto(`http://127.0.0.1:${server.httpServer.address().port}/browser.html`);
+  const rail = page.getByRole('navigation', { name: 'Workspace views' });
+  await rail.getByRole('button', { name: 'Chats', exact: true }).waitFor();
+  assert.deepEqual(await rail.getByRole('button').evaluateAll(buttons => buttons.map(button => button.getAttribute('aria-label'))), ['Chats', 'Extensions', 'Settings']);
+  const extensions = rail.getByRole('button', { name: 'Extensions', exact: true });
+  assert.equal(await extensions.getAttribute('aria-pressed'), 'false');
+  await extensions.click();
+  assert.equal(await extensions.getAttribute('aria-pressed'), 'true');
+  assert.equal(await rail.getByRole('button', { name: 'Chats', exact: true }).getAttribute('aria-pressed'), 'false');
+  await page.getByRole('heading', { name: 'Extensions', level: 2, exact: true }).waitFor();
+  await page.getByRole('heading', { name: 'Extensions', level: 1, exact: true }).waitFor();
+  await page.setViewportSize({ width: 360, height: 480 });
+  for (const name of ['Chats', 'Extensions', 'Settings']) assert.equal(await rail.getByRole('button', { name, exact: true }).isVisible(), true, name);
+  await rail.getByRole('button', { name: 'Chats', exact: true }).click();
+  assert.equal(await extensions.getAttribute('aria-pressed'), 'false');
+});
+
 test('connection settings stay reachable while the content boundary is failed', async (t) => {
   const { page } = await serveFixture(t, 'settings-failure-fixture.jsx');
   const failure = page.getByText('This view could not load.', { exact: true });

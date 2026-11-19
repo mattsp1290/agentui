@@ -142,7 +142,7 @@ test('real host admits the owner directly and protects metadata, scope and expli
   assert.deepEqual(await f.ok(catalog), []);
   assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }), scope);
   assert.deepEqual(await f.ok({ op: 'create', agentId: recordedAgentId, scope }), scope);
-  assert.deepEqual(await f.ok(catalog), [{ scope, preview: null }]);
+  assert.deepEqual(await f.ok(catalog), [{ scope, preview: null, provider: null }]);
   assert.deepEqual(await f.ok({ ...catalog, after: scope.conversationId }), []);
 });
 
@@ -201,7 +201,7 @@ test('an open HTTP pull stays pending while another request completes', { timeou
   void pending.response.then(() => { settled = true; }, () => { settled = true; });
   await pending.sent;
   assert.equal((await f.ok({ op: 'metadata' })).hostId, f.hostId);
-  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }), [{ scope, preview: null }]);
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }), [{ scope, preview: null, provider: null }]);
   assert.equal(settled, false);
   const response = await pending.response;
   assert.equal(response.status, 200, JSON.stringify(response.body));
@@ -244,7 +244,7 @@ test('fixed-port process restart preserves device identity, catalog and evidence
   assert.equal(f.origin, origin);
   assert.equal(f.hostId, hostId);
   assert.deepEqual(await f.ok({ op: 'metadata' }, alice.cookie), alice.metadata);
-  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }, alice.cookie), [{ scope, preview: intent.body.text }]);
+  assert.deepEqual(await f.ok({ op: 'catalog', after: null, limit: 100 }, alice.cookie), [{ scope, preview: intent.body.text, provider: null }]);
   assert.deepEqual(await f.ok({ op: 'receipt', scope, id: intent.clientCommandId }, alice.cookie), receipt);
   assert.deepEqual(await snapshot(), before);
   assert.deepEqual((await f.ok({ op: 'submit', command: intent }, alice.cookie)).receipt, receipt);

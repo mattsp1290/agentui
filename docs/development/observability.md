@@ -95,7 +95,7 @@ The tests inspect actual OTLP JSON sent by the bundled host. They check content 
 
 ## Configure the Crew worker
 
-The [public Crew launcher](../../examples/crew/README.md#trace-the-host-and-crew-worker) uses the same host configuration described above. Its request spans cover AgentUI admission and dispatch. They do not measure remote Crew inference. The optional native agents configured in that host retain their normal observed agent spans.
+The [public Crew launcher](../../extensions/crew/README.md#trace-the-host-and-crew-worker) uses the same host configuration described above. Its request spans cover AgentUI admission and dispatch. They do not measure remote Crew inference. The optional native agents configured in that host retain their normal observed agent spans.
 
 Crew owns tracing around actual native driver calls. The following worker settings describe [Crew PR 81](https://github.com/mattsp1290/crew/pull/81) at revision `c7ed7b43008dc414485304f167834d6eb9bc2d53`. GitHub reported that PR open when this integration was prepared on November 15, 2026. Confirm the installed Crew revision before using these settings. This AgentUI change does not upgrade or deploy Crew.
 
@@ -117,7 +117,7 @@ AgentUI does not forward incoming trace context to Crew or synthesize Crew agent
 To verify this launcher boundary after building, run:
 
 ```sh
-node --test examples/crew/tests/launcher-observability.test.mjs
+node --test extensions/crew/tests/launcher-observability.test.mjs
 ```
 
 This local test exercises the actual launcher against controlled Crew and OTLP HTTP servers. Live Crew invocation export and Datadog ingestion or conversion require checks against the installed worker and backend. Inspect both service names and verify an actual Crew agent span in the backend. AgentUI's live Datadog qualification remains tracked in `agentui-pkbs`.

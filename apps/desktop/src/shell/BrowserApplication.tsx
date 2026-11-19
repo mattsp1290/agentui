@@ -11,6 +11,7 @@ import { useDesktopCustomizations } from '../application/DesktopCustomizations.j
 import { CustomizationModules } from '../application/CustomizationModules.js';
 import { ConversationSearch } from '../application/ConversationSearch.js';
 import { ComposerAgentControls } from '../application/ComposerAgentControls.js';
+import { ExtensionsList, ExtensionWorkspace, conversationSlots, extensionRows, openableRow } from '../application/ExtensionsView.js';
 import { conversationLabel } from '@agentui/contracts/conversation';
 import type { ApplicationController } from '../application/application-controller.js';
 
@@ -24,7 +25,8 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   readonly suspended?: boolean;
 }) {
   const { controller, snapshot: app } = useApplication(supplied);
-  const [selectedView, setSelectedView] = useState<'chats' | 'settings'>('chats');
+  const [selectedView, setSelectedView] = useState<'chats' | 'extensions' | 'settings'>('chats');
+  const [selectedExtension, setSelectedExtension] = useState<string | null>(null);
   const [customizationEnabled, setCustomizationEnabled] = useState(true);
   const custom = useDesktopCustomizations({ customizations: customization, sink: controller.frontendGenerations, enabled: children === undefined && customizationEnabled });
   const [recoveryChoice, setRecoveryChoice] = useState<{ scopeKey: string; agentId: string } | null>(null);
@@ -50,20 +52,49 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
   const activeActions = app.active ? controller.conversationActions(app.active) : null;
   const modules = custom.namespaces.map(owner => <CustomizationModules key={owner.namespace} owner={owner}
     active={app.active} actions={activeActions} enabled={enabled} agent={agent} />);
-  const conversation = app.active && activeActions
+  const customizationsOn = children === undefined && customizationEnabled;
+  const rows = extensionRows({ customizations: customization, activations: custom.namespaces, enabled: customizationsOn, metadata });
+  const workspaceRow = openableRow(rows.find(row => row.namespace === selectedExtension));
+  const workspaceOpen = selectedView === 'extensions' && workspaceRow !== null;
+  // One element, placed in one slot: the Chats view, or the open workspace of the active conversation's namespace.
+  const slots = conversationSlots({ row: workspaceOpen ? workspaceRow : null, active: app.active, metadata, custom, modules, agents: choices });
+  const activeConversation = app.active && activeActions
     ? <ConversationView
         key={`${app.active.viewId}/${app.active.scope.hostId}/${app.active.scope.conversationId}`}
-        transcript={custom.transcript} activity={custom.activity} contentLayout={custom.contentLayout} modules={modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
-        composerControls={canSwitch => <ComposerAgentControls agents={choices} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
+        transcript={slots.transcript} activity={custom.activity} contentLayout={slots.contentLayout} modules={slots.modules} permissionState={app.permissionState} observation={app.observation} actions={activeActions} active={app.active} enabled={enabled} storageFailure={app.storageFailure} agent={agent}
+        composerControls={canSwitch => <ComposerAgentControls agents={slots.composerAgents} agent={app.active?.agent ?? null} hasConversation enabled={canSwitch && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} />}
       />
+    : null;
+  const workspaceConversation = slots.workspace ? activeConversation : null;
+  const conversation = !slots.workspace && activeConversation
+    ? activeConversation
     : <section className="conversation-panel empty-workspace">
         <p className="eyebrow">YOUR LOCAL WORKSPACE</p>
         <h1>A conversation that stays with you.</h1>
         <p>{app.host.kind === 'ready' && !selected ? 'No agents are available to start a conversation.' : 'Connect to your local host, then start a conversation. Your chats and drafts stay here when you come back.'}</p>
         <div className="composer empty-composer"><p>Choose your chat settings.</p><ComposerAgentControls agents={choices} agent={selected ?? null} hasConversation={false} enabled={enabled && app.saved.pendingCreation === null} onStartConversation={id => void controller.create(id)} onSetupPi={setupPi} /></div>
       </section>;
+  const hostAlerts = <>
+    {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
+    {app.error && <p className="application-alert" role="alert">{app.error}</p>}
+    {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
+      {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
+    </div>}
+  </>;
+  const creationRecovery = app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
+    {app.saved.pendingCreation.agentId === null && <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
+      <option value="">Check the saved chat first</option>{options}
+    </select></label>}
+    <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
+  </div>;
+  const extensionsView = <div className="extensions-view" inert={suspended}>
+    {workspaceOpen
+      ? <ExtensionWorkspace row={workspaceRow} metadata={metadata} workspaces={app.workspaces} active={app.active} controller={controller}
+          conversation={workspaceConversation} status={<>{hostAlerts}{creationRecovery}</>} onBack={() => setSelectedExtension(null)} />
+      : <ExtensionsList rows={rows} enabled={!suspended} onOpen={setSelectedExtension} />}
+  </div>;
   const controls = <div className="application-controls">
-    <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : 'Settings'}</h2>
+    <h2 className="sidebar-title">{selectedView === 'chats' ? 'Chats' : selectedView === 'extensions' ? 'Extensions' : 'Settings'}</h2>
     {app.capturedSends.length > 0 && <section aria-label="Captured tools"><h3>Captured tools</h3>
       <p>Tools are retained for these sends. Execution is not enabled.</p>
       {app.capturedSends.map(send => <div key={send.key} data-captured-command={send.command.clientCommandId}>
@@ -73,21 +104,13 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
       </div>)}
     </section>}
     {app.savedViewNotice && <p role="note">{app.savedViewNotice}</p>}
-    {app.storageFailure && <div className="application-alert" role="alert"><strong>Local storage unavailable. Commands are blocked.</strong><p>{app.storageFailure}</p><p>Existing records have not been discarded. Restore browser storage access, then reload.</p></div>}
-    {app.error && <p className="application-alert" role="alert">{app.error}</p>}
-    {app.host.kind === 'incompatible' && <div className="application-alert" role="alert"><strong>This host is incompatible. Commands are blocked.</strong>
-      {app.host.issues.map(issue => <p key={issue.dimension}>{issue.reason} {issue.action}</p>)}
-    </div>}
+    {!workspaceOpen && hostAlerts}
+    {selectedView === 'extensions' && !workspaceOpen && creationRecovery}
     <div className="chat-navigation" hidden={selectedView !== 'chats'}>
       <div className="action-row">
         <button disabled={!enabled || app.saved.pendingCreation !== null || selected?.availability.kind !== 'ready'} onClick={() => void controller.create(selected?.id)}>{selected && 'runtime' in selected && selected.runtime.engine === 'agentui-recorded' ? 'New recorded conversation' : 'New conversation'}</button>
       </div>
-      {app.saved.pendingCreation && <div className="creation-recovery"><p>Creation of {app.saved.pendingCreation.scope.conversationId} needs confirmation. Recovery uses the saved conversation and agent.</p>
-        {app.saved.pendingCreation.agentId === null && <label className="agent-choice">Agent if this chat was not created<select aria-label="Agent for pending creation" disabled={!enabled} value={recoveryAgent ?? ''} onChange={event => setRecoveryChoice(event.target.value ? { scopeKey: pendingScopeKey, agentId: event.target.value } : null)}>
-          <option value="">Check the saved chat first</option>{options}
-        </select></label>}
-        <button disabled={!enabled} onClick={() => void controller.recoverCreation(recoveryAgent ?? undefined)}>Recover creation</button>
-      </div>}
+      {creationRecovery}
       <ConversationSearch controller={controller} connectionKey={searchConnection} enabled={enabled} active={app.active?.scope ?? null}>
       {app.catalog.items.length > 0 && <nav className="conversation-catalog" aria-label="Host conversations">
         {app.catalog.items.map(({ scope, preview }) => {
@@ -135,11 +158,15 @@ export function BrowserApplication({ children, artifact, controller: supplied, c
     <button type="button" aria-label="Chats" title="Chats" aria-pressed={selectedView === 'chats'} onClick={() => setSelectedView('chats')}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11.5a7.5 7.5 0 0 1-7.5 7.5H5l-3 3v-9.5A7.5 7.5 0 0 1 9.5 5H12"/><path d="M16 5h6m-3-3v6"/></svg>
     </button>
+    <button type="button" aria-label="Extensions" title="Extensions" aria-pressed={selectedView === 'extensions'} onClick={() => setSelectedView('extensions')}>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="13.5" y="3" width="7.5" height="7.5" rx="1.5"/><rect x="3" y="13.5" width="7.5" height="7.5" rx="1.5"/><path d="M17.25 13.5v7.5M13.5 17.25H21"/></svg>
+    </button>
     <button type="button" className="settings-view-button" aria-label="Settings" title="Settings" aria-pressed={selectedView === 'settings'} onClick={() => setSelectedView('settings')}>
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h4m4 0h8M4 12h8m4 0h4M4 18h2m4 0h10"/><circle cx="10" cy="6" r="2"/><circle cx="14" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></svg>
     </button>
   </nav>;
-  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} settingsView={settings} restoreMode={children === undefined ? 'managed' : 'remount'}
+  return <DesktopShell navigation={rail} activeView={selectedView} protectedContent={controls} defaultView={views} settingsView={settings}
+    extensionsView={extensionsView} workspaceOpen={workspaceOpen} restoreMode={children === undefined ? 'managed' : 'remount'}
     onRestore={() => { setCustomizationEnabled(false); setSelectedView('chats'); }}
     status={app.active ? <ConversationStatus active={app.active} /> : 'No conversation open'}
     buildLabel={presentation.buildLabel}>{children}</DesktopShell>;

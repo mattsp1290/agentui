@@ -53,13 +53,16 @@ function DefaultView() {
   </div>;
 }
 
-export function DesktopShell({ children, defaultView, settingsView, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
+export function DesktopShell({ children, defaultView, settingsView, extensionsView, workspaceOpen = false, protectedContent, navigation, activeView, onRestore, restoreMode = 'remount', status, buildLabel }: {
   readonly children?: ReactNode;
   readonly defaultView?: ReactNode;
   readonly settingsView?: ReactNode;
+  readonly extensionsView?: ReactNode;
+  /** An extension workspace owns the area right of the rail, so the sidebar column collapses. */
+  readonly workspaceOpen?: boolean;
   readonly protectedContent?: ReactNode;
   readonly navigation?: ReactNode;
-  readonly activeView?: 'chats' | 'settings';
+  readonly activeView?: 'chats' | 'extensions' | 'settings';
   readonly onRestore?: () => void;
   readonly restoreMode?: 'remount' | 'managed';
   readonly status?: ReactNode;
@@ -69,7 +72,8 @@ export function DesktopShell({ children, defaultView, settingsView, protectedCon
   const boundaryKey = restoreMode === 'managed' ? 0 : view.kind === 'initial' ? 0 : view.revision;
   const revision = view.kind === 'initial' ? 0 : view.revision;
   const showSettings = settingsView !== undefined && activeView === 'settings';
-  return <ThemeScope className="desktop-shell" data-workspace-view={activeView}>
+  const showExtensions = extensionsView !== undefined && activeView === 'extensions';
+  return <ThemeScope className="desktop-shell" data-workspace-view={activeView} data-workspace-open={showExtensions && workspaceOpen ? 'true' : undefined}>
     <header className="shell-header">
       <div className="brand"><span className="brand-mark" aria-hidden="true">a</span><strong>AgentUI</strong><span className="platform-label">Desktop</span></div>
       <details className="recovery-menu"><summary>View options</summary><nav aria-label="Recovery controls">
@@ -80,13 +84,16 @@ export function DesktopShell({ children, defaultView, settingsView, protectedCon
     {navigation}
     {protectedContent}
     <main id="main-content">
-      <div className="shell-view" hidden={showSettings}>
+      <div className="shell-view" hidden={showSettings || showExtensions}>
         <ContentBoundary key={boundaryKey} revision={revision}>
           {view.kind === 'initial' ? children ?? defaultView ?? <DefaultView /> : defaultView ?? <DefaultView />}
         </ContentBoundary>
       </div>
       {settingsView !== undefined && <div className="shell-view" hidden={!showSettings}>
         <ContentBoundary key={`settings-${boundaryKey}`} revision={revision}>{settingsView}</ContentBoundary>
+      </div>}
+      {extensionsView !== undefined && <div className="shell-view" hidden={!showExtensions}>
+        <ContentBoundary key={`extensions-${boundaryKey}`} revision={revision}>{extensionsView}</ContentBoundary>
       </div>}
     </main>
     <footer className="shell-footer"><span className="footer-status">{status ?? 'Disconnected'}</span><span>{buildLabel ?? 'Local app · No host connection'}</span></footer>

@@ -69,6 +69,16 @@ async function prepareProviderExtensions(selected: ProviderExtensionSelection): 
   } catch { return { kind: 'failed', failure, recovery: 'replace' }; }
 }
 
+/** Namespaces a selection configures, read from its grants and the manifests known before loading. */
+export function selectedNamespaces(selected: ProviderExtensionSelection): readonly string[] {
+  const grants = selected.kind === 'entries' ? selected.entries.flatMap(entry => entry.installations) : selected.grants;
+  const manifests = selected.kind === 'entries' ? selected.entries.flatMap(entry => {
+    if (entry.kind === 'artifact') return [];
+    try { return [parseExtensionManifest(entry.manifest).namespace]; } catch { return []; }
+  }) : [];
+  return [...new Set([...grants.map(grant => grant.instance.namespace), ...manifests])].sort();
+}
+
 export async function verifyArtifactPins(pins: readonly ArtifactPin[], grants: readonly ProviderInstallation[]): Promise<readonly ServerCustomizationArtifact[]> {
   const prepared = await prepareProviderExtensions({ kind: 'artifacts', pins, grants });
   if (prepared.kind === 'failed') throw new Error('Invalid artifact selection');
@@ -76,7 +86,7 @@ export async function verifyArtifactPins(pins: readonly ArtifactPin[], grants: r
 }
 
 export function providerExtensionSource(database: AccessDatabase, selected: ProviderExtensionSelection): ServerExtensionSource {
-  return { async prepare() {
+  return { namespaces: () => selectedNamespaces(selected), async prepare() {
     const loaded: { readonly loaded: LoadedServerEntry; readonly installations: readonly ProviderInstallation[] }[] = [];
     const extensions: ProviderExtension[] = [];
     const cleanup = async () => {
@@ -98,7 +108,9 @@ export function providerExtensionSource(database: AccessDatabase, selected: Prov
     try {
       for (const extension of loaded) {
         extensions.push({ ...extension.loaded, authority: createProviderAuthority(database,
-          extension.loaded.manifest.namespace, extension.installations) });
+          extension.loaded.manifest.namespace, extension.installations),
+          installations: extension.installations.map(grant => ({ id: grant.id, instance: grant.instance, service: grant.service,
+            expectedAuthority: grant.expectedAuthority })) });
       }
       return { kind: 'ready', extensions };
     } catch {

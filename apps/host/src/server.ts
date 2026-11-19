@@ -57,6 +57,8 @@ export interface BrowserHostOptions {
   readonly extensions?: ExtensionStartup;
   readonly refreshBuilder?: string;
   readonly setupCapability?: string;
+  /** Test-only override of the 15-second extension operation deadline. */
+  readonly operationDeadlineMs?: number;
 }
 function piApiKey(): string {
   const apiKey = process.env.OPENCODE_GO_API_KEY;
@@ -98,7 +100,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
   const agents: InstalledAgent[] = [];
   let defaultInstallation = recordedInstallation;
   let feeds: FeedRegistry | undefined;
-  const providers = createServerExtensions();
+  const providers = createServerExtensions(options.operationDeadlineMs === undefined ? {} : { operationDeadlineMs: options.operationDeadlineMs });
   let control: Awaited<ReturnType<typeof startControl>> | undefined;
   let refresh: RefreshController | undefined;
   let resolveFatal!: () => void;
@@ -314,7 +316,8 @@ export async function startBrowserHost(options: BrowserHostOptions) {
       ? { kind: 'extensions' }
       : { kind: 'native', defaultInstallation, agents: configured ? agents : [{ installation: recordedInstallation, availability: { kind: 'ready' } }] };
     const isClosing = () => closing;
-    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing });
+    const api = createApi({ host, compatibility, feeds: registry, providers, agentSelection, isClosing,
+      extensions: { describe: providers.extensions, call: providers.callOperation } });
     const handler = serviceEndpoint({ client: 'browser-development', hostId, api, files: browser.files, isClosing, observability });
     const native = serviceEndpoint({ client: 'native', hostId, api, isClosing, observability });
     const setupHandler = piSetup && options.setupCapability ? piSetupEndpoint(piSetup, options.setupCapability, () => closing) : null;
@@ -339,7 +342,7 @@ export async function startBrowserHost(options: BrowserHostOptions) {
     const origin = `http://127.0.0.1:${address.port}`;
     control = await startControl(join(owner.directory, 'control.sock'), isClosing, selectionControl, providers.discover, refresh);
     return { origin, hostId, close, fatal, discoverProviders: providers.discover,
-      extensionStatus: providers.status,
+      extensionStatus: providers.status, callOperation: providers.callOperation,
       async replaceProviderExtensions(selected: readonly BrowserProviderExtension[]) {
         return directReplace(readyHost, selected);
       },

@@ -37,6 +37,10 @@ Read [host observability](docs/development/observability.md) to export opt-in Op
 Read the [default theme and primitives](docs/design/theme.md) and [T3 Code design findings](docs/design/t3-code.md).
 Run `npm run preview:theme` after building to inspect the local visual fixture.
 
+## Extensions
+
+The **Extensions** item in the desktop rail lists every installed extension and opens its workspace. This repository ships two: [Crew](docs/extensions/crew.md), with a member sidebar and flat chat rows, and [Coworkers](docs/extensions/coworkers.md), with chat cards and message bubbles. Both are configured through `~/.local/share/agentui/extensions.json` and token environment variables, as [the launcher guide](docs/development/launcher.md#load-server-extensions-on-a-local-host) describes; [authoring extensions](docs/architecture/extension-sdk.md) covers the platform.
+
 ## Launch the desktop app
 
 On macOS, install the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) and make Node.js and npm available. From the repository root, run:
