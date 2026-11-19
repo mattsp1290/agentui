@@ -87,7 +87,7 @@ test('Crew settles a finished send from its original request status once observa
   assert.deepEqual(remote.calls.filter(call => call.method === 'POST').map(call => call.input?.requestId).filter(Boolean), [requestId]);
 });
 
-test('Crew settles a send whose request finished while the host was stopped after restart', async t => {
+test('Crew request finishes before the host stops and the commit hook settles the send after restart', async t => {
   const remote = await service(t), f = await fixture(t, [remote.extension()]), scope = await f.create();
   assert.equal((await f.client.conversation(scope).submit(send(scope))).receipt.state.kind, 'accepted');
   await until(() => JSON.parse(saved(f).conversation.document).domain.currentRun?.kind === 'running');
