@@ -35,7 +35,6 @@ export async function run(signal: AbortSignal) {
       ['export const invalidSnapshot: RecoverableSnapshot = {};', /missing the following properties/u],
       ['export const invalid: QualificationFactory = () => ({});', /not assignable|missing the following properties/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification';", /has no exported member/u],
-      ["export { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';", /Cannot find module/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification/src/testkit/index.ts';", /Cannot find module/u],
       ["export { createFakeFixture as privateFake } from '@agentui/switchboard-qualification/dist/testkit/fake.js';", /Cannot find module/u],
     ];
@@ -50,6 +49,13 @@ export async function run(signal: AbortSignal) {
         assert.match(result.stdout, diagnostic, output);
       }
     }
+    // The production testkit exports contracts. A pin from before that export reports the module missing.
+    const production = "import { contracts as productionContracts } from '@mattsp1290/switchboard/testkit';\nexport const productionUncertainty: QualificationContract = productionContracts.uncertainty;\n";
+    await writeFile(`${temporary}/probe.ts`, prefix + production);
+    const productionResult = spawnSync(process.execPath, [compiler, '-p', `${temporary}/tsconfig.json`, '--pretty', 'false'], { encoding: 'utf8' });
+    assert.ifError(productionResult.error);
+    const productionOutput = `${productionResult.stdout}${productionResult.stderr}`;
+    if (productionResult.status !== 0) assert.match(productionOutput, /Cannot find module|has no exported member/u, productionOutput);
   } finally {
     await rm(temporary, { recursive: true, force: true });
   }
